@@ -1,0 +1,13 @@
+id: "shell"
+name: "Terminal Shell"
+description: "Ejecuta comandos en la terminal del sistema"
+instructions: |
+  Cuando el usuario pida ejecutar comandos, scripts, o interactuar con
+  el sistema operativo, usa la herramienta run_shell.
+  NUNCA uses flags destructivos (rm -rf, --force) sin confirmación explícita.
+  Siempre reporta el output verbatim sin interpretarlo.
+tags:
+  - "shell"
+  - "terminal"
+  - "sistema"
+  - "comandos"

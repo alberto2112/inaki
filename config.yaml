@@ -1,0 +1,195 @@
+# =============================================================================
+# Iñaki v2 — Configuración Global de Referencia
+# =============================================================================
+#
+# Este fichero documenta TODOS los parámetros configurables del sistema.
+# No es leído directamente — sirve como referencia canónica.
+#
+# Configuración real: config/global.yaml + config/agents/{id}.yaml
+# Secrets: config/global.secrets.yaml + config/agents/{id}.secrets.yaml
+#          (nunca commitear *.secrets.yaml — están en .gitignore)
+#
+# Sistema de merge (4 capas, campo a campo):
+#   config/global.yaml
+#       ↓
+#   config/global.secrets.yaml
+#       ↓
+#   config/agents/{id}.yaml
+#       ↓
+#   config/agents/{id}.secrets.yaml
+#       ↓
+#   AgentConfig resuelto
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# [app] — Configuración general del sistema
+# -----------------------------------------------------------------------------
+app:
+  name: "Iñaki"               # Nombre del asistente (usado en logs y presentaciones)
+
+  log_level: "INFO"           # Nivel de log: DEBUG | INFO | WARNING | ERROR | CRITICAL
+                              # DEBUG muestra llamadas HTTP, embeddings, tool calls
+
+  data_dir: "data"            # Directorio para datos en runtime (SQLite, history)
+                              # Producción Pi 5: "/home/pi/inaki/data"
+
+  models_dir: "models"        # Directorio para modelos ONNX locales
+                              # Producción Pi 5: "/home/pi/inaki/models"
+
+  skills_dir: "skills"        # Directorio con archivos YAML de skills
+                              # Producción Pi 5: "/home/pi/inaki/skills"
+
+  default_agent: "general"    # Agente usado por CLI sin flag --agent
+                              # Debe coincidir con un archivo en config/agents/
+
+
+# -----------------------------------------------------------------------------
+# [llm] — Proveedor de lenguaje (LLM)
+# -----------------------------------------------------------------------------
+llm:
+  provider: "openrouter"      # Proveedor activo. Opciones:
+                              #   "openrouter" — API compatible OpenAI via openrouter.ai
+                              #   "openai"     — OpenAI API directa
+                              #   "ollama"     — Ollama local (sin api_key)
+                              #   "groq"       — Groq API (muy rápido, modelos limitados)
+                              # Añadir nuevo proveedor: crear adapters/outbound/providers/{name}.py
+                              # con PROVIDER_NAME = "{name}" (descubrimiento automático)
+
+  base_url: "https://openrouter.ai/api/v1"
+                              # URL base de la API. Valores por proveedor:
+                              #   openrouter: "https://openrouter.ai/api/v1"
+                              #   openai:     "https://api.openai.com/v1"
+                              #   ollama:     "http://localhost:11434"
+                              #   groq:       "https://api.groq.com/openai/v1"
+
+  model: "anthropic/claude-3-5-haiku"
+                              # Modelo a usar. Ejemplos:
+                              #   OpenRouter:  "anthropic/claude-3-5-haiku"
+                              #                "anthropic/claude-sonnet-4-5"
+                              #                "google/gemini-flash-1.5"
+                              #                "meta-llama/llama-3.1-8b-instruct"
+                              #   OpenAI:      "gpt-4o-mini", "gpt-4o"
+                              #   Ollama:      "llama3.2", "mistral", "phi3"
+                              #   Groq:        "llama3-8b-8192", "mixtral-8x7b-32768"
+
+  temperature: 0.7            # Creatividad del modelo (0.0 = determinista, 1.0 = muy creativo)
+                              # Recomendado: 0.3-0.5 para tareas de código, 0.7-0.9 para conversación
+
+  max_tokens: 2048            # Máximo de tokens en la respuesta
+                              # Aumentar para respuestas largas (código, análisis)
+                              # Considerar coste en Pi 5 con modelos locales
+
+  # api_key: "sk-or-..."     # API key del proveedor — MOVER A global.secrets.yaml
+                              # Ollama no requiere api_key
+
+
+# -----------------------------------------------------------------------------
+# [embedding] — Modelo de embeddings para RAG
+# -----------------------------------------------------------------------------
+embedding:
+  provider: "e5_onnx"         # Proveedor de embeddings. Opciones:
+                              #   "e5_onnx" — multilingual-e5-small via ONNX Runtime
+                              #               Recomendado para Pi 5 (local, ARM64, sin internet)
+                              # Añadir proveedor: crear adapters/outbound/embedding/{name}.py
+                              # con PROVIDER_NAME = "{name}"
+
+  model_path: "models/e5-small"
+                              # Directorio con los archivos del modelo ONNX:
+                              #   models/e5-small/model.onnx
+                              #   models/e5-small/tokenizer.json
+                              # Descargar desde HuggingFace: intfloat/multilingual-e5-small
+                              # Producción: "/home/pi/inaki/models/e5-small"
+
+  dimension: 384              # Dimensión del vector de embedding
+                              # multilingual-e5-small → 384 (no cambiar)
+                              # ⚠ Cambiar esto requiere borrar y recrear la DB de memorias
+
+
+# -----------------------------------------------------------------------------
+# [memory] — Memoria a largo plazo (SQLite + sqlite-vec)
+# -----------------------------------------------------------------------------
+memory:
+  db_path: "data/inaki.db"    # Ruta a la base de datos SQLite
+                              # Contiene tablas: memories, memory_embeddings (vec0)
+                              # Memoria GLOBAL: compartida entre todos los agentes
+                              # Producción: "/home/pi/inaki/data/inaki.db"
+
+  default_top_k: 5            # Número de recuerdos recuperados por RAG en cada turno
+                              # Aumentar para más contexto (mayor coste de tokens)
+                              # Disminuir para respuestas más rápidas
+
+
+# -----------------------------------------------------------------------------
+# [history] — Historial de conversación a corto plazo (ficheros .txt)
+# -----------------------------------------------------------------------------
+history:
+  active_dir: "data/history/active"
+                              # Directorio con historiales activos: {agent_id}.txt
+                              # Un fichero por agente, solo mensajes user y assistant
+                              # Producción: "/home/pi/inaki/data/history/active"
+
+  archive_dir: "data/history/archive"
+                              # Directorio con historiales archivados tras /consolidate
+                              # Formato: {agent_id}_{YYYYMMDD_HHMMSS}.txt
+                              # Producción: "/home/pi/inaki/data/history/archive"
+
+
+# =============================================================================
+# CONFIGURACIÓN POR AGENTE — config/agents/{id}.yaml
+# =============================================================================
+# Los campos de abajo son propios de cada agente.
+# Se definen en config/agents/{id}.yaml, no en global.yaml.
+# El agente puede sobrescribir cualquier campo de las secciones anteriores.
+# =============================================================================
+
+# [agente] — Identidad del agente (requerido en cada agents/{id}.yaml)
+# id: "general"               # Identificador único (= nombre del archivo sin .yaml)
+# name: "Iñaki-g"             # Nombre para mostrar en CLI y logs
+# description: "Asistente personal de uso general"
+# system_prompt: |            # Prompt base del agente (requerido, sin valor por defecto)
+#   Eres Iñaki, un asistente personal inteligente.
+#   Eres conciso, directo y útil.
+#
+# # Override LLM — solo campos que cambian, el resto se hereda del global
+# llm:
+#   model: "anthropic/claude-3-5-haiku"
+#   max_tokens: 4096           # Los agentes dev pueden necesitar más tokens para código
+#
+# # Canales de comunicación para este agente
+# channels:
+#
+#   telegram:
+#     allowed_user_ids: ["123456789", "987654321"]
+#                             # Lista de Telegram user IDs autorizados
+#                             # Vacío ([]) = todos pueden interactuar
+#     reactions: true         # Reaccionar con emojis (👀 procesando, ✅ ok, ❌ error)
+#     debug: false            # Log de mensajes entrantes y salientes
+#     # token → en agents/{id}.secrets.yaml
+#
+#   rest:
+#     host: "0.0.0.0"         # Escuchar en todas las interfaces (para acceso desde Android)
+#     port: 6498              # Puerto del servidor FastAPI de este agente
+#                             # Cada agente debe tener un puerto diferente
+#     # auth_key → en agents/{id}.secrets.yaml
+
+
+# =============================================================================
+# SECRETS — config/global.secrets.yaml + config/agents/{id}.secrets.yaml
+# =============================================================================
+# Los campos de abajo NUNCA van en archivos commiteables.
+# Copiar los .example y rellenar con valores reales:
+#   cp config/global.secrets.yaml.example config/global.secrets.yaml
+#   cp config/agents/general.secrets.yaml.example config/agents/general.secrets.yaml
+# =============================================================================
+
+# config/global.secrets.yaml:
+# llm:
+#   api_key: "sk-or-..."       # API key del proveedor LLM (shared entre todos los agentes)
+
+# config/agents/general.secrets.yaml:
+# channels:
+#   telegram:
+#     token: "7xxxxxxx:AAF..." # Bot token de BotFather (@BotFather en Telegram)
+#   rest:
+#     auth_key: "sxc-..."      # Clave para header X-API-Key en peticiones a la REST API

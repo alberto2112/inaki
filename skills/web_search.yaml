@@ -1,0 +1,12 @@
+id: "web_search"
+name: "Búsqueda Web"
+description: "Busca información actualizada en internet usando DuckDuckGo"
+instructions: |
+  Cuando el usuario pregunte sobre eventos actuales, noticias recientes,
+  precios, o cualquier información que pueda haber cambiado desde tu
+  entrenamiento, usa la herramienta web_search para obtener datos frescos.
+tags:
+  - "búsqueda"
+  - "internet"
+  - "noticias"
+  - "actualidad"

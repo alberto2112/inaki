@@ -1,0 +1,96 @@
+"""Proveedor LLM via Ollama (API local compatible con OpenAI)."""
+
+from __future__ import annotations
+
+import json
+import logging
+from collections.abc import AsyncIterator
+
+import httpx
+
+from adapters.outbound.providers.base import BaseLLMProvider
+from core.domain.entities.message import Message, Role
+from core.domain.errors import LLMError
+from infrastructure.config import LLMConfig
+
+PROVIDER_NAME = "ollama"
+
+logger = logging.getLogger(__name__)
+
+
+class OllamaProvider(BaseLLMProvider):
+
+    def __init__(self, cfg: LLMConfig) -> None:
+        self._cfg = cfg
+        self._base_url = cfg.base_url or "http://localhost:11434"
+
+    def _build_messages(self, messages: list[Message], system_prompt: str) -> list[dict]:
+        result = [{"role": "system", "content": system_prompt}]
+        for m in messages:
+            if m.role in (Role.USER, Role.ASSISTANT):
+                result.append({"role": m.role.value, "content": m.content})
+        return result
+
+    async def complete(
+        self,
+        messages: list[Message],
+        system_prompt: str,
+        tools: list[dict] | None = None,
+    ) -> str:
+        payload = {
+            "model": self._cfg.model,
+            "messages": self._build_messages(messages, system_prompt),
+            "stream": False,
+            "options": {
+                "temperature": self._cfg.temperature,
+                "num_predict": self._cfg.max_tokens,
+            },
+        }
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                resp = await client.post(
+                    f"{self._base_url}/api/chat",
+                    json=payload,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except httpx.HTTPError as exc:
+            raise LLMError(f"Ollama HTTP error: {exc}") from exc
+
+        return data["message"]["content"]
+
+    async def stream(
+        self,
+        messages: list[Message],
+        system_prompt: str,
+    ) -> AsyncIterator[str]:
+        payload = {
+            "model": self._cfg.model,
+            "messages": self._build_messages(messages, system_prompt),
+            "stream": True,
+            "options": {
+                "temperature": self._cfg.temperature,
+                "num_predict": self._cfg.max_tokens,
+            },
+        }
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                async with client.stream(
+                    "POST",
+                    f"{self._base_url}/api/chat",
+                    json=payload,
+                ) as resp:
+                    resp.raise_for_status()
+                    async for line in resp.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            chunk = json.loads(line)
+                            if content := chunk.get("message", {}).get("content"):
+                                yield content
+                            if chunk.get("done"):
+                                break
+                        except json.JSONDecodeError:
+                            continue
+        except httpx.HTTPError as exc:
+            raise LLMError(f"Ollama stream error: {exc}") from exc

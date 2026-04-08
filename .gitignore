@@ -1,0 +1,45 @@
+# Secrets — nunca commitear
+config/*.secrets.yaml
+config/agents/*.secrets.yaml
+
+# Datos y modelos
+data/
+models/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Misc
+.env
+.env.*
+*.log
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# pytest
+.pytest_cache/
+
+# Coverage
+.coverage
+htmlcov/
+coverage.xml
+
+# mypy / pyright
+.mypy_cache/
+.pyright/
+
+# Jupyter
+.ipynb_checkpoints/

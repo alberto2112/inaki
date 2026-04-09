@@ -71,6 +71,9 @@ async def run_daemon(app_container, registry) -> None:
     Arranca todos los canales de todos los agentes en paralelo.
     Cancela graciosamente cuando recibe SIGTERM o SIGINT.
     """
+    # Scheduler startup
+    await app_container.startup()
+
     shutdown_event = asyncio.Event()
 
     def _handle_signal(*_):
@@ -154,5 +157,8 @@ async def run_daemon(app_container, registry) -> None:
             exc = task.exception()
             if exc:
                 logger.error("Tarea '%s' falló con: %s", task.get_name(), exc)
+
+    # Scheduler shutdown
+    await app_container.shutdown()
 
     logger.info("Daemon apagado limpiamente.")

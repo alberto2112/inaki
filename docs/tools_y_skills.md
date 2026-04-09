@@ -174,7 +174,7 @@ Las skills seleccionadas se inyectan en el system prompt como sección de texto:
 User input
     │
     ▼
-embed_query() ──────────────────────────────────────────┐
+embed_query() ───────────────────────────────────────────┐
     │                                                    │
     ▼                                                    ▼
 Skills RAG                                          Tools RAG

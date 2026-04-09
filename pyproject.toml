@@ -20,6 +20,9 @@ dependencies = [
     "fastapi>=0.111",
     "uvicorn>=0.30",
     "duckduckgo-search>=6.0",
+    "croniter>=2.0",
+    "exchangelib>=5.0",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +30,7 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-mock>=3.14",
+    "freezegun>=1.5",
     "ruff>=0.4",
     "mypy>=1.10",
 ]

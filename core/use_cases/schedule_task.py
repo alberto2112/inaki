@@ -3,50 +3,59 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
-import json
+from typing import TYPE_CHECKING, Any, Callable
 
 from core.domain.entities.task import ScheduledTask, TaskStatus
+from core.domain.errors import BuiltinTaskProtectedError, TaskNotFoundError
 from core.ports.inbound.scheduler_port import ISchedulerUseCase
+
+if TYPE_CHECKING:
+    from core.ports.outbound.scheduler_port import ISchedulerRepository
 
 logger = logging.getLogger(__name__)
 
 
 class ScheduleTaskUseCase(ISchedulerUseCase):
-    """
-    Implementación simple de scheduler usando un fichero JSON.
-    Para producción en Pi 5 se puede migrar a SQLite.
-    """
 
-    def __init__(self, tasks_file: str) -> None:
-        self._tasks_file = Path(tasks_file)
-        self._tasks_file.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(
+        self,
+        repo: ISchedulerRepository,
+        on_mutation: Callable[[], None],
+    ) -> None:
+        self._repo = repo
+        self._on_mutation = on_mutation
 
-    def _load(self) -> list[ScheduledTask]:
-        if not self._tasks_file.exists():
-            return []
-        with self._tasks_file.open("r", encoding="utf-8") as f:
-            raw = json.load(f)
-        return [ScheduledTask(**item) for item in raw]
+    async def create_task(self, task: ScheduledTask) -> ScheduledTask:
+        created = await self._repo.save_task(task)
+        self._on_mutation()
+        return created
 
-    def _save(self, tasks: list[ScheduledTask]) -> None:
-        with self._tasks_file.open("w", encoding="utf-8") as f:
-            json.dump([t.model_dump(mode="json") for t in tasks], f, indent=2, ensure_ascii=False)
+    async def delete_task(self, task_id: int) -> None:
+        if task_id < 100:
+            raise BuiltinTaskProtectedError(
+                f"Task {task_id} is a builtin and cannot be deleted."
+            )
+        await self._repo.delete_task(task_id)
+        self._on_mutation()
 
-    async def schedule(self, task: ScheduledTask) -> ScheduledTask:
-        tasks = self._load()
-        tasks = [t for t in tasks if t.id != task.id]  # upsert
-        tasks.append(task)
-        self._save(tasks)
-        logger.info("Tarea programada: '%s' (%s)", task.name, task.id)
+    async def enable_task(self, task_id: int) -> None:
+        await self._repo.update_status(task_id, TaskStatus.PENDING)
+        self._on_mutation()
+
+    async def disable_task(self, task_id: int) -> None:
+        await self._repo.update_status(task_id, TaskStatus.DISABLED)
+        self._on_mutation()
+
+    async def get_task(self, task_id: int) -> ScheduledTask:
+        task = await self._repo.get_task(task_id)
+        if task is None:
+            raise TaskNotFoundError(f"Task {task_id} not found")
         return task
 
-    async def cancel(self, task_id: str) -> None:
-        tasks = self._load()
-        tasks = [t for t in tasks if t.id != task_id]
-        self._save(tasks)
-        logger.info("Tarea cancelada: %s", task_id)
+    async def list_tasks(self) -> list[ScheduledTask]:
+        return await self._repo.list_tasks()
 
-    async def list_tasks(self, agent_id: str) -> list[ScheduledTask]:
-        tasks = self._load()
-        return [t for t in tasks if t.agent_id == agent_id]
+    async def update_task(self, task_id: int, **kwargs: Any) -> ScheduledTask:
+        task = await self.get_task(task_id)
+        updated = task.model_copy(update=kwargs)
+        return await self._repo.save_task(updated)

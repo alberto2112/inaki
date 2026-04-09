@@ -64,6 +64,13 @@ class HistoryConfig(BaseModel):
     max_messages_in_prompt: int = 0  # 0 = sin límite; N = últimos N mensajes al LLM
 
 
+class SchedulerConfig(BaseModel):
+    enabled: bool = True
+    db_path: str = "data/scheduler.db"
+    max_retries: int = 3
+    output_truncation_size: int = 65536
+
+
 class SkillsConfig(BaseModel):
     rag_min_skills: int = 10
     rag_top_k: int = 3
@@ -105,6 +112,7 @@ class GlobalConfig(BaseModel):
     history: HistoryConfig
     skills: SkillsConfig = SkillsConfig()
     tools: ToolsConfig = ToolsConfig()
+    scheduler: SchedulerConfig = SchedulerConfig()
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +167,7 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
 
     skills = SkillsConfig(**merged.get("skills", {}))
     tools = ToolsConfig(**merged.get("tools", {}))
+    scheduler = SchedulerConfig(**merged.get("scheduler", {}))
 
     global_cfg = GlobalConfig(
         app=app,
@@ -168,6 +177,7 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
         history=history,
         skills=skills,
         tools=tools,
+        scheduler=scheduler,
     )
     return global_cfg, merged
 

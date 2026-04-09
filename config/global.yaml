@@ -47,3 +47,9 @@ tools:
   rag_min_tools: 10          # activa el selector RAG si hay más de N tools disponibles
   rag_top_k: 5               # cuántas tools seleccionar cuando el RAG está activo
   tool_call_max_iterations: 5  # máximo de iteraciones en el loop de tool calls
+
+scheduler:
+  enabled: true
+  db_path: "data/scheduler.db"
+  max_retries: 3
+  output_truncation_size: 65536

@@ -22,10 +22,12 @@ class Role(str, Enum):
 class Message(BaseModel):
     role: Role
     content: str
+    timestamp: datetime | None = None   # UTC; asignado por SQLiteHistoryStore en append()
 ```
 
-> **Regla crítica:** el historial persistido en fichero solo contiene `USER` y `ASSISTANT`.
+> **Regla crítica:** el historial persistido en SQLite solo contiene `USER` y `ASSISTANT`.
 > Los mensajes `TOOL` y `TOOL_RESULT` son efímeros — viven solo durante el loop de tools.
+> `timestamp` se muta en `append()` si es `None`, asignando `datetime.now(UTC)`. Fluye hasta `MemoryEntry.created_at` en la consolidación.
 
 ---
 
@@ -40,14 +42,32 @@ class MemoryEntry(BaseModel):
     embedding: list[float] # Vector 384d generado con embed_passage()
     relevance: float      # 0.0–1.0, estimada por el LLM extractor
     tags: list[str]       # Etiquetas semánticas ["tech", "preferencias"]
-    created_at: datetime  # UTC
+    created_at: datetime  # UTC — viene del timestamp del mensaje original, no de cuando se consolidó
     agent_id: str | None  # None = recuerdo global compartido entre todos los agentes
 ```
 
 > La memoria es **global y compartida**: `agent_id = None` en todos los recuerdos.
 > El historial de conversación es privado por agente.
+> `created_at` refleja cuándo ocurrió el hecho en la conversación — el LLM extractor lo incluye en el JSON como campo `timestamp`.
 
-**Schema SQLite:**
+**Schema SQLite de historial** (`data/history.db`):
+```sql
+CREATE TABLE history (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id   TEXT    NOT NULL,
+    role       TEXT    NOT NULL,       -- "user" | "assistant"
+    content    TEXT    NOT NULL,
+    created_at TEXT    NOT NULL,       -- ISO8601 UTC
+    archived   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_history_agent ON history(agent_id, archived);
+```
+
+`archive()` hace soft-delete (`archived=1`). `clear()` hace hard-delete. Base de datos separada de `data/inaki.db` para no interferir con la extensión `sqlite-vec`.
+
+---
+
+**Schema SQLite de memoria** (`data/inaki.db`):
 ```sql
 CREATE TABLE memories (
     id         TEXT PRIMARY KEY,
@@ -197,7 +217,7 @@ Los puertos son contratos (ABC) que el core define y los adaptadores implementan
 | `IEmbeddingProvider` | `embedding_port.py` | `embed_query(text)`, `embed_passage(text)` |
 | `IToolExecutor` | `tool_port.py` | `register(tool)`, `execute(name, **kwargs)`, `get_schemas()` |
 | `ISkillRepository` | `skill_port.py` | `retrieve(embedding, top_k)` |
-| `IHistoryStore` | `history_port.py` | `append(agent_id, msg)`, `load(agent_id)`, `archive(agent_id)`, `clear(agent_id)` |
+| `IHistoryStore` | `history_port.py` | `append(agent_id, msg)`, `load(agent_id)`, `load_full(agent_id)`, `archive(agent_id)`, `clear(agent_id)` |
 
 ### Inbound (lo que el core expone al exterior)
 

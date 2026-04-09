@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from core.domain.entities.memory import MemoryEntry
 from core.domain.entities.message import Role
@@ -38,9 +39,14 @@ Devuelve ÚNICAMENTE un JSON válido con el siguiente schema, sin texto adiciona
   {{
     "content": "descripción clara del hecho o preferencia",
     "relevance": 0.0-1.0,
-    "tags": ["tag1", "tag2"]
+    "tags": ["tag1", "tag2"],
+    "timestamp": "2026-04-09T15:30:00Z"
   }}
 ]
+
+El campo "timestamp" es opcional. Si lo incluyes, usa el timestamp del mensaje
+de la conversación más relevante para ese hecho (formato ISO8601 UTC).
+Si no aplica, omítelo.
 
 Si no hay nada relevante para recordar, devuelve un array vacío: []
 
@@ -82,11 +88,15 @@ class ConsolidateMemoryUseCase:
         if not messages:
             return "El historial está vacío — nada que consolidar."
 
-        # 2. Formatear historial para el LLM
+        # 2. Formatear historial para el LLM (incluye timestamp si está disponible)
+        def _fmt(m):
+            if m.timestamp is not None:
+                ts = m.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
+                return f"{m.role.value} [{ts}]: {m.content}"
+            return f"{m.role.value}: {m.content}"
+
         history_text = "\n".join(
-            f"{m.role.value}: {m.content}"
-            for m in messages
-            if m.role in (Role.USER, Role.ASSISTANT)
+            _fmt(m) for m in messages if m.role in (Role.USER, Role.ASSISTANT)
         )
         prompt = _EXTRACTOR_PROMPT_TEMPLATE.format(history=history_text)
 
@@ -116,12 +126,20 @@ class ConsolidateMemoryUseCase:
         for fact in facts:
             try:
                 embedding = await self._embedder.embed_passage(fact["content"])
+                created_at = None
+                raw_ts = fact.get("timestamp")
+                if raw_ts:
+                    try:
+                        created_at = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+                    except (ValueError, TypeError):
+                        pass
                 entry = MemoryEntry(
                     content=fact["content"],
                     embedding=embedding,
                     relevance=float(fact.get("relevance", 0.5)),
                     tags=fact.get("tags", []),
                     agent_id=None,  # global compartido
+                    created_at=created_at or datetime.now(timezone.utc),
                 )
                 await self._memory.store(entry)
                 stored += 1
@@ -142,7 +160,7 @@ class ConsolidateMemoryUseCase:
             stored,
             archive_path,
         )
-        return f"✓ {stored} recuerdo(s) extraído(s). Historial archivado en {archive_path}"
+        return f"✓ {stored} recuerdo(s) extraído(s). Historial archivado ({archive_path})."
 
     def _parse_facts(self, raw: str) -> list[dict]:
         """Extrae y valida el JSON de recuerdos del LLM."""

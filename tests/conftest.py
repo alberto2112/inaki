@@ -23,7 +23,7 @@ def agent_config() -> AgentConfig:
         llm=LLMConfig(provider="openrouter", model="test-model", api_key="test-key"),
         embedding=EmbeddingConfig(provider="e5_onnx", model_path="models/test"),
         memory=MemoryConfig(db_path=":memory:", default_top_k=3),
-        history=HistoryConfig(active_dir="/tmp/inaki_test/active", archive_dir="/tmp/inaki_test/archive"),
+        history=HistoryConfig(db_path="/tmp/inaki_test/history.db"),
     )
 
 
@@ -62,7 +62,7 @@ def mock_history() -> AsyncMock:
     history = AsyncMock()
     history.load.return_value = []
     history.append.return_value = None
-    history.archive.return_value = "/tmp/archive/test_20240101.txt"
+    history.archive.return_value = "Historial de 'test' archivado."
     history.clear.return_value = None
     return history
 

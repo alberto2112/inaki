@@ -36,9 +36,8 @@ memory:
   min_relevance_score: 0.5
 
 history:
-  active_dir: "data/history/active"
-  archive_dir: "data/history/archive"
-  max_messages_in_prompt: 21  # últimos N mensajes por participante inyectados al LLM (0 = sin límite)
+  db_path: "data/history.db"
+  max_messages_in_prompt: 21  # últimos N mensajes inyectados al LLM (0 = sin límite)
 
 skills:
   rag_min_skills: 5    # activa el selector RAG si hay más de N skills disponibles

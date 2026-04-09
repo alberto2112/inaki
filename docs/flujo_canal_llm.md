@@ -77,8 +77,8 @@ RunAgentUseCase.execute(user_input)
 │
 ├── 1. HISTORIAL
 │   └── history.load(agent_id) → list[Message]
-│       Archivo: data/history/active/{agent_id}.txt
-│       Formato parseado: [Message(USER, "..."), Message(ASSISTANT, "..."), ...]
+│       SQLiteHistoryStore: SELECT ... WHERE agent_id=? AND archived=0 ORDER BY id DESC LIMIT N
+│       Resultado: [Message(USER, "...", timestamp=...), Message(ASSISTANT, "...", timestamp=...), ...]
 │
 ├── 2. EMBEDDING DEL INPUT
 │   └── embedder.embed_query(user_input) → list[float] (384d)
@@ -132,8 +132,8 @@ RunAgentUseCase.execute(user_input)
 ├── 7. PERSISTIR EN HISTORIAL
 │   ├── history.append(agent_id, Message(USER, user_input))
 │   └── history.append(agent_id, Message(ASSISTANT, response))
-│       FileHistoryStore: escribe en data/history/active/{agent_id}.txt
-│       "user: {user_input}\nassistant: {response}\n"
+│       SQLiteHistoryStore: INSERT INTO history (agent_id, role, content, created_at)
+│       message.timestamp se muta en place con datetime.now(UTC) si era None
 │
 └── 8. RETURN response → canal de origen
 ```
@@ -196,6 +196,7 @@ donde la respuesta contiene `tool_calls` en lugar de texto.
 ├── 9. PERSISTIR EN HISTORIAL
 │   ├── history.append(agent_id, Message(USER, user_input))    ← solo el input original
 │   └── history.append(agent_id, Message(ASSISTANT, response)) ← solo la respuesta final
+│       SQLiteHistoryStore: INSERT INTO history (agent_id, role, content, created_at)
 │       ⚠ Los mensajes de tool calls y tool results NO se persisten en el historial
 │
 └── 10. RETURN response final → canal de origen
@@ -212,23 +213,26 @@ cli_runner (o TelegramBot._cmd_consolidate)
     ↓
 container.consolidate_memory.execute()
 │
-├── 1. history.load(agent_id) → list[Message]
+├── 1. history.load_full(agent_id) → list[Message]
 │   Si vacío → return "El historial está vacío — nada que consolidar."
+│   SQLiteHistoryStore: SELECT ... WHERE agent_id=? AND archived=0 ORDER BY id ASC
 │
-├── 2. Formatear historial para el LLM:
-│   "user: hola\nassistant: hola también\nuser: me gusta Python\n..."
+├── 2. Formatear historial para el LLM (con timestamps si están presentes):
+│   "user [2026-04-09T15:30:00Z]: hola\nassistant [2026-04-09T15:30:45Z]: hola también\n..."
+│   Si timestamp=None: "user: me gusta Python\n..."
 │
 ├── 3. llm.complete(messages=[], system_prompt=EXTRACTOR_PROMPT)
-│   ← '[{"content": "Le gusta Python", "relevance": 0.9, "tags": ["tech"]}, ...]'
+│   ← '[{"content": "Le gusta Python", "relevance": 0.9, "tags": ["tech"], "timestamp": "2026-04-09T15:30:00Z"}, ...]'
 │   Si falla → ConsolidationError, historial INTACTO, FIN
 │
-├── 4. parse JSON → list[{content, relevance, tags}]
+├── 4. parse JSON → list[{content, relevance, tags, timestamp?}]
 │   Si JSON inválido → ConsolidationError, historial INTACTO, FIN
 │
 ├── 5. Para cada recuerdo:
 │   ├── embedder.embed_passage(content) → vector 384d
 │   │   E5OnnxProvider: añade prefijo "passage: " internamente
-│   ├── MemoryEntry(id=UUID, content, embedding, relevance, tags, agent_id=None)
+│   ├── created_at = datetime.fromisoformat(fact["timestamp"]) si existe, else datetime.now(UTC)
+│   ├── MemoryEntry(id=UUID, content, embedding, relevance, tags, created_at, agent_id=None)
 │   └── memory.store(entry)
 │       SQLiteMemoryRepository:
 │         INSERT INTO memories (...)
@@ -237,11 +241,11 @@ container.consolidate_memory.execute()
 │
 ├── 6. SOLO SI TODO OK:
 │   ├── history.archive(agent_id)
-│   │   FileHistoryStore: rename active/{id}.txt → archive/{id}_{ts}.txt
+│   │   SQLiteHistoryStore: UPDATE history SET archived=1 WHERE agent_id=? AND archived=0
 │   └── history.clear(agent_id)
-│       FileHistoryStore: unlink active/{id}.txt
+│       SQLiteHistoryStore: DELETE FROM history WHERE agent_id=?
 │
-└── return "✓ 3 recuerdo(s) extraído(s). Historial archivado en data/history/archive/general_20240101.txt"
+└── return "✓ 3 recuerdo(s) extraído(s). Historial archivado (Historial de 'general' archivado.)."
 ```
 
 ---
@@ -263,7 +267,7 @@ container.consolidate_memory.execute()
           │  memory.search()  ───┤◄── IMemoryRepository (SQLite + vec0)
           │  skills.retrieve()───┤◄── ISkillRepository (YAML + cosine sim)
           │         │            │
-          │  history.load()   ───┤◄── IHistoryStore (fichero .txt)
+          │  history.load()   ───┤◄── IHistoryStore (SQLite — data/history.db)
           │         │            │
           │  build_system_prompt │◄── AgentContext
           │         │            │

@@ -14,12 +14,12 @@ class IHistoryStore(ABC):
 
     @abstractmethod
     async def load_full(self, agent_id: str) -> list[Message]:
-        """Retorna el historial completo leyendo desde disco. Usar solo para consolidación."""
+        """Retorna el historial completo activo. Usar solo para consolidación."""
         ...
 
     @abstractmethod
     async def archive(self, agent_id: str) -> str:
-        """Mueve el historial activo a /archive. Retorna la ruta del archivo."""
+        """Marca el historial activo como archivado. Retorna una cadena de confirmación (no es una ruta de filesystem)."""
         ...
 
     @abstractmethod

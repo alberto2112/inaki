@@ -1,5 +1,7 @@
 """Tests unitarios para ConsolidateMemoryUseCase — transaccionalidad crítica."""
 
+from datetime import datetime, timezone
+
 import pytest
 from unittest.mock import AsyncMock, call
 
@@ -21,7 +23,7 @@ def use_case(mock_llm, mock_memory, mock_embedder, mock_history):
 
 @pytest.fixture
 def messages_in_history(mock_history):
-    mock_history.load.return_value = [
+    mock_history.load_full.return_value = [
         Message(role=Role.USER, content="me gusta Python"),
         Message(role=Role.ASSISTANT, content="Anotado."),
     ]
@@ -59,7 +61,7 @@ async def test_consolidation_does_not_archive_on_store_failure(use_case, mock_ll
 
 
 async def test_consolidation_returns_message_when_history_empty(use_case, mock_history):
-    mock_history.load.return_value = []
+    mock_history.load_full.return_value = []
     result = await use_case.execute()
     assert "vacío" in result
 
@@ -83,3 +85,55 @@ async def test_consolidation_raises_on_invalid_json(use_case, mock_llm, mock_his
     with pytest.raises(ConsolidationError):
         await use_case.execute()
     mock_history.archive.assert_not_called()
+
+
+# SC-15
+async def test_consolidation_formats_message_with_timestamp(use_case, mock_llm, mock_memory, mock_history):
+    ts = datetime(2026, 4, 9, 15, 30, 0, tzinfo=timezone.utc)
+    mock_history.load_full.return_value = [
+        Message(role=Role.USER, content="prefiero café sin azúcar", timestamp=ts),
+    ]
+    mock_llm.complete.return_value = "[]"
+
+    await use_case.execute()
+
+    call_args = mock_llm.complete.call_args
+    system_prompt = call_args.kwargs.get("system_prompt") or call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs["system_prompt"]
+    assert "user [2026-04-09T15:30:00Z]: prefiero café sin azúcar" in system_prompt
+
+
+# SC-16
+async def test_consolidation_formats_message_without_timestamp(use_case, mock_llm, mock_memory, mock_history):
+    mock_history.load_full.return_value = [
+        Message(role=Role.USER, content="prefiero café sin azúcar", timestamp=None),
+    ]
+    mock_llm.complete.return_value = "[]"
+
+    await use_case.execute()
+
+    call_args = mock_llm.complete.call_args
+    system_prompt = call_args.kwargs.get("system_prompt") or call_args.kwargs["system_prompt"]
+    assert "user: prefiero café sin azúcar" in system_prompt
+    assert "[" not in system_prompt.split("user:")[1].split("\n")[0]
+
+
+# SC-17
+async def test_consolidation_sets_created_at_from_llm_timestamp(use_case, mock_llm, mock_memory, mock_history, messages_in_history):
+    mock_llm.complete.return_value = '[{"content": "test", "relevance": 0.9, "tags": [], "timestamp": "2026-04-09T15:30:00Z"}]'
+
+    await use_case.execute()
+
+    entry = mock_memory.store.call_args.args[0]
+    assert entry.created_at == datetime(2026, 4, 9, 15, 30, 0, tzinfo=timezone.utc)
+
+
+# SC-18
+async def test_consolidation_falls_back_to_now_when_no_timestamp(use_case, mock_llm, mock_memory, mock_history, messages_in_history):
+    mock_llm.complete.return_value = '[{"content": "test", "relevance": 0.9, "tags": []}]'
+    before = datetime.now(timezone.utc)
+
+    await use_case.execute()
+
+    after = datetime.now(timezone.utc)
+    entry = mock_memory.store.call_args.args[0]
+    assert before <= entry.created_at <= after

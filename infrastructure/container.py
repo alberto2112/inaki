@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from adapters.outbound.history.file_history_store import FileHistoryStore
+from adapters.outbound.history.sqlite_history_store import SQLiteHistoryStore
 from adapters.outbound.memory.sqlite_memory_repo import SQLiteMemoryRepository
 from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
 from adapters.outbound.tools.tool_registry import ToolRegistry
@@ -40,7 +40,7 @@ class AgentContainer:
             skills_dir=global_config.app.skills_dir,
             embedder=self._embedder,
         )
-        self._history = FileHistoryStore(cfg.history)
+        self._history = SQLiteHistoryStore(cfg.history)
         self._tools = ToolRegistry(embedder=self._embedder)
         self._register_tools()
 

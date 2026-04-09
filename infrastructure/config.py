@@ -60,9 +60,8 @@ class MemoryConfig(BaseModel):
 
 
 class HistoryConfig(BaseModel):
-    active_dir: str = "data/history/active"
-    archive_dir: str = "data/history/archive"
-    max_messages_in_prompt: int = 0  # 0 = sin límite; N = últimos N mensajes por participante
+    db_path: str = "data/history.db"
+    max_messages_in_prompt: int = 0  # 0 = sin límite; N = últimos N mensajes al LLM
 
 
 class SkillsConfig(BaseModel):

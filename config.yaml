@@ -121,18 +121,14 @@ memory:
 
 
 # -----------------------------------------------------------------------------
-# [history] — Historial de conversación a corto plazo (ficheros .txt)
+# [history] — Historial de conversación a corto plazo (SQLite)
 # -----------------------------------------------------------------------------
 history:
-  active_dir: "data/history/active"
-                              # Directorio con historiales activos: {agent_id}.txt
-                              # Un fichero por agente, solo mensajes user y assistant
-                              # Producción: "/home/pi/inaki/data/history/active"
+  db_path: "data/history.db"  # Ruta a la base de datos SQLite del historial
+                              # Separada de inaki.db (que usa sqlite-vec)
+                              # Producción: "/home/pi/inaki/data/history.db"
 
-  archive_dir: "data/history/archive"
-                              # Directorio con historiales archivados tras /consolidate
-                              # Formato: {agent_id}_{YYYYMMDD_HHMMSS}.txt
-                              # Producción: "/home/pi/inaki/data/history/archive"
+  max_messages_in_prompt: 21  # Últimos N mensajes inyectados al LLM (0 = sin límite)
 
 
 # =============================================================================

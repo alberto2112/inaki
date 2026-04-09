@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import Enum
 from pydantic import BaseModel
 
@@ -13,3 +14,4 @@ class Role(str, Enum):
 class Message(BaseModel):
     role: Role
     content: str
+    timestamp: datetime | None = None

@@ -34,7 +34,7 @@ main.py
 │           ├── SQLiteMemoryRepository(db_path, embedder)
 │           ├── LLMProviderFactory.create(cfg) → ILLMProvider
 │           ├── YamlSkillRepository(skills_dir, embedder)
-│           ├── FileHistoryStore(history_cfg)
+│           ├── SQLiteHistoryStore(history_cfg)
 │           ├── ToolRegistry() + register(ShellTool, WebSearchTool)
 │           ├── RunAgentUseCase(llm, memory, embedder, skills, history, tools, cfg)
 │           └── ConsolidateMemoryUseCase(llm, memory, embedder, history, agent_id)
@@ -115,8 +115,8 @@ AgentContainer.__init__
 ├── YamlSkillRepository(skills_dir, embedder)
 │   └── _ensure_loaded() — carga y embeds todos los YAML en primer uso (lazy)
 │
-├── FileHistoryStore(history_cfg)
-│   └── mkdir(active_dir, archive_dir) si no existen
+├── SQLiteHistoryStore(history_cfg)
+│   └── mkdir(parent de db_path) si no existe — schema creado lazy en primer uso
 │
 └── ToolRegistry()
     ├── register(ShellTool())
@@ -125,21 +125,27 @@ AgentContainer.__init__
 
 ---
 
-## Formato del historial en disco
+## Formato del historial en SQLite
 
-**Archivo:** `data/history/active/{agent_id}.txt`
+**Base de datos:** `data/history.db` (separada de `data/inaki.db` que usa sqlite-vec)
 
+**Tabla `history`:**
+
+```sql
+CREATE TABLE history (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id   TEXT    NOT NULL,
+    role       TEXT    NOT NULL,       -- "user" | "assistant"
+    content    TEXT    NOT NULL,
+    created_at TEXT    NOT NULL,       -- ISO8601 UTC: "2026-04-09T15:30:00+00:00"
+    archived   INTEGER NOT NULL DEFAULT 0
+);
 ```
-user: hola iñaki, ¿cómo estás?
-assistant: Bien, gracias. ¿En qué puedo ayudarte hoy?
-user: necesito ayuda con Python
-assistant: Claro, dime qué necesitas.
-```
 
-Solo se escriben líneas `user:` y `assistant:`. Los mensajes de tools son efímeros.
+Solo se persisten filas con `role = "user"` o `"assistant"`. Los mensajes de tools son efímeros.
 
-**Archive:** `data/history/archive/{agent_id}_{YYYYMMDD_HHMMSS}.txt`
-Tras `consolidate`, el activo se mueve a archive y se crea uno nuevo vacío.
+**Archive (soft-delete):** `UPDATE history SET archived = 1 WHERE agent_id = ? AND archived = 0`
+Tras `consolidate`, las filas quedan con `archived=1` y luego se eliminan con `DELETE`.
 
 ---
 

@@ -1,11 +1,17 @@
 """
 Sistema de configuración de Iñaki.
 
+Layout por defecto en el home del usuario:
+  ~/.inaki/config/global.yaml          — config base del sistema
+  ~/.inaki/config/global.secrets.yaml  — secrets globales (api keys compartidas)
+  ~/.inaki/agents/{id}.yaml            — config y canales del agente
+  ~/.inaki/agents/{id}.secrets.yaml    — secrets del agente (opcional)
+
+El primer arranque crea los archivos faltantes vía `ensure_user_config()`.
+Se puede override con `--config DIR` (usa el layout legacy `DIR/agents/`).
+
 4 capas de merge en orden (cada capa sobreescribe solo los campos que define):
-  1. config/global.yaml          — config base del sistema
-  2. config/global.secrets.yaml  — secrets globales (api keys compartidas)
-  3. config/agents/{id}.yaml     — config y canales del agente
-  4. config/agents/{id}.secrets.yaml — secrets del agente (opcional)
+  1. global.yaml → 2. global.secrets.yaml → 3. agents/{id}.yaml → 4. agents/{id}.secrets.yaml
 
 Regla de secrets: si el agente no define un secret, hereda del global.
 """
@@ -33,6 +39,7 @@ class AppConfig(BaseModel):
     data_dir: str = "data"
     models_dir: str = "models"
     skills_dir: str = "skills"
+    ext_dirs: list[str] = ["ext", "~/.inaki/ext"]
     default_agent: str = "general"
 
 
@@ -140,6 +147,101 @@ def _load_yaml_safe(path: Path) -> dict:
     with path.open("r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
     return data
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap del directorio del usuario (~/.inaki)
+# ---------------------------------------------------------------------------
+
+_GLOBAL_YAML_HEADER = """\
+# =============================================================================
+# Iñaki — Configuración global
+# =============================================================================
+#
+# Este archivo fue generado automáticamente en el primer arranque con los
+# valores por defecto del sistema. Podés editarlo a mano.
+#
+# Referencia completa de todos los parámetros disponibles:
+#   config.example.yaml (en el repo de Iñaki)
+#
+# Layout:
+#   ~/.inaki/config/global.yaml          ← este archivo (config base)
+#   ~/.inaki/config/global.secrets.yaml  ← secrets (api keys)
+#   ~/.inaki/agents/{id}.yaml            ← config de cada agente
+#   ~/.inaki/agents/{id}.secrets.yaml    ← secrets por agente (opcional)
+# =============================================================================
+
+"""
+
+_SECRETS_YAML_HEADER = """\
+# =============================================================================
+# Iñaki — Secrets globales
+# =============================================================================
+#
+# Poné acá las API keys compartidas entre todos los agentes.
+# Este archivo NUNCA debe commitearse a un repositorio.
+#
+# Ejemplo:
+#
+#   llm:
+#     api_key: "sk-or-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+#
+#   embedding:
+#     api_key: "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+#
+# Los secrets por agente (tokens de Telegram, auth_keys REST) van en
+# ~/.inaki/agents/{id}.secrets.yaml
+# =============================================================================
+"""
+
+
+def _render_default_global_yaml() -> str:
+    """Serializa los defaults de las clases Pydantic como YAML con header."""
+    defaults = {
+        "app": AppConfig().model_dump(),
+        "llm": LLMConfig().model_dump(exclude={"api_key"}),
+        "embedding": EmbeddingConfig().model_dump(exclude={"api_key"}),
+        "memory": MemoryConfig().model_dump(),
+        "history": HistoryConfig().model_dump(),
+        "skills": SkillsConfig().model_dump(),
+        "tools": ToolsConfig().model_dump(),
+        "scheduler": SchedulerConfig().model_dump(),
+    }
+    body = yaml.safe_dump(defaults, sort_keys=False, default_flow_style=False)
+    return _GLOBAL_YAML_HEADER + body
+
+
+def ensure_user_config(config_dir: Path, agents_dir: Path) -> None:
+    """
+    Bootstrap idempotente del layout ~/.inaki/.
+
+    Crea `config_dir`, `agents_dir`, `global.yaml` y `global.secrets.yaml`
+    si no existen. No toca archivos ya presentes.
+    """
+    try:
+        config_dir.mkdir(parents=True, exist_ok=True)
+        agents_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        logger.error("No se pudo crear el directorio de configuración: %s", exc)
+        raise
+
+    global_yaml = config_dir / "global.yaml"
+    if not global_yaml.exists():
+        try:
+            global_yaml.write_text(_render_default_global_yaml(), encoding="utf-8")
+        except OSError as exc:
+            logger.error("No se pudo escribir %s: %s", global_yaml, exc)
+            raise
+        logger.info("Config creada: %s", global_yaml)
+
+    secrets_yaml = config_dir / "global.secrets.yaml"
+    if not secrets_yaml.exists():
+        try:
+            secrets_yaml.write_text(_SECRETS_YAML_HEADER, encoding="utf-8")
+        except OSError as exc:
+            logger.error("No se pudo escribir %s: %s", secrets_yaml, exc)
+            raise
+        logger.info("Secrets file creado: %s", secrets_yaml)
 
 
 # ---------------------------------------------------------------------------

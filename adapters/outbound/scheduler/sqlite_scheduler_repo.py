@@ -231,13 +231,19 @@ class SQLiteSchedulerRepo:
             )
         return [self._row_to_task(r) for r in rows]
 
-    async def update_status(self, task_id: int, status: TaskStatus, **kwargs: Any) -> None:
+    async def update_status(self, task_id: int, status: TaskStatus, *, retry_count: int | None = None) -> None:
         async with self._conn() as conn:
             await self._ensure_schema_conn(conn)
-            await conn.execute(
-                "UPDATE scheduled_tasks SET status = ? WHERE id = ?",
-                (status.value, task_id),
-            )
+            if retry_count is not None:
+                await conn.execute(
+                    "UPDATE scheduled_tasks SET status = ?, retry_count = ? WHERE id = ?",
+                    (status.value, retry_count, task_id),
+                )
+            else:
+                await conn.execute(
+                    "UPDATE scheduled_tasks SET status = ? WHERE id = ?",
+                    (status.value, task_id),
+                )
             await conn.commit()
 
     async def update_after_execution(
@@ -248,6 +254,7 @@ class SQLiteSchedulerRepo:
         output: str | None,
         next_run: datetime | None,
         executions_remaining: int | None,
+        retry_count: int = 0,
     ) -> None:
         now_iso = datetime.now(timezone.utc).isoformat()
         next_run_ts = next_run.timestamp() if next_run else None
@@ -259,10 +266,11 @@ class SQLiteSchedulerRepo:
                 SET status = 'pending',
                     last_run = ?,
                     next_run = ?,
-                    executions_remaining = ?
+                    executions_remaining = ?,
+                    retry_count = ?
                 WHERE id = ?
                 """,
-                (now_iso, next_run_ts, executions_remaining, task_id),
+                (now_iso, next_run_ts, executions_remaining, retry_count, task_id),
             )
             await conn.commit()
 

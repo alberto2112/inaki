@@ -8,6 +8,7 @@ Modos de uso:
   python main.py --inspect "mensaje"         → inspeccionar pipeline RAG sin llamar al LLM
   python main.py --daemon                    → servicio systemd (todos los canales de todos los agentes)
   python main.py --daemon --config /etc/inaki/config  → daemon con config custom
+  python main.py --setup                     → wizard de configuración del sistema
 """
 
 from __future__ import annotations
@@ -104,7 +105,17 @@ Ejemplos:
         metavar="MENSAJE",
         help="Inspeccionar el pipeline RAG para un mensaje sin llamar al LLM",
     )
+    parser.add_argument(
+        "--setup",
+        action="store_true",
+        help="Wizard de configuración del sistema (INAKI_SECRET_KEY y otras variables)",
+    )
     args = parser.parse_args()
+
+    if args.setup:
+        from adapters.inbound.cli.setup_wizard import run_setup
+        run_setup()
+        return
 
     config_dir = Path(args.config) if args.config else _get_config_dir()
     global_config, registry = _bootstrap(config_dir)

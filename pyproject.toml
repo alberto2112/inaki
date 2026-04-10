@@ -23,6 +23,7 @@ dependencies = [
     "croniter>=2.0",
     "exchangelib>=5.0",
     "python-dotenv>=1.0",
+    "cryptography>=42.0",
 ]
 
 [project.optional-dependencies]

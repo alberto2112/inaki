@@ -34,6 +34,7 @@ from core.domain.errors import InvalidTriggerTypeError
 if TYPE_CHECKING:
     from adapters.outbound.scheduler.dispatch_adapters import SchedulerDispatchPorts
     from core.ports.outbound.scheduler_port import ISchedulerRepository
+    from infrastructure.config import SchedulerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +45,13 @@ class SchedulerService:
         self,
         repo: ISchedulerRepository,
         dispatch: SchedulerDispatchPorts,
-        config: Any,
+        config: SchedulerConfig,
+        builtin_tasks: list[ScheduledTask] | None = None,
     ) -> None:
         self._repo = repo
         self._dispatch = dispatch
         self._config = config
+        self._builtin_tasks: list[ScheduledTask] = builtin_tasks or []
         self._wake = asyncio.Event()
         self._task: asyncio.Task | None = None
 
@@ -58,8 +61,8 @@ class SchedulerService:
 
     async def start(self) -> None:
         await self._repo.ensure_schema()
-        from adapters.outbound.scheduler.builtin_tasks import BUILTIN_CONSOLIDATE_MEMORY
-        await self._repo.seed_builtin(BUILTIN_CONSOLIDATE_MEMORY)
+        for builtin in self._builtin_tasks:
+            await self._repo.seed_builtin(builtin)
         await self._handle_missed_on_startup()
         self._task = asyncio.create_task(self._loop(), name="scheduler-loop")
 
@@ -131,6 +134,7 @@ class SchedulerService:
         output: str | None = None
         error: str | None = None
         success = False
+        attempt = 0
 
         for attempt in range(self._config.max_retries + 1):
             started_at = datetime.now(timezone.utc)
@@ -141,6 +145,10 @@ class SchedulerService:
             except Exception as exc:
                 error = str(exc)
                 logger.warning("Task %s attempt %d failed: %s", task.id, attempt + 1, exc)
+                # Persist current retry count after each failure
+                await self._repo.update_status(
+                    task.id, TaskStatus.RUNNING, retry_count=attempt + 1
+                )
 
             if task.log_enabled:
                 await self._repo.save_log(
@@ -156,7 +164,7 @@ class SchedulerService:
         if success:
             await self._finalize_task(task, output)
         else:
-            await self._repo.update_status(task.id, TaskStatus.FAILED)
+            await self._repo.update_status(task.id, TaskStatus.FAILED, retry_count=attempt + 1)
 
     async def _finalize_task(self, task: ScheduledTask, output: str | None) -> None:
         now = datetime.now(timezone.utc)
@@ -190,6 +198,7 @@ class SchedulerService:
                     output=truncated,
                     next_run=next_run,
                     executions_remaining=remaining,
+                    retry_count=0,
                 )
 
     async def _dispatch_trigger(self, task: ScheduledTask) -> str | None:

@@ -56,6 +56,10 @@ class ScheduleTaskUseCase(ISchedulerUseCase):
         return await self._repo.list_tasks()
 
     async def update_task(self, task_id: int, **kwargs: Any) -> ScheduledTask:
+        if task_id < 100:
+            raise BuiltinTaskProtectedError(
+                f"Task {task_id} is a builtin and cannot be modified via update_task."
+            )
         task = await self.get_task(task_id)
         updated = task.model_copy(update=kwargs)
         return await self._repo.save_task(updated)

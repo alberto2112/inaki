@@ -131,10 +131,13 @@ async def test_execute_task_retries_max_retries_then_failed(
 
     await service._execute_task(task)
 
-    mock_repo.update_status.assert_any_await(task.id, TaskStatus.RUNNING)
-    mock_repo.update_status.assert_any_await(task.id, TaskStatus.FAILED)
     # max_retries=1 means 2 attempts total (attempt 0 + attempt 1)
     assert service._dispatch_trigger.call_count == 2  # type: ignore[attr-defined]
+    # retry_count is persisted after each failure and on final FAILED status
+    calls = mock_repo.update_status.call_args_list
+    statuses = [(c.args[1], c.kwargs.get("retry_count")) for c in calls]
+    assert (TaskStatus.RUNNING, None) in statuses
+    assert (TaskStatus.FAILED, 2) in statuses
 
 
 async def test_execute_task_on_success_calls_finalize(

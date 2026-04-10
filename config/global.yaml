@@ -31,12 +31,12 @@ embedding:
   # dimension: 384
 
 memory:
-  db_path: "data/inaki.db"
+  db_path: "~/.inaki/mem/inaki.db"
   default_top_k: 7
   min_relevance_score: 0.5
 
 history:
-  db_path: "data/history.db"
+  db_path: "~/.inaki/mem/history.db"
   max_messages_in_prompt: 21  # últimos N mensajes inyectados al LLM (0 = sin límite)
 
 skills:
@@ -50,6 +50,6 @@ tools:
 
 scheduler:
   enabled: true
-  db_path: "data/scheduler.db"
+  db_path: "~/.inaki/scheduler.db"
   max_retries: 3
   output_truncation_size: 65536

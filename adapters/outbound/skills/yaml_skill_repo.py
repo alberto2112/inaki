@@ -42,9 +42,37 @@ class YamlSkillRepository(ISkillRepository):
     def __init__(self, skills_dir: str, embedder: IEmbeddingProvider) -> None:
         self._skills_dir = Path(skills_dir)
         self._embedder = embedder
+        self._extra_files: list[Path] = []
         self._skills: list[Skill] = []
         self._embeddings: list[list[float]] = []
         self._loaded = False
+
+    def add_file(self, path: Path) -> None:
+        """Registra un YAML de skill adicional fuera de skills_dir. Invalida cache."""
+        path = Path(path).resolve()
+        if path in [p.resolve() for p in self._extra_files]:
+            return
+        self._extra_files.append(path)
+        self._loaded = False
+
+    async def _load_skill_from_path(self, yaml_file: Path) -> None:
+        try:
+            with yaml_file.open("r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            skill = Skill(
+                id=data.get("id", yaml_file.stem),
+                name=data.get("name", yaml_file.stem),
+                description=data.get("description", ""),
+                instructions=data.get("instructions", ""),
+                tags=data.get("tags", []),
+            )
+            text = f"{skill.name} {skill.description} {' '.join(skill.tags)}"
+            embedding = await self._embedder.embed_passage(text)
+            self._skills.append(skill)
+            self._embeddings.append(embedding)
+            logger.debug("Skill cargada: '%s' (%s)", skill.id, yaml_file)
+        except Exception as exc:
+            logger.warning("Error cargando skill %s: %s", yaml_file, exc)
 
     async def _ensure_loaded(self) -> None:
         if self._loaded:
@@ -52,31 +80,26 @@ class YamlSkillRepository(ISkillRepository):
 
         self._skills = []
         self._embeddings = []
+        seen: set[Path] = set()
 
-        if not self._skills_dir.exists():
+        # 1. Directorio base (built-ins)
+        if self._skills_dir.exists():
+            for yaml_file in sorted(self._skills_dir.rglob("*.yaml")):
+                resolved = yaml_file.resolve()
+                if resolved not in seen:
+                    seen.add(resolved)
+                    await self._load_skill_from_path(yaml_file)
+        else:
             logger.warning("Directorio de skills no encontrado: %s", self._skills_dir)
-            self._loaded = True
-            return
 
-        for yaml_file in sorted(self._skills_dir.rglob("*.yaml")):
-            try:
-                with yaml_file.open("r", encoding="utf-8") as f:
-                    data = yaml.safe_load(f) or {}
-                skill = Skill(
-                    id=data.get("id", yaml_file.stem),
-                    name=data.get("name", yaml_file.stem),
-                    description=data.get("description", ""),
-                    instructions=data.get("instructions", ""),
-                    tags=data.get("tags", []),
-                )
-                # Embedding del texto completo de la skill para búsqueda semántica
-                text = f"{skill.name} {skill.description} {' '.join(skill.tags)}"
-                embedding = await self._embedder.embed_passage(text)
-                self._skills.append(skill)
-                self._embeddings.append(embedding)
-                logger.debug("Skill cargada: '%s'", skill.id)
-            except Exception as exc:
-                logger.warning("Error cargando skill %s: %s", yaml_file, exc)
+        # 2. Archivos extra (desde extensiones)
+        for extra in self._extra_files:
+            resolved = extra.resolve()
+            if resolved in seen:
+                logger.debug("Skill extra ya cargada: %s", extra)
+                continue
+            seen.add(resolved)
+            await self._load_skill_from_path(extra)
 
         logger.info("YamlSkillRepository: %d skill(s) cargada(s)", len(self._skills))
         self._loaded = True

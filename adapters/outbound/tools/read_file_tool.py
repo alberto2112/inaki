@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 
-from adapters.outbound.tools.path_resolution import resolve_path
+from adapters.outbound.tools.path_resolution import (
+    ContainmentMode,
+    WorkspaceEscapeError,
+    resolve_path,
+)
 from core.ports.outbound.tool_port import ITool, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -16,7 +21,7 @@ class ReadFileTool(ITool):
     description = (
         "Reads a file with optional pagination (offset + max_lines). "
         "Returns JSON with content, line_count, and truncated. "
-        "Accepts absolute paths or paths relative to the process current working directory."
+        "Paths are resolved against the agent's workspace root."
     )
     parameters_schema = {
         "type": "object",
@@ -24,7 +29,7 @@ class ReadFileTool(ITool):
             "file_path": {
                 "type": "string",
                 "description": (
-                    "Path to the file (absolute or relative to Iñaki's current working directory). "
+                    "Path to the file (absolute or relative to the agent's workspace). "
                     "~ is expanded to the home directory."
                 ),
             },
@@ -42,6 +47,10 @@ class ReadFileTool(ITool):
         "required": ["file_path"],
     }
 
+    def __init__(self, workspace: Path, containment: ContainmentMode = "strict") -> None:
+        self._workspace = workspace
+        self._containment = containment
+
     async def execute(
         self,
         file_path: str,
@@ -53,7 +62,17 @@ class ReadFileTool(ITool):
             max_lines = 0
         if offset is None:
             offset = 0
-        resolved = resolve_path(file_path)
+        try:
+            resolved = resolve_path(file_path, self._workspace, self._containment)
+        except WorkspaceEscapeError as exc:
+            logger.warning("read_file containment violation: %s", exc)
+            payload = {"success": False, "error": str(exc)}
+            return ToolResult(
+                tool_name=self.name,
+                output=json.dumps(payload, ensure_ascii=False),
+                success=False,
+                error=str(exc),
+            )
 
         try:
             text = resolved.read_text(encoding="utf-8")

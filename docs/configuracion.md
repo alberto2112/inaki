@@ -88,10 +88,10 @@ memory:
                                  # próximo turno. Sentinel: 0 → usar fallback del sistema (84).
                                  # Cualquier valor > 0 se respeta tal cual.
 
-history:
+chat_history:
   db_path: "data/history.db"     # Base de datos SQLite del historial de conversación
                                  # (separada de inaki.db que usa sqlite-vec)
-  max_messages_in_prompt: 21     # Últimos N mensajes inyectados al LLM (0 = sin límite)
+  max_messages: 21               # Últimos N mensajes inyectados al LLM (0 = sin límite)
 
 scheduler:
   enabled: true                  # Arranca el SchedulerService en modo daemon
@@ -200,7 +200,7 @@ memory:
   db_path: "/home/pi/inaki/data/inaki.db"
   digest_path: "/home/pi/.inaki/mem/last_memories.md"
 
-history:
+chat_history:
   db_path: "/home/pi/inaki/data/history.db"
 
 scheduler:

@@ -6,9 +6,14 @@ import contextlib
 import json
 import logging
 import uuid
+from pathlib import Path
 from typing import Any
 
-from adapters.outbound.tools.path_resolution import resolve_path
+from adapters.outbound.tools.path_resolution import (
+    ContainmentMode,
+    WorkspaceEscapeError,
+    resolve_path,
+)
 from core.ports.outbound.tool_port import ITool, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -28,7 +33,7 @@ class PatchFileTool(ITool):
             "file_path": {
                 "type": "string",
                 "description": (
-                    "Target file path (absolute or relative to process CWD; ~ expanded). "
+                    "Target file path (absolute or relative to the agent's workspace; ~ expanded). "
                     "Use 'file_path', not 'path'. Parent directory must already exist."
                 ),
             },
@@ -64,8 +69,22 @@ class PatchFileTool(ITool):
         "required": ["file_path", "patches"],
     }
 
+    def __init__(self, workspace: Path, containment: ContainmentMode = "strict") -> None:
+        self._workspace = workspace
+        self._containment = containment
+
     async def execute(self, patches: list[dict[str, Any]], file_path: str, **kwargs) -> ToolResult:
-        resolved = resolve_path(file_path)
+        try:
+            resolved = resolve_path(file_path, self._workspace, self._containment)
+        except WorkspaceEscapeError as exc:
+            logger.warning("patch_file containment violation: %s", exc)
+            payload = {"success": False, "error": str(exc)}
+            return ToolResult(
+                tool_name=self.name,
+                output=json.dumps(payload, ensure_ascii=False),
+                success=False,
+                error=str(exc),
+            )
 
         if not resolved.exists():
             payload = {"success": False, "error": f"File not found: {file_path}"}

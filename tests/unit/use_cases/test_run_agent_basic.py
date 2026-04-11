@@ -12,7 +12,7 @@ from infrastructure.config import (
     LLMConfig,
     EmbeddingConfig,
     MemoryConfig,
-    HistoryConfig,
+    ChatHistoryConfig,
     SkillsConfig,
     ToolsConfig,
 )
@@ -91,7 +91,7 @@ def _make_use_case(overrides: dict, mock_llm, mock_memory, mock_embedder, mock_s
         llm=LLMConfig(provider="openrouter", model="test-model", api_key="test-key"),
         embedding=EmbeddingConfig(provider="e5_onnx", model_path="models/test"),
         memory=overrides.get("memory", MemoryConfig(db_path=":memory:", default_top_k=3)),
-        history=HistoryConfig(db_path="/tmp/inaki_test/history.db"),
+        chat_history=ChatHistoryConfig(db_path="/tmp/inaki_test/history.db"),
         skills=overrides.get("skills", SkillsConfig()),
         tools=overrides.get("tools", ToolsConfig()),
     )

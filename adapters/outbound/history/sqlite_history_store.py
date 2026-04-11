@@ -33,7 +33,7 @@ import aiosqlite
 
 from core.domain.entities.message import Message, Role
 from core.ports.outbound.history_port import IHistoryStore
-from infrastructure.config import HistoryConfig
+from infrastructure.config import ChatHistoryConfig
 
 logger = logging.getLogger(__name__)
 
@@ -60,9 +60,9 @@ CREATE INDEX IF NOT EXISTS idx_history_uninfused ON history(agent_id, infused);
 
 class SQLiteHistoryStore(IHistoryStore):
 
-    def __init__(self, cfg: HistoryConfig) -> None:
+    def __init__(self, cfg: ChatHistoryConfig) -> None:
         self._db_path = cfg.db_path
-        self._max_n = cfg.max_messages_in_prompt
+        self._max_n = cfg.max_messages
         Path(cfg.db_path).parent.mkdir(parents=True, exist_ok=True)
 
     @asynccontextmanager

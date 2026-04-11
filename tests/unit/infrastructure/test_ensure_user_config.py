@@ -69,7 +69,17 @@ def test_render_default_global_yaml_is_parseable() -> None:
     parsed = yaml.safe_load(rendered)
 
     assert isinstance(parsed, dict)
-    for key in ("app", "llm", "embedding", "memory", "history", "skills", "tools", "scheduler"):
+    for key in (
+        "app",
+        "llm",
+        "embedding",
+        "memory",
+        "chat_history",
+        "skills",
+        "tools",
+        "scheduler",
+        "workspace",
+    ):
         assert key in parsed, f"missing top-level key: {key}"
 
 

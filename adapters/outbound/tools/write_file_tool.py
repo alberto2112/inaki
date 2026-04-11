@@ -6,8 +6,13 @@ import contextlib
 import json
 import logging
 import uuid
+from pathlib import Path
 
-from adapters.outbound.tools.path_resolution import resolve_path
+from adapters.outbound.tools.path_resolution import (
+    ContainmentMode,
+    WorkspaceEscapeError,
+    resolve_path,
+)
 from core.ports.outbound.tool_port import ITool, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -28,7 +33,7 @@ class WriteFileTool(ITool):
             "file_path": {
                 "type": "string",
                 "description": (
-                    "Destination path (absolute or relative to CWD; ~ expanded). "
+                    "Destination path (absolute or relative to the agent's workspace; ~ expanded). "
                     "Use 'file_path', not 'path'. "
                     "Parent directory must exist unless create_dirs=true."
                 ),
@@ -54,6 +59,10 @@ class WriteFileTool(ITool):
         "required": ["file_path", "content"],
     }
 
+    def __init__(self, workspace: Path, containment: ContainmentMode = "strict") -> None:
+        self._workspace = workspace
+        self._containment = containment
+
     async def execute(
         self,
         file_path: str,
@@ -66,7 +75,17 @@ class WriteFileTool(ITool):
             create_dirs = False
         if overwrite is None:
             overwrite = False
-        resolved = resolve_path(file_path)
+        try:
+            resolved = resolve_path(file_path, self._workspace, self._containment)
+        except WorkspaceEscapeError as exc:
+            logger.warning("write_file containment violation: %s", exc)
+            payload = {"success": False, "error": str(exc)}
+            return ToolResult(
+                tool_name=self.name,
+                output=json.dumps(payload, ensure_ascii=False),
+                success=False,
+                error=str(exc),
+            )
 
         parent = resolved.parent
         if not parent.exists():

@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import warnings
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import yaml
 from pydantic import BaseModel, BeforeValidator, field_validator
@@ -112,9 +112,9 @@ class MemoryConfig(BaseModel):
         return self.keep_last_messages
 
 
-class HistoryConfig(BaseModel):
+class ChatHistoryConfig(BaseModel):
     db_path: ExpandedPath = "data/history.db"
-    max_messages_in_prompt: int = 0  # 0 = sin límite; N = últimos N mensajes al LLM
+    max_messages: int = 0  # 0 = sin límite; N = últimos N mensajes al LLM
 
 
 class SchedulerConfig(BaseModel):
@@ -136,6 +136,28 @@ class ToolsConfig(BaseModel):
     circuit_breaker_threshold: int = 2
 
 
+ContainmentMode = Literal["strict", "warn", "off"]
+
+
+class WorkspaceConfig(BaseModel):
+    """
+    Workspace sobre el que operan las tools de filesystem.
+
+    `path` — directorio raíz donde se resuelven los paths relativos.
+    `containment` — guard de contención para paths absolutos y escapes via `..`:
+      - "strict"  → bloquea cualquier path fuera del workspace (recomendado en prod)
+      - "warn"    → loggea warning pero permite el acceso
+      - "off"     → sin check (útil en desarrollo)
+    """
+
+    path: ExpandedPath = "~/inaki-workspace"
+    containment: ContainmentMode = "strict"
+
+    def model_post_init(self, __context: object) -> None:
+        # Expand ~ in the default value (BeforeValidator no corre en defaults de clase).
+        object.__setattr__(self, "path", str(Path(self.path).expanduser()))
+
+
 # ---------------------------------------------------------------------------
 # AgentConfig — config completa y resuelta para un agente
 # ---------------------------------------------------------------------------
@@ -148,9 +170,10 @@ class AgentConfig(BaseModel):
     llm: LLMConfig
     embedding: EmbeddingConfig
     memory: MemoryConfig
-    history: HistoryConfig
+    chat_history: ChatHistoryConfig
     skills: SkillsConfig = SkillsConfig()
     tools: ToolsConfig = ToolsConfig()
+    workspace: WorkspaceConfig = WorkspaceConfig()
     channels: dict[str, dict[str, Any]] = {}
 
 
@@ -163,10 +186,11 @@ class GlobalConfig(BaseModel):
     llm: LLMConfig
     embedding: EmbeddingConfig
     memory: MemoryConfig
-    history: HistoryConfig
+    chat_history: ChatHistoryConfig
     skills: SkillsConfig = SkillsConfig()
     tools: ToolsConfig = ToolsConfig()
     scheduler: SchedulerConfig = SchedulerConfig()
+    workspace: WorkspaceConfig = WorkspaceConfig()
 
 
 # ---------------------------------------------------------------------------
@@ -252,10 +276,11 @@ def _render_default_global_yaml() -> str:
         "llm": LLMConfig().model_dump(exclude={"api_key"}),
         "embedding": EmbeddingConfig().model_dump(exclude={"api_key"}),
         "memory": mem,
-        "history": HistoryConfig().model_dump(),
+        "chat_history": ChatHistoryConfig().model_dump(),
         "skills": SkillsConfig().model_dump(),
         "tools": ToolsConfig().model_dump(),
         "scheduler": SchedulerConfig().model_dump(),
+        "workspace": WorkspaceConfig().model_dump(),
     }
     body = yaml.safe_dump(defaults, sort_keys=False, default_flow_style=False)
     return _GLOBAL_YAML_HEADER + body
@@ -315,21 +340,23 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
     llm = LLMConfig(**merged.get("llm", {}))
     embedding = EmbeddingConfig(**merged.get("embedding", {}))
     memory = MemoryConfig(**merged.get("memory", {}))
-    history = HistoryConfig(**merged.get("history", {}))
+    chat_history = ChatHistoryConfig(**merged.get("chat_history", {}))
 
     skills = SkillsConfig(**merged.get("skills", {}))
     tools = ToolsConfig(**merged.get("tools", {}))
     scheduler = SchedulerConfig(**merged.get("scheduler", {}))
+    workspace = WorkspaceConfig(**merged.get("workspace", {}))
 
     global_cfg = GlobalConfig(
         app=app,
         llm=llm,
         embedding=embedding,
         memory=memory,
-        history=history,
+        chat_history=chat_history,
         skills=skills,
         tools=tools,
         scheduler=scheduler,
+        workspace=workspace,
     )
     return global_cfg, merged
 
@@ -376,9 +403,10 @@ def load_agent_config(
             llm=LLMConfig(**merged.get("llm", {})),
             embedding=EmbeddingConfig(**merged.get("embedding", {})),
             memory=MemoryConfig(**merged.get("memory", {})),
-            history=HistoryConfig(**merged.get("history", {})),
+            chat_history=ChatHistoryConfig(**merged.get("chat_history", {})),
             skills=SkillsConfig(**merged.get("skills", {})),
             tools=ToolsConfig(**merged.get("tools", {})),
+            workspace=WorkspaceConfig(**merged.get("workspace", {})),
             channels=merged.get("channels", {}),
         )
     except (KeyError, ValueError) as exc:

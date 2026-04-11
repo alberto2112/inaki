@@ -3,21 +3,27 @@
 **Change**: ext-user-extensions
 **Version**: N/A
 **Mode**: Standard
+**Initial verify**: 2026-04-10
+**Post-fix update**: 2026-04-11
+
+> **Nota histórica**: Este reporte conserva los issues que se encontraron en el verify inicial como audit trail. Cada issue ha sido marcado con `[RESUELTO]` y la fecha/commit donde fue corregido. El veredicto final (sección al pie) es **PASS**.
 
 ---
 
 ## Completeness
 
-| Metric | Value |
-|--------|-------|
-| Tasks total | 52 |
-| Tasks complete (by code evidence) | 51 |
-| Tasks unmarked in `tasks.md` | 52 |
+| Metric | Value (inicial) | Value (post-fix) |
+|--------|-----------------|------------------|
+| Tasks total | 52 | 52 |
+| Tasks complete (by code evidence) | 51 | **52** |
+| Tasks unmarked in `tasks.md` | 52 | **0** |
 
-**Note**: `tasks.md` still has all items as `[ ]` despite the implementation being complete. The apply-progress artifact in Engram claims 100% complete. This is a documentation hygiene issue, not a code issue — the work itself is done (verified via codebase inspection + test execution).
+**Note (inicial)**: `tasks.md` still has all items as `[ ]` despite the implementation being complete. The apply-progress artifact in Engram claims 100% complete. This is a documentation hygiene issue, not a code issue — the work itself is done (verified via codebase inspection + test execution).
 
-Incomplete tasks (by code evidence):
-- **Task 8.1** — "Eliminar `adapters/outbound/tools/shell_tool.py`". The file was renamed to `adapters/outbound/tools/run_shell_tool.py` and **still exists, is tracked in git** (commit `8eb14ec`), contains `class ShellTool(ITool)` with `name = "run_shell"`. It is NOT imported from `container.py` (dead code), but its presence violates REQ-07.
+**`[RESUELTO 2026-04-11]`**: `tasks.md` marcado con `[x]` en los 52 items. El CRITICAL de Task 8.1 se resolvió en el commit `d58272c refactor: remove ShellTool implementation` (2026-04-11 02:42).
+
+Incomplete tasks (inicial):
+- ~~**Task 8.1** — "Eliminar `adapters/outbound/tools/shell_tool.py`". The file was renamed to `adapters/outbound/tools/run_shell_tool.py` and **still exists, is tracked in git** (commit `8eb14ec`), contains `class ShellTool(ITool)` with `name = "run_shell"`. It is NOT imported from `container.py` (dead code), but its presence violates REQ-07.~~ **`[RESUELTO 2026-04-11 via commit d58272c]`** — 75 líneas eliminadas.
 
 ---
 
@@ -66,7 +72,7 @@ tests/unit/use_cases/test_schedule_task.py ........                      [100%]
 | REQ-05: AppConfig.ext_dirs | configuración personalizada | `config.py:36` define `ext_dirs: list[str] = ["ext", "~/.inaki/ext"]` | ✅ COMPLIANT (estructural) |
 | REQ-06: Migración exchange_calendar | disponible post-migración | `~/.inaki/ext/exchange_calendar/` completo con engine, manifest, yaml; imports reescritos a `ext.exchange_calendar.tools.engine.*` | ✅ COMPLIANT (estructural) |
 | REQ-07: Migración run_shell | disponible desde `~/.inaki/ext/` | `~/.inaki/ext/run_shell/tools/run_shell_tool.py` contiene `class RunShellTool` con `name = "run_shell"`; manifest + YAML presentes | ✅ COMPLIANT (estructural) |
-| REQ-07: Migración run_shell | `adapters/outbound/tools/shell_tool.py` eliminado de built-ins | **`adapters/outbound/tools/run_shell_tool.py` SIGUE EXISTIENDO en el repo (tracked)** | ❌ **FAILING** |
+| REQ-07: Migración run_shell | `adapters/outbound/tools/shell_tool.py` eliminado de built-ins | ~~`run_shell_tool.py` SIGUE EXISTIENDO en el repo (tracked)~~ `[RESUELTO 2026-04-11 via commit d58272c]` | ✅ COMPLIANT |
 | REQ-08: Resiliencia | ImportError en manifest | `test_container_extensions.py > test_manifest_import_error_skipped` | ✅ COMPLIANT |
 | REQ-08: Resiliencia | SyntaxError en manifest | `test_container_extensions.py > test_manifest_syntax_error_skipped` | ✅ COMPLIANT |
 | REQ-08: Resiliencia | tool falla al instanciar | `test_container_extensions.py > test_tool_instantiation_error_skipped` | ✅ COMPLIANT |
@@ -75,7 +81,8 @@ tests/unit/use_cases/test_schedule_task.py ........                      [100%]
 | REQ-09: Precedencia built-ins | run_shell/exchange NO en built-ins | `test_container_builtin_tools.py > test_shell_and_exchange_not_in_builtins` | ✅ COMPLIANT |
 | REQ-09: Precedencia built-ins | colisión de nombre | `test_container_extensions.py > test_name_collision_warning` | ✅ COMPLIANT |
 
-**Compliance summary**: 22/23 escenarios compliant (95.6%). 1 scenario FAILING por archivo huérfano trackeado.
+**Compliance summary (inicial)**: 22/23 escenarios compliant (95.6%). 1 scenario FAILING por archivo huérfano trackeado.
+**Compliance summary (post-fix)**: **23/23 escenarios compliant (100%)**.
 
 ---
 
@@ -89,7 +96,7 @@ tests/unit/use_cases/test_schedule_task.py ........                      [100%]
 | REQ-04: `add_file()` | ✅ Implementado | `yaml_skill_repo.py:50-56` con resolución de path y cache invalidation; `_ensure_loaded` con `seen: set[Path]` |
 | REQ-05: `AppConfig.ext_dirs` | ✅ Implementado | `config.py:36` |
 | REQ-06: Migración exchange_calendar | ✅ Implementado | Engine completo en `~/.inaki/ext/exchange_calendar/tools/engine/` con 8 módulos e imports reescritos |
-| REQ-07: Migración run_shell | ⚠️ Parcial | `~/.inaki/ext/run_shell/` correcto, pero `adapters/outbound/tools/run_shell_tool.py` (orphan con `class ShellTool`) sigue en el repo |
+| REQ-07: Migración run_shell | ✅ Implementado | `~/.inaki/ext/run_shell/` correcto. Orphan `adapters/outbound/tools/run_shell_tool.py` eliminado en commit `d58272c` (2026-04-11). |
 | REQ-08: Resiliencia | ✅ Implementado | `container.py:118-127, 145-149, 154-159` con try/except y logging |
 | REQ-09: Precedencia built-ins | ✅ Implementado | `container.py:134-139` chequea `tool_instance.name in self._tools._tools` |
 
@@ -107,7 +114,7 @@ tests/unit/use_cases/test_schedule_task.py ........                      [100%]
 | `_register_extensions` llamado desde `__init__` | ✅ Yes | `container.py:54` |
 | `YamlSkillRepository.add_file()` con dedup vía resolve() | ✅ Yes | `yaml_skill_repo.py:50-56, 83-102` |
 | Colisión de nombres → WARNING + skip | ✅ Yes | `container.py:134-139` |
-| Eliminar código viejo (`adapters/outbound/tools/shell_tool.py`, `exchange_calendar*`) | ⚠️ Deviated | `shell_tool.py` fue renombrado a `run_shell_tool.py` y no eliminado |
+| Eliminar código viejo (`adapters/outbound/tools/shell_tool.py`, `exchange_calendar*`) | ✅ Yes | `shell_tool.py` había sido renombrado a `run_shell_tool.py`; eliminado en commit `d58272c` (2026-04-11). |
 
 ---
 
@@ -115,30 +122,26 @@ tests/unit/use_cases/test_schedule_task.py ........                      [100%]
 
 ### CRITICAL (must fix before archive)
 
-1. **`adapters/outbound/tools/run_shell_tool.py` sigue en el repo (tracked)**
-   - **Evidencia**: `git ls-files` confirma que está trackeado; contenido: `class ShellTool(ITool)` con `name = "run_shell"`. Es código muerto (no lo importa nadie) pero viola REQ-07 / Task 8.1 del plan: el archivo viejo debe ser eliminado.
-   - **Impacto**: Confusión futura (dos definiciones del mismo nombre `run_shell` en el repo; la "real" vive en `~/.inaki/ext/`). También quebranta el grep de verificación de Task 8.4.
-   - **Fix sugerido**: `git rm adapters/outbound/tools/run_shell_tool.py` y commit.
+1. **`[RESUELTO 2026-04-11 via commit d58272c]` — `adapters/outbound/tools/run_shell_tool.py` sigue en el repo (tracked)**
+   - **Evidencia original**: `git ls-files` confirmaba que estaba trackeado; contenía `class ShellTool(ITool)` con `name = "run_shell"`. Código muerto (no lo importaba nadie) que violaba REQ-07 / Task 8.1.
+   - **Fix aplicado**: commit `d58272c refactor: remove ShellTool implementation` eliminó 75 líneas del archivo.
 
 ### WARNING (should fix)
 
-1. **`tasks.md` sin marcar como completado**
-   - Los 52 items siguen como `[ ]` pese a que el apply-progress reporta 100%. Es un fallo del contrato de persistencia de `sdd-apply` (no marcó las tareas mientras implementaba).
-   - **Fix sugerido**: editar `tasks.md` y marcar todos los items completados (excepto el que tiene el issue crítico).
+1. **`[RESUELTO 2026-04-11]` — `tasks.md` sin marcar como completado**
+   - Los 52 items estaban como `[ ]` pese a que el apply-progress reportaba 100%. Fallo del contrato de persistencia de `sdd-apply`.
+   - **Fix aplicado**: `tasks.md` editado con los 52 items marcados `[x]`.
 
-2. **`ext/` está completamente vacío — `ext/__init__.py` fue eliminado**
-   - Task 3.4 indicaba "verificar que `ext/__init__.py` existe; crearlo vacío si no existe". Actualmente el directorio está vacío.
-   - **Impacto**: ninguno funcional (el loader hace `glob("*/manifest.py")` y lista vacía). Es solo un detalle de scaffolding para futuras extensiones en desarrollo.
-   - **Fix sugerido**: crear `ext/__init__.py` vacío para dejar el directorio listo para la primera extensión en dev.
+2. **`[RESUELTO 2026-04-11]` — `ext/` estaba completamente vacío (`ext/__init__.py` eliminado)**
+   - Task 3.4 indicaba verificar que `ext/__init__.py` existe. Impacto funcional: ninguno.
+   - **Fix aplicado**: `ext/__init__.py` creado vacío.
 
 ### SUGGESTION (nice to have)
 
-1. **`.gitignore` no tiene entrada para `ext/`** (ni positiva ni negativa)
-   - Task 9.2 pedía verificar que `ext/` no está ignorado. La verificación pasa por omisión (no hay regla que lo excluya), pero no hay afirmación explícita. Si alguien en el futuro agrega una regla genérica como `ext*`, romperá el auto-discovery sin darse cuenta.
-   - **Fix sugerido**: añadir un comentario en `.gitignore` dejando claro que `ext/` debe ser committeado.
+1. **`[VERIFICADO 2026-04-11]` — `.gitignore` no tiene entrada para `ext/`**
+   - Verificado: `.gitignore` no contiene ningún patrón que excluya `ext/`. Cobertura implícita suficiente.
 
-2. **Los archivos `.DS_Store` en `~/.inaki/ext/`**
-   - No afecta al repo (está fuera del repo), pero si el usuario empieza a versionar `~/.inaki/` en su dotfiles en el futuro, conviene que los `.DS_Store` no viajen.
+2. **Los archivos `.DS_Store` en `~/.inaki/ext/`** (sin acción — fuera del repo)
 
 ---
 

@@ -153,7 +153,7 @@ memory:
                               # Cualquier valor > 0 se respeta tal cual.
                               #
                               # Sugerencia: mantener keep_last_messages ≥
-                              # history.max_messages_in_prompt, sino el prompt
+                              # chat_history.max_messages, sino el prompt
                               # builder no tendrá suficientes filas para
                               # llenar su ventana tras cada consolidación.
 
@@ -163,14 +163,51 @@ memory:
 
 
 # -----------------------------------------------------------------------------
-# [history] — Historial de conversación a corto plazo (SQLite)
+# [chat_history] — Historial de conversación a corto plazo (SQLite)
 # -----------------------------------------------------------------------------
-history:
+chat_history:
   db_path: "data/history.db"  # Ruta a la base de datos SQLite del historial
                               # Separada de inaki.db (que usa sqlite-vec)
                               # Producción: "/home/pi/inaki/data/history.db"
 
-  max_messages_in_prompt: 21  # Últimos N mensajes inyectados al LLM (0 = sin límite)
+  max_messages: 21            # Últimos N mensajes inyectados al LLM (0 = sin límite)
+
+
+# -----------------------------------------------------------------------------
+# [workspace] — Directorio de trabajo del agente (sandbox de las tools de FS)
+# -----------------------------------------------------------------------------
+#
+# Define DÓNDE operan las tools de filesystem (read_file, write_file, patch_file).
+# Los paths relativos del LLM se resuelven contra `workspace.path`, NO contra el
+# cwd del proceso. Esto permite correr múltiples agentes/sub-agentes en paralelo
+# en el mismo proceso sin que se pisen los directorios.
+#
+# Cada agente puede overrridear `path` y/o `containment` en su `agents/{id}.yaml`
+# para aislar su scope del resto.
+# -----------------------------------------------------------------------------
+workspace:
+  path: "~/inaki-workspace"   # Raíz del workspace. Se crea si no existe.
+                              # Soporta expansión de `~` (home del usuario).
+                              # Ejemplos:
+                              #   "~/inaki-workspace"           ← default
+                              #   "/srv/inaki/projects/alpha"   ← producción dedicada
+                              #   "~/Documents/inaki"           ← usuario desktop
+
+  containment: "strict"       # Guard de contención para paths absolutos y
+                              # escapes via `..`. Modos:
+                              #   "strict" → bloquea cualquier path fuera del
+                              #              workspace con un error. Recomendado
+                              #              en PRODUCCIÓN — evita que el LLM
+                              #              toque archivos sensibles del sistema
+                              #              (p.ej. `/etc/passwd`, `~/.ssh/`).
+                              #
+                              #   "warn"   → loggea warning pero permite el
+                              #              acceso. Útil en desarrollo para
+                              #              detectar qué paths se están saliendo
+                              #              antes de endurecer a strict.
+                              #
+                              #   "off"    → sin check. Solo para debugging
+                              #              local — NO usar en producción.
 
 
 # =============================================================================
@@ -198,6 +235,11 @@ history:
 # memory:
 #   enabled: true              # Si false, este agente NO entra en la
 #                              # consolidación nocturna global. Default: true.
+#
+# # Override de workspace — aislar el scope de FS de este agente
+# workspace:
+#   path: "~/inaki-workspace/agents/coder"   # cada sub-agente con su raíz propia
+#   containment: "strict"                    # se puede endurecer/relajar por agente
 #
 # # Canales de comunicación para este agente
 # channels:

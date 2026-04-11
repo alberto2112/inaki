@@ -56,7 +56,7 @@ class AgentContainer:
         self._memory = SQLiteMemoryRepository(cfg.memory.db_path, self._embedder)
         self._llm = LLMProviderFactory.create(cfg)
         self._skills = YamlSkillRepository(embedder=self._embedder)
-        self._history = SQLiteHistoryStore(cfg.history)
+        self._history = SQLiteHistoryStore(cfg.chat_history)
         self._tools = ToolRegistry(embedder=self._embedder)
         self._register_tools()
         self._register_extensions(global_config.app.ext_dirs)
@@ -82,15 +82,32 @@ class AgentContainer:
 
     def _register_tools(self) -> None:
         """Registra tools built-in del núcleo. Las extensiones se cargan aparte."""
+        from pathlib import Path
+
         from adapters.outbound.tools.patch_file_tool import PatchFileTool
         from adapters.outbound.tools.read_file_tool import ReadFileTool
         from adapters.outbound.tools.web_search_tool import WebSearchTool
         from adapters.outbound.tools.write_file_tool import WriteFileTool
 
+        ws_cfg = self.agent_config.workspace
+        workspace_path = Path(ws_cfg.path).expanduser().resolve()
+        try:
+            workspace_path.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            logger.error(
+                "No se pudo crear el workspace '%s' para el agente '%s': %s",
+                workspace_path, self.agent_config.id, exc,
+            )
+            raise
+        logger.info(
+            "Agente '%s': workspace='%s' containment='%s'",
+            self.agent_config.id, workspace_path, ws_cfg.containment,
+        )
+
         self._tools.register(WebSearchTool())
-        self._tools.register(ReadFileTool())
-        self._tools.register(WriteFileTool())
-        self._tools.register(PatchFileTool())
+        self._tools.register(ReadFileTool(workspace=workspace_path, containment=ws_cfg.containment))
+        self._tools.register(WriteFileTool(workspace=workspace_path, containment=ws_cfg.containment))
+        self._tools.register(PatchFileTool(workspace=workspace_path, containment=ws_cfg.containment))
 
     def _register_extensions(self, ext_dirs: list[str]) -> None:
         """

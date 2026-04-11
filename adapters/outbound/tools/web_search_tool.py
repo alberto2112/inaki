@@ -32,12 +32,11 @@ class WebSearchTool(ITool):
     description = (
         "Busca información en internet vía Tavily. "
         "Usar para eventos actuales, datos volátiles o info fuera del contexto. "
-        "Operaciones disponibles: "
-        "'search' (default) con parámetro 'query'; "
-        "'configure' con parámetro 'api_key' (y opcionalmente 'search_depth', 'max_results') "
-        "para guardar credenciales de Tavily; "
-        "'show_config' para inspeccionar la configuración actual. "
-        "Si no hay api_key configurada, pedile al usuario que te la provea y usá operation=configure."
+        "Default: llamá con operation='search' y el parámetro 'query'. "
+        "Si la llamada falla por credenciales, el error te indica cómo proceder. "
+        "Otras operaciones: "
+        "'configure' con 'api_key' (y opcionalmente 'search_depth', 'max_results') para guardar credenciales de Tavily; "
+        "'show_config' para inspeccionar la configuración actual."
     )
     parameters_schema = {
         "type": "object",

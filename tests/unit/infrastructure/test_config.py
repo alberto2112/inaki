@@ -8,8 +8,8 @@ import pytest
 
 from infrastructure.config import (
     AppConfig,
+    ChatHistoryConfig,
     EmbeddingConfig,
-    HistoryConfig,
     MemoryConfig,
     SchedulerConfig,
 )
@@ -72,8 +72,8 @@ def test_memory_db_path_expands_tilde() -> None:
     assert "~" not in cfg.db_path
 
 
-def test_history_db_path_expands_tilde() -> None:
-    cfg = HistoryConfig(db_path="~/.inaki/mem/context.db")
+def test_chat_history_db_path_expands_tilde() -> None:
+    cfg = ChatHistoryConfig(db_path="~/.inaki/mem/context.db")
     assert cfg.db_path == f"{HOME}/.inaki/mem/context.db"
     assert "~" not in cfg.db_path
 

@@ -1,8 +1,8 @@
 """Symmetric encryption service (Fernet).
 
 Key lifecycle:
-  1. Reads INAKI_SECRET_KEY from .env at project root.
-  2. If absent, generates a new Fernet key, writes it to .env, and logs a warning.
+  1. Reads INAKI_SECRET_KEY from ~/.inaki/.env.
+  2. If absent (first run), generates a new Fernet key, writes it there, and logs a warning.
 
 Encrypted values are prefixed with "enc:" so callers can distinguish them from
 plain-text values without extra metadata.
@@ -23,13 +23,12 @@ _ENC_PREFIX = "enc:"
 _ENV_KEY = "INAKI_SECRET_KEY"
 
 
-def _project_root() -> Path:
-    # core/services/crypto_service.py → parents[2] = project root
-    return Path(__file__).resolve().parents[2]
+def _secret_env_path() -> Path:
+    return Path.home() / ".inaki" / ".env"
 
 
 class CryptoService:
-    """Fernet-based symmetric encryption. Key lives in INAKI_SECRET_KEY (.env)."""
+    """Fernet-based symmetric encryption. Key lives in INAKI_SECRET_KEY (~/.inaki/.env)."""
 
     def __init__(self) -> None:
         self._fernet = Fernet(self._load_or_generate_key())
@@ -39,17 +38,18 @@ class CryptoService:
     # ------------------------------------------------------------------
 
     def _load_or_generate_key(self) -> bytes:
-        env_path = _project_root() / ".env"
+        env_path = _secret_env_path()
         load_dotenv(env_path)
         key = os.getenv(_ENV_KEY, "").strip()
         if key:
             return key.encode()
 
+        env_path.parent.mkdir(parents=True, exist_ok=True)
         new_key = Fernet.generate_key()
         set_key(str(env_path), _ENV_KEY, new_key.decode())
         logger.warning(
             "INAKI_SECRET_KEY no encontrada — clave generada y guardada en %s. "
-            "Guarda esta clave en un lugar seguro si necesitás recuperar datos cifrados.",
+            "Guardá esta clave en un lugar seguro si necesitás recuperar datos cifrados.",
             env_path,
         )
         return new_key

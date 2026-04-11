@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -23,6 +24,13 @@ def _make_container(tmp_path: Path) -> AgentContainer:
     container = AgentContainer.__new__(AgentContainer)
     container._tools = ToolRegistry(embedder=FakeEmbedder())
     container._skills = YamlSkillRepository(FakeEmbedder())
+    container.agent_config = SimpleNamespace(
+        id="test-agent",
+        workspace=SimpleNamespace(
+            path=str(tmp_path / "workspace"),
+            containment="strict",
+        ),
+    )
     return container
 
 

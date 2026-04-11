@@ -48,3 +48,6 @@ coverage.xml
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Agent Teams Lite — skill registry cache
+.atl/

@@ -9,7 +9,7 @@ Type=simple
 User=pi
 Group=pi
 WorkingDirectory=/home/pi/inaki
-ExecStart=/home/pi/inaki/.venv/bin/python main.py --daemon
+ExecStart=/home/pi/inaki/.venv/bin/python main.py daemon
 ExecReload=/bin/kill -HUP $MAINPID
 
 # Reiniciar automáticamente si falla (salvo salida limpia o señal de stop)

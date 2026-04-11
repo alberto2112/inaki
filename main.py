@@ -2,23 +2,32 @@
 Entry point de Iñaki.
 
 Modos de uso:
-  python main.py                             → CLI interactivo (agente por defecto)
-  python main.py --agent dev                 → CLI con agente específico
-  python main.py --agent list                → listar agentes disponibles
-  python main.py --inspect "mensaje"         → inspeccionar pipeline RAG sin llamar al LLM
-  python main.py --consolidate               → consolida TODOS los agentes habilitados (con delay)
-  python main.py --consolidate --agent dev   → consolida solo el agente indicado
-  python main.py --daemon                    → servicio systemd (todos los canales de todos los agentes)
-  python main.py --daemon --config /etc/inaki/config  → daemon con config custom
-  python main.py --setup                     → wizard de configuración del sistema
+  inaki                                    → CLI interactivo (agente por defecto)
+  inaki chat --agent dev                   → CLI con agente específico
+  inaki chat --agent list                  → listar agentes disponibles
+  inaki inspect "mensaje"                  → inspeccionar pipeline RAG sin llamar al LLM
+  inaki consolidate                        → consolida TODOS los agentes habilitados (con delay)
+  inaki consolidate --agent dev            → consolida solo el agente indicado
+  inaki daemon                             → servicio systemd (todos los canales de todos los agentes)
+  inaki --config /etc/inaki/config daemon  → daemon con config custom
+  inaki setup                              → wizard de configuración del sistema
 """
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import sys
 from pathlib import Path
+from typing import Optional
+
+import typer
+
+app = typer.Typer(
+    name="inaki",
+    help="Iñaki — asistente personal agentico",
+    invoke_without_command=True,
+    no_args_is_help=False,
+)
 
 
 def _get_config_dir() -> Path:
@@ -73,87 +82,6 @@ def _run_cli(global_config, registry, agent_id: str) -> None:
     run(global_config, registry, agent_id)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        prog="inaki",
-        description="Iñaki — asistente personal agentico",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Ejemplos:
-  inaki                                Chat CLI con el agente por defecto
-  inaki --agent dev                    Chat CLI con el agente 'dev'
-  inaki --agent list                   Listar agentes disponibles
-  inaki --inspect "busca el dolar"     Inspeccionar RAG sin llamar al LLM
-  inaki --daemon                       Modo servicio (Telegram + REST para todos los agentes)
-  inaki --daemon --config /etc/inaki/config
-        """,
-    )
-    parser.add_argument(
-        "--agent",
-        default=None,
-        metavar="AGENT_ID|list",
-        help="ID del agente o 'list' para listar agentes (solo en modo CLI)",
-    )
-    parser.add_argument(
-        "--daemon",
-        action="store_true",
-        help="Arrancar como servicio systemd (levanta todos los canales)",
-    )
-    parser.add_argument(
-        "--config",
-        default=None,
-        metavar="DIR",
-        help="Directorio de configuración (default: ./config)",
-    )
-    parser.add_argument(
-        "--inspect",
-        default=None,
-        metavar="MENSAJE",
-        help="Inspeccionar el pipeline RAG para un mensaje sin llamar al LLM",
-    )
-    parser.add_argument(
-        "--consolidate",
-        action="store_true",
-        help="Consolida la memoria y sale. Sin --agent itera todos los agentes habilitados con delay.",
-    )
-    parser.add_argument(
-        "--setup",
-        action="store_true",
-        help="Wizard de configuración del sistema (INAKI_SECRET_KEY y otras variables)",
-    )
-    args = parser.parse_args()
-
-    if args.setup:
-        from adapters.inbound.cli.setup_wizard import run_setup
-        run_setup()
-        return
-
-    if args.config:
-        config_dir = Path(args.config)
-        agents_dir = config_dir / "agents"
-    else:
-        from infrastructure.config import ensure_user_config
-        config_dir = _get_config_dir()
-        agents_dir = _get_agents_dir()
-        ensure_user_config(config_dir, agents_dir)
-
-    global_config, registry = _bootstrap(config_dir, agents_dir)
-
-    if args.daemon:
-        if args.agent:
-            print("--agent no tiene efecto en modo --daemon (se levantan todos los agentes)", file=sys.stderr)
-        _run_daemon(global_config, registry)
-    elif args.consolidate:
-        _run_consolidate(global_config, registry, args.agent)
-    elif args.inspect is not None:
-        agent_id = args.agent or global_config.app.default_agent
-        from adapters.inbound.cli.cli_runner import run_inspect
-        run_inspect(global_config, registry, agent_id, args.inspect)
-    else:
-        agent_id = args.agent or global_config.app.default_agent
-        _run_cli(global_config, registry, agent_id)
-
-
 def _run_consolidate(global_config, registry, agent_id: str | None) -> None:
     """
     Ejecuta consolidación de memoria one-shot y sale.
@@ -163,12 +91,12 @@ def _run_consolidate(global_config, registry, agent_id: str | None) -> None:
     """
     from infrastructure.container import AppContainer
 
-    app = AppContainer(global_config, registry)
+    app_container = AppContainer(global_config, registry)
 
     async def _run() -> None:
         if agent_id:
             try:
-                container = app.get_agent(agent_id)
+                container = app_container.get_agent(agent_id)
             except Exception as exc:
                 print(f"Error: {exc}", file=sys.stderr)
                 sys.exit(1)
@@ -179,11 +107,127 @@ def _run_consolidate(global_config, registry, agent_id: str | None) -> None:
                 print(f"Error consolidando '{agent_id}': {exc}", file=sys.stderr)
                 sys.exit(1)
         else:
-            result = await app.consolidate_all_agents.execute()
+            result = await app_container.consolidate_all_agents.execute()
             print(result)
 
     asyncio.run(_run())
 
 
+def _resolve_dirs(config_dir_override: Optional[Path]):
+    """Resuelve config_dir y agents_dir, aplicando ensure_user_config si es necesario."""
+    if config_dir_override:
+        config_dir = config_dir_override
+        agents_dir = config_dir / "agents"
+    else:
+        from infrastructure.config import ensure_user_config
+        config_dir = _get_config_dir()
+        agents_dir = _get_agents_dir()
+        ensure_user_config(config_dir, agents_dir)
+    return config_dir, agents_dir
+
+
+def _invoke_default_chat(config_dir_override: Optional[Path]) -> None:
+    """Lanza el chat interactivo con el agente por defecto."""
+    config_dir, agents_dir = _resolve_dirs(config_dir_override)
+    global_config, registry = _bootstrap(config_dir, agents_dir)
+    agent_id = global_config.app.default_agent
+    _run_cli(global_config, registry, agent_id)
+
+
+@app.callback()
+def _root(
+    ctx: typer.Context,
+    config: Optional[Path] = typer.Option(
+        None,
+        "--config",
+        metavar="DIR",
+        help="Directorio de configuración (default: ~/.inaki/config)",
+    ),
+) -> None:
+    """Iñaki — asistente personal agentico."""
+    ctx.ensure_object(dict)
+    ctx.obj["config_dir"] = config
+    if ctx.invoked_subcommand is None:
+        # bare `inaki` → default chat
+        _invoke_default_chat(config)
+
+
+@app.command()
+def chat(
+    ctx: typer.Context,
+    agent: Optional[str] = typer.Option(
+        None,
+        "--agent",
+        metavar="AGENT_ID|list",
+        help="ID del agente o 'list' para listar agentes disponibles",
+    ),
+) -> None:
+    """Chat interactivo con un agente."""
+    config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
+    config_dir, agents_dir = _resolve_dirs(config_dir_override)
+    global_config, registry = _bootstrap(config_dir, agents_dir)
+    agent_id = agent or global_config.app.default_agent
+    _run_cli(global_config, registry, agent_id)
+
+
+@app.command()
+def daemon(
+    ctx: typer.Context,
+) -> None:
+    """Arranca como servicio systemd (levanta todos los canales de todos los agentes)."""
+    config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
+    config_dir, agents_dir = _resolve_dirs(config_dir_override)
+    global_config, registry = _bootstrap(config_dir, agents_dir)
+    _run_daemon(global_config, registry)
+
+
+@app.command()
+def inspect(
+    ctx: typer.Context,
+    message: str = typer.Argument(
+        ...,
+        metavar="MESSAGE",
+        help="Mensaje para inspeccionar el pipeline RAG (sin llamar al LLM)",
+    ),
+    agent: Optional[str] = typer.Option(
+        None,
+        "--agent",
+        metavar="AGENT_ID",
+        help="ID del agente (default: agente por defecto del global)",
+    ),
+) -> None:
+    """Inspecciona el pipeline RAG para un mensaje sin llamar al LLM."""
+    config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
+    config_dir, agents_dir = _resolve_dirs(config_dir_override)
+    global_config, registry = _bootstrap(config_dir, agents_dir)
+    agent_id = agent or global_config.app.default_agent
+    from adapters.inbound.cli.cli_runner import run_inspect
+    run_inspect(global_config, registry, agent_id, message)
+
+
+@app.command()
+def consolidate(
+    ctx: typer.Context,
+    agent: Optional[str] = typer.Option(
+        None,
+        "--agent",
+        metavar="AGENT_ID",
+        help="Consolida solo el agente indicado (ignora memory.enabled). Sin flag → itera todos.",
+    ),
+) -> None:
+    """Consolida la memoria y sale."""
+    config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
+    config_dir, agents_dir = _resolve_dirs(config_dir_override)
+    global_config, registry = _bootstrap(config_dir, agents_dir)
+    _run_consolidate(global_config, registry, agent)
+
+
+@app.command()
+def setup() -> None:
+    """Wizard de configuración del sistema (INAKI_SECRET_KEY y otras variables)."""
+    from adapters.inbound.cli.setup_wizard import run_setup
+    run_setup()
+
+
 if __name__ == "__main__":
-    main()
+    app()

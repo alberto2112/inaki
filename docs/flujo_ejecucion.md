@@ -2,7 +2,7 @@
 
 ## Arranque del sistema
 
-### Modo CLI (`python main.py [--agent id]`)
+### Modo CLI (`python main.py [chat] [--agent id]`)
 
 ```
 main.py
@@ -57,10 +57,10 @@ main.py
     └── asyncio.run(run_cli(app, agent_id))
 ```
 
-### Modo Daemon (`python main.py --daemon`)
+### Modo Daemon (`python main.py daemon`)
 
 ```
-main.py --daemon
+main.py daemon
 │
 ├── _bootstrap(config_dir)      [igual que CLI]
 │
@@ -93,15 +93,15 @@ main.py --daemon
     └── On shutdown: app_container.shutdown() → cancel tasks → gather → log
 ```
 
-### Modo Consolidación one-shot (`python main.py --consolidate [--agent id]`)
+### Modo Consolidación one-shot (`python main.py consolidate [--agent id]`)
 
 ```
-main.py --consolidate
+main.py consolidate
 │
 ├── _bootstrap(config_dir)
 ├── AppContainer(global_config, registry)   ← NO arranca scheduler ni canales
 │
-└── _run_consolidate(global_config, registry, args.agent)
+└── _run_consolidate(global_config, registry, agent)
     │
     ├── Con --agent X:
     │   ├── container = app.get_agent("X")
@@ -233,12 +233,12 @@ Wipe total para el agente.
 | Comando | Acción |
 |---------|--------|
 | `python main.py` | Chat CLI con agente por defecto |
-| `python main.py --agent dev` | Chat CLI con agente 'dev' |
-| `python main.py --agent list` | Lista todos los agentes |
-| `python main.py --daemon` | Modo servicio (todos los canales + scheduler) |
-| `python main.py --consolidate` | Consolida todos los agentes habilitados con delay y sale |
-| `python main.py --consolidate --agent dev` | Consolida solo el agente indicado y sale |
-| `python main.py --inspect "msg"` | Inspecciona el pipeline RAG sin llamar al LLM |
+| `python main.py chat --agent dev` | Chat CLI con agente 'dev' |
+| `python main.py chat --agent list` | Lista todos los agentes |
+| `python main.py daemon` | Modo servicio (todos los canales + scheduler) |
+| `python main.py consolidate` | Consolida todos los agentes habilitados con delay y sale |
+| `python main.py consolidate --agent dev` | Consolida solo el agente indicado y sale |
+| `python main.py inspect "msg"` | Inspecciona el pipeline RAG sin llamar al LLM |
 | `/consolidate` (en chat) | Extrae recuerdos y archiva historial del agente actual |
 | `/history` (en chat) | Muestra el historial actual |
 | `/clear` (en chat) | Limpia historial sin archivar |
@@ -251,7 +251,7 @@ Wipe total para el agente.
 ## Flujo de consolidación de memoria
 
 La memoria a largo plazo se alimenta de dos formas: manual (`/consolidate` en
-chat o `--consolidate` por CLI) y automática (tarea programada nocturna).
+chat o `inaki consolidate` por CLI) y automática (tarea programada nocturna).
 Ambos caminos terminan invocando el mismo use case per-agente.
 
 ### Reconciliación de la tarea builtin al arrancar

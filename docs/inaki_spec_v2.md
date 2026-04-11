@@ -581,8 +581,8 @@ class AgentRegistry:
 
 ```bash
 python main.py                          # usa default_agent del global
-python main.py --agent dev              # usa agente 'dev'
-python main.py --agent list             # lista agentes disponibles con descripción
+python main.py chat --agent dev         # usa agente 'dev'
+python main.py chat --agent list        # lista agentes disponibles con descripción
 ```
 
 ### Memoria: scope global

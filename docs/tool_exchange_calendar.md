@@ -24,7 +24,7 @@ Permite leer, buscar, crear, actualizar y eliminar eventos del calendario de Out
 ### Primera vez — wizard interactivo
 
 ```bash
-python main.py --setup
+python main.py setup
 ```
 
 El wizard genera `INAKI_SECRET_KEY` (clave Fernet) y la escribe en `.env`.

@@ -20,8 +20,8 @@ RunAgentUseCase.execute(user_input)
 │
 ├── 1. _history.load(agent_id)
 │       → list[Message]  ← historial completo de data/history/active/{agent_id}.txt
-│   └── trim: history[-(max_messages_in_prompt * 2):]
-│       → solo los últimos N mensajes por participante (si max_messages_in_prompt > 0)
+│   └── trim: history[-(max_messages * 2):]
+│       → solo los últimos N mensajes por participante (si max_messages > 0)
 │       → el fichero en disco NO se modifica
 │
 ├── 2. _embedder.embed_query(user_input)
@@ -57,20 +57,20 @@ RunAgentUseCase.execute(user_input)
 
 ## Truncado del historial para el prompt
 
-`history.max_messages_in_prompt` controla cuántos mensajes de cada participante se inyectan en el prompt. El fichero en disco nunca se toca.
+`chat_history.max_messages` controla cuántos mensajes de cada participante se inyectan en el prompt. El fichero en disco nunca se toca.
 
 ```
-max_messages_in_prompt = 21  →  history[-(21 * 2):]  →  últimos 42 mensajes
-                                                          (21 del usuario + 21 del asistente)
+max_messages = 21  →  history[-(21 * 2):]  →  últimos 42 mensajes
+                                                (21 del usuario + 21 del asistente)
 
-max_messages_in_prompt = 0   →  sin truncado, historial completo
+max_messages = 0   →  sin truncado, historial completo
 ```
 
 Configurable en `global.yaml`:
 
 ```yaml
-history:
-  max_messages_in_prompt: 21  # 0 = sin límite
+chat_history:
+  max_messages: 21  # 0 = sin límite
 ```
 
 ---
@@ -198,8 +198,8 @@ assistant: ...
 
 ```bash
 # One-shot desde terminal
-python main.py --inspect "busca el precio del dolar"
-python main.py --agent dev --inspect "ejecuta los tests"
+python main.py inspect "busca el precio del dolar"
+python main.py inspect "ejecuta los tests" --agent dev
 
 # Interactivo dentro del chat CLI
 /inspect busca el precio del dolar

@@ -135,7 +135,7 @@ llm:
 memory:
   enabled: true        # Si false, este agente NO entra en la consolidación
                        # nocturna global. Default: true.
-                       # El flag manual `inaki --consolidate --agent {id}` ignora
+                       # El comando `inaki consolidate --agent {id}` ignora
                        # este flag y consolida el agente indicado de todas formas.
 
 # Canales disponibles para este agente
@@ -247,8 +247,8 @@ a mano.
 
 | Comando | Efecto |
 |---------|--------|
-| `inaki --consolidate` | Ejecuta el use case global — itera todos los agentes con `memory.enabled=true` respetando `delay_seconds`. |
-| `inaki --consolidate --agent dev` | Consolida solo `dev`, ignora el flag `enabled`. |
+| `inaki consolidate` | Ejecuta el use case global — itera todos los agentes con `memory.enabled=true` respetando `delay_seconds`. |
+| `inaki consolidate --agent dev` | Consolida solo `dev`, ignora el flag `enabled`. |
 
 Ambos arrancan `AppContainer`, corren la consolidación one-shot e imprimen el
 resultado por stdout. No arrancan el scheduler ni los canales.

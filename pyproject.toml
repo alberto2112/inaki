@@ -24,6 +24,7 @@ dependencies = [
     "exchangelib>=5.0",
     "python-dotenv>=1.0",
     "cryptography>=42.0",
+    "typer>=0.12",
 ]
 
 [project.optional-dependencies]
@@ -37,7 +38,7 @@ dev = [
 ]
 
 [project.scripts]
-inaki = "main:main"
+inaki = "main:app"
 
 [tool.setuptools.packages.find]
 include = ["core*", "adapters*", "infrastructure*"]

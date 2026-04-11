@@ -1,6 +1,11 @@
 # Secrets — nunca commitear
 config/*.secrets.yaml
 config/agents/*.secrets.yaml
+*.secrets.yaml
+*.secrets.yml
+
+# Backups / directorios renombrados con prefijo "_" — nunca commitear
+_*/
 
 # Datos y modelos
 data/

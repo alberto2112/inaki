@@ -1,0 +1,81 @@
+# =============================================================================
+# Iñaki — Coordinator Agent Example
+# =============================================================================
+#
+# This is an example coordinator agent that delegates specialised work to
+# other agents using the `delegate` tool, then synthesises their results.
+#
+# To use: copy this file, rename it (e.g. coordinator.yaml), and adjust the
+# fields below to suit your setup.
+#
+# IMPORTANT: every agent id listed in `delegation.allowed_targets` must exist
+# as a corresponding YAML file in the agents directory (e.g. researcher.yaml,
+# coder.yaml). If a target is not found at runtime, `delegate` returns
+# `unknown_agent` without raising.
+#
+# This file is an example — it is intentionally skipped by AgentRegistry
+# (files containing ".example" in their name are ignored on startup).
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# [identity] — required fields
+# -----------------------------------------------------------------------------
+id: "coordinator"               # Must match the filename (without .yaml)
+name: "Coordinator"             # Display name in CLI and logs
+description: "Coordinator agent that delegates specialised tasks to sub-agents and synthesises their results."
+
+system_prompt: |
+  You are a coordinator assistant. Your role is to route tasks to the right
+  specialist agent and synthesise their results into a coherent final answer.
+
+  When a task is clearly better handled by a specialist, use the `delegate`
+  tool to hand it off. Always review the specialist's structured result and
+  present a clear, unified answer to the user.
+
+  Do not attempt to answer questions that fall outside your scope — delegate
+  them instead.
+
+
+# -----------------------------------------------------------------------------
+# [llm] — override only what differs from global.yaml; rest is inherited
+# -----------------------------------------------------------------------------
+llm:
+  model: "anthropic/claude-3-5-haiku"
+                                # Coordinators issue many short tool calls —
+                                # a fast, cost-efficient model is a good fit.
+
+
+# -----------------------------------------------------------------------------
+# [delegation] — enable delegation and restrict the allow-list
+# -----------------------------------------------------------------------------
+delegation:
+  enabled: true                 # Registers the `delegate` tool for this agent.
+                                # Set to false (or omit) to disable delegation.
+
+  allowed_targets:              # Explicit allow-list of agent ids this coordinator
+    - researcher                # may delegate to. Agents NOT listed here will
+    - coder                     # receive `target_not_allowed` at runtime even if
+                                # their YAML exists.
+                                #
+                                # Replace "researcher" and "coder" with the actual
+                                # ids of the agents you have configured.
+
+
+# -----------------------------------------------------------------------------
+# [tools] — coordinators delegate rather than act; no special tool overrides
+# -----------------------------------------------------------------------------
+# tools section intentionally omitted — all values inherit from global.yaml.
+# Uncomment to customise if needed:
+#
+# tools:
+#   tool_call_max_iterations: 5
+#   circuit_breaker_threshold: 2
+
+
+# -----------------------------------------------------------------------------
+# [workspace] — inherited from global; override only if isolation is needed
+# -----------------------------------------------------------------------------
+# workspace:
+#   path: "~/inaki-workspace/agents/coordinator"
+#   containment: "strict"

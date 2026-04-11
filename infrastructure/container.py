@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from typing import Callable
 
 from croniter import croniter
 from pydantic import ValidationError
@@ -36,6 +37,7 @@ from core.domain.services.scheduler_service import SchedulerService
 from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
 from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
 from core.use_cases.run_agent import RunAgentUseCase
+from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from core.use_cases.schedule_task import ScheduleTaskUseCase
 from infrastructure.config import AgentConfig, AgentRegistry, GlobalConfig
 from infrastructure.factories.embedding_factory import EmbeddingProviderFactory
@@ -50,6 +52,12 @@ class AgentContainer:
     def __init__(self, agent_config: AgentConfig, global_config: GlobalConfig) -> None:
         cfg = agent_config
         self.agent_config = agent_config
+
+        # Stash global_config so wire_delegation can access delegation limits (task 5.1)
+        self._global_config = global_config
+
+        # Idempotency guard for wire_delegation (task 5.1)
+        self._delegation_wired: bool = False
 
         # Factories resuelven el proveedor correcto leyendo cfg.embedding.provider y cfg.llm.provider
         self._embedder = EmbeddingProviderFactory.create(cfg)
@@ -67,6 +75,16 @@ class AgentContainer:
             embedder=self._embedder,
             skills=self._skills,
             history=self._history,
+            tools=self._tools,
+            agent_config=cfg,
+        )
+
+        # Every agent gets a one-shot use case unconditionally so it can always
+        # be a delegation target, regardless of whether it can INITIATE delegation.
+        # (REQ-DG-1 still holds: the `delegate` tool is only registered when
+        # delegation.enabled=True — see wire_delegation.)
+        self.run_agent_one_shot = RunAgentOneShotUseCase(
+            llm=self._llm,
             tools=self._tools,
             agent_config=cfg,
         )
@@ -108,6 +126,130 @@ class AgentContainer:
         self._tools.register(ReadFileTool(workspace=workspace_path, containment=ws_cfg.containment))
         self._tools.register(WriteFileTool(workspace=workspace_path, containment=ws_cfg.containment))
         self._tools.register(PatchFileTool(workspace=workspace_path, containment=ws_cfg.containment))
+
+    def wire_delegation(
+        self,
+        get_agent_container: Callable[[str], "AgentContainer | None"],
+    ) -> None:
+        """
+        Phase-2 wiring: registers the delegate tool when delegation is enabled.
+
+        Must be called AFTER all AgentContainers have been constructed (two-phase
+        init in AppContainer) so that get_agent_container can resolve siblings.
+
+        No-op when:
+        - delegation.enabled is False (REQ-DG-1: tool never registered → never in schemas)
+        - called a second time (idempotency guard)
+        """
+        if not self.agent_config.delegation.enabled:
+            return
+
+        if self._delegation_wired:
+            logger.debug(
+                "AgentContainer '%s': wire_delegation ya ejecutado — skipping (idempotent)",
+                self.agent_config.id,
+            )
+            return
+
+        from adapters.outbound.tools.delegate_tool import DelegateTool
+
+        # Build and register the delegate tool.
+        # (run_agent_one_shot is already set in __init__ — no construction here.)
+        delegate_tool = DelegateTool(
+            allowed_targets=self.agent_config.delegation.allowed_targets,
+            get_agent_container=get_agent_container,
+            max_iterations_per_sub=self._global_config.delegation.max_iterations_per_sub,
+            timeout_seconds=self._global_config.delegation.timeout_seconds,
+        )
+        self._tools.register(delegate_tool)
+
+        self._delegation_wired = True
+
+        # -----------------------------------------------------------------------
+        # Task 6.1 — Build agent-discovery section and inject into RunAgentUseCase.
+        #
+        # Enumerate target agents filtered by allowed_targets, then call
+        # self.run_agent.set_extra_system_sections() so that execute() passes the
+        # section via extra_sections when building the system prompt.
+        #
+        # Rules:
+        # - allowed_targets == [] → all targets from get_agent_container are unknown
+        #   at wiring time (closure resolves at call time, not here).  We resolve
+        #   them NOW from the closure to build the discovery section eagerly.
+        # - If a target_id resolves to None → skip silently (log at debug level).
+        # - If no targets can be resolved → do NOT set extra sections (empty header
+        #   must not appear).
+        # - The section is PARENT-SIDE ONLY. RunAgentOneShotUseCase (child path)
+        #   is NEVER passed extra_sections — it has no _extra_system_sections attr.
+        # -----------------------------------------------------------------------
+        discovery_section = self._build_discovery_section(get_agent_container)
+        if discovery_section:
+            self.run_agent.set_extra_system_sections([discovery_section])
+            logger.debug(
+                "AgentContainer '%s': agent-discovery section injected into run_agent",
+                self.agent_config.id,
+            )
+
+        logger.info(
+            "AgentContainer '%s': delegation wired (allowed_targets=%s)",
+            self.agent_config.id,
+            self.agent_config.delegation.allowed_targets or "<all>",
+        )
+
+    def _build_discovery_section(
+        self,
+        get_agent_container: Callable[[str], "AgentContainer | None"],
+    ) -> str:
+        """
+        Build a human-readable section listing available delegation targets.
+
+        Returns an empty string when:
+        - allowed_targets is empty (no targets configured)
+        - all configured targets resolve to None (unknown agents)
+
+        Format (REQ-DG-7 / task 6.1):
+
+            # Available agents for delegation
+
+            You can delegate tasks to the following agents via the `delegate` tool:
+
+            - **<id>** — <description>.
+              Tools: <tool1>, <tool2>, ...
+        """
+        target_ids = self.agent_config.delegation.allowed_targets
+
+        if not target_ids:
+            # No explicit allow-list → no discovery section (cannot enumerate without targets)
+            return ""
+
+        lines: list[str] = []
+        for target_id in target_ids:
+            target_container = get_agent_container(target_id)
+            if target_container is None:
+                logger.debug(
+                    "AgentContainer '%s': target '%s' not found in registry — skipping in discovery",
+                    self.agent_config.id,
+                    target_id,
+                )
+                continue
+
+            description = target_container.agent_config.description
+            # Collect tool names from the target's registry (all registered tools)
+            tool_names = list(target_container._tools._tools.keys())
+            tool_list = ", ".join(tool_names) if tool_names else "(no tools)"
+
+            lines.append(f"- **{target_id}** — {description}.")
+            lines.append(f"  Tools: {tool_list}")
+
+        if not lines:
+            # All targets were unknown — do not emit an empty header
+            return ""
+
+        header = (
+            "# Available agents for delegation\n\n"
+            "You can delegate tasks to the following agents via the `delegate` tool:\n"
+        )
+        return "\n" + header + "\n" + "\n".join(lines)
 
     def _register_extensions(self, ext_dirs: list[str]) -> None:
         """
@@ -198,6 +340,7 @@ class AppContainer:
         self.registry = registry
         self.agents: dict[str, AgentContainer] = {}
 
+        # Phase 1: build all AgentContainers (existing loop, unchanged)
         for agent_cfg in registry.list_all():
             try:
                 self.agents[agent_cfg.id] = AgentContainer(agent_cfg, global_config)
@@ -205,6 +348,19 @@ class AppContainer:
             except Exception as exc:
                 logger.error(
                     "Error creando container para agente '%s': %s", agent_cfg.id, exc
+                )
+
+        # Phase 2: wire delegation AFTER all containers are built so that the
+        # get_agent_container closure can resolve any sibling (two-phase init).
+        def _get_agent_container(agent_id: str) -> "AgentContainer | None":
+            return self.agents.get(agent_id)
+
+        for agent_id, container in self.agents.items():
+            try:
+                container.wire_delegation(_get_agent_container)
+            except Exception as exc:
+                logger.error(
+                    "Error en wire_delegation para agente '%s': %s", agent_id, exc
                 )
 
         # Global consolidation use case — itera agentes habilitados con delay

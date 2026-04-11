@@ -19,7 +19,6 @@ Regla de secrets: si el agente no define un secret, hereda del global.
 from __future__ import annotations
 
 import logging
-import warnings
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -158,6 +157,20 @@ class WorkspaceConfig(BaseModel):
         object.__setattr__(self, "path", str(Path(self.path).expanduser()))
 
 
+class DelegationConfig(BaseModel):
+    """Config global de delegación (aplica a todos los agentes como valores por defecto)."""
+
+    max_iterations_per_sub: int = 10
+    timeout_seconds: int = 60
+
+
+class AgentDelegationConfig(BaseModel):
+    """Config de delegación por agente."""
+
+    enabled: bool = False
+    allowed_targets: list[str] = []
+
+
 # ---------------------------------------------------------------------------
 # AgentConfig — config completa y resuelta para un agente
 # ---------------------------------------------------------------------------
@@ -174,6 +187,7 @@ class AgentConfig(BaseModel):
     skills: SkillsConfig = SkillsConfig()
     tools: ToolsConfig = ToolsConfig()
     workspace: WorkspaceConfig = WorkspaceConfig()
+    delegation: AgentDelegationConfig = AgentDelegationConfig()
     channels: dict[str, dict[str, Any]] = {}
 
 
@@ -191,6 +205,7 @@ class GlobalConfig(BaseModel):
     tools: ToolsConfig = ToolsConfig()
     scheduler: SchedulerConfig = SchedulerConfig()
     workspace: WorkspaceConfig = WorkspaceConfig()
+    delegation: DelegationConfig = DelegationConfig()
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +281,25 @@ _SECRETS_YAML_HEADER = """\
 """
 
 
+_DELEGATION_SECTION_COMMENT = """\
+
+# -----------------------------------------------------------------------------
+# [delegation] — Delegación agente-a-agente (defaults globales)
+# -----------------------------------------------------------------------------
+#
+# Controla los valores por defecto para la ejecución de sub-agentes delegados.
+# Per-agent `delegation.enabled: true` y `allowed_targets: [...]` siguen siendo
+# necesarios en cada agents/{id}.yaml para habilitar la delegación en ese agente.
+#
+# Nota: NO existe campo `max_depth` — la prevención de recursión es estructural
+# (el tool `delegate` se filtra automáticamente de los schemas del sub-agente).
+#
+# delegation:
+#   max_iterations_per_sub: 10   # máx. iteraciones del tool-loop por llamada delegada
+#   timeout_seconds: 60          # presupuesto de reloj por llamada delegada (asyncio.wait_for)
+"""
+
+
 def _render_default_global_yaml() -> str:
     """Serializa los defaults de las clases Pydantic como YAML con header."""
     mem = MemoryConfig().model_dump()
@@ -283,7 +317,7 @@ def _render_default_global_yaml() -> str:
         "workspace": WorkspaceConfig().model_dump(),
     }
     body = yaml.safe_dump(defaults, sort_keys=False, default_flow_style=False)
-    return _GLOBAL_YAML_HEADER + body
+    return _GLOBAL_YAML_HEADER + body + _DELEGATION_SECTION_COMMENT
 
 
 def ensure_user_config(config_dir: Path, agents_dir: Path) -> None:
@@ -346,6 +380,7 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
     tools = ToolsConfig(**merged.get("tools", {}))
     scheduler = SchedulerConfig(**merged.get("scheduler", {}))
     workspace = WorkspaceConfig(**merged.get("workspace", {}))
+    delegation = DelegationConfig(**merged.get("delegation", {}))
 
     global_cfg = GlobalConfig(
         app=app,
@@ -357,6 +392,7 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
         tools=tools,
         scheduler=scheduler,
         workspace=workspace,
+        delegation=delegation,
     )
     return global_cfg, merged
 
@@ -407,6 +443,7 @@ def load_agent_config(
             skills=SkillsConfig(**merged.get("skills", {})),
             tools=ToolsConfig(**merged.get("tools", {})),
             workspace=WorkspaceConfig(**merged.get("workspace", {})),
+            delegation=AgentDelegationConfig(**merged.get("delegation", {})),
             channels=merged.get("channels", {}),
         )
     except (KeyError, ValueError) as exc:

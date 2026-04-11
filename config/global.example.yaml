@@ -210,6 +210,22 @@ workspace:
                               #              local — NO usar en producción.
 
 
+# -----------------------------------------------------------------------------
+# [delegation] — Delegación agente-a-agente (defaults globales)
+# -----------------------------------------------------------------------------
+#
+# Controla los valores por defecto para la ejecución de sub-agentes delegados.
+# Per-agent `delegation.enabled: true` y `allowed_targets: [...]` siguen siendo
+# necesarios en cada agents/{id}.yaml para habilitar la delegación en ese agente.
+#
+# Nota: NO existe campo `max_depth` — la prevención de recursión es estructural
+# (el tool `delegate` se filtra automáticamente de los schemas del sub-agente).
+#
+# delegation:
+#   max_iterations_per_sub: 10   # máx. iteraciones del tool-loop por llamada delegada
+#   timeout_seconds: 60          # presupuesto de reloj por llamada delegada (asyncio.wait_for)
+
+
 # =============================================================================
 # CONFIGURACIÓN POR AGENTE — config/agents/{id}.yaml
 # =============================================================================

@@ -22,12 +22,15 @@ from typing import Optional
 
 import typer
 
+from adapters.inbound.cli.scheduler_cli import scheduler_app
+
 app = typer.Typer(
     name="inaki",
     help="Iñaki — asistente personal agentico",
     invoke_without_command=True,
     no_args_is_help=False,
 )
+app.add_typer(scheduler_app, name="scheduler", help="Manage scheduled tasks")
 
 
 def _get_config_dir() -> Path:

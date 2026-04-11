@@ -31,6 +31,7 @@ class ScheduleTaskUseCase(ISchedulerUseCase):
         return created
 
     async def delete_task(self, task_id: int) -> None:
+        await self.get_task(task_id)
         if task_id < 100:
             raise BuiltinTaskProtectedError(
                 f"Task {task_id} is a builtin and cannot be deleted."
@@ -39,10 +40,12 @@ class ScheduleTaskUseCase(ISchedulerUseCase):
         self._on_mutation()
 
     async def enable_task(self, task_id: int) -> None:
+        await self.get_task(task_id)
         await self._repo.update_status(task_id, TaskStatus.PENDING)
         self._on_mutation()
 
     async def disable_task(self, task_id: int) -> None:
+        await self.get_task(task_id)
         await self._repo.update_status(task_id, TaskStatus.DISABLED)
         self._on_mutation()
 

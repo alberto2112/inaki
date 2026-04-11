@@ -9,7 +9,7 @@ import pytest
 
 from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRepo
 from core.domain.entities.task import (
-    CliCommandPayload,
+    ConsolidateMemoryPayload,
     ScheduledTask,
     TaskKind,
     TaskStatus,
@@ -22,8 +22,8 @@ def _make_task(name: str = "task", next_run: datetime | None = None) -> Schedule
         id=0,
         name=name,
         task_kind=TaskKind.ONESHOT,
-        trigger_type=TriggerType.CLI_COMMAND,
-        trigger_payload=CliCommandPayload(args=["--test"]),
+        trigger_type=TriggerType.CONSOLIDATE_MEMORY,
+        trigger_payload=ConsolidateMemoryPayload(),
         schedule="2025-01-01T03:00:00+00:00",
         next_run=next_run,
     )
@@ -34,8 +34,8 @@ def _make_builtin() -> ScheduledTask:
         id=1,
         name="builtin_task",
         task_kind=TaskKind.RECURRENT,
-        trigger_type=TriggerType.CLI_COMMAND,
-        trigger_payload=CliCommandPayload(args=["--consolidate"]),
+        trigger_type=TriggerType.CONSOLIDATE_MEMORY,
+        trigger_payload=ConsolidateMemoryPayload(),
         schedule="0 3 * * *",
     )
 
@@ -84,6 +84,24 @@ async def test_seed_builtin_idempotent(repo: SQLiteSchedulerRepo) -> None:
     tasks = await repo.list_tasks()
     builtin_tasks = [t for t in tasks if t.id == 1]
     assert len(builtin_tasks) == 1
+
+
+async def test_seed_builtin_computes_next_run_for_recurrent(repo: SQLiteSchedulerRepo) -> None:
+    """
+    Regresión: un builtin RECURRENT sin next_run se sembraba con NULL y
+    nunca lo veía list_due_pending. seed_builtin debe calcularlo vía croniter.
+    """
+    builtin = _make_builtin()
+    assert builtin.next_run is None  # precondición del caso de uso
+
+    await repo.seed_builtin(builtin)
+
+    saved = await repo.get_task(1)
+    assert saved is not None
+    assert saved.next_run is not None
+    # Debe ser estrictamente futuro desde "ahora"
+    now = datetime.now(timezone.utc)
+    assert saved.next_run > now
 
 
 # ---------------------------------------------------------------------------

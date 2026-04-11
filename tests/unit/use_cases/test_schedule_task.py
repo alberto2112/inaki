@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from core.domain.entities.task import (
-    CliCommandPayload,
+    ConsolidateMemoryPayload,
     ScheduledTask,
     TaskKind,
     TaskStatus,
@@ -22,8 +22,8 @@ def _make_task(task_id: int = 0) -> ScheduledTask:
         id=task_id,
         name="test-task",
         task_kind=TaskKind.ONESHOT,
-        trigger_type=TriggerType.CLI_COMMAND,
-        trigger_payload=CliCommandPayload(args=["--hello"]),
+        trigger_type=TriggerType.CONSOLIDATE_MEMORY,
+        trigger_payload=ConsolidateMemoryPayload(),
         schedule="2025-01-01T03:00:00+00:00",
     )
 

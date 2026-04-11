@@ -22,7 +22,7 @@ class FakeEmbedder:
 def _make_container(tmp_path: Path) -> AgentContainer:
     container = AgentContainer.__new__(AgentContainer)
     container._tools = ToolRegistry(embedder=FakeEmbedder())
-    container._skills = YamlSkillRepository(str(tmp_path / "skills"), FakeEmbedder())
+    container._skills = YamlSkillRepository(FakeEmbedder())
     return container
 
 

@@ -3,9 +3,9 @@ RunAgentUseCase — orquesta un turno completo de conversación.
 
 Flujo completo:
   1. Cargar historial del agente
-  2. Generar embedding del input del usuario
-  3. Recuperar memorias relevantes (RAG)
-  4. Recuperar skills relevantes (RAG)
+  2. Leer digest markdown de memoria
+  3. Listar skills y tools disponibles
+  4. Si RAG activo: generar embedding y filtrar skills/tools relevantes
   5. Construir AgentContext y system prompt dinámico
   6. Llamar al LLM con historial + tools disponibles
   7. Si el LLM devuelve tool calls → ejecutar tools, añadir resultados, rellamar LLM
@@ -21,7 +21,6 @@ import json
 import logging
 from dataclasses import dataclass, field
 
-from core.domain.entities.memory import MemoryEntry
 from core.domain.entities.message import Message, Role
 from core.domain.entities.skill import Skill
 from core.domain.value_objects.agent_context import AgentContext
@@ -38,7 +37,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class InspectResult:
     user_input: str
-    memories: list[MemoryEntry]
+    memory_digest: str
     all_skills: list[Skill]
     selected_skills: list[Skill]
     skills_rag_active: bool
@@ -68,45 +67,48 @@ class RunAgentUseCase:
         self._tools = tools
         self._cfg = agent_config
 
+    def _read_digest(self) -> str:
+        """Lee el digest markdown. Retorna '' si no existe o falla la lectura."""
+        path = self._cfg.memory.digest_path  # already an expanded Path (validator)
+        try:
+            return path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            logger.debug("Digest no encontrado en %s — primera vez o sin consolidate", path)
+            return ""
+        except UnicodeDecodeError as exc:
+            logger.warning("Digest %s con encoding inválido, ignorando: %s", path, exc)
+            return ""
+        except OSError as exc:
+            logger.warning("No se pudo leer el digest %s: %s", path, exc)
+            return ""
+
     async def execute(self, user_input: str) -> str:
         agent_id = self._cfg.id
-        top_k = self._cfg.memory.default_top_k
 
-        # 1. Cargar historial (ventana en memoria si max_messages_in_prompt > 0)
         history = await self._history.load(agent_id)
-
-        # 2-4. RAG: embedding + memoria + skills
-        query_vec = await self._embedder.embed_query(user_input)
-        memories = await self._memory.search(query_vec, top_k=top_k)
+        digest_text = self._read_digest()
         all_skills = await self._skills.list_all()
-        if len(all_skills) > self._cfg.skills.rag_min_skills:
-            retrieved_skills = await self._skills.retrieve(query_vec, top_k=self._cfg.skills.rag_top_k)
-        else:
-            retrieved_skills = all_skills
+        all_schemas = self._tools.get_schemas()
+        skills_rag_active = len(all_skills) > self._cfg.skills.rag_min_skills
+        tools_rag_active = len(all_schemas) > self._cfg.tools.rag_min_tools
+        retrieved_skills: list[Skill] = all_skills
+        tool_schemas: list[dict] = all_schemas
 
-        # 5. Construir context y system prompt
-        context = AgentContext(
-            agent_id=agent_id,
-            memories=memories,
-            skills=retrieved_skills,
-        )
+        if skills_rag_active or tools_rag_active:
+            query_vec = await self._embedder.embed_query(user_input)
+            if skills_rag_active:
+                retrieved_skills = await self._skills.retrieve(query_vec, top_k=self._cfg.skills.rag_top_k)
+            if tools_rag_active:
+                tool_schemas = await self._tools.get_schemas_relevant(query_vec, top_k=self._cfg.tools.rag_top_k)
+
+        context = AgentContext(agent_id=agent_id, memory_digest=digest_text, skills=retrieved_skills)
         system_prompt = context.build_system_prompt(self._cfg.system_prompt)
 
-        # Mensaje del usuario
         user_msg = Message(role=Role.USER, content=user_input)
         messages = history + [user_msg]
 
-        # 6-7. LLM con loop de tool calls
-        all_schemas = self._tools.get_schemas()
-        if len(all_schemas) > self._cfg.tools.rag_min_tools:
-            tool_schemas = await self._tools.get_schemas_relevant(
-                query_vec, top_k=self._cfg.tools.rag_top_k
-            )
-        else:
-            tool_schemas = all_schemas
         response = await self._run_with_tools(messages, system_prompt, tool_schemas)
 
-        # 8. Persistir en historial (solo user y assistant)
         await self._history.append(agent_id, user_msg)
         await self._history.append(agent_id, Message(role=Role.ASSISTANT, content=response))
 
@@ -117,36 +119,27 @@ class RunAgentUseCase:
         Corre el pipeline RAG completo sin llamar al LLM ni persistir historial.
         Útil para debuggear qué ve el LLM en cada turno.
         """
-        top_k = self._cfg.memory.default_top_k
-
-        query_vec = await self._embedder.embed_query(user_input)
-        memories = await self._memory.search(query_vec, top_k=top_k)
+        digest_text = self._read_digest()
         all_skills = await self._skills.list_all()
-        skills_rag_active = len(all_skills) > self._cfg.skills.rag_min_skills
-        if skills_rag_active:
-            retrieved_skills = await self._skills.retrieve(query_vec, top_k=self._cfg.skills.rag_top_k)
-        else:
-            retrieved_skills = all_skills
-
-        context = AgentContext(
-            agent_id=self._cfg.id,
-            memories=memories,
-            skills=retrieved_skills,
-        )
-        system_prompt = context.build_system_prompt(self._cfg.system_prompt)
-
         all_schemas = self._tools.get_schemas()
+        skills_rag_active = len(all_skills) > self._cfg.skills.rag_min_skills
         tools_rag_active = len(all_schemas) > self._cfg.tools.rag_min_tools
-        if tools_rag_active:
-            selected_schemas = await self._tools.get_schemas_relevant(
-                query_vec, top_k=self._cfg.tools.rag_top_k
-            )
-        else:
-            selected_schemas = all_schemas
+        retrieved_skills: list[Skill] = all_skills
+        selected_schemas: list[dict] = all_schemas
+
+        if skills_rag_active or tools_rag_active:
+            query_vec = await self._embedder.embed_query(user_input)
+            if skills_rag_active:
+                retrieved_skills = await self._skills.retrieve(query_vec, top_k=self._cfg.skills.rag_top_k)
+            if tools_rag_active:
+                selected_schemas = await self._tools.get_schemas_relevant(query_vec, top_k=self._cfg.tools.rag_top_k)
+
+        context = AgentContext(agent_id=self._cfg.id, memory_digest=digest_text, skills=retrieved_skills)
+        system_prompt = context.build_system_prompt(self._cfg.system_prompt)
 
         return InspectResult(
             user_input=user_input,
-            memories=memories,
+            memory_digest=digest_text,
             all_skills=all_skills,
             selected_skills=retrieved_skills,
             skills_rag_active=skills_rag_active,
@@ -166,8 +159,16 @@ class RunAgentUseCase:
         Loop de tool calls: llama al LLM, ejecuta tools si las pide,
         añade los resultados y relama hasta obtener respuesta final o
         alcanzar el máximo de iteraciones.
+
+        Incluye un circuit breaker por tool dentro del mismo turno: si una tool
+        falla `circuit_breaker_threshold` veces, sucesivas llamadas a esa tool
+        retornan inmediatamente sin ejecutarse y se le informa al LLM que corte
+        los reintentos.
         """
         working_messages = list(messages)
+        failure_counts: dict[str, int] = {}
+        tripped: set[str] = set()
+        threshold = self._cfg.tools.circuit_breaker_threshold
 
         for iteration in range(self._cfg.tools.tool_call_max_iterations):
             raw = await self._llm.complete(
@@ -176,12 +177,10 @@ class RunAgentUseCase:
                 tools=tool_schemas if tool_schemas else None,
             )
 
-            # Verificar si la respuesta contiene tool calls
             tool_calls = self._extract_tool_calls(raw)
             if not tool_calls:
-                return raw  # Respuesta final de texto
+                return raw
 
-            # Ejecutar tools y acumular resultados
             tool_results = []
             for tc in tool_calls:
                 tool_name = tc.get("function", {}).get("name", "")
@@ -191,11 +190,33 @@ class RunAgentUseCase:
                 except json.JSONDecodeError:
                     kwargs = {}
 
+                if tool_name in tripped:
+                    logger.warning(
+                        "Circuit breaker abierto para '%s' — llamada bloqueada", tool_name
+                    )
+                    tool_results.append(
+                        f"[{tool_name}]: CIRCUIT OPEN — esta tool ya falló "
+                        f"{threshold} vez/veces en este turno. NO la vuelvas a llamar. "
+                        "Respondé al usuario con lo que sabés, o pedile ayuda para resolver el bloqueo."
+                    )
+                    continue
+
                 result = await self._tools.execute(tool_name, **kwargs)
                 tool_results.append(f"[{tool_name}]: {result.output}")
                 logger.debug("Tool '%s' ejecutada: success=%s", tool_name, result.success)
 
-            # Añadir resultados como mensaje del sistema para el siguiente turno
+                if result.success:
+                    failure_counts[tool_name] = 0
+                else:
+                    failure_counts[tool_name] = failure_counts.get(tool_name, 0) + 1
+                    if failure_counts[tool_name] >= threshold:
+                        tripped.add(tool_name)
+                        logger.warning(
+                            "Circuit breaker DISPARADO para '%s' tras %d fallos",
+                            tool_name,
+                            failure_counts[tool_name],
+                        )
+
             results_summary = "\n".join(tool_results)
             working_messages.append(
                 Message(role=Role.USER, content=f"[Resultados de tools]\n{results_summary}")

@@ -1,6 +1,10 @@
 """
 YamlSkillRepository — carga skills desde YAML y las recupera via cosine similarity.
 
+Las skills se registran exclusivamente vía `add_file()`, invocado por los
+manifest.py de las extensiones del usuario. No hay skills built-in ni directorio
+base — el core no define saber de dominio.
+
 Estructura esperada de cada skill YAML:
   id: "web_search"
   name: "Búsqueda Web"
@@ -39,8 +43,7 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
 
 class YamlSkillRepository(ISkillRepository):
 
-    def __init__(self, skills_dir: str, embedder: IEmbeddingProvider) -> None:
-        self._skills_dir = Path(skills_dir)
+    def __init__(self, embedder: IEmbeddingProvider) -> None:
         self._embedder = embedder
         self._extra_files: list[Path] = []
         self._skills: list[Skill] = []
@@ -48,7 +51,7 @@ class YamlSkillRepository(ISkillRepository):
         self._loaded = False
 
     def add_file(self, path: Path) -> None:
-        """Registra un YAML de skill adicional fuera de skills_dir. Invalida cache."""
+        """Registra un YAML de skill. Invalida cache."""
         path = Path(path).resolve()
         if path in [p.resolve() for p in self._extra_files]:
             return
@@ -82,21 +85,9 @@ class YamlSkillRepository(ISkillRepository):
         self._embeddings = []
         seen: set[Path] = set()
 
-        # 1. Directorio base (built-ins)
-        if self._skills_dir.exists():
-            for yaml_file in sorted(self._skills_dir.rglob("*.yaml")):
-                resolved = yaml_file.resolve()
-                if resolved not in seen:
-                    seen.add(resolved)
-                    await self._load_skill_from_path(yaml_file)
-        else:
-            logger.warning("Directorio de skills no encontrado: %s", self._skills_dir)
-
-        # 2. Archivos extra (desde extensiones)
         for extra in self._extra_files:
             resolved = extra.resolve()
             if resolved in seen:
-                logger.debug("Skill extra ya cargada: %s", extra)
                 continue
             seen.add(resolved)
             await self._load_skill_from_path(extra)

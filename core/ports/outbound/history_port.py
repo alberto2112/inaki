@@ -14,15 +14,44 @@ class IHistoryStore(ABC):
 
     @abstractmethod
     async def load_full(self, agent_id: str) -> list[Message]:
-        """Retorna el historial completo activo. Usar solo para consolidación."""
+        """Retorna el historial completo activo."""
         ...
 
     @abstractmethod
-    async def archive(self, agent_id: str) -> str:
-        """Marca el historial activo como archivado. Retorna una cadena de confirmación (no es una ruta de filesystem)."""
+    async def load_uninfused(self, agent_id: str) -> list[Message]:
+        """
+        Retorna los mensajes que aún no han pasado por el extractor de recuerdos
+        (flag `infused=0`). Usado por la consolidación para evitar re-extraer
+        hechos de mensajes ya procesados que siguen vivos en el buffer por el
+        trim (keep_last).
+        """
+        ...
+
+    @abstractmethod
+    async def mark_infused(self, agent_id: str) -> int:
+        """
+        Marca todos los mensajes del agente con `infused=1`. Retorna el número
+        de filas afectadas. Se llama tras una extracción exitosa, antes del
+        trim, para que las siguientes corridas no vuelvan a procesar las
+        mismas filas.
+        """
+        ...
+
+    @abstractmethod
+    async def trim(self, agent_id: str, keep_last: int) -> None:
+        """
+        Borra todos los mensajes del agente salvo los N más recientes.
+
+        Se llama tras una consolidación exitosa: los recuerdos relevantes ya
+        están extraídos al storage vectorial, pero preservamos los últimos N
+        mensajes como contexto inmediato para el próximo turno.
+
+        Si `keep_last <= 0` no borra nada (no-op defensivo).
+        Si el agente tiene menos mensajes que `keep_last`, tampoco borra.
+        """
         ...
 
     @abstractmethod
     async def clear(self, agent_id: str) -> None:
-        """Elimina el historial activo (usar tras archivar)."""
+        """Elimina todo el historial del agente. Usado por el slash `/clear`."""
         ...

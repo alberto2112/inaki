@@ -61,8 +61,11 @@ def mock_skills() -> AsyncMock:
 def mock_history() -> AsyncMock:
     history = AsyncMock()
     history.load.return_value = []
+    history.load_full.return_value = []
+    history.load_uninfused.return_value = []
     history.append.return_value = None
-    history.archive.return_value = "Historial de 'test' archivado."
+    history.mark_infused.return_value = 0
+    history.trim.return_value = None
     history.clear.return_value = None
     return history
 

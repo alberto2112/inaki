@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from core.ports.outbound.llm_dispatcher_port import ILLMDispatcher
+from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
 
 
 class ChannelSenderAdapter:
@@ -37,7 +38,18 @@ class LLMDispatcherAdapter:
         return await agent.run_agent.run(prompt or "", tools_override=tools_override)
 
 
+class ConsolidationDispatchAdapter:
+    """Thin wrapper so the scheduler service doesn't import the use case directly."""
+
+    def __init__(self, use_case: ConsolidateAllAgentsUseCase) -> None:
+        self._uc = use_case
+
+    async def consolidate_all(self) -> str:
+        return await self._uc.execute()
+
+
 @dataclass
 class SchedulerDispatchPorts:
     channel_sender: ChannelSenderAdapter
     llm_dispatcher: ILLMDispatcher
+    consolidator: ConsolidationDispatchAdapter

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 from contextlib import suppress
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -22,7 +21,7 @@ from croniter import croniter
 from core.domain.entities.task import (
     AgentSendPayload,
     ChannelSendPayload,
-    CliCommandPayload,
+    ConsolidateMemoryPayload,
     ScheduledTask,
     ShellExecPayload,
     TaskKind,
@@ -46,12 +45,10 @@ class SchedulerService:
         repo: ISchedulerRepository,
         dispatch: SchedulerDispatchPorts,
         config: SchedulerConfig,
-        builtin_tasks: list[ScheduledTask] | None = None,
     ) -> None:
         self._repo = repo
         self._dispatch = dispatch
         self._config = config
-        self._builtin_tasks: list[ScheduledTask] = builtin_tasks or []
         self._wake = asyncio.Event()
         self._task: asyncio.Task | None = None
 
@@ -61,8 +58,6 @@ class SchedulerService:
 
     async def start(self) -> None:
         await self._repo.ensure_schema()
-        for builtin in self._builtin_tasks:
-            await self._repo.seed_builtin(builtin)
         await self._handle_missed_on_startup()
         self._task = asyncio.create_task(self._loop(), name="scheduler-loop")
 
@@ -216,8 +211,8 @@ class SchedulerService:
             return result
         elif isinstance(payload, ShellExecPayload):
             return await self._run_shell(payload)
-        elif isinstance(payload, CliCommandPayload):
-            return await self._run_cli(payload)
+        elif isinstance(payload, ConsolidateMemoryPayload):
+            return await self._dispatch.consolidator.consolidate_all()
         else:
             raise InvalidTriggerTypeError(f"Unknown payload type: {type(payload)}")
 
@@ -235,17 +230,4 @@ class SchedulerService:
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         if proc.returncode != 0:
             raise RuntimeError(f"shell_exec exited with code {proc.returncode}")
-        return stdout.decode(errors="replace")
-
-    async def _run_cli(self, payload: CliCommandPayload) -> str:
-        cmd = [sys.executable, "-m", "interface.cli"] + payload.args
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        timeout = payload.timeout or 600
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        if proc.returncode != 0:
-            raise RuntimeError(f"cli_command exited with code {proc.returncode}")
         return stdout.decode(errors="replace")

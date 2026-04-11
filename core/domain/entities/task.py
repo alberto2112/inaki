@@ -16,7 +16,7 @@ class TriggerType(str, Enum):
     CHANNEL_SEND = "channel_send"
     AGENT_SEND = "agent_send"
     SHELL_EXEC = "shell_exec"
-    CLI_COMMAND = "cli_command"
+    CONSOLIDATE_MEMORY = "consolidate_memory"
 
 
 class TaskStatus(str, Enum):
@@ -54,14 +54,18 @@ class ShellExecPayload(BaseModel):
     timeout: int | None = None
 
 
-class CliCommandPayload(BaseModel):
-    type: Literal["cli_command"] = "cli_command"
-    args: list[str]
-    timeout: int | None = None
+class ConsolidateMemoryPayload(BaseModel):
+    """
+    Triggers the global memory consolidation across all enabled agents.
+
+    No fields — the consolidator reads the agent registry at runtime and
+    iterates every agent whose `memory.enabled` flag is true.
+    """
+    type: Literal["consolidate_memory"] = "consolidate_memory"
 
 
 TriggerPayload = Annotated[
-    ChannelSendPayload | AgentSendPayload | ShellExecPayload | CliCommandPayload,
+    ChannelSendPayload | AgentSendPayload | ShellExecPayload | ConsolidateMemoryPayload,
     Field(discriminator="type"),
 ]
 

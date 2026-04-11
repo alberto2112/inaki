@@ -12,7 +12,7 @@ from freezegun import freeze_time
 from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRepo
 from core.domain.entities.task import (
     AgentSendPayload,
-    CliCommandPayload,
+    ConsolidateMemoryPayload,
     ScheduledTask,
     TaskKind,
     TaskStatus,
@@ -32,6 +32,8 @@ def _make_dispatch(llm_output: str = "agent-result") -> MagicMock:
     dispatch = MagicMock()
     dispatch.channel_sender = AsyncMock()
     dispatch.llm_dispatcher = AsyncMock(return_value=llm_output)
+    dispatch.consolidator = AsyncMock()
+    dispatch.consolidator.consolidate_all = AsyncMock(return_value="ok")
     return dispatch
 
 
@@ -61,8 +63,8 @@ def _oneshot_past() -> ScheduledTask:
         id=0,
         name="oneshot",
         task_kind=TaskKind.ONESHOT,
-        trigger_type=TriggerType.CLI_COMMAND,
-        trigger_payload=CliCommandPayload(args=["--test"]),
+        trigger_type=TriggerType.CONSOLIDATE_MEMORY,
+        trigger_payload=ConsolidateMemoryPayload(),
         schedule="2025-06-01T10:00:00+00:00",
         next_run=datetime(2025, 6, 1, 10, 0, 0, tzinfo=timezone.utc),
     )
@@ -73,8 +75,8 @@ def _recurrent_past(executions_remaining: int | None = None) -> ScheduledTask:
         id=0,
         name="recurrent",
         task_kind=TaskKind.RECURRENT,
-        trigger_type=TriggerType.CLI_COMMAND,
-        trigger_payload=CliCommandPayload(args=["--test"]),
+        trigger_type=TriggerType.CONSOLIDATE_MEMORY,
+        trigger_payload=ConsolidateMemoryPayload(),
         schedule="0 * * * *",  # every hour
         next_run=datetime(2025, 6, 1, 10, 0, 0, tzinfo=timezone.utc),
         executions_remaining=executions_remaining,

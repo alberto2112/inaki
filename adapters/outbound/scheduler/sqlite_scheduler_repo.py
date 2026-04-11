@@ -16,9 +16,10 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 import aiosqlite
-from pydantic import TypeAdapter
+from croniter import croniter
+from pydantic import TypeAdapter, ValidationError
 
-from core.domain.entities.task import ScheduledTask, TaskStatus, TriggerPayload
+from core.domain.entities.task import ScheduledTask, TaskKind, TaskStatus, TriggerPayload
 from core.domain.entities.task_log import TaskLog
 
 logger = logging.getLogger(__name__)
@@ -176,6 +177,15 @@ class SQLiteSchedulerRepo:
                 return task
 
     async def get_task(self, task_id: int) -> ScheduledTask | None:
+        """
+        Devuelve la tarea o None si no existe.
+
+        IMPORTANTE: si la fila tiene payload indeserializable (schema viejo,
+        enum removido, etc.) propaga `pydantic.ValidationError`. El caller
+        puede decidir si borrar la fila y reseedar (patrón de reconciliación)
+        o reventar. Para iteraciones masivas usar `list_tasks` que salta
+        las stale con warning.
+        """
         async with self._conn() as conn:
             await self._ensure_schema_conn(conn)
             rows = await conn.execute_fetchall(
@@ -191,7 +201,7 @@ class SQLiteSchedulerRepo:
             rows = await conn.execute_fetchall(
                 "SELECT * FROM scheduled_tasks ORDER BY id ASC"
             )
-        return [self._row_to_task(r) for r in rows]
+        return self._rows_to_tasks_skip_stale(rows)
 
     async def delete_task(self, task_id: int) -> None:
         async with self._conn() as conn:
@@ -200,8 +210,13 @@ class SQLiteSchedulerRepo:
             await conn.commit()
 
     async def get_next_due(self, as_of: datetime) -> ScheduledTask | None:
-        """Returns the enabled pending task with the earliest next_run."""
-        ts = as_of.timestamp()
+        """
+        Returns the enabled pending task with the earliest next_run.
+
+        Salta filas con payload indeserializable (log WARNING) y devuelve la
+        siguiente válida. Así el loop del scheduler no revienta si queda una
+        fila stale que el reconciliador todavía no limpió.
+        """
         async with self._conn() as conn:
             await self._ensure_schema_conn(conn)
             rows = await conn.execute_fetchall(
@@ -209,15 +224,17 @@ class SQLiteSchedulerRepo:
                 SELECT * FROM scheduled_tasks
                 WHERE enabled = 1 AND status = 'pending'
                 ORDER BY next_run ASC NULLS LAST
-                LIMIT 1
                 """,
             )
-        if not rows:
-            return None
-        return self._row_to_task(rows[0])
+        parsed = self._rows_to_tasks_skip_stale(rows)
+        return parsed[0] if parsed else None
 
     async def list_due_pending(self, as_of: datetime) -> list[ScheduledTask]:
-        """Returns all enabled pending tasks whose next_run <= as_of."""
+        """
+        Returns all enabled pending tasks whose next_run <= as_of.
+
+        Salta filas con payload indeserializable con WARNING.
+        """
         ts = as_of.timestamp()
         async with self._conn() as conn:
             await self._ensure_schema_conn(conn)
@@ -229,7 +246,24 @@ class SQLiteSchedulerRepo:
                 """,
                 (ts,),
             )
-        return [self._row_to_task(r) for r in rows]
+        return self._rows_to_tasks_skip_stale(rows)
+
+    def _rows_to_tasks_skip_stale(self, rows) -> list[ScheduledTask]:
+        """
+        Convierte filas a ScheduledTask saltando (con WARNING) las que tengan
+        payload indeserializable por schema stale.
+        """
+        tasks: list[ScheduledTask] = []
+        for row in rows:
+            try:
+                tasks.append(self._row_to_task(row))
+            except ValidationError as exc:
+                logger.warning(
+                    "scheduler_repo: fila id=%s ignorada por payload stale: %s",
+                    row["id"],
+                    exc,
+                )
+        return tasks
 
     async def update_status(self, task_id: int, status: TaskStatus, *, retry_count: int | None = None) -> None:
         async with self._conn() as conn:
@@ -295,9 +329,22 @@ class SQLiteSchedulerRepo:
             return log.model_copy(update={"id": cursor.lastrowid})
 
     async def seed_builtin(self, task: ScheduledTask) -> None:
-        """Insert builtin task only if it doesn't already exist (INSERT OR IGNORE)."""
+        """
+        Insert builtin task only if it doesn't already exist (INSERT OR IGNORE).
+
+        If the task is RECURRENT and `next_run` is None, compute it from the
+        cron schedule so the task is actually due at some point. Otherwise it
+        would sit in the DB with `next_run = NULL` and never be picked up by
+        `list_due_pending` (NULL fails the `next_run <= ?` predicate).
+        """
         payload_json = _serialize_payload(task.trigger_payload)
-        next_run_ts: float | None = task.next_run.timestamp() if task.next_run else None
+        next_run = task.next_run
+        if next_run is None and task.task_kind == TaskKind.RECURRENT:
+            now = datetime.now(timezone.utc)
+            next_run = datetime.fromtimestamp(
+                croniter(task.schedule, now).get_next(), tz=timezone.utc
+            )
+        next_run_ts: float | None = next_run.timestamp() if next_run else None
         async with self._conn() as conn:
             await self._ensure_schema_conn(conn)
             await conn.execute(

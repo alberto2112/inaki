@@ -56,7 +56,7 @@ def _make_container(tmp_path: Path) -> AgentContainer:
     """Crea un AgentContainer con _tools y _skills falsos sin __init__ completo."""
     container = AgentContainer.__new__(AgentContainer)
     container._tools = ToolRegistry(embedder=FakeEmbedder())
-    container._skills = YamlSkillRepository(str(tmp_path / "skills"), FakeEmbedder())
+    container._skills = YamlSkillRepository(FakeEmbedder())
     return container
 
 

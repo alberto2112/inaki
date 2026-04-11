@@ -21,12 +21,30 @@ from __future__ import annotations
 import logging
 import warnings
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import yaml
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, BeforeValidator, field_validator
 
 logger = logging.getLogger(__name__)
+
+
+def _expand_user_str(v: Any) -> Any:
+    """Expand `~` in a string path. Non-strings pass through untouched."""
+    if isinstance(v, str):
+        return str(Path(v).expanduser())
+    return v
+
+
+def _expand_user_list(v: Any) -> Any:
+    """Expand `~` in every string element of a list. Non-lists pass through."""
+    if isinstance(v, list):
+        return [str(Path(x).expanduser()) if isinstance(x, str) else x for x in v]
+    return v
+
+
+ExpandedPath = Annotated[str, BeforeValidator(_expand_user_str)]
+ExpandedPathList = Annotated[list[str], BeforeValidator(_expand_user_list)]
 
 
 # ---------------------------------------------------------------------------
@@ -36,10 +54,9 @@ logger = logging.getLogger(__name__)
 class AppConfig(BaseModel):
     name: str = "Iñaki"
     log_level: str = "INFO"
-    data_dir: str = "data"
-    models_dir: str = "models"
-    skills_dir: str = "skills"
-    ext_dirs: list[str] = ["ext", "~/.inaki/ext"]
+    data_dir: ExpandedPath = "data"
+    models_dir: ExpandedPath = "models"
+    ext_dirs: ExpandedPathList = ["ext", "~/.inaki/ext"]
     default_agent: str = "general"
 
 
@@ -54,26 +71,55 @@ class LLMConfig(BaseModel):
 
 class EmbeddingConfig(BaseModel):
     provider: str = "e5_onnx"
-    model_path: str = "models/e5-small"   # solo e5_onnx
+    model_path: ExpandedPath = "models/e5-small"   # solo e5_onnx
     model: str = "text-embedding-3-small"  # solo openai
     dimension: int = 384
     base_url: str = "https://api.openai.com/v1"  # solo openai
     api_key: str | None = None             # solo openai — en secrets
 
 
+_KEEP_LAST_MESSAGES_FALLBACK = 84
+
+
 class MemoryConfig(BaseModel):
-    db_path: str = "data/inaki.db"
+    db_path: ExpandedPath = "data/inaki.db"
     default_top_k: int = 5
+    digest_size: int = 14
+    digest_path: Path = Path("~/.inaki/mem/last_memories.md")
+    min_relevance_score: float = 0.5
+    schedule: str = "0 3 * * *"
+    delay_seconds: int = 2
+    keep_last_messages: int = 0
+    enabled: bool = True
+
+    @field_validator("digest_path", mode="before")
+    @classmethod
+    def _expand_digest_path(cls, v) -> Path:
+        return Path(v).expanduser()
+
+    def model_post_init(self, __context: object) -> None:
+        # Expand ~ in the default value (field_validator does not run on class defaults)
+        object.__setattr__(self, "digest_path", self.digest_path.expanduser())
+
+    def resolved_keep_last_messages(self) -> int:
+        """
+        Devuelve cuántos mensajes preservar por agente tras la consolidación.
+        0 (default) es un sentinel que significa 'usar el fallback del sistema'
+        ({fallback}). Cualquier valor > 0 se respeta tal cual.
+        """.format(fallback=_KEEP_LAST_MESSAGES_FALLBACK)
+        if self.keep_last_messages <= 0:
+            return _KEEP_LAST_MESSAGES_FALLBACK
+        return self.keep_last_messages
 
 
 class HistoryConfig(BaseModel):
-    db_path: str = "data/history.db"
+    db_path: ExpandedPath = "data/history.db"
     max_messages_in_prompt: int = 0  # 0 = sin límite; N = últimos N mensajes al LLM
 
 
 class SchedulerConfig(BaseModel):
     enabled: bool = True
-    db_path: str = "data/scheduler.db"
+    db_path: ExpandedPath = "data/scheduler.db"
     max_retries: int = 3
     output_truncation_size: int = 65536
 
@@ -87,6 +133,7 @@ class ToolsConfig(BaseModel):
     rag_min_tools: int = 10
     rag_top_k: int = 5
     tool_call_max_iterations: int = 5
+    circuit_breaker_threshold: int = 2
 
 
 # ---------------------------------------------------------------------------
@@ -197,11 +244,14 @@ _SECRETS_YAML_HEADER = """\
 
 def _render_default_global_yaml() -> str:
     """Serializa los defaults de las clases Pydantic como YAML con header."""
+    mem = MemoryConfig().model_dump()
+    # Path no es serializable por yaml.safe_dump — convertir a str
+    mem["digest_path"] = str(mem["digest_path"])
     defaults = {
         "app": AppConfig().model_dump(),
         "llm": LLMConfig().model_dump(exclude={"api_key"}),
         "embedding": EmbeddingConfig().model_dump(exclude={"api_key"}),
-        "memory": MemoryConfig().model_dump(),
+        "memory": mem,
         "history": HistoryConfig().model_dump(),
         "skills": SkillsConfig().model_dump(),
         "tools": ToolsConfig().model_dump(),
@@ -286,7 +336,7 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
 
 def load_agent_config(
     agent_id: str,
-    config_dir: Path,
+    agents_dir: Path,
     global_raw: dict,
 ) -> AgentConfig | None:
     """
@@ -295,7 +345,6 @@ def load_agent_config(
 
     Retorna None si el agente tiene config inválida (loggea WARNING).
     """
-    agents_dir = config_dir / "agents"
     agent_yaml = agents_dir / f"{agent_id}.yaml"
     agent_secrets = agents_dir / f"{agent_id}.secrets.yaml"
 
@@ -343,24 +392,22 @@ def load_agent_config(
 
 class AgentRegistry:
     """
-    Escanea config/agents/ al arrancar y construye el registro de agentes.
+    Escanea el directorio de agentes al arrancar y construye el registro.
     Los agentes con config inválida se omiten con WARNING.
     """
 
-    def __init__(self, config_dir: Path, global_raw: dict) -> None:
+    def __init__(self, agents_dir: Path, global_raw: dict) -> None:
         self._agents: dict[str, AgentConfig] = {}
-        agents_dir = config_dir / "agents"
 
         if not agents_dir.exists():
             logger.warning("Directorio de agentes no encontrado: %s", agents_dir)
             return
 
         for yaml_file in sorted(agents_dir.glob("*.yaml")):
-            # Ignorar .example y .secrets
             if ".secrets" in yaml_file.name or ".example" in yaml_file.name:
                 continue
             agent_id = yaml_file.stem
-            cfg = load_agent_config(agent_id, config_dir, global_raw)
+            cfg = load_agent_config(agent_id, agents_dir, global_raw)
             if cfg is not None:
                 self._agents[agent_id] = cfg
                 logger.debug("Agente '%s' cargado: %s", agent_id, cfg.name)

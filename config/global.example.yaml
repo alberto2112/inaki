@@ -37,9 +37,6 @@ app:
   models_dir: "models"        # Directorio para modelos ONNX locales
                               # Producción Pi 5: "/home/pi/inaki/models"
 
-  skills_dir: "skills"        # Directorio con archivos YAML de skills
-                              # Producción Pi 5: "/home/pi/inaki/skills"
-
   default_agent: "general"    # Agente usado por CLI sin flag --agent
                               # Debe coincidir con un archivo en config/agents/
 
@@ -119,6 +116,51 @@ memory:
                               # Aumentar para más contexto (mayor coste de tokens)
                               # Disminuir para respuestas más rápidas
 
+  digest_size: 14             # Nº de recuerdos más recientes volcados al digest markdown
+                              # tras cada /consolidate. Orden: created_at DESC.
+
+  digest_path: "~/.inaki/mem/last_memories.md"
+                              # Ruta del fichero markdown leído por el prompt builder
+                              # en cada turno. Soporta expansión de ~ (home del usuario).
+                              # Parte del principio user-data-separation: los datos del
+                              # usuario viven fuera del árbol del proyecto.
+                              # Producción Pi 5: "/home/pi/.inaki/mem/last_memories.md"
+
+  min_relevance_score: 0.5    # Umbral mínimo (0.0-1.0) para persistir un recuerdo
+                              # extraído por el LLM. Hechos con relevance < umbral
+                              # se descartan ANTES de generar embeddings (ahorra
+                              # tokens y storage).
+
+  schedule: "0 3 * * *"       # Cron para la consolidación global nocturna
+                              # (una sola tarea que itera todos los agentes).
+                              # Ejemplos:
+                              #   "0 3 * * *"   — todos los días a las 03:00
+                              #   "0 */6 * * *" — cada 6 horas
+                              # Al arrancar el daemon se reconcilia: si cambia
+                              # acá se actualiza la fila en scheduler.db.
+
+  delay_seconds: 2            # Pausa (segundos) entre agente y agente durante
+                              # la consolidación global. Evita golpear el
+                              # rate-limit del proveedor LLM cuando hay varios.
+
+  keep_last_messages: 0       # Mensajes a preservar por agente tras una
+                              # consolidación exitosa. Los recuerdos extraídos
+                              # ya están en la memoria vectorial, pero los
+                              # últimos N mensajes quedan en `history.db` como
+                              # contexto inmediato para el próximo turno.
+                              #
+                              # Sentinel:  0 → usar fallback del sistema (84)
+                              # Cualquier valor > 0 se respeta tal cual.
+                              #
+                              # Sugerencia: mantener keep_last_messages ≥
+                              # history.max_messages_in_prompt, sino el prompt
+                              # builder no tendrá suficientes filas para
+                              # llenar su ventana tras cada consolidación.
+
+  # enabled: true             # Flag PER-AGENT — va en agents/{id}.yaml, NO acá
+                              # Controla si ese agente participa en la
+                              # consolidación nocturna. Default: true.
+
 
 # -----------------------------------------------------------------------------
 # [history] — Historial de conversación a corto plazo (SQLite)
@@ -151,6 +193,11 @@ history:
 # llm:
 #   model: "anthropic/claude-3-5-haiku"
 #   max_tokens: 4096           # Los agentes dev pueden necesitar más tokens para código
+#
+# # Override de memoria — único flag válido per-agent
+# memory:
+#   enabled: true              # Si false, este agente NO entra en la
+#                              # consolidación nocturna global. Default: true.
 #
 # # Canales de comunicación para este agente
 # channels:

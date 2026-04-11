@@ -108,12 +108,8 @@ def print_inspect(result) -> None:
     print(f"  RAG Inspect: \"{result.user_input}\"")
     print(f"{'━' * W}\n")
 
-    print(f"📍 Memorias recuperadas ({len(result.memories)}):")
-    if result.memories:
-        for m in result.memories:
-            print(f"   - {m.content}")
-    else:
-        print("   (ninguna)")
+    print("📍 Digest de memoria:")
+    print(result.memory_digest or "   (sin digest)")
 
     skills_rag_label = (
         f"RAG activo — {len(result.selected_skills)}/{len(result.all_skills)} seleccionadas"

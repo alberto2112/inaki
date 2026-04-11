@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 
 from telegram import Update
+from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 from adapters.inbound.telegram.message_mapper import telegram_update_to_input, format_response
@@ -94,7 +95,9 @@ class TelegramBot:
 
         try:
             response = await self._container.run_agent.execute(user_input)
-            await update.message.reply_text(format_response(response))
+            await update.message.reply_text(
+                format_response(response), parse_mode=ParseMode.HTML
+            )
             if self._reactions:
                 try:
                     await update.message.set_reaction("✅")

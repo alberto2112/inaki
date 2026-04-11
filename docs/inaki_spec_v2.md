@@ -422,7 +422,6 @@ app:
   log_level: "INFO"
   data_dir: "/home/pi/inaki/data"
   models_dir: "/home/pi/inaki/models"
-  skills_dir: "/home/pi/inaki/skills"
   default_agent: "general"       # Agente usado por CLI si no se pasa --agent
 
 llm:
@@ -909,7 +908,7 @@ class AgentContainer:
         self._embedder = EmbeddingProviderFactory.create(cfg)
         self._memory = SQLiteMemoryRepository(cfg.memory.db_path, self._embedder)
         self._llm = LLMProviderFactory.create(cfg)
-        self._skills = YamlSkillRepository(global_config.app.skills_dir, self._embedder)
+        self._skills = YamlSkillRepository(self._embedder)
         self._history = FileHistoryStore(
             active_dir=cfg.history.active_dir,
             archive_dir=cfg.history.archive_dir,

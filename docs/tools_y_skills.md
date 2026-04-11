@@ -137,13 +137,7 @@ Todos los campos son obligatorios. `instructions` admite Markdown.
 
 ### Descubrimiento
 
-`YamlSkillRepository` hace glob sobre `skills_dir/*.yaml` de forma lazy (al primer uso). No requiere registro manual.
-
-```yaml
-# config/global.yaml
-app:
-  skills_dir: "skills"
-```
+`YamlSkillRepository` se carga vía `add_file()` desde los `manifest.py` de las extensiones del usuario (`ext/` local o `~/.inaki/ext/` en producción). El core no define skills built-in: todo saber de dominio vive en extensiones.
 
 ### RAG de skills
 

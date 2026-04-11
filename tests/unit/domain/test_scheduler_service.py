@@ -9,7 +9,7 @@ import pytest
 from freezegun import freeze_time
 
 from core.domain.entities.task import (
-    CliCommandPayload,
+    ConsolidateMemoryPayload,
     ScheduledTask,
     TaskKind,
     TaskStatus,
@@ -34,6 +34,8 @@ def _make_dispatch() -> MagicMock:
     dispatch = MagicMock()
     dispatch.channel_sender = AsyncMock()
     dispatch.llm_dispatcher = AsyncMock()
+    dispatch.consolidator = AsyncMock()
+    dispatch.consolidator.consolidate_all = AsyncMock(return_value="ok")
     return dispatch
 
 
@@ -47,8 +49,8 @@ def _make_task(
         id=task_id,
         name="test",
         task_kind=task_kind,
-        trigger_type=TriggerType.CLI_COMMAND,
-        trigger_payload=CliCommandPayload(args=["--test"]),
+        trigger_type=TriggerType.CONSOLIDATE_MEMORY,
+        trigger_payload=ConsolidateMemoryPayload(),
         schedule="0 3 * * *",
         next_run=next_run,
         executions_remaining=executions_remaining,

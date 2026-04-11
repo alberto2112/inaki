@@ -1,15 +1,25 @@
 """
-ConsolidateMemoryUseCase — extrae recuerdos del historial y lo archiva.
+ConsolidateMemoryUseCase — extrae recuerdos del historial y lo trunca.
 
 Flujo:
-  1. Cargar historial completo del agente
-  2. Enviar historial al LLM con prompt extractor
-  3. El LLM devuelve JSON con lista de recuerdos
-  4. Para cada recuerdo: generar embedding + construir MemoryEntry + persistir
-  5. Si todo OK: archivar historial + clear
-  6. Si falla en cualquier punto: NO archivar, historial intacto
+  1. Cargar mensajes pendientes de procesamiento (`infused = 0`)
+  2. Si no hay pendientes → no-op idempotente (sin trim, sin nada)
+  3. Enviar esos mensajes al LLM con prompt extractor
+  4. El LLM devuelve JSON con lista de recuerdos
+  5. Filtrar hechos por min_relevance_score
+  6. Para cada hecho: generar embedding + construir MemoryEntry + persistir
+  7. Marcar todos los mensajes del agente como `infused = 1`
+     (evita que la próxima corrida reprocese mensajes que siguen vivos en
+     el buffer tras el trim, lo cual generaría recuerdos duplicados en la
+     memoria vectorial)
+  8. Regenerar digest markdown (best-effort)
+  9. `history.trim(agent_id, keep_last=resolved_keep_last)`
+     Preserva los últimos N mensajes como contexto inmediato para el próximo
+     turno. El valor sale de `memory.keep_last_messages` (0 = fallback 84).
+ 10. Si falla en cualquier punto: NO marcar, NO truncar, historial intacto.
 
-El archivado es TRANSACCIONAL: solo ocurre si la extracción y persistencia son exitosas.
+El truncado y el marcado son TRANSACCIONALES: solo ocurren si la extracción
+y persistencia son exitosas.
 """
 
 from __future__ import annotations
@@ -26,6 +36,7 @@ from core.ports.outbound.embedding_port import IEmbeddingProvider
 from core.ports.outbound.history_port import IHistoryStore
 from core.ports.outbound.llm_port import ILLMProvider
 from core.ports.outbound.memory_port import IMemoryRepository
+from infrastructure.config import MemoryConfig
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +69,7 @@ Conversación:
 @dataclass
 class ConsolidationResult:
     memories_extracted: int
-    archive_path: str
+    kept_messages: int
 
 
 class ConsolidateMemoryUseCase:
@@ -70,12 +81,14 @@ class ConsolidateMemoryUseCase:
         embedder: IEmbeddingProvider,
         history: IHistoryStore,
         agent_id: str,
+        memory_config: MemoryConfig,
     ) -> None:
         self._llm = llm
         self._memory = memory
         self._embedder = embedder
         self._history = history
         self._agent_id = agent_id
+        self._memory_cfg = memory_config
 
     async def execute(self) -> str:
         """
@@ -83,10 +96,10 @@ class ConsolidateMemoryUseCase:
         Retorna un mensaje descriptivo del resultado.
         Lanza ConsolidationError si falla (historial intacto).
         """
-        # 1. Cargar historial completo desde disco (ignora la ventana en memoria)
-        messages = await self._history.load_full(self._agent_id)
+        # 1. Cargar solo los mensajes NO procesados aún por el extractor
+        messages = await self._history.load_uninfused(self._agent_id)
         if not messages:
-            return "El historial está vacío — nada que consolidar."
+            return "No hay mensajes nuevos para consolidar."
 
         # 2. Formatear historial para el LLM (incluye timestamp si está disponible)
         def _fmt(m):
@@ -121,6 +134,27 @@ class ConsolidateMemoryUseCase:
             # LLM dice que no hay nada relevante — archivamos igual
             logger.info("El LLM no encontró recuerdos relevantes en el historial")
 
+        # 4b. Filtrar por relevance_score mínimo (ahorra tokens de embedding)
+        threshold = self._memory_cfg.min_relevance_score
+        filtered: list[dict] = []
+        dropped = 0
+        for fact in facts:
+            try:
+                score = float(fact.get("relevance", 0.0))
+            except (TypeError, ValueError):
+                score = 0.0
+            if score >= threshold:
+                filtered.append(fact)
+            else:
+                dropped += 1
+        if dropped:
+            logger.info(
+                "Consolidación: %d recuerdo(s) descartado(s) por relevance < %.2f",
+                dropped,
+                threshold,
+            )
+        facts = filtered
+
         # 5. Generar embeddings y persistir
         stored = 0
         for fact in facts:
@@ -138,7 +172,7 @@ class ConsolidateMemoryUseCase:
                     embedding=embedding,
                     relevance=float(fact.get("relevance", 0.5)),
                     tags=fact.get("tags", []),
-                    agent_id=None,  # global compartido
+                    agent_id=self._agent_id,  # atribución: quién extrajo este hecho
                     created_at=created_at or datetime.now(timezone.utc),
                 )
                 await self._memory.store(entry)
@@ -148,19 +182,64 @@ class ConsolidateMemoryUseCase:
                     f"Error persistiendo recuerdo '{fact.get('content', '')}': {exc}"
                 ) from exc
 
-        # 6. Archivar historial (solo si llegamos hasta aquí sin errores)
+        # 6. Marcar todos los mensajes del agente como infused ANTES del trim.
+        # Esto es el gate que evita que la próxima corrida reprocese mensajes
+        # que sigan vivos en el buffer (por el keep_last del trim). Si falla,
+        # abortamos — los recuerdos ya están persistidos en inaki.db pero el
+        # error queda visible y se puede reintentar.
         try:
-            archive_path = await self._history.archive(self._agent_id)
-            await self._history.clear(self._agent_id)
+            await self._history.mark_infused(self._agent_id)
         except Exception as exc:
-            raise ConsolidationError(f"Error archivando historial: {exc}") from exc
+            raise ConsolidationError(
+                f"Error marcando mensajes como infused: {exc}"
+            ) from exc
+
+        # 7. Regenerar digest markdown (best-effort, no rompe consolidación)
+        await self._write_digest()
+
+        # 8. Truncar historial (solo si llegamos hasta aquí sin errores).
+        # Preserva los últimos N mensajes como contexto inmediato para el
+        # próximo turno; los recuerdos extraídos ya están en la memoria
+        # vectorial, así que el resto del historial es descartable.
+        keep_last = self._memory_cfg.resolved_keep_last_messages()
+        try:
+            await self._history.trim(self._agent_id, keep_last=keep_last)
+        except Exception as exc:
+            raise ConsolidationError(f"Error truncando historial: {exc}") from exc
 
         logger.info(
-            "Consolidación completada: %d recuerdos extraídos, historial archivado en %s",
+            "Consolidación completada para '%s': %d recuerdo(s) extraído(s), "
+            "últimos %d mensaje(s) preservados",
+            self._agent_id,
             stored,
-            archive_path,
+            keep_last,
         )
-        return f"✓ {stored} recuerdo(s) extraído(s). Historial archivado ({archive_path})."
+        return f"✓ {stored} recuerdo(s) extraído(s). Historial truncado (últimos {keep_last} mensajes preservados)."
+
+    def _render_digest(self, memories: list[MemoryEntry]) -> str:
+        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
+        lines = [
+            "# Recuerdos sobre el usuario",
+            f"<!-- Generado por /consolidate — {now_iso} -->",
+            "",
+        ]
+        for m in memories:
+            date_str = (m.created_at or datetime.now(timezone.utc)).strftime("%Y-%m-%d")
+            tag_suffix = f" ({', '.join(m.tags)})" if m.tags else ""
+            lines.append(f"- [{date_str}] {m.content}{tag_suffix}")
+        return "\n".join(lines) + "\n"
+
+    async def _write_digest(self) -> None:
+        """Regenera el digest markdown. Nunca propaga excepciones — un fallo no aborta la consolidación."""
+        try:
+            latest = await self._memory.get_recent(self._memory_cfg.digest_size)
+            markdown = self._render_digest(latest)
+            path = self._memory_cfg.digest_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(markdown, encoding="utf-8")
+            logger.info("Digest regenerado: %s (%d recuerdos)", path, len(latest))
+        except Exception as exc:  # noqa: BLE001 — best-effort
+            logger.error("No se pudo regenerar el digest: %s", exc)
 
     def _parse_facts(self, raw: str) -> list[dict]:
         """Extrae y valida el JSON de recuerdos del LLM."""

@@ -1,20 +1,18 @@
 from pydantic import BaseModel
-from core.domain.entities.memory import MemoryEntry
 from core.domain.entities.skill import Skill
 
 
 class AgentContext(BaseModel):
     agent_id: str
-    memories: list[MemoryEntry] = []
+    memory_digest: str = ""
     skills: list[Skill] = []
 
     def build_system_prompt(self, base_prompt: str) -> str:
-        """Construye el system prompt dinámico inyectando memoria y skills relevantes."""
         sections = [base_prompt]
 
-        if self.memories:
-            mem_block = "\n".join(f"- {m.content}" for m in self.memories)
-            sections.append(f"\n## Lo que recuerdas del usuario:\n{mem_block}")
+        if self.memory_digest.strip():
+            # El digest ya trae su propio header "# Recuerdos sobre el usuario".
+            sections.append("\n" + self.memory_digest)
 
         if self.skills:
             skill_block = "\n".join(

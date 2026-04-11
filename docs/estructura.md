@@ -101,10 +101,6 @@ inaki/
 │       ├── dev.secrets.yaml               # Secrets del agente dev — gitignoreado
 │       └── dev.secrets.yaml.example       # Referencia — commiteable
 │
-├── skills/                                # Definiciones YAML de skills
-│   ├── web_search.yaml
-│   └── shell.yaml
-│
 ├── data/                                  # Datos en runtime (gitignoreado)
 │   ├── inaki.db                           # SQLite — memorias a largo plazo
 │   └── history/

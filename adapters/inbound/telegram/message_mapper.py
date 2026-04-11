@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from html import escape as _html_escape
+
+from markdown_it import MarkdownIt
+from markdown_it.token import Token
 from telegram import Update
 
-from core.domain.entities.message import Message, Role
+_md = MarkdownIt("commonmark", {"html": False}).enable("strikethrough")
 
 
 def telegram_update_to_input(update: Update) -> str | None:
@@ -16,8 +20,161 @@ def telegram_update_to_input(update: Update) -> str | None:
 
 def format_response(response: str) -> str:
     """
-    Formatea la respuesta del agente para Telegram.
-    Telegram soporta Markdown básico (MarkdownV2) pero es estricto con el escape.
-    Aquí devolvemos texto plano para máxima compatibilidad.
+    Convierte la respuesta markdown del LLM al subset HTML de Telegram.
+
+    Telegram HTML soporta: b, i, u, s, code, pre, a, blockquote, tg-spoiler.
+    El resto (headers, listas, hr) se degrada a texto plano con marcadores.
+    Usar con parse_mode="HTML" en reply_text.
     """
-    return response
+    if not response:
+        return ""
+    tokens = _md.parse(response)
+    return _render(tokens).strip()
+
+
+def _escape(text: str) -> str:
+    return _html_escape(text, quote=False)
+
+
+def _render_inline(token: Token) -> str:
+    out: list[str] = []
+    for child in token.children or []:
+        t = child.type
+        if t == "text":
+            out.append(_escape(child.content))
+        elif t in ("softbreak", "hardbreak"):
+            out.append("\n")
+        elif t == "strong_open":
+            out.append("<b>")
+        elif t == "strong_close":
+            out.append("</b>")
+        elif t == "em_open":
+            out.append("<i>")
+        elif t == "em_close":
+            out.append("</i>")
+        elif t == "s_open":
+            out.append("<s>")
+        elif t == "s_close":
+            out.append("</s>")
+        elif t == "code_inline":
+            out.append(f"<code>{_escape(child.content)}</code>")
+        elif t == "link_open":
+            href = child.attrGet("href") or ""
+            out.append(f'<a href="{_escape(href)}">')
+        elif t == "link_close":
+            out.append("</a>")
+        elif t == "image":
+            alt = child.content or ""
+            src = child.attrGet("src") or ""
+            if src:
+                out.append(f'<a href="{_escape(src)}">{_escape(alt or src)}</a>')
+            elif alt:
+                out.append(_escape(alt))
+        elif child.content:
+            out.append(_escape(child.content))
+    return "".join(out)
+
+
+def _render(tokens: list[Token]) -> str:
+    out: list[str] = []
+    list_stack: list[dict] = []
+
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        t = tok.type
+
+        if t == "heading_open":
+            inline = tokens[i + 1]
+            content = _render_inline(inline)
+            out.append(f"<b>{content}</b>\n\n")
+            i += 3
+            continue
+
+        if t == "paragraph_open":
+            inline = tokens[i + 1]
+            content = _render_inline(inline)
+            if list_stack:
+                out.append(content)
+            else:
+                out.append(content + "\n\n")
+            i += 3
+            continue
+
+        if t == "bullet_list_open":
+            list_stack.append({"type": "ul", "index": 0})
+            i += 1
+            continue
+        if t == "ordered_list_open":
+            start = tok.attrGet("start")
+            list_stack.append({"type": "ol", "index": int(start) if start else 1})
+            i += 1
+            continue
+        if t in ("bullet_list_close", "ordered_list_close"):
+            list_stack.pop()
+            if not list_stack:
+                out.append("\n")
+            i += 1
+            continue
+
+        if t == "list_item_open":
+            depth = max(len(list_stack) - 1, 0)
+            indent = "  " * depth
+            current = list_stack[-1]
+            if current["type"] == "ul":
+                marker = "• "
+            else:
+                marker = f"{current['index']}. "
+                current["index"] += 1
+            out.append(f"{indent}{marker}")
+            i += 1
+            continue
+        if t == "list_item_close":
+            out.append("\n")
+            i += 1
+            continue
+
+        if t in ("fence", "code_block"):
+            info = (tok.info or "").strip()
+            lang = info.split()[0] if info else ""
+            content = _escape(tok.content.rstrip("\n"))
+            if lang:
+                out.append(
+                    f'<pre><code class="language-{_escape(lang)}">{content}</code></pre>\n\n'
+                )
+            else:
+                out.append(f"<pre>{content}</pre>\n\n")
+            i += 1
+            continue
+
+        if t == "blockquote_open":
+            depth = 1
+            j = i + 1
+            inner: list[Token] = []
+            while j < len(tokens):
+                if tokens[j].type == "blockquote_open":
+                    depth += 1
+                elif tokens[j].type == "blockquote_close":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                inner.append(tokens[j])
+                j += 1
+            inner_html = _render(inner).strip()
+            out.append(f"<blockquote>{inner_html}</blockquote>\n\n")
+            i = j + 1
+            continue
+
+        if t == "hr":
+            out.append("──────────\n\n")
+            i += 1
+            continue
+
+        if t == "inline":
+            out.append(_render_inline(tok))
+            i += 1
+            continue
+
+        i += 1
+
+    return "".join(out)

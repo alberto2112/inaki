@@ -1,4 +1,4 @@
-"""Tests para YamlSkillRepository.add_file()."""
+"""Tests para YamlSkillRepository.add_file() — única fuente de skills."""
 
 from __future__ import annotations
 
@@ -46,11 +46,17 @@ def _write_skill(path: Path, skill_id: str) -> Path:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+async def test_empty_repo_returns_no_skills() -> None:
+    """Repo sin ningún add_file → list_all() devuelve lista vacía."""
+    repo = YamlSkillRepository(FakeEmbedder())
+    skills = await repo.list_all()
+    assert skills == []
+
+
+@pytest.mark.asyncio
 async def test_add_file_loads_skill(tmp_path: Path) -> None:
     """add_file con YAML válido → skill aparece en list_all()."""
-    skills_dir = tmp_path / "skills"
-    skills_dir.mkdir()
-    repo = YamlSkillRepository(str(skills_dir), FakeEmbedder())
+    repo = YamlSkillRepository(FakeEmbedder())
 
     extra = _write_skill(tmp_path / "extra.yaml", "extra_skill")
     repo.add_file(extra)
@@ -60,49 +66,37 @@ async def test_add_file_loads_skill(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_add_file_combines_with_dir(tmp_path: Path) -> None:
-    """skills_dir + add_file → ambas fuentes presentes en list_all()."""
-    skills_dir = tmp_path / "skills"
-    skills_dir.mkdir()
-    _write_skill(skills_dir / "builtin.yaml", "builtin")
+async def test_add_file_multiple_sources(tmp_path: Path) -> None:
+    """add_file con N archivos → todos presentes en list_all()."""
+    repo = YamlSkillRepository(FakeEmbedder())
 
-    repo = YamlSkillRepository(str(skills_dir), FakeEmbedder())
-
-    extra = _write_skill(tmp_path / "extra.yaml", "extra")
-    repo.add_file(extra)
+    repo.add_file(_write_skill(tmp_path / "a.yaml", "alpha"))
+    repo.add_file(_write_skill(tmp_path / "b.yaml", "beta"))
 
     skills = await repo.list_all()
     ids = {s.id for s in skills}
-    assert "builtin" in ids
-    assert "extra" in ids
+    assert "alpha" in ids
+    assert "beta" in ids
 
 
 @pytest.mark.asyncio
 async def test_add_file_invalidates_cache(tmp_path: Path) -> None:
-    """list_all() → add_file() → list_all() da N+1 skills."""
-    skills_dir = tmp_path / "skills"
-    skills_dir.mkdir()
-    _write_skill(skills_dir / "builtin.yaml", "builtin")
+    """list_all() → add_file() → list_all() refleja la skill nueva."""
+    repo = YamlSkillRepository(FakeEmbedder())
 
-    repo = YamlSkillRepository(str(skills_dir), FakeEmbedder())
-
+    repo.add_file(_write_skill(tmp_path / "a.yaml", "alpha"))
     before = await repo.list_all()
     assert len(before) == 1
 
-    extra = _write_skill(tmp_path / "extra.yaml", "extra")
-    repo.add_file(extra)
-
+    repo.add_file(_write_skill(tmp_path / "b.yaml", "beta"))
     after = await repo.list_all()
     assert len(after) == 2
 
 
 @pytest.mark.asyncio
 async def test_add_file_deduplicates(tmp_path: Path) -> None:
-    """Misma path dos veces → una sola entrada en list_all()."""
-    skills_dir = tmp_path / "skills"
-    skills_dir.mkdir()
-
-    repo = YamlSkillRepository(str(skills_dir), FakeEmbedder())
+    """Mismo path dos veces → una sola entrada en list_all()."""
+    repo = YamlSkillRepository(FakeEmbedder())
 
     extra = _write_skill(tmp_path / "extra.yaml", "extra")
     repo.add_file(extra)
@@ -113,28 +107,9 @@ async def test_add_file_deduplicates(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_add_file_deduplicates_with_dir(tmp_path: Path) -> None:
-    """Extra ya bajo skills_dir → no se carga dos veces."""
-    skills_dir = tmp_path / "skills"
-    skills_dir.mkdir()
-    builtin = _write_skill(skills_dir / "builtin.yaml", "builtin")
-
-    repo = YamlSkillRepository(str(skills_dir), FakeEmbedder())
-
-    # Añadir la misma skill que ya está en el dir
-    repo.add_file(builtin)
-
-    skills = await repo.list_all()
-    assert len([s for s in skills if s.id == "builtin"]) == 1
-
-
-@pytest.mark.asyncio
 async def test_add_file_missing_path_no_crash(tmp_path: Path) -> None:
     """Path inexistente → warning sin lanzar excepción, list_all() funciona."""
-    skills_dir = tmp_path / "skills"
-    skills_dir.mkdir()
-
-    repo = YamlSkillRepository(str(skills_dir), FakeEmbedder())
+    repo = YamlSkillRepository(FakeEmbedder())
     repo.add_file(tmp_path / "nonexistent.yaml")
 
     skills = await repo.list_all()

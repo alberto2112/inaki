@@ -5,7 +5,20 @@ Un registro por mensaje: tabla `history` en data/history.db.
 Solo se persisten mensajes user y assistant — nunca tool calls.
 
 Schema:
-  history — una fila por mensaje, con soft-delete para archive
+  history — una fila por mensaje con flag `infused` (0=pendiente de extracción,
+  1=ya procesado por el extractor de recuerdos).
+
+La columna `archived` del schema original es legacy (venía de un soft-delete
+que se eliminó cuando la consolidación pasó a usar `trim` en vez de
+archive+clear). Se mantiene en CREATE TABLE IF NOT EXISTS para no romper
+DBs existentes, pero ninguna query de esta clase la usa.
+
+La columna `infused` fue añadida en una migración posterior para evitar que
+el extractor re-procesara los mensajes que siguen vivos en el buffer tras el
+trim. DBs preexistentes reciben la columna vía ALTER TABLE ADD COLUMN en
+`_ensure_schema`, y todos los mensajes ya presentes quedan marcados con
+`infused=1` durante la migración (asumimos que forman parte de un estado
+estable previo al cambio).
 """
 
 from __future__ import annotations
@@ -19,7 +32,6 @@ from typing import AsyncIterator
 import aiosqlite
 
 from core.domain.entities.message import Message, Role
-from core.domain.errors import HistoryError
 from core.ports.outbound.history_port import IHistoryStore
 from infrastructure.config import HistoryConfig
 
@@ -32,12 +44,17 @@ CREATE TABLE IF NOT EXISTS history (
     role       TEXT    NOT NULL,
     content    TEXT    NOT NULL,
     created_at TEXT    NOT NULL,
-    archived   INTEGER NOT NULL DEFAULT 0
+    archived   INTEGER NOT NULL DEFAULT 0,
+    infused    INTEGER NOT NULL DEFAULT 0
 );
 """
 
 _CREATE_INDEX = """
-CREATE INDEX IF NOT EXISTS idx_history_agent ON history(agent_id, archived);
+CREATE INDEX IF NOT EXISTS idx_history_agent ON history(agent_id, id);
+"""
+
+_CREATE_INFUSED_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_history_uninfused ON history(agent_id, infused);
 """
 
 
@@ -57,6 +74,23 @@ class SQLiteHistoryStore(IHistoryStore):
     async def _ensure_schema(self, conn: aiosqlite.Connection) -> None:
         await conn.execute(_CREATE_TABLE)
         await conn.execute(_CREATE_INDEX)
+
+        # Migración: añadir columna `infused` si la DB viene de una versión
+        # previa al cambio. Se marca todo lo existente como infused=1 para
+        # no reprocesar mensajes ya vividos (asumimos estado estable).
+        cursor = await conn.execute("PRAGMA table_info(history)")
+        cols = {row[1] for row in await cursor.fetchall()}
+        if "infused" not in cols:
+            logger.info(
+                "Migrando tabla history: añadiendo columna `infused` y marcando "
+                "todas las filas existentes como infused=1"
+            )
+            await conn.execute(
+                "ALTER TABLE history ADD COLUMN infused INTEGER NOT NULL DEFAULT 0"
+            )
+            await conn.execute("UPDATE history SET infused = 1")
+
+        await conn.execute(_CREATE_INFUSED_INDEX)
         await conn.commit()
 
     async def append(self, agent_id: str, message: Message) -> None:
@@ -82,7 +116,7 @@ class SQLiteHistoryStore(IHistoryStore):
             if self._max_n > 0:
                 rows = await conn.execute_fetchall(
                     "SELECT role, content, created_at FROM history "
-                    "WHERE agent_id = ? AND archived = 0 "
+                    "WHERE agent_id = ? "
                     "ORDER BY id DESC LIMIT ?",
                     (agent_id, self._max_n),
                 )
@@ -90,7 +124,7 @@ class SQLiteHistoryStore(IHistoryStore):
             else:
                 rows = await conn.execute_fetchall(
                     "SELECT role, content, created_at FROM history "
-                    "WHERE agent_id = ? AND archived = 0 "
+                    "WHERE agent_id = ? "
                     "ORDER BY id ASC",
                     (agent_id,),
                 )
@@ -101,25 +135,65 @@ class SQLiteHistoryStore(IHistoryStore):
             await self._ensure_schema(conn)
             rows = await conn.execute_fetchall(
                 "SELECT role, content, created_at FROM history "
-                "WHERE agent_id = ? AND archived = 0 "
+                "WHERE agent_id = ? "
                 "ORDER BY id ASC",
                 (agent_id,),
             )
         return [self._row_to_message(r) for r in rows]
 
-    async def archive(self, agent_id: str) -> str:
+    async def load_uninfused(self, agent_id: str) -> list[Message]:
+        async with self._conn() as conn:
+            await self._ensure_schema(conn)
+            rows = await conn.execute_fetchall(
+                "SELECT role, content, created_at FROM history "
+                "WHERE agent_id = ? AND infused = 0 "
+                "ORDER BY id ASC",
+                (agent_id,),
+            )
+        return [self._row_to_message(r) for r in rows]
+
+    async def mark_infused(self, agent_id: str) -> int:
         async with self._conn() as conn:
             await self._ensure_schema(conn)
             cursor = await conn.execute(
-                "UPDATE history SET archived = 1 WHERE agent_id = ? AND archived = 0",
+                "UPDATE history SET infused = 1 WHERE agent_id = ? AND infused = 0",
                 (agent_id,),
             )
             await conn.commit()
-            if cursor.rowcount == 0:
-                raise HistoryError(f"No hay historial activo para '{agent_id}'")
+            if cursor.rowcount > 0:
+                logger.info(
+                    "Historial de '%s': %d mensaje(s) marcado(s) como infused",
+                    agent_id,
+                    cursor.rowcount,
+                )
+            return cursor.rowcount or 0
 
-        logger.info("Historial de '%s' archivado (%d filas)", agent_id, cursor.rowcount)
-        return f"Historial de '{agent_id}' archivado."
+    async def trim(self, agent_id: str, keep_last: int) -> None:
+        if keep_last <= 0:
+            return
+        async with self._conn() as conn:
+            await self._ensure_schema(conn)
+            cursor = await conn.execute(
+                """
+                DELETE FROM history
+                WHERE agent_id = ?
+                  AND id NOT IN (
+                    SELECT id FROM history
+                    WHERE agent_id = ?
+                    ORDER BY id DESC
+                    LIMIT ?
+                  )
+                """,
+                (agent_id, agent_id, keep_last),
+            )
+            await conn.commit()
+            if cursor.rowcount > 0:
+                logger.info(
+                    "Historial de '%s' truncado: %d fila(s) borrada(s), últimas %d preservadas",
+                    agent_id,
+                    cursor.rowcount,
+                    keep_last,
+                )
 
     async def clear(self, agent_id: str) -> None:
         async with self._conn() as conn:

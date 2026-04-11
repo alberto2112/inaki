@@ -10,20 +10,30 @@ Este es el ÚNICO lugar donde se instancian adaptadores concretos.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
+
+from croniter import croniter
+from pydantic import ValidationError
 
 from adapters.outbound.history.sqlite_history_store import SQLiteHistoryStore
 from adapters.outbound.memory.sqlite_memory_repo import SQLiteMemoryRepository
+from adapters.outbound.scheduler.builtin_tasks import (
+    CONSOLIDATE_MEMORY_TASK_ID,
+    build_consolidate_memory_task,
+)
 from adapters.outbound.scheduler.dispatch_adapters import (
     ChannelSenderAdapter,
+    ConsolidationDispatchAdapter,
     LLMDispatcherAdapter,
     SchedulerDispatchPorts,
 )
-from adapters.outbound.scheduler.builtin_tasks import BUILTIN_CONSOLIDATE_MEMORY
 from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRepo
 from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
 from adapters.outbound.tools.tool_registry import ToolRegistry
+from core.domain.entities.task import TaskStatus
 from core.domain.errors import AgentNotFoundError
 from core.domain.services.scheduler_service import SchedulerService
+from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
 from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
 from core.use_cases.run_agent import RunAgentUseCase
 from core.use_cases.schedule_task import ScheduleTaskUseCase
@@ -39,15 +49,13 @@ class AgentContainer:
 
     def __init__(self, agent_config: AgentConfig, global_config: GlobalConfig) -> None:
         cfg = agent_config
+        self.agent_config = agent_config
 
         # Factories resuelven el proveedor correcto leyendo cfg.embedding.provider y cfg.llm.provider
         self._embedder = EmbeddingProviderFactory.create(cfg)
         self._memory = SQLiteMemoryRepository(cfg.memory.db_path, self._embedder)
         self._llm = LLMProviderFactory.create(cfg)
-        self._skills = YamlSkillRepository(
-            skills_dir=global_config.app.skills_dir,
-            embedder=self._embedder,
-        )
+        self._skills = YamlSkillRepository(embedder=self._embedder)
         self._history = SQLiteHistoryStore(cfg.history)
         self._tools = ToolRegistry(embedder=self._embedder)
         self._register_tools()
@@ -69,6 +77,7 @@ class AgentContainer:
             embedder=self._embedder,
             history=self._history,
             agent_id=cfg.id,
+            memory_config=cfg.memory,
         )
 
     def _register_tools(self) -> None:
@@ -181,6 +190,17 @@ class AppContainer:
                     "Error creando container para agente '%s': %s", agent_cfg.id, exc
                 )
 
+        # Global consolidation use case — itera agentes habilitados con delay
+        enabled_consolidators: dict[str, ConsolidateMemoryUseCase] = {
+            agent_id: container.consolidate_memory
+            for agent_id, container in self.agents.items()
+            if container.agent_config.memory.enabled
+        }
+        self.consolidate_all_agents = ConsolidateAllAgentsUseCase(
+            enabled_agents=enabled_consolidators,
+            delay_seconds=global_config.memory.delay_seconds,
+        )
+
         # Scheduler wiring
         scheduler_cfg = global_config.scheduler
         self.scheduler_repo = SQLiteSchedulerRepo(scheduler_cfg.db_path)
@@ -191,20 +211,106 @@ class AppContainer:
         dispatch_ports = SchedulerDispatchPorts(
             channel_sender=ChannelSenderAdapter(self),
             llm_dispatcher=LLMDispatcherAdapter(self.agents),
+            consolidator=ConsolidationDispatchAdapter(self.consolidate_all_agents),
         )
         self.scheduler_service = SchedulerService(
             repo=self.scheduler_repo,
             dispatch=dispatch_ports,
             config=scheduler_cfg,
-            builtin_tasks=[BUILTIN_CONSOLIDATE_MEMORY],
         )
 
     def _on_scheduler_mutation(self) -> None:
         self.scheduler_service.invalidate()
 
+    async def _reconcile_consolidate_memory_task(self) -> None:
+        """
+        Garantiza que la tarea builtin `consolidate_memory` en la DB refleja
+        la config actual:
+          - no existe → seed con schedule de config + next_run computado
+          - schedule cambió en config → update + recompute next_run
+          - status = FAILED (arrastre de corridas viejas rotas) → reset a pending
+          - next_run NULL → recompute
+        """
+        target_schedule = self.global_config.memory.schedule
+        target = build_consolidate_memory_task(target_schedule)
+
+        await self.scheduler_repo.ensure_schema()
+
+        # get_task puede fallar con ValidationError si en la DB quedó un payload
+        # de un schema viejo (p.ej. 'cli_command' de la era previa al refactor).
+        # En ese caso tratamos la fila como stale: la borramos y seedamos limpio.
+        try:
+            existing = await self.scheduler_repo.get_task(CONSOLIDATE_MEMORY_TASK_ID)
+        except ValidationError as exc:
+            logger.warning(
+                "Tarea builtin consolidate_memory tiene payload stale en DB "
+                "(esquema viejo) — borrando y reseedando: %s",
+                exc,
+            )
+            await self.scheduler_repo.delete_task(CONSOLIDATE_MEMORY_TASK_ID)
+            existing = None
+
+        if existing is None:
+            # seed_builtin computa next_run si es recurrente y viene None
+            await self.scheduler_repo.seed_builtin(target)
+            logger.info(
+                "Tarea builtin consolidate_memory sembrada con schedule '%s'",
+                target_schedule,
+            )
+            return
+
+        now = datetime.now(timezone.utc)
+        needs_save = False
+        new_schedule = existing.schedule
+        new_next_run = existing.next_run
+        new_status = existing.status
+        new_retry = existing.retry_count
+
+        if existing.schedule != target_schedule:
+            new_schedule = target_schedule
+            new_next_run = datetime.fromtimestamp(
+                croniter(target_schedule, now).get_next(), tz=timezone.utc
+            )
+            logger.info(
+                "consolidate_memory: schedule actualizado '%s' → '%s'",
+                existing.schedule,
+                target_schedule,
+            )
+            needs_save = True
+
+        if new_status == TaskStatus.FAILED:
+            new_status = TaskStatus.PENDING
+            new_retry = 0
+            if new_next_run is None or new_next_run <= now:
+                new_next_run = datetime.fromtimestamp(
+                    croniter(new_schedule, now).get_next(), tz=timezone.utc
+                )
+            logger.info(
+                "consolidate_memory: estado FAILED reseteado a PENDING (next_run=%s)",
+                new_next_run,
+            )
+            needs_save = True
+
+        if new_next_run is None:
+            new_next_run = datetime.fromtimestamp(
+                croniter(new_schedule, now).get_next(), tz=timezone.utc
+            )
+            logger.info("consolidate_memory: next_run era NULL → recomputado a %s", new_next_run)
+            needs_save = True
+
+        if needs_save:
+            updated = existing.model_copy(update={
+                "schedule": new_schedule,
+                "next_run": new_next_run,
+                "status": new_status,
+                "retry_count": new_retry,
+            })
+            await self.scheduler_repo.save_task(updated)
+
     async def startup(self) -> None:
         """Arranca el scheduler service. Llamar en el daemon lifecycle."""
         if self.global_config.scheduler.enabled:
+            await self._reconcile_consolidate_memory_task()
             await self.scheduler_service.start()
             logger.info("SchedulerService iniciado")
 

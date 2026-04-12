@@ -2,32 +2,31 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 
-import numpy as np
-
-from core.domain.errors import ToolError
+from adapters.outbound.embedding import resolve_provider_name
+from core.domain.services.similarity import cosine_similarity
+from core.ports.outbound.embedding_cache_port import IEmbeddingCache
 from core.ports.outbound.embedding_port import IEmbeddingProvider
 from core.ports.outbound.tool_port import ITool, IToolExecutor, ToolResult
 
 logger = logging.getLogger(__name__)
 
 
-def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    va = np.array(a, dtype=np.float32)
-    vb = np.array(b, dtype=np.float32)
-    norm_a = np.linalg.norm(va)
-    norm_b = np.linalg.norm(vb)
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return float(np.dot(va, vb) / (norm_a * norm_b))
-
-
 class ToolRegistry(IToolExecutor):
 
-    def __init__(self, embedder: IEmbeddingProvider) -> None:
+    def __init__(
+        self,
+        embedder: IEmbeddingProvider,
+        cache: IEmbeddingCache | None = None,
+        dimension: int = 384,
+    ) -> None:
         self._tools: dict[str, ITool] = {}
         self._embedder = embedder
+        self._cache = cache
+        self._dimension = dimension
+        self._provider_name = resolve_provider_name(embedder)
         self._embeddings: dict[str, list[float]] = {}
         self._embeddings_ready = False
 
@@ -39,9 +38,24 @@ class ToolRegistry(IToolExecutor):
     async def _ensure_embeddings(self) -> None:
         if self._embeddings_ready:
             return
-        self._embeddings = {}
         for tool in self._tools.values():
-            embedding = await self._embedder.embed_passage(tool.description)
+            if tool.name in self._embeddings:
+                continue
+            content_hash = hashlib.md5(tool.description.encode("utf-8")).hexdigest()
+
+            embedding: list[float] | None = None
+            if self._cache is not None:
+                embedding = await self._cache.get(
+                    content_hash, self._provider_name, self._dimension
+                )
+
+            if embedding is None:
+                embedding = await self._embedder.embed_passage(tool.description)
+                if self._cache is not None:
+                    await self._cache.put(
+                        content_hash, self._provider_name, self._dimension, embedding
+                    )
+
             self._embeddings[tool.name] = embedding
         self._embeddings_ready = True
         logger.debug("Embeddings de tools generados: %d tools", len(self._embeddings))
@@ -88,7 +102,7 @@ class ToolRegistry(IToolExecutor):
             return []
 
         scored = [
-            (name, _cosine_similarity(query_embedding, emb))
+            (name, cosine_similarity(query_embedding, emb))
             for name, emb in self._embeddings.items()
         ]
         scored.sort(key=lambda x: x[1], reverse=True)

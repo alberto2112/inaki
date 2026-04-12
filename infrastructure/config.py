@@ -75,6 +75,7 @@ class EmbeddingConfig(BaseModel):
     dimension: int = 384
     base_url: str = "https://api.openai.com/v1"  # solo openai
     api_key: str | None = None             # solo openai — en secrets
+    cache_db: ExpandedPath = "data/embedding_cache.db"
 
 
 _KEEP_LAST_MESSAGES_FALLBACK = 84

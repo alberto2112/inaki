@@ -112,6 +112,16 @@ scheduler:
   db_path: "data/scheduler.db"   # Base de datos de tareas programadas
   max_retries: 3
   output_truncation_size: 65536
+
+workspace:
+  path: "~/inaki-workspace"      # Directorio raíz permitido para file tools (default global)
+  containment: "strict"          # strict | warn | off
+                                 # strict → bloquea paths fuera del workspace (recomendado)
+                                 # warn   → permite pero loguea WARNING
+                                 # off    → sin restricciones
+                                 # Afecta a read_file, write_file, patch_file.
+                                 # run_shell NO está sujeto a esta config.
+                                 # Overrideable por agente en agents/{id}.yaml.
 ```
 
 ---
@@ -152,6 +162,12 @@ memory:
                        # El comando `inaki consolidate --agent {id}` ignora
                        # este flag y consolida el agente indicado de todas formas.
 
+# Workspace — contención de paths para file tools (read_file, write_file, patch_file)
+# run_shell NO está afectado por esta config.
+workspace:
+  path: "/Users/alberto/tmp/mi_workspace"  # Directorio raíz permitido (default: cwd del proceso)
+  containment: "strict"                    # strict | warn | off (default: strict)
+
 # Canales disponibles para este agente
 # Los valores sensibles (tokens, auth_key) van en {id}.secrets.yaml
 channels:
@@ -163,6 +179,44 @@ channels:
     host: "0.0.0.0"
     port: 6498                       # Cada agente tiene su propio puerto
 ```
+
+---
+
+## `workspace` — contención de paths en file tools
+
+Cada agente puede declarar un `workspace` para controlar qué paths pueden tocar
+las tools de ficheros. Se configura en `config/agents/{id}.yaml`:
+
+```yaml
+workspace:
+  path: "/Users/alberto/tmp/mi_workspace"  # Directorio raíz permitido
+  containment: "strict"                    # strict | warn | off
+```
+
+**Modos de contención:**
+
+| Modo | Comportamiento |
+|------|----------------|
+| `strict` | Bloquea cualquier path fuera de `workspace.path`. La tool devuelve error al LLM. **Default.** |
+| `warn` | Permite paths fuera del workspace pero loguea un WARNING. Útil para debug. |
+| `off` | Sin restricciones. La tool accede a cualquier path del sistema. |
+
+**Tools afectadas por `workspace.containment`:**
+
+| Tool | ¿Sandboxeada? |
+|------|--------------|
+| `read_file` | ✅ sí |
+| `write_file` | ✅ sí |
+| `patch_file` | ✅ sí |
+| `run_shell` | ❌ no — ejecuta comandos sin restricción de paths |
+| `delegate`, `scheduler`, resto de builtins | ❌ no aplica |
+
+> **Nota:** `run_shell` es una extensión en `ext/` y no tiene contención de ningún tipo.
+> Si el LLM puede llamar `run_shell`, puede operar en cualquier path del sistema.
+
+Si `workspace.path` no se define en la config del agente, se usa el directorio de trabajo
+del proceso al momento de arrancar. Para evitar ambigüedades en producción (systemd),
+especificar siempre un path absoluto.
 
 ---
 

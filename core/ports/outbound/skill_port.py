@@ -12,4 +12,5 @@ class ISkillRepository(ABC):
         self,
         query_embedding: list[float],
         top_k: int = 3,
+        min_score: float = 0.0,
     ) -> list[Skill]: ...

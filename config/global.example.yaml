@@ -226,6 +226,24 @@ workspace:
 #   timeout_seconds: 60          # presupuesto de reloj por llamada delegada (asyncio.wait_for)
 
 
+# -----------------------------------------------------------------------------
+# [user] — Preferencias del usuario final
+# -----------------------------------------------------------------------------
+#
+# Configuración relativa al usuario que interactúa con el asistente.
+# Se usa, por ejemplo, para interpretar tiempos relativos en el scheduler
+# y presentar fechas en la zona horaria correcta.
+#
+# user:
+#   timezone: "UTC"              # Zona horaria del usuario.
+#                                # Ejemplos:
+#                                #   "UTC"                              ← default
+#                                #   "America/Argentina/Buenos_Aires"   ← Argentina (GMT-3)
+#                                #   "Europe/Madrid"                    ← España peninsular
+#                                #   "America/New_York"                 ← EST/EDT
+#                                # Formato: IANA timezone database (tzdata).
+
+
 # =============================================================================
 # CONFIGURACIÓN POR AGENTE — config/agents/{id}.yaml
 # =============================================================================

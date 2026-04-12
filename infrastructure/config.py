@@ -157,6 +157,12 @@ class WorkspaceConfig(BaseModel):
         object.__setattr__(self, "path", str(Path(self.path).expanduser()))
 
 
+class UserConfig(BaseModel):
+    """Preferencias del usuario final (no del agente)."""
+
+    timezone: str = "UTC"
+
+
 class DelegationConfig(BaseModel):
     """Config global de delegación (aplica a todos los agentes como valores por defecto)."""
 
@@ -206,6 +212,7 @@ class GlobalConfig(BaseModel):
     scheduler: SchedulerConfig = SchedulerConfig()
     workspace: WorkspaceConfig = WorkspaceConfig()
     delegation: DelegationConfig = DelegationConfig()
+    user: UserConfig = UserConfig()
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +322,7 @@ def _render_default_global_yaml() -> str:
         "tools": ToolsConfig().model_dump(),
         "scheduler": SchedulerConfig().model_dump(),
         "workspace": WorkspaceConfig().model_dump(),
+        "user": UserConfig().model_dump(),
     }
     body = yaml.safe_dump(defaults, sort_keys=False, default_flow_style=False)
     return _GLOBAL_YAML_HEADER + body + _DELEGATION_SECTION_COMMENT
@@ -381,6 +389,7 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
     scheduler = SchedulerConfig(**merged.get("scheduler", {}))
     workspace = WorkspaceConfig(**merged.get("workspace", {}))
     delegation = DelegationConfig(**merged.get("delegation", {}))
+    user = UserConfig(**merged.get("user", {}))
 
     global_cfg = GlobalConfig(
         app=app,
@@ -393,6 +402,7 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
         scheduler=scheduler,
         workspace=workspace,
         delegation=delegation,
+        user=user,
     )
     return global_cfg, merged
 

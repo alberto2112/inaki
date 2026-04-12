@@ -85,10 +85,7 @@ class SQLiteSchedulerRepo:
 
     async def ensure_schema(self) -> None:
         async with self._conn() as conn:
-            await conn.execute(_CREATE_TASKS_TABLE)
-            await conn.execute(_CREATE_TASKS_INDEX)
-            await conn.execute(_CREATE_LOGS_TABLE)
-            await conn.commit()
+            await self._ensure_schema_conn(conn)
 
     async def save_task(self, task: ScheduledTask) -> ScheduledTask:
         payload_json = _serialize_payload(task.trigger_payload)
@@ -107,8 +104,8 @@ class SQLiteSchedulerRepo:
                     INSERT INTO scheduled_tasks
                         (id, name, description, task_kind, trigger_type, trigger_payload,
                          schedule, next_run, status, enabled, executions_remaining,
-                         retry_count, log_enabled, created_at, last_run)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         retry_count, log_enabled, created_at, last_run, created_by)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         new_id,
@@ -126,6 +123,7 @@ class SQLiteSchedulerRepo:
                         int(task.log_enabled),
                         task.created_at.isoformat(),
                         task.last_run.isoformat() if task.last_run else None,
+                        task.created_by,
                     ),
                 )
                 await conn.commit()
@@ -137,8 +135,8 @@ class SQLiteSchedulerRepo:
                     INSERT INTO scheduled_tasks
                         (id, name, description, task_kind, trigger_type, trigger_payload,
                          schedule, next_run, status, enabled, executions_remaining,
-                         retry_count, log_enabled, created_at, last_run)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         retry_count, log_enabled, created_at, last_run, created_by)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         name=excluded.name,
                         description=excluded.description,
@@ -153,7 +151,8 @@ class SQLiteSchedulerRepo:
                         retry_count=excluded.retry_count,
                         log_enabled=excluded.log_enabled,
                         created_at=excluded.created_at,
-                        last_run=excluded.last_run
+                        last_run=excluded.last_run,
+                        created_by=excluded.created_by
                     """,
                     (
                         task.id,
@@ -171,6 +170,7 @@ class SQLiteSchedulerRepo:
                         int(task.log_enabled),
                         task.created_at.isoformat(),
                         task.last_run.isoformat() if task.last_run else None,
+                        task.created_by,
                     ),
                 )
                 await conn.commit()
@@ -208,6 +208,18 @@ class SQLiteSchedulerRepo:
             await self._ensure_schema_conn(conn)
             await conn.execute("DELETE FROM scheduled_tasks WHERE id = ?", (task_id,))
             await conn.commit()
+
+    async def count_active_by_agent(self, agent_id: str) -> int:
+        async with self._conn() as conn:
+            await self._ensure_schema_conn(conn)
+            rows = await conn.execute_fetchall(
+                """
+                SELECT COUNT(*) AS cnt FROM scheduled_tasks
+                WHERE created_by = ? AND status NOT IN ('completed', 'failed', 'disabled')
+                """,
+                (agent_id,),
+            )
+        return rows[0]["cnt"] if rows else 0
 
     async def get_next_due(self, as_of: datetime) -> ScheduledTask | None:
         """
@@ -352,8 +364,8 @@ class SQLiteSchedulerRepo:
                 INSERT OR IGNORE INTO scheduled_tasks
                     (id, name, description, task_kind, trigger_type, trigger_payload,
                      schedule, next_run, status, enabled, executions_remaining,
-                     retry_count, log_enabled, created_at, last_run)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     retry_count, log_enabled, created_at, last_run, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task.id,
@@ -371,6 +383,7 @@ class SQLiteSchedulerRepo:
                     int(task.log_enabled),
                     task.created_at.isoformat(),
                     task.last_run.isoformat() if task.last_run else None,
+                    task.created_by,
                 ),
             )
             await conn.commit()
@@ -383,6 +396,13 @@ class SQLiteSchedulerRepo:
         await conn.execute(_CREATE_TASKS_TABLE)
         await conn.execute(_CREATE_TASKS_INDEX)
         await conn.execute(_CREATE_LOGS_TABLE)
+        try:
+            await conn.execute(
+                "ALTER TABLE scheduled_tasks ADD COLUMN created_by TEXT DEFAULT ''"
+            )
+        except Exception as exc:
+            if "duplicate column" not in str(exc).lower():
+                raise
         await conn.commit()
 
     def _row_to_task(self, row: aiosqlite.Row) -> ScheduledTask:
@@ -410,4 +430,5 @@ class SQLiteSchedulerRepo:
             log_enabled=bool(row["log_enabled"]),
             created_at=datetime.fromisoformat(row["created_at"]),
             last_run=last_run,
+            created_by=row["created_by"] if row["created_by"] is not None else "",
         )

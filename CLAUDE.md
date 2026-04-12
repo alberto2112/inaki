@@ -72,3 +72,13 @@ Secrets are YAML-only (no env vars). `*.secrets.yaml` files are gitignored.
 - Never commit without showing me the commit message for approval.
 - Always ask before running `git merge` or `git push`.
 - Preferred branch naming: `feature/`, `fix/`, `refactor/`, `experiment/`
+
+## References
+
+- **Tech Spec**: `docs/inaki_spec_v2.md`
+- **Architecture**: `docs/estructura.md`
+- **Execution Flow**: `docs/flujo_ejecucion.md`
+- **Config Reference**: `docs/configuracion.md`
+- **Scheduler Spec**: `docs/scheduler-spec.md`
+- **Discovered failures to be fixed**: `docs/fixme-discovered-failures.md`
+- **GitHub**: https://github.com/alberto2112/inaki

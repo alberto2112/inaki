@@ -315,6 +315,7 @@ def _render_default_global_yaml() -> str:
         "tools": ToolsConfig().model_dump(),
         "scheduler": SchedulerConfig().model_dump(),
         "workspace": WorkspaceConfig().model_dump(),
+        "user": UserConfig().model_dump(),
     }
     body = yaml.safe_dump(defaults, sort_keys=False, default_flow_style=False)
     return _GLOBAL_YAML_HEADER + body + _DELEGATION_SECTION_COMMENT

@@ -392,6 +392,16 @@ class AppContainer:
             config=scheduler_cfg,
         )
 
+        # Phase 3: wire scheduler tool into each agent now that schedule_task_uc is ready.
+        user_timezone = global_config.user.timezone
+        for agent_id, container in self.agents.items():
+            try:
+                container.wire_scheduler(self.schedule_task_uc, user_timezone)
+            except Exception as exc:
+                logger.error(
+                    "Error en wire_scheduler para agente '%s': %s", agent_id, exc
+                )
+
     def _on_scheduler_mutation(self) -> None:
         self.scheduler_service.invalidate()
 

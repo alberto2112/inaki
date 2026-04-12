@@ -101,6 +101,10 @@ embedding:
   dimension: 384              # Dimensión del vector de embedding
                               # multilingual-e5-small → 384 (no cambiar)
                               # ⚠ Cambiar esto requiere borrar y recrear la DB de memorias
+  
+  cache_db: "data/embedding_cache.db"
+                              # Ruta a la base de datos SQLite del cache de embeddings
+                              # Producción: "/home/pi/inaki/data/embedding_cache.db"
 
 
 # -----------------------------------------------------------------------------

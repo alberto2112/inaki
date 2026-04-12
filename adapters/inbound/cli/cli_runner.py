@@ -118,8 +118,12 @@ def print_inspect(result) -> None:
     )
     print(f"\n🧠 Skills [{skills_rag_label}]:")
     if result.selected_skills:
-        for s in result.selected_skills:
-            print(f"   - {s.name}: {s.description}")
+        for i, s in enumerate(result.selected_skills):
+            extra = ""
+            if result.skills_rag_active and i < len(result.selected_skill_scores):
+                _, sc = result.selected_skill_scores[i]
+                extra = f" [score={sc:.4f}]"
+            print(f"   - {s.name}: {extra}")
     else:
         print("   (ninguna)")
 
@@ -130,9 +134,14 @@ def print_inspect(result) -> None:
     )
     print(f"\n🔧 Tools enviadas al LLM [{rag_label}]:")
     if result.selected_tool_schemas:
-        for schema in result.selected_tool_schemas:
+        for i, schema in enumerate(result.selected_tool_schemas):
             fn = schema.get("function", {})
-            print(f"   - {fn.get('name', '?')}: {fn.get('description', '')}")
+            name = fn.get("name", "?")
+            extra = ""
+            if result.tools_rag_active and i < len(result.selected_tool_scores):
+                _, sc = result.selected_tool_scores[i]
+                extra = f" [score={sc:.4f}]"
+            print(f"   - {name}: {fn.get('description', '')}{extra}")
     else:
         print("   (ninguna)")
 

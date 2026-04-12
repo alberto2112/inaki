@@ -38,14 +38,23 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class InspectResult:
+    """
+    Resultado del pipeline de inspect (sin LLM).
+
+    selected_skill_scores / selected_tool_scores: pares (id o nombre, similitud coseno)
+    solo cuando el RAG correspondiente estuvo activo; si no, listas vacías.
+    """
+
     user_input: str
     memory_digest: str
     all_skills: list[Skill]
     selected_skills: list[Skill]
     skills_rag_active: bool
+    selected_skill_scores: list[tuple[str, float]]
     all_tool_schemas: list[dict]
     selected_tool_schemas: list[dict]
     tools_rag_active: bool
+    selected_tool_scores: list[tuple[str, float]]
     system_prompt: str
 
 
@@ -179,13 +188,29 @@ class RunAgentUseCase:
         tools_rag_active = len(all_schemas) > self._cfg.tools.rag_min_tools
         retrieved_skills: list[Skill] = all_skills
         selected_schemas: list[dict] = all_schemas
+        skill_scores: list[tuple[str, float]] = []
+        tool_scores: list[tuple[str, float]] = []
 
         if skills_rag_active or tools_rag_active:
             query_vec = await self._embedder.embed_query(user_input)
             if skills_rag_active:
-                retrieved_skills = await self._skills.retrieve(query_vec, top_k=self._cfg.skills.rag_top_k)
+                scored_skills = await self._skills.retrieve_with_scores(
+                    query_vec,
+                    top_k=self._cfg.skills.rag_top_k,
+                    min_score=self._cfg.skills.rag_min_score,
+                )
+                retrieved_skills = [s for s, _ in scored_skills]
+                skill_scores = [(s.id, sc) for s, sc in scored_skills]
             if tools_rag_active:
-                selected_schemas = await self._tools.get_schemas_relevant(query_vec, top_k=self._cfg.tools.rag_top_k)
+                scored_tools = await self._tools.get_schemas_relevant_with_scores(
+                    query_vec,
+                    top_k=self._cfg.tools.rag_top_k,
+                    min_score=self._cfg.tools.rag_min_score,
+                )
+                selected_schemas = [sch for sch, _ in scored_tools]
+                tool_scores = [
+                    (sch["function"]["name"], sc) for sch, sc in scored_tools
+                ]
 
         user_context = self._read_user_context()
         context = AgentContext(agent_id=self._cfg.id, user_context=user_context, memory_digest=digest_text, skills=retrieved_skills, timezone=self._user_timezone)
@@ -197,9 +222,11 @@ class RunAgentUseCase:
             all_skills=all_skills,
             selected_skills=retrieved_skills,
             skills_rag_active=skills_rag_active,
+            selected_skill_scores=skill_scores,
             all_tool_schemas=all_schemas,
             selected_tool_schemas=selected_schemas,
             tools_rag_active=tools_rag_active,
+            selected_tool_scores=tool_scores,
             system_prompt=system_prompt,
         )
 

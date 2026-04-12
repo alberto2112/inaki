@@ -79,25 +79,25 @@ class ToolRegistry(IToolExecutor):
                 error=str(exc),
             )
 
-    def get_schemas(self) -> list[dict]:
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameters_schema,
-                },
-            }
-            for tool in self._tools.values()
-        ]
+    def _schema_dict(self, tool: ITool) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters_schema,
+            },
+        }
 
-    async def get_schemas_relevant(
+    def get_schemas(self) -> list[dict]:
+        return [self._schema_dict(tool) for tool in self._tools.values()]
+
+    async def _rank_tools_by_query(
         self,
         query_embedding: list[float],
-        top_k: int = 5,
-        min_score: float = 0.0,
-    ) -> list[dict]:
+        top_k: int,
+        min_score: float,
+    ) -> list[tuple[str, float]]:
         await self._ensure_embeddings()
         if not self._embeddings:
             return []
@@ -109,17 +109,32 @@ class ToolRegistry(IToolExecutor):
         scored.sort(key=lambda x: x[1], reverse=True)
         if min_score > 0.0:
             scored = [(name, s) for name, s in scored if s >= min_score]
-        top_names = {name for name, _ in scored[:top_k]}
+        return scored[:top_k]
 
+    async def get_schemas_relevant_with_scores(
+        self,
+        query_embedding: list[float],
+        top_k: int = 5,
+        min_score: float = 0.0,
+    ) -> list[tuple[dict, float]]:
+        ranked = await self._rank_tools_by_query(query_embedding, top_k, min_score)
+        out: list[tuple[dict, float]] = []
+        for name, score in ranked:
+            tool = self._tools.get(name)
+            if tool is not None:
+                out.append((self._schema_dict(tool), score))
+        return out
+
+    async def get_schemas_relevant(
+        self,
+        query_embedding: list[float],
+        top_k: int = 5,
+        min_score: float = 0.0,
+    ) -> list[dict]:
+        ranked = await self._rank_tools_by_query(query_embedding, top_k, min_score)
+        top_names = {name for name, _ in ranked}
         return [
-            {
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameters_schema,
-                },
-            }
+            self._schema_dict(tool)
             for tool in self._tools.values()
             if tool.name in top_names
         ]

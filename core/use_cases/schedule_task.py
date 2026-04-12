@@ -6,7 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Callable
 
 from core.domain.entities.task import ScheduledTask, TaskStatus
-from core.domain.errors import BuiltinTaskProtectedError, TaskNotFoundError
+from core.domain.errors import BuiltinTaskProtectedError, TaskNotFoundError, TooManyActiveTasksError
 from core.ports.inbound.scheduler_port import ISchedulerUseCase
 
 if TYPE_CHECKING:
@@ -26,6 +26,10 @@ class ScheduleTaskUseCase(ISchedulerUseCase):
         self._on_mutation = on_mutation
 
     async def create_task(self, task: ScheduledTask) -> ScheduledTask:
+        if task.created_by != "":
+            count = await self._repo.count_active_by_agent(task.created_by)
+            if count >= 21:
+                raise TooManyActiveTasksError(agent_id=task.created_by)
         created = await self._repo.save_task(task)
         self._on_mutation()
         return created

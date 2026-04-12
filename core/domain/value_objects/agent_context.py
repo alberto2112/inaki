@@ -7,7 +7,11 @@ class AgentContext(BaseModel):
     memory_digest: str = ""
     skills: list[Skill] = []
 
-    def build_system_prompt(self, base_prompt: str) -> str:
+    def build_system_prompt(
+        self,
+        base_prompt: str,
+        extra_sections: list[str] | None = None,
+    ) -> str:
         sections = [base_prompt]
 
         if self.memory_digest.strip():
@@ -21,5 +25,9 @@ class AgentContext(BaseModel):
                 for s in self.skills
             )
             sections.append(f"\n## Skills disponibles:\n{skill_block}")
+
+        if extra_sections:
+            for section in extra_sections:
+                sections.append(section)
 
         return "\n".join(sections)

@@ -18,7 +18,7 @@ from typing import NoReturn
 logger = logging.getLogger(__name__)
 
 
-async def _run_rest_server(agent_cfg, container) -> None:
+async def _run_rest_server(agent_cfg, container, servers: list) -> None:
     """Arranca un servidor uvicorn para un agente en su puerto configurado."""
     import uvicorn
     from adapters.inbound.rest.app import create_agent_app
@@ -36,6 +36,10 @@ async def _run_rest_server(agent_cfg, container) -> None:
         access_log=True,
     )
     server = uvicorn.Server(config)
+    # Desactivamos los signal handlers de uvicorn: los maneja el daemon
+    # vía should_exit para un shutdown coordinado de todos los canales.
+    server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
+    servers.append(server)
     logger.info("REST server iniciado para '%s' en %s:%d", agent_cfg.id, host, port)
     await server.serve()
 
@@ -85,6 +89,7 @@ async def run_daemon(app_container, registry) -> None:
         loop.add_signal_handler(sig, _handle_signal)
 
     tasks: list[asyncio.Task] = []
+    uvicorn_servers: list = []
 
     # REST servers
     for agent_cfg in registry.agents_with_channel("rest"):
@@ -100,7 +105,7 @@ async def run_daemon(app_container, registry) -> None:
             logger.error("No se pudo obtener container para '%s': %s", agent_cfg.id, exc)
             continue
         task = asyncio.create_task(
-            _run_rest_server(agent_cfg, container),
+            _run_rest_server(agent_cfg, container, uvicorn_servers),
             name=f"rest:{agent_cfg.id}",
         )
         tasks.append(task)
@@ -145,9 +150,18 @@ async def run_daemon(app_container, registry) -> None:
         return_when=asyncio.FIRST_COMPLETED,
     )
 
-    # Cancelar todo lo que quede
+    # Shutdown gracioso de uvicorn: should_exit = True deja que uvicorn
+    # haga su propio teardown del lifespan en lugar de recibir un
+    # CancelledError en mitad de starlette.routing.lifespan.
+    for server in uvicorn_servers:
+        server.should_exit = True
+
+    # Cancelar telegram bots (no tienen protocolo should_exit).
+    # Los tasks de uvicorn terminarán por su cuenta cuando should_exit
+    # tome efecto, pero igual los esperamos en el gather.
     for task in pending:
-        task.cancel()
+        if not task.get_name().startswith("rest:"):
+            task.cancel()
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
 

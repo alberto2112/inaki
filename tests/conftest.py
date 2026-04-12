@@ -75,3 +75,11 @@ def mock_tools() -> MagicMock:
     tools = MagicMock()
     tools.get_schemas.return_value = []
     return tools
+
+
+@pytest.fixture
+def mock_embedding_cache() -> AsyncMock:
+    cache = AsyncMock()
+    cache.get.return_value = None
+    cache.put.return_value = None
+    return cache

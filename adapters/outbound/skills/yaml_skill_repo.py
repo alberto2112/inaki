@@ -18,33 +18,34 @@ Estructura esperada de cada skill YAML:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
 
-import numpy as np
 import yaml
 
+from adapters.outbound.embedding import resolve_provider_name
 from core.domain.entities.skill import Skill
+from core.domain.services.similarity import cosine_similarity
+from core.ports.outbound.embedding_cache_port import IEmbeddingCache
 from core.ports.outbound.embedding_port import IEmbeddingProvider
 from core.ports.outbound.skill_port import ISkillRepository
 
 logger = logging.getLogger(__name__)
 
 
-def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    va = np.array(a, dtype=np.float32)
-    vb = np.array(b, dtype=np.float32)
-    norm_a = np.linalg.norm(va)
-    norm_b = np.linalg.norm(vb)
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return float(np.dot(va, vb) / (norm_a * norm_b))
-
-
 class YamlSkillRepository(ISkillRepository):
 
-    def __init__(self, embedder: IEmbeddingProvider) -> None:
+    def __init__(
+        self,
+        embedder: IEmbeddingProvider,
+        cache: IEmbeddingCache | None = None,
+        dimension: int = 384,
+    ) -> None:
         self._embedder = embedder
+        self._cache = cache
+        self._dimension = dimension
+        self._provider_name = resolve_provider_name(embedder)
         self._extra_files: list[Path] = []
         self._skills: list[Skill] = []
         self._embeddings: list[list[float]] = []
@@ -60,8 +61,17 @@ class YamlSkillRepository(ISkillRepository):
 
     async def _load_skill_from_path(self, yaml_file: Path) -> None:
         try:
-            with yaml_file.open("r", encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
+            raw_bytes = yaml_file.read_bytes()
+            content_hash = hashlib.md5(raw_bytes).hexdigest()
+
+            # Intentar obtener embedding del cache
+            embedding: list[float] | None = None
+            if self._cache is not None:
+                embedding = await self._cache.get(
+                    content_hash, self._provider_name, self._dimension
+                )
+
+            data = yaml.safe_load(raw_bytes.decode("utf-8")) or {}
             skill = Skill(
                 id=data.get("id", yaml_file.stem),
                 name=data.get("name", yaml_file.stem),
@@ -69,8 +79,15 @@ class YamlSkillRepository(ISkillRepository):
                 instructions=data.get("instructions", ""),
                 tags=data.get("tags", []),
             )
-            text = f"{skill.name} {skill.description} {' '.join(skill.tags)}"
-            embedding = await self._embedder.embed_passage(text)
+
+            if embedding is None:
+                text = f"{skill.name} {skill.description} {' '.join(skill.tags)}"
+                embedding = await self._embedder.embed_passage(text)
+                if self._cache is not None:
+                    await self._cache.put(
+                        content_hash, self._provider_name, self._dimension, embedding
+                    )
+
             self._skills.append(skill)
             self._embeddings.append(embedding)
             logger.debug("Skill cargada: '%s' (%s)", skill.id, yaml_file)
@@ -109,7 +126,7 @@ class YamlSkillRepository(ISkillRepository):
             return []
 
         scored = [
-            (skill, _cosine_similarity(query_embedding, emb))
+            (skill, cosine_similarity(query_embedding, emb))
             for skill, emb in zip(self._skills, self._embeddings)
         ]
         scored.sort(key=lambda x: x[1], reverse=True)

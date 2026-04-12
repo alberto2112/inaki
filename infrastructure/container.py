@@ -29,6 +29,7 @@ from adapters.outbound.scheduler.dispatch_adapters import (
     SchedulerDispatchPorts,
 )
 from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRepo
+from adapters.outbound.embedding.sqlite_embedding_cache import SqliteEmbeddingCache
 from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
 from adapters.outbound.tools.tool_registry import ToolRegistry
 from core.domain.entities.task import TaskStatus
@@ -61,11 +62,20 @@ class AgentContainer:
 
         # Factories resuelven el proveedor correcto leyendo cfg.embedding.provider y cfg.llm.provider
         self._embedder = EmbeddingProviderFactory.create(cfg)
+        self._embedding_cache = SqliteEmbeddingCache(cfg.embedding.cache_db)
         self._memory = SQLiteMemoryRepository(cfg.memory.db_path, self._embedder)
         self._llm = LLMProviderFactory.create(cfg)
-        self._skills = YamlSkillRepository(embedder=self._embedder)
+        self._skills = YamlSkillRepository(
+            embedder=self._embedder,
+            cache=self._embedding_cache,
+            dimension=cfg.embedding.dimension,
+        )
         self._history = SQLiteHistoryStore(cfg.chat_history)
-        self._tools = ToolRegistry(embedder=self._embedder)
+        self._tools = ToolRegistry(
+            embedder=self._embedder,
+            cache=self._embedding_cache,
+            dimension=cfg.embedding.dimension,
+        )
         self._register_tools()
         self._register_extensions(global_config.app.ext_dirs)
 

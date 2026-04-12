@@ -14,7 +14,6 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from croniter import croniter
-from pydantic import ValidationError
 
 from adapters.outbound.history.sqlite_history_store import SQLiteHistoryStore
 from adapters.outbound.memory.sqlite_memory_repo import SQLiteMemoryRepository
@@ -421,19 +420,7 @@ class AppContainer:
 
         await self.scheduler_repo.ensure_schema()
 
-        # get_task puede fallar con ValidationError si en la DB quedó un payload
-        # de un schema viejo (p.ej. 'cli_command' de la era previa al refactor).
-        # En ese caso tratamos la fila como stale: la borramos y seedamos limpio.
-        try:
-            existing = await self.scheduler_repo.get_task(CONSOLIDATE_MEMORY_TASK_ID)
-        except ValidationError as exc:
-            logger.warning(
-                "Tarea builtin consolidate_memory tiene payload stale en DB "
-                "(esquema viejo) — borrando y reseedando: %s",
-                exc,
-            )
-            await self.scheduler_repo.delete_task(CONSOLIDATE_MEMORY_TASK_ID)
-            existing = None
+        existing = await self.scheduler_repo.get_task(CONSOLIDATE_MEMORY_TASK_ID)
 
         if existing is None:
             # seed_builtin computa next_run si es recurrente y viene None

@@ -7,18 +7,6 @@ Solo se persisten mensajes user y assistant — nunca tool calls.
 Schema:
   history — una fila por mensaje con flag `infused` (0=pendiente de extracción,
   1=ya procesado por el extractor de recuerdos).
-
-La columna `archived` del schema original es legacy (venía de un soft-delete
-que se eliminó cuando la consolidación pasó a usar `trim` en vez de
-archive+clear). Se mantiene en CREATE TABLE IF NOT EXISTS para no romper
-DBs existentes, pero ninguna query de esta clase la usa.
-
-La columna `infused` fue añadida en una migración posterior para evitar que
-el extractor re-procesara los mensajes que siguen vivos en el buffer tras el
-trim. DBs preexistentes reciben la columna vía ALTER TABLE ADD COLUMN en
-`_ensure_schema`, y todos los mensajes ya presentes quedan marcados con
-`infused=1` durante la migración (asumimos que forman parte de un estado
-estable previo al cambio).
 """
 
 from __future__ import annotations
@@ -44,7 +32,6 @@ CREATE TABLE IF NOT EXISTS history (
     role       TEXT    NOT NULL,
     content    TEXT    NOT NULL,
     created_at TEXT    NOT NULL,
-    archived   INTEGER NOT NULL DEFAULT 0,
     infused    INTEGER NOT NULL DEFAULT 0
 );
 """
@@ -74,22 +61,6 @@ class SQLiteHistoryStore(IHistoryStore):
     async def _ensure_schema(self, conn: aiosqlite.Connection) -> None:
         await conn.execute(_CREATE_TABLE)
         await conn.execute(_CREATE_INDEX)
-
-        # Migración: añadir columna `infused` si la DB viene de una versión
-        # previa al cambio. Se marca todo lo existente como infused=1 para
-        # no reprocesar mensajes ya vividos (asumimos estado estable).
-        cursor = await conn.execute("PRAGMA table_info(history)")
-        cols = {row[1] for row in await cursor.fetchall()}
-        if "infused" not in cols:
-            logger.info(
-                "Migrando tabla history: añadiendo columna `infused` y marcando "
-                "todas las filas existentes como infused=1"
-            )
-            await conn.execute(
-                "ALTER TABLE history ADD COLUMN infused INTEGER NOT NULL DEFAULT 0"
-            )
-            await conn.execute("UPDATE history SET infused = 1")
-
         await conn.execute(_CREATE_INFUSED_INDEX)
         await conn.commit()
 
@@ -202,13 +173,8 @@ class SQLiteHistoryStore(IHistoryStore):
             await conn.commit()
 
     def _row_to_message(self, row: aiosqlite.Row) -> Message:
-        ts: datetime | None = None
-        try:
-            ts = datetime.fromisoformat(row["created_at"])
-        except (ValueError, TypeError):
-            pass
         return Message(
             role=Role(row["role"]),
             content=row["content"],
-            timestamp=ts,
+            timestamp=datetime.fromisoformat(row["created_at"]),
         )

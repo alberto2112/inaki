@@ -366,7 +366,7 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
     base = _load_yaml_safe(config_dir / "global.yaml")
     secrets = _load_yaml_safe(config_dir / "global.secrets.yaml")
 
-    if not secrets and (config_dir / "global.secrets.yaml").exists() is False:
+    if not secrets and not (config_dir / "global.secrets.yaml").exists():
         logger.debug("global.secrets.yaml no encontrado — usando solo global.yaml")
 
     merged = _deep_merge(base, secrets)

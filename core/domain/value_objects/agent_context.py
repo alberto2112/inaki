@@ -64,12 +64,13 @@ class AgentContext(BaseModel):
             sections.append("\n" + self.memory_digest)
 
         if self.skills:
-            skill_block = "\n".join(
-                f"- **{s.name}**: {s.description}"
-                + (f"\n  {s.instructions}" if s.instructions else "")
-                for s in self.skills
-            )
-            sections.append(f"\n## Skills disponibles:\n{skill_block}")
+            skill_blocks = []
+            for s in self.skills:
+                block = f"### {s.name}\n{s.description}"
+                if s.instructions:
+                    block += f"\n\n{s.instructions}"
+                skill_blocks.append(block)
+            sections.append("\n## Skills disponibles:\n\n" + "\n\n".join(skill_blocks))
 
         if extra_sections:
             for section in extra_sections:

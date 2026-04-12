@@ -211,11 +211,27 @@ put(hash, provider, dim, embedding)
 ```
 system_prompt = base_prompt
     + memory_digest (si existe)
-    + "## Skills disponibles:\n- **Nombre**: descripción\n  instrucciones"
+    + "## Skills disponibles:\n\n### Nombre\ndescripción\n\ninstrucciones"
     + extra_sections (e.g. agent discovery para delegación)
 ```
 
-Las skills se renderizan como lista markdown. Solo las skills recuperadas por RAG (o todas si RAG inactivo) aparecen en el prompt.
+Cada skill se renderiza como un bloque markdown con heading `###`, descripción como primer párrafo, e instructions separadas por línea en blanco:
+
+```markdown
+## Skills disponibles:
+
+### Búsqueda Web
+Busca información en internet usando DuckDuckGo
+
+Cuando el usuario pregunta sobre eventos actuales o necesita información...
+
+### Calculadora
+Realiza cálculos matemáticos
+
+Usa esta skill cuando el usuario pide operaciones numéricas...
+```
+
+Solo las skills recuperadas por RAG (o todas si RAG inactivo) aparecen en el prompt.
 
 ---
 

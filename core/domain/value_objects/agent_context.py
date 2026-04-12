@@ -44,6 +44,7 @@ def _resolve_vars(text: str, tz_name: str | None) -> str:
 
 class AgentContext(BaseModel):
     agent_id: str
+    user_context: str = ""
     memory_digest: str = ""
     skills: list[Skill] = []
     timezone: str | None = None
@@ -54,6 +55,9 @@ class AgentContext(BaseModel):
         extra_sections: list[str] | None = None,
     ) -> str:
         sections = [base_prompt]
+
+        if self.user_context.strip():
+            sections.append("\n" + self.user_context)
 
         if self.memory_digest.strip():
             # El digest ya trae su propio header "# Recuerdos sobre el usuario".

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 from core.domain.entities.message import Message, Role
 from core.domain.entities.skill import Skill
@@ -87,6 +88,14 @@ class RunAgentUseCase:
         """
         self._extra_system_sections = list(sections)
 
+    def _read_user_context(self) -> str:
+        """Lee ~/.inaki/user.md. Retorna '' si no existe."""
+        path = Path("~/.inaki/user.md").expanduser()
+        try:
+            return path.read_text(encoding="utf-8")
+        except (FileNotFoundError, OSError):
+            return ""
+
     def _read_digest(self) -> str:
         """Lee el digest markdown. Retorna '' si no existe o falla la lectura."""
         path = self._cfg.memory.digest_path  # already an expanded Path (validator)
@@ -121,7 +130,8 @@ class RunAgentUseCase:
             if tools_rag_active:
                 tool_schemas = await self._tools.get_schemas_relevant(query_vec, top_k=self._cfg.tools.rag_top_k)
 
-        context = AgentContext(agent_id=agent_id, memory_digest=digest_text, skills=retrieved_skills, timezone=self._user_timezone)
+        user_context = self._read_user_context()
+        context = AgentContext(agent_id=agent_id, user_context=user_context, memory_digest=digest_text, skills=retrieved_skills, timezone=self._user_timezone)
         system_prompt = context.build_system_prompt(
             self._cfg.system_prompt,
             extra_sections=self._extra_system_sections or None,
@@ -169,7 +179,8 @@ class RunAgentUseCase:
             if tools_rag_active:
                 selected_schemas = await self._tools.get_schemas_relevant(query_vec, top_k=self._cfg.tools.rag_top_k)
 
-        context = AgentContext(agent_id=self._cfg.id, memory_digest=digest_text, skills=retrieved_skills, timezone=self._user_timezone)
+        user_context = self._read_user_context()
+        context = AgentContext(agent_id=self._cfg.id, user_context=user_context, memory_digest=digest_text, skills=retrieved_skills, timezone=self._user_timezone)
         system_prompt = context.build_system_prompt(self._cfg.system_prompt)
 
         return InspectResult(

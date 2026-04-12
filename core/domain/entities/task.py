@@ -41,6 +41,7 @@ class ChannelSendPayload(BaseModel):
 class AgentSendPayload(BaseModel):
     type: Literal["agent_send"] = "agent_send"
     agent_id: str
+    task: str
     system: str | None = None
     tools_override: list[dict] | None = None
     output_channel: str | None = None

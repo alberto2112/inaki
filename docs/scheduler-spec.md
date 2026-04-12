@@ -108,7 +108,7 @@ trigger_type: agent_send
 trigger_payload:
   type: agent_send
   agent_id: "analyst"
-  system: "Genera el reporte semanal de actividad."
+  task: "Genera el reporte semanal de actividad."
   output_channel: "telegram:987654321"
 task_kind: recurrent
 schedule: "0 8 * * 1"   # lunes 8 AM
@@ -140,7 +140,7 @@ trigger_type: agent_send
 trigger_payload:
   type: agent_send
   agent_id: "onboarding-bot"
-  system: "Continúa el onboarding del usuario."
+  task: "Continúa el onboarding del usuario."
 ```
 
 ---
@@ -383,7 +383,8 @@ Despacha un agente con prompt y/o tools opcionales. El resultado puede redirigir
 class AgentSendPayload(BaseModel):
     type: Literal["agent_send"] = "agent_send"
     agent_id: str                           # ID del agente a despachar
-    system: str | None = None               # Prompt; None = usa el default del agente
+    task: str                               # Mensaje/tarea a enviar al agente
+    system: str | None = None               # Override del system prompt; None = usa el default del agente
     tools_override: list[dict] | None = None  # Tools disponibles; None = todas
     output_channel: str | None = None       # Si definido, envía resultado al canal
 ```
@@ -393,7 +394,7 @@ class AgentSendPayload(BaseModel):
 {
   "type": "agent_send",
   "agent_id": "analyst",
-  "system": "Genera el reporte semanal.",
+  "task": "Genera el reporte semanal.",
   "output_channel": "telegram:123456789"
 }
 ```

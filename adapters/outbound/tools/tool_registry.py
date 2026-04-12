@@ -96,6 +96,7 @@ class ToolRegistry(IToolExecutor):
         self,
         query_embedding: list[float],
         top_k: int = 5,
+        min_score: float = 0.0,
     ) -> list[dict]:
         await self._ensure_embeddings()
         if not self._embeddings:
@@ -106,6 +107,8 @@ class ToolRegistry(IToolExecutor):
             for name, emb in self._embeddings.items()
         ]
         scored.sort(key=lambda x: x[1], reverse=True)
+        if min_score > 0.0:
+            scored = [(name, s) for name, s in scored if s >= min_score]
         top_names = {name for name, _ in scored[:top_k]}
 
         return [

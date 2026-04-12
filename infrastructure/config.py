@@ -127,11 +127,13 @@ class SchedulerConfig(BaseModel):
 class SkillsConfig(BaseModel):
     rag_min_skills: int = 10
     rag_top_k: int = 3
+    rag_min_score: float = 0.0
 
 
 class ToolsConfig(BaseModel):
     rag_min_tools: int = 10
     rag_top_k: int = 5
+    rag_min_score: float = 0.0
     tool_call_max_iterations: int = 5
     circuit_breaker_threshold: int = 2
 

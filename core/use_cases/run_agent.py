@@ -126,9 +126,17 @@ class RunAgentUseCase:
         if skills_rag_active or tools_rag_active:
             query_vec = await self._embedder.embed_query(user_input)
             if skills_rag_active:
-                retrieved_skills = await self._skills.retrieve(query_vec, top_k=self._cfg.skills.rag_top_k)
+                retrieved_skills = await self._skills.retrieve(
+                    query_vec,
+                    top_k=self._cfg.skills.rag_top_k,
+                    min_score=self._cfg.skills.rag_min_score,
+                )
             if tools_rag_active:
-                tool_schemas = await self._tools.get_schemas_relevant(query_vec, top_k=self._cfg.tools.rag_top_k)
+                tool_schemas = await self._tools.get_schemas_relevant(
+                    query_vec,
+                    top_k=self._cfg.tools.rag_top_k,
+                    min_score=self._cfg.tools.rag_min_score,
+                )
 
         user_context = self._read_user_context()
         context = AgentContext(agent_id=agent_id, user_context=user_context, memory_digest=digest_text, skills=retrieved_skills, timezone=self._user_timezone)

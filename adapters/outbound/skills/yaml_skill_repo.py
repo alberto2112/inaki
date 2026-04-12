@@ -120,6 +120,7 @@ class YamlSkillRepository(ISkillRepository):
         self,
         query_embedding: list[float],
         top_k: int = 3,
+        min_score: float = 0.0,
     ) -> list[Skill]:
         await self._ensure_loaded()
         if not self._skills:
@@ -130,4 +131,6 @@ class YamlSkillRepository(ISkillRepository):
             for skill, emb in zip(self._skills, self._embeddings)
         ]
         scored.sort(key=lambda x: x[1], reverse=True)
+        if min_score > 0.0:
+            scored = [(skill, s) for skill, s in scored if s >= min_score]
         return [skill for skill, _ in scored[:top_k]]

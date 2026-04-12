@@ -36,6 +36,7 @@ class IToolExecutor(ABC):
         self,
         query_embedding: list[float],
         top_k: int = 5,
+        min_score: float = 0.0,
     ) -> list[dict]:
         """Retorna los schemas de las tools más relevantes para el query via cosine similarity."""
         ...

@@ -104,4 +104,5 @@ Deployed on Raspberry Pi 5 (4GB RAM) via systemd (`systemd/inaki.service`). Memo
 - **Execution Flow**: `docs/flujo_ejecucion.md`
 - **Config Reference**: `docs/configuracion.md`
 - **Scheduler Spec**: `docs/scheduler-spec.md`
+- **Discovered failures to be fixed**: `docs/fixme-discovered-failures.md`
 - **GitHub**: https://github.com/alberto2112/inaki

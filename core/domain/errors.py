@@ -42,6 +42,14 @@ class TaskNotFoundError(SchedulerError):
     """La tarea solicitada no existe."""
 
 
+class TooManyActiveTasksError(SchedulerError):
+    """El agente alcanzó el límite máximo de tareas activas."""
+
+    def __init__(self, agent_id: str) -> None:
+        super().__init__(f"Agent {agent_id} has reached the maximum of 21 active tasks")
+        self.agent_id = agent_id
+
+
 class ToolLoopMaxIterationsError(IñakiError):
     """El tool-loop alcanzó el límite de iteraciones sin completar la tarea."""
 

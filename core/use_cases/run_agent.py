@@ -70,6 +70,13 @@ class RunAgentUseCase:
         # Extra sections injected by wire_delegation (task 6.1).
         # Empty by default — non-breaking when delegation is disabled.
         self._extra_system_sections: list[str] = []
+        # Timezone del usuario para resolver {{TIMEZONE}}/{{DATETIME}}/etc. en el system prompt.
+        # None → fallback a TZ local del sistema. Se puede inyectar via wire_user_timezone().
+        self._user_timezone: str | None = None
+
+    def wire_user_timezone(self, tz: str | None) -> None:
+        """Inyecta la timezone del usuario para la interpolación de variables en el system prompt."""
+        self._user_timezone = tz
 
     def set_extra_system_sections(self, sections: list[str]) -> None:
         """
@@ -114,7 +121,7 @@ class RunAgentUseCase:
             if tools_rag_active:
                 tool_schemas = await self._tools.get_schemas_relevant(query_vec, top_k=self._cfg.tools.rag_top_k)
 
-        context = AgentContext(agent_id=agent_id, memory_digest=digest_text, skills=retrieved_skills)
+        context = AgentContext(agent_id=agent_id, memory_digest=digest_text, skills=retrieved_skills, timezone=self._user_timezone)
         system_prompt = context.build_system_prompt(
             self._cfg.system_prompt,
             extra_sections=self._extra_system_sections or None,
@@ -162,7 +169,7 @@ class RunAgentUseCase:
             if tools_rag_active:
                 selected_schemas = await self._tools.get_schemas_relevant(query_vec, top_k=self._cfg.tools.rag_top_k)
 
-        context = AgentContext(agent_id=self._cfg.id, memory_digest=digest_text, skills=retrieved_skills)
+        context = AgentContext(agent_id=self._cfg.id, memory_digest=digest_text, skills=retrieved_skills, timezone=self._user_timezone)
         system_prompt = context.build_system_prompt(self._cfg.system_prompt)
 
         return InspectResult(

@@ -69,7 +69,7 @@ async def chat_stream(
             from core.domain.value_objects.agent_context import AgentContext
             from core.domain.entities.message import Message, Role
 
-            context = AgentContext(agent_id=cfg.id, memories=memories, skills=skills)
+            context = AgentContext(agent_id=cfg.id, memories=memories, skills=skills, timezone=container.run_agent._user_timezone)
             system_prompt = context.build_system_prompt(cfg.system_prompt)
 
             user_msg = Message(role=Role.USER, content=body.message)

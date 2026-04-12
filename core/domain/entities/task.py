@@ -42,6 +42,7 @@ class ChannelSendPayload(BaseModel):
 class AgentSendPayload(BaseModel):
     type: Literal["agent_send"] = "agent_send"
     agent_id: str
+    task: str
     system: str | None = None
     tools_override: list[dict] | None = None
     output_channel: str | None = None
@@ -96,6 +97,7 @@ class ScheduledTask(BaseModel):
     enabled: bool = True
     executions_remaining: int | None = None  # recurrent only: None=infinite, N=countdown
     status: TaskStatus = TaskStatus.PENDING
+    created_by: str = ""  # agent_id that created the task; "" = CLI/unknown origin
     retry_count: int = 0
     log_enabled: bool = True
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

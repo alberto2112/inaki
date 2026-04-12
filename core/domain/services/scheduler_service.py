@@ -204,7 +204,7 @@ class SchedulerService:
             return None
         elif isinstance(payload, AgentSendPayload):
             result = await self._dispatch.llm_dispatcher.dispatch(
-                payload.agent_id, payload.system, payload.tools_override
+                payload.agent_id, payload.task, payload.tools_override
             )
             if payload.output_channel:
                 await self._dispatch.channel_sender.send_message(payload.output_channel, result)

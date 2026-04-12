@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from freezegun import freeze_time
@@ -14,6 +14,7 @@ from core.domain.entities.task import (
     TaskKind,
     TaskStatus,
     TriggerType,
+    WebhookPayload,
 )
 from core.domain.entities.task_log import TaskLog
 from core.domain.services.scheduler_service import SchedulerService
@@ -36,6 +37,8 @@ def _make_dispatch() -> MagicMock:
     dispatch.llm_dispatcher = AsyncMock()
     dispatch.consolidator = AsyncMock()
     dispatch.consolidator.consolidate_all = AsyncMock(return_value="ok")
+    dispatch.http_caller = AsyncMock()
+    dispatch.http_caller.call = AsyncMock(return_value="webhook response")
     return dispatch
 
 
@@ -83,7 +86,6 @@ def service(mock_repo: AsyncMock) -> SchedulerService:
 async def test_handle_missed_marks_oneshot_as_missed(
     service: SchedulerService, mock_repo: AsyncMock
 ) -> None:
-    now = datetime(2025, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
     task = _make_task(
         task_id=100,
         task_kind=TaskKind.ONESHOT,
@@ -174,3 +176,56 @@ def test_invalidate_sets_wake_event(service: SchedulerService) -> None:
     assert not service._wake.is_set()
     service.invalidate()
     assert service._wake.is_set()
+
+
+# ---------------------------------------------------------------------------
+# _dispatch_trigger webhook
+# ---------------------------------------------------------------------------
+
+def _make_webhook_task(url: str = "https://example.com/hook") -> ScheduledTask:
+    return ScheduledTask(
+        id=200,
+        name="webhook-test",
+        task_kind=TaskKind.ONESHOT,
+        trigger_type=TriggerType.WEBHOOK,
+        trigger_payload=WebhookPayload(url=url),
+        schedule="2025-12-01T10:00:00+00:00",
+        status=TaskStatus.PENDING,
+    )
+
+
+async def test_dispatch_webhook_calls_http_caller(
+    service: SchedulerService,
+) -> None:
+    """_dispatch_trigger calls http_caller.call() with the correct WebhookPayload."""
+    task = _make_webhook_task()
+    result = await service._dispatch_trigger(task)
+
+    service._dispatch.http_caller.call.assert_awaited_once_with(task.trigger_payload)
+    assert result == "webhook response"
+
+
+async def test_dispatch_webhook_return_value_propagated_to_finalize(
+    service: SchedulerService, mock_repo: AsyncMock
+) -> None:
+    """Return value from http_caller.call() reaches _finalize_task as output."""
+    task = _make_webhook_task()
+    service._finalize_task = AsyncMock()  # type: ignore[method-assign]
+
+    await service._execute_task(task)
+
+    service._finalize_task.assert_awaited_once_with(task, "webhook response")  # type: ignore[attr-defined]
+
+
+async def test_dispatch_webhook_failure_propagates_as_execute_failure(
+    service: SchedulerService, mock_repo: AsyncMock
+) -> None:
+    """RuntimeError from http_caller leads to FAILED status after retries."""
+    task = _make_webhook_task()
+    service._dispatch.http_caller.call = AsyncMock(side_effect=RuntimeError("500 error"))
+
+    await service._execute_task(task)
+
+    calls = mock_repo.update_status.call_args_list
+    final_statuses = [c.args[1] for c in calls]
+    assert TaskStatus.FAILED in final_statuses

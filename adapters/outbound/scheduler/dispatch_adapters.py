@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+import httpx
 
 from core.ports.outbound.llm_dispatcher_port import ILLMDispatcher
 from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
+
+if TYPE_CHECKING:
+    from core.domain.entities.task import WebhookPayload
 
 
 class ChannelSenderAdapter:
@@ -48,8 +53,33 @@ class ConsolidationDispatchAdapter:
         return await self._uc.execute()
 
 
+class HttpCallerAdapter:
+    """Performs HTTP calls for webhook triggers."""
+
+    async def call(self, payload: WebhookPayload) -> str:
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.request(
+                    method=payload.method,
+                    url=payload.url,
+                    headers=payload.headers,
+                    content=payload.body,
+                    timeout=payload.timeout,
+                )
+            except httpx.TimeoutException as exc:
+                raise RuntimeError(f"Webhook timed out: {exc}") from exc
+            except httpx.ConnectError as exc:
+                raise RuntimeError(f"Webhook connection failed: {exc}") from exc
+            if response.status_code not in payload.success_codes:
+                raise RuntimeError(
+                    f"Webhook returned non-success status {response.status_code}"
+                )
+            return response.text
+
+
 @dataclass
 class SchedulerDispatchPorts:
     channel_sender: ChannelSenderAdapter
     llm_dispatcher: ILLMDispatcher
     consolidator: ConsolidationDispatchAdapter
+    http_caller: HttpCallerAdapter

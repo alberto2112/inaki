@@ -59,9 +59,6 @@ class AgentContainer:
         # Idempotency guard for wire_delegation (task 5.1)
         self._delegation_wired: bool = False
 
-        # Idempotency guard for wire_scheduler (task 5.2)
-        self._scheduler_wired: bool = False
-
         # Factories resuelven el proveedor correcto leyendo cfg.embedding.provider y cfg.llm.provider
         self._embedder = EmbeddingProviderFactory.create(cfg)
         self._memory = SQLiteMemoryRepository(cfg.memory.db_path, self._embedder)
@@ -197,45 +194,6 @@ class AgentContainer:
             "AgentContainer '%s': delegation wired (allowed_targets=%s)",
             self.agent_config.id,
             self.agent_config.delegation.allowed_targets or "<all>",
-        )
-
-    def wire_scheduler(
-        self,
-        schedule_task_uc: ScheduleTaskUseCase | None,
-        user_timezone: str,
-    ) -> None:
-        """
-        Phase-3 wiring: registers the scheduler tool when schedule_task_uc is available.
-
-        No-op when:
-        - schedule_task_uc is None (scheduler disabled or not yet built)
-        - called a second time (idempotency guard)
-        """
-        if schedule_task_uc is None:
-            return
-
-        if self._scheduler_wired:
-            logger.debug(
-                "AgentContainer '%s': wire_scheduler ya ejecutado — skipping (idempotent)",
-                self.agent_config.id,
-            )
-            return
-
-        from adapters.outbound.tools.scheduler_tool import SchedulerTool
-
-        scheduler_tool = SchedulerTool(
-            schedule_task_uc=schedule_task_uc,
-            agent_id=self.agent_config.id,
-            user_timezone=user_timezone,
-        )
-        self._tools.register(scheduler_tool)
-
-        self._scheduler_wired = True
-
-        logger.info(
-            "AgentContainer '%s': scheduler tool wired (timezone=%s)",
-            self.agent_config.id,
-            user_timezone,
         )
 
     def _build_discovery_section(

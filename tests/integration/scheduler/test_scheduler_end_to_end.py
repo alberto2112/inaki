@@ -180,7 +180,7 @@ async def test_agent_send_no_output_channel_stores_output(
         trigger_type=TriggerType.AGENT_SEND,
         trigger_payload=AgentSendPayload(
             agent_id="general",
-            prompt_override="do something",
+            task="do something",
             output_channel=None,
         ),
         schedule="2025-06-01T10:00:00+00:00",

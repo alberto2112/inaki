@@ -29,6 +29,9 @@ build/
 .env.*
 *.log
 
+# custom tools and skills
+ext/
+
 # macOS
 .DS_Store
 .AppleDouble

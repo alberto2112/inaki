@@ -27,10 +27,10 @@ RunAgentUseCase.execute()
         │       └── embed_query(user_input)  → query_vec
         │
         ├── (si skills_rag_active)
-        │       └── skills.retrieve(query_vec, top_k=rag_top_k) → retrieved_skills
+        │       └── skills.retrieve(query_vec, top_k, min_score) → retrieved_skills
         │
         ├── (si tools_rag_active)
-        │       └── tools.get_schemas_relevant(query_vec, top_k=rag_top_k) → tool_schemas
+        │       └── tools.get_schemas_relevant(query_vec, top_k, min_score) → tool_schemas
         │
         ▼
 AgentContext(skills=retrieved_skills)
@@ -65,10 +65,11 @@ list_all() / retrieve()
                 │
                 └── _loaded = True  (no se recarga hasta add_file nuevo)
 
-retrieve(query_vec, top_k)
+retrieve(query_vec, top_k, min_score)
         │
         ├── cosine_similarity(query_vec, emb) para cada skill
         ├── sort desc por score
+        ├── filtrar score < min_score (si min_score > 0.0)
         └── top_k skills → inject en system prompt
 ```
 
@@ -82,7 +83,7 @@ retrieve(query_vec, top_k)
 register(tool) → ToolRegistry._tools{}
                    └── _embeddings_ready = False (invalidar)
 
-get_schemas_relevant(query_vec, top_k)
+get_schemas_relevant(query_vec, top_k, min_score)
         │
         └── _ensure_embeddings()
                 │
@@ -100,6 +101,7 @@ get_schemas_relevant(query_vec, top_k)
                 └── _embeddings_ready = True
 
 scored = cosine_similarity(query_vec, emb) para cada tool
+filtrar score < min_score (si min_score > 0.0)
 top_k nombres → schemas de esas tools
 ```
 
@@ -118,7 +120,7 @@ cos_sim(a, b) = dot(a, b) / (||a|| * ||b||)
 - Usa `numpy` internamente (float32)
 - Retorna 0.0 si alguno de los vectores tiene norma cero (vector nulo)
 - Escala: −1.0 (opuesto) → 0.0 (ortogonal) → 1.0 (idéntico)
-- No hay umbral mínimo (threshold): siempre se toman los top-k, sin importar el score
+- Umbral configurable: `rag_min_score` filtra resultados por debajo del threshold antes de aplicar top_k (default 0.0 = sin filtro)
 
 ---
 
@@ -192,6 +194,7 @@ put(hash, provider, dim, embedding)
 |-------|---------|-------------|
 | `rag_min_skills` | `10` | Mínimo de skills para activar RAG. Con ≤10 skills, se mandan todas |
 | `rag_top_k` | `3` | Cuántas skills devuelve el retrieve |
+| `rag_min_score` | `0.0` | Score mínimo de cosine similarity (0.0-1.0). Skills por debajo se descartan ANTES de aplicar top_k. 0.0 = sin filtro |
 
 ### `ToolsConfig`
 
@@ -199,6 +202,7 @@ put(hash, provider, dim, embedding)
 |-------|---------|-------------|
 | `rag_min_tools` | `10` | Mínimo de tools para activar RAG |
 | `rag_top_k` | `5` | Cuántas tools devuelve el retrieve |
+| `rag_min_score` | `0.0` | Score mínimo de cosine similarity (0.0-1.0). Tools por debajo se descartan ANTES de aplicar top_k. 0.0 = sin filtro |
 | `tool_call_max_iterations` | `5` | Iteraciones máximas del tool loop |
 | `circuit_breaker_threshold` | `2` | Fallos consecutivos antes de cortar |
 

@@ -255,3 +255,93 @@ async def test_inspect_result_has_memory_digest_not_memories(
     result = await uc.inspect("hola")
     assert hasattr(result, "memory_digest") and isinstance(result.memory_digest, str)
     assert not hasattr(result, "memories")
+
+
+# ---------------------------------------------------------------------------
+# Task 6.1 — extra_sections thread-through
+# ---------------------------------------------------------------------------
+
+async def test_extra_system_sections_threaded_to_llm(
+    mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools, agent_config
+):
+    """
+    Task 6.1 thread-through verification.
+
+    When _extra_system_sections is set on RunAgentUseCase, the content MUST
+    appear in the system_prompt passed to the LLM on the next execute() call.
+    """
+    mock_skills.list_all.return_value = []
+    mock_tools.get_schemas.return_value = []
+    mock_llm.complete.return_value = "ok"
+
+    uc = RunAgentUseCase(
+        llm=mock_llm, memory=mock_memory, embedder=mock_embedder,
+        skills=mock_skills, history=mock_history, tools=mock_tools,
+        agent_config=agent_config,
+    )
+
+    # Simulate what wire_delegation does
+    uc.set_extra_system_sections(["SECTION-TEST: discovery content here"])
+
+    await uc.execute("hola")
+
+    call_args = mock_llm.complete.call_args
+    # LLM.complete(messages, system_prompt) — system_prompt is the second positional arg
+    captured_prompt = call_args.args[1]
+    assert "SECTION-TEST: discovery content here" in captured_prompt, (
+        "extra_sections content must appear in the system prompt passed to the LLM"
+    )
+
+
+async def test_extra_system_sections_empty_by_default(
+    mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools, agent_config
+):
+    """
+    When no extra sections are set, _extra_system_sections is empty and
+    execute() works normally without any extra content in the prompt.
+    """
+    mock_skills.list_all.return_value = []
+    mock_tools.get_schemas.return_value = []
+    mock_llm.complete.return_value = "ok"
+
+    uc = RunAgentUseCase(
+        llm=mock_llm, memory=mock_memory, embedder=mock_embedder,
+        skills=mock_skills, history=mock_history, tools=mock_tools,
+        agent_config=agent_config,
+    )
+
+    # No extra sections set — _extra_system_sections defaults to []
+    assert uc._extra_system_sections == []
+
+    # execute() must work normally
+    result = await uc.execute("hola")
+    assert result == "ok"
+
+
+async def test_set_extra_system_sections_replaces_existing(
+    mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools, agent_config
+):
+    """
+    set_extra_system_sections replaces the existing list (idempotent setter).
+    The last set value is what appears in the system prompt.
+    """
+    mock_skills.list_all.return_value = []
+    mock_tools.get_schemas.return_value = []
+    mock_llm.complete.return_value = "ok"
+
+    uc = RunAgentUseCase(
+        llm=mock_llm, memory=mock_memory, embedder=mock_embedder,
+        skills=mock_skills, history=mock_history, tools=mock_tools,
+        agent_config=agent_config,
+    )
+
+    uc.set_extra_system_sections(["FIRST-SECTION"])
+    uc.set_extra_system_sections(["SECOND-SECTION"])
+
+    await uc.execute("hola")
+
+    captured_prompt = mock_llm.complete.call_args.args[1]
+    assert "SECOND-SECTION" in captured_prompt
+    assert "FIRST-SECTION" not in captured_prompt, (
+        "First section must have been replaced by the second"
+    )

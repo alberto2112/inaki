@@ -213,3 +213,67 @@ def test_all_vars_replaced_when_present(var: str) -> None:
     ctx = AgentContext(agent_id="test", timezone="UTC")
     result = ctx.build_system_prompt(var)
     assert var not in result
+
+
+# ---------------------------------------------------------------------------
+# {{WEEKDAY}} y {{WEEKDAY_NUMBER}} — 2026-04-12 es domingo (isoweekday=7)
+# ---------------------------------------------------------------------------
+
+@freeze_time("2026-04-12 15:30:00", tz_offset=0)
+def test_weekday_en_flag() -> None:
+    ctx = AgentContext(agent_id="test", timezone="UTC")
+    result = ctx.build_system_prompt("{{WEEKDAY[EN]}}")
+    assert result == "Sunday"
+
+
+@freeze_time("2026-04-12 15:30:00", tz_offset=0)
+def test_weekday_es_flag() -> None:
+    ctx = AgentContext(agent_id="test", timezone="UTC")
+    result = ctx.build_system_prompt("{{WEEKDAY[ES]}}")
+    assert result == "domingo"
+
+
+@freeze_time("2026-04-12 15:30:00", tz_offset=0)
+def test_weekday_fr_flag() -> None:
+    ctx = AgentContext(agent_id="test", timezone="UTC")
+    result = ctx.build_system_prompt("{{WEEKDAY[FR]}}")
+    assert result == "dimanche"
+
+
+@freeze_time("2026-04-12 15:30:00", tz_offset=0)
+def test_weekday_number_is_iso_8601() -> None:
+    # ISO 8601: 1=lunes … 7=domingo
+    ctx = AgentContext(agent_id="test", timezone="UTC")
+    result = ctx.build_system_prompt("{{WEEKDAY_NUMBER}}")
+    assert result == "7"
+
+
+@freeze_time("2026-04-12 15:30:00", tz_offset=0)
+def test_weekday_flag_case_insensitive() -> None:
+    ctx = AgentContext(agent_id="test", timezone="UTC")
+    assert ctx.build_system_prompt("{{weekday[en]}}") == "Sunday"
+    assert ctx.build_system_prompt("{{WEEKDAY[es]}}") == "domingo"
+    assert ctx.build_system_prompt("{{Weekday[Fr]}}") == "dimanche"
+
+
+@freeze_time("2026-04-12 15:30:00", tz_offset=0)
+def test_weekday_unknown_flag_falls_back_to_locale() -> None:
+    ctx = AgentContext(agent_id="test", timezone="UTC")
+    result = ctx.build_system_prompt("{{WEEKDAY[XX]}}")
+    # No debe lanzar excepción y no debe quedar el placeholder
+    assert "{{WEEKDAY[XX]}}" not in result
+
+
+@freeze_time("2026-04-12 15:30:00", tz_offset=0)
+def test_weekday_and_weekday_number_in_same_prompt() -> None:
+    ctx = AgentContext(agent_id="test", timezone="UTC")
+    result = ctx.build_system_prompt("{{WEEKDAY[ES]}} (día {{WEEKDAY_NUMBER}})")
+    assert result == "domingo (día 7)"
+
+
+@pytest.mark.parametrize("var", ["{{WEEKDAY[EN]}}", "{{WEEKDAY[ES]}}", "{{WEEKDAY[FR]}}", "{{WEEKDAY_NUMBER}}"])
+@freeze_time("2026-04-12 15:30:00", tz_offset=0)
+def test_new_vars_all_replaced(var: str) -> None:
+    ctx = AgentContext(agent_id="test", timezone="UTC")
+    result = ctx.build_system_prompt(var)
+    assert var not in result

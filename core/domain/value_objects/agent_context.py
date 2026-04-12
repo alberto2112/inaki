@@ -8,11 +8,20 @@ from pydantic import BaseModel
 
 from core.domain.entities.skill import Skill
 
-_VAR_RE = re.compile(r"\{\{(TIMEZONE|DATETIME|DATE|TIME)\}\}", re.IGNORECASE)
+_VAR_RE = re.compile(
+    r"\{\{(TIMEZONE|DATETIME|DATE|TIME|WEEKDAY_NUMBER|WEEKDAY)(?:\[([A-Z]{2})\])?\}\}",
+    re.IGNORECASE,
+)
+
+_WEEKDAY_NAMES: dict[str, list[str]] = {
+    "EN": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+    "ES": ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"],
+    "FR": ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"],
+}
 
 
 def _resolve_vars(text: str, tz_name: str | None) -> str:
-    """Reemplaza {{TIMEZONE}}, {{DATETIME}}, {{DATE}} y {{TIME}} con valores reales."""
+    """Reemplaza variables dinámicas en el prompt con valores reales en runtime."""
     if not _VAR_RE.search(text):
         return text
 
@@ -29,6 +38,7 @@ def _resolve_vars(text: str, tz_name: str | None) -> str:
 
     def _replace(m: re.Match) -> str:
         token = m.group(1).upper()
+        flag = (m.group(2) or "").upper()
         if token == "TIMEZONE":
             return tz_display
         if token == "DATETIME":
@@ -37,6 +47,12 @@ def _resolve_vars(text: str, tz_name: str | None) -> str:
             return now.strftime("%Y-%m-%d")
         if token == "TIME":
             return now.strftime("%H:%M")
+        if token == "WEEKDAY":
+            if flag in _WEEKDAY_NAMES:
+                return _WEEKDAY_NAMES[flag][now.weekday()]
+            return now.strftime("%A")  # locale del sistema
+        if token == "WEEKDAY_NUMBER":
+            return str(now.isoweekday())  # ISO 8601: 1=lunes, 7=domingo
         return m.group(0)
 
     return _VAR_RE.sub(_replace, text)

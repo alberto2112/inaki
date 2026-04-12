@@ -200,6 +200,7 @@ else:
 | `agent_send` | `llm_dispatcher.dispatch(agent_id, prompt, tools)` → str resultado; si `output_channel` definido, envía resultado al canal |
 | `shell_exec` | subprocess con command/working_dir/env_vars/timeout → stdout; RuntimeError si exit code != 0 |
 | `consolidate_memory` | `consolidator.consolidate_all()` → str resultado |
+| `webhook` | `http_caller.call(payload)` → str (response body); RuntimeError si status no está en `success_codes`, timeout o connection error |
 
 ### 3.4 Finalización (`_finalize_task()`)
 
@@ -421,6 +422,52 @@ class ShellExecPayload(BaseModel):
   "working_dir": "/home/user/project",
   "env_vars": {"ENV": "production"},
   "timeout": 120
+}
+```
+
+---
+
+### `webhook`
+
+Realiza una llamada HTTP a una URL externa. Útil para integrar el scheduler con APIs REST, webhooks de terceros o cualquier servicio HTTP.
+
+```python
+class WebhookPayload(BaseModel):
+    type: Literal["webhook"] = "webhook"
+    url: str                              # URL destino (requerida)
+    method: str = "POST"                  # Método HTTP
+    headers: dict[str, str] = {}          # Headers adicionales
+    body: str | None = None               # Cuerpo de la petición (raw string)
+    timeout: int = 30                     # Timeout en segundos
+    success_codes: list[int] = [200, 201, 202, 204]  # Códigos considerados exitosos
+```
+
+**Campos**:
+
+| Campo | Tipo | Default | Descripción |
+|-------|------|---------|-------------|
+| `url` | `str` | — (requerido) | URL del endpoint HTTP |
+| `method` | `str` | `"POST"` | Método HTTP (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`) |
+| `headers` | `dict[str, str]` | `{}` | Headers HTTP adicionales |
+| `body` | `str \| None` | `None` | Cuerpo de la petición como string |
+| `timeout` | `int` | `30` | Timeout en segundos |
+| `success_codes` | `list[int]` | `[200, 201, 202, 204]` | Códigos HTTP considerados exitosos |
+
+**Dispatch**: `http_caller.call(payload)` → `str` (body de la respuesta). Lanza `RuntimeError` si el código de respuesta no está en `success_codes`, si ocurre un timeout (`httpx.TimeoutException`) o si la conexión falla (`httpx.ConnectError`).
+
+**Ejemplo**:
+```json
+{
+  "type": "webhook",
+  "url": "https://api.example.com/notifications",
+  "method": "POST",
+  "headers": {
+    "Authorization": "Bearer my-secret-token",
+    "Content-Type": "application/json"
+  },
+  "body": "{\"event\": \"daily_report\", \"status\": \"ok\"}",
+  "timeout": 10,
+  "success_codes": [200, 201]
 }
 ```
 

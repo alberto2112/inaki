@@ -14,7 +14,7 @@ import asyncio
 import logging
 from contextlib import suppress
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from croniter import croniter
 
@@ -26,6 +26,7 @@ from core.domain.entities.task import (
     ShellExecPayload,
     TaskKind,
     TaskStatus,
+    WebhookPayload,
 )
 from core.domain.entities.task_log import TaskLog
 from core.domain.errors import InvalidTriggerTypeError
@@ -213,6 +214,8 @@ class SchedulerService:
             return await self._run_shell(payload)
         elif isinstance(payload, ConsolidateMemoryPayload):
             return await self._dispatch.consolidator.consolidate_all()
+        elif isinstance(payload, WebhookPayload):
+            return await self._dispatch.http_caller.call(payload)
         else:
             raise InvalidTriggerTypeError(f"Unknown payload type: {type(payload)}")
 

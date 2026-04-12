@@ -157,12 +157,6 @@ class WorkspaceConfig(BaseModel):
         object.__setattr__(self, "path", str(Path(self.path).expanduser()))
 
 
-class UserConfig(BaseModel):
-    """Preferencias del usuario final (no del agente)."""
-
-    timezone: str = "UTC"
-
-
 class DelegationConfig(BaseModel):
     """Config global de delegación (aplica a todos los agentes como valores por defecto)."""
 
@@ -212,7 +206,6 @@ class GlobalConfig(BaseModel):
     scheduler: SchedulerConfig = SchedulerConfig()
     workspace: WorkspaceConfig = WorkspaceConfig()
     delegation: DelegationConfig = DelegationConfig()
-    user: UserConfig = UserConfig()
 
 
 # ---------------------------------------------------------------------------
@@ -389,7 +382,6 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
     scheduler = SchedulerConfig(**merged.get("scheduler", {}))
     workspace = WorkspaceConfig(**merged.get("workspace", {}))
     delegation = DelegationConfig(**merged.get("delegation", {}))
-    user = UserConfig(**merged.get("user", {}))
 
     global_cfg = GlobalConfig(
         app=app,
@@ -402,7 +394,6 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
         scheduler=scheduler,
         workspace=workspace,
         delegation=delegation,
-        user=user,
     )
     return global_cfg, merged
 

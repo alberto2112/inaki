@@ -7,6 +7,7 @@ class ToolResult(BaseModel):
     output: str
     success: bool
     error: str | None = None
+    retryable: bool = True
 
 
 class ITool(ABC):

@@ -206,6 +206,24 @@ class AgentContainer:
             self.agent_config.delegation.allowed_targets or "<all>",
         )
 
+    def wire_scheduler(self, schedule_task_uc: ScheduleTaskUseCase, user_timezone: str) -> None:
+        """
+        Phase-3 wiring: registers the scheduler tool.
+
+        Must be called AFTER AppContainer has constructed schedule_task_uc
+        (which depends on scheduler_repo, available only at AppContainer level).
+        """
+        from adapters.outbound.tools.scheduler_tool import SchedulerTool
+
+        self._tools.register(
+            SchedulerTool(
+                schedule_task_uc=schedule_task_uc,
+                agent_id=self.agent_config.id,
+                user_timezone=user_timezone,
+            )
+        )
+        logger.info("AgentContainer '%s': scheduler tool registrada", self.agent_config.id)
+
     def _build_discovery_section(
         self,
         get_agent_container: Callable[[str], "AgentContainer | None"],

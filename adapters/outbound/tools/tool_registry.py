@@ -64,9 +64,10 @@ class ToolRegistry(IToolExecutor):
         if tool_name not in self._tools:
             return ToolResult(
                 tool_name=tool_name,
-                output=f"Tool '{tool_name}' no encontrada",
+                output=f"Tool '{tool_name}' no encontrada. Tools disponibles: {', '.join(self._tools.keys())}",
                 success=False,
                 error=f"Tool no registrada: {tool_name}",
+                retryable=False,
             )
         try:
             return await self._tools[tool_name].execute(**kwargs)
@@ -74,9 +75,10 @@ class ToolRegistry(IToolExecutor):
             logger.exception("Error ejecutando tool '%s'", tool_name)
             return ToolResult(
                 tool_name=tool_name,
-                output=f"Error: {exc}",
+                output=f"Error interno en '{tool_name}': {exc}",
                 success=False,
                 error=str(exc),
+                retryable=False,
             )
 
     def _schema_dict(self, tool: ITool) -> dict:

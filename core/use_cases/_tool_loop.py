@@ -23,15 +23,27 @@ from core.ports.outbound.tool_port import IToolExecutor
 logger = logging.getLogger(__name__)
 
 
-def _extract_tool_calls(raw: str) -> list[dict]:
-    """Extrae tool calls del JSON devuelto por el LLM."""
-    if not raw.strip().startswith("{"):
-        return []
+def _extract_tool_calls(raw: str) -> tuple[list[dict], str | None]:
+    """Extrae tool calls del JSON devuelto por el LLM.
+
+    Returns:
+        (tool_calls, error): tool_calls si el parseo fue exitoso,
+        o ([], error_message) si el JSON es malformado para que el LLM
+        pueda corregirse.
+    """
+    stripped = raw.strip()
+    if not stripped.startswith("{"):
+        return [], None
     try:
-        data = json.loads(raw)
-        return data.get("tool_calls", [])
-    except json.JSONDecodeError:
-        return []
+        data = json.loads(stripped)
+        return data.get("tool_calls", []), None
+    except json.JSONDecodeError as exc:
+        return [], (
+            f"Tu respuesta parece un tool call pero el JSON es inválido: {exc}. "
+            "Asegurate de que el campo 'arguments' sea un string con JSON escapado, "
+            'por ejemplo: "arguments": "{\\"key\\": \\"value\\"}". '
+            "Intentalo de nuevo con JSON válido."
+        )
 
 
 async def run_tool_loop(
@@ -80,7 +92,13 @@ async def run_tool_loop(
         )
         last_raw = raw
 
-        tool_calls = _extract_tool_calls(raw)
+        tool_calls, parse_error = _extract_tool_calls(raw)
+        if parse_error:
+            logger.warning("Tool call JSON malformado del LLM: %s", parse_error)
+            working_messages.append(
+                Message(role=Role.USER, content=f"[Error de formato]\n{parse_error}")
+            )
+            continue
         if not tool_calls:
             return raw
 
@@ -110,12 +128,12 @@ async def run_tool_loop(
 
             if result.success:
                 failure_counts[tool_name] = 0
-            else:
+            elif not result.retryable:
                 failure_counts[tool_name] = failure_counts.get(tool_name, 0) + 1
                 if failure_counts[tool_name] >= circuit_breaker_threshold:
                     tripped.add(tool_name)
                     logger.warning(
-                        "Circuit breaker DISPARADO para '%s' tras %d fallos",
+                        "Circuit breaker DISPARADO para '%s' tras %d fallos no-retryable",
                         tool_name,
                         failure_counts[tool_name],
                     )

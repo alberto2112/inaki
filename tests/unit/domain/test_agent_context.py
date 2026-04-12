@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import pytest
+from freezegun import freeze_time
+
 from core.domain.value_objects.agent_context import AgentContext
 
 
@@ -114,3 +117,99 @@ def test_extra_sections_does_not_duplicate_base_prompt() -> None:
     extra = "\n## Extra"
     result = ctx.build_system_prompt(BASE_PROMPT, extra_sections=[extra])
     assert result.count(BASE_PROMPT) == 1
+
+
+# ---------------------------------------------------------------------------
+# Variable interpolation — {{TIMEZONE}}, {{DATETIME}}, {{DATE}}, {{TIME}}
+# ---------------------------------------------------------------------------
+
+_FROZEN_UTC = "2026-04-12 15:30:00"
+_FROZEN_BSAS = "2026-04-12 12:30:00"  # UTC-3
+
+
+@freeze_time("2026-04-12 15:30:00", tz_offset=0)
+def test_datetime_var_replaced() -> None:
+    ctx = AgentContext(agent_id="test", timezone="UTC")
+    result = ctx.build_system_prompt("Ahora son {{DATETIME}}.")
+    assert "{{DATETIME}}" not in result
+    assert "2026-04-12 15:30" in result
+
+
+@freeze_time("2026-04-12 15:30:00", tz_offset=0)
+def test_date_var_replaced() -> None:
+    ctx = AgentContext(agent_id="test", timezone="UTC")
+    result = ctx.build_system_prompt("Fecha: {{DATE}}.")
+    assert "{{DATE}}" not in result
+    assert "2026-04-12" in result
+
+
+@freeze_time("2026-04-12 15:30:00", tz_offset=0)
+def test_time_var_replaced() -> None:
+    ctx = AgentContext(agent_id="test", timezone="UTC")
+    result = ctx.build_system_prompt("Hora: {{TIME}}.")
+    assert "{{TIME}}" not in result
+    assert "15:30" in result
+
+
+@freeze_time("2026-04-12 15:30:00", tz_offset=0)
+def test_timezone_var_replaced_from_config() -> None:
+    ctx = AgentContext(agent_id="test", timezone="America/Argentina/Buenos_Aires")
+    result = ctx.build_system_prompt("TZ: {{TIMEZONE}}.")
+    assert "{{TIMEZONE}}" not in result
+    assert "America/Argentina/Buenos_Aires" in result
+
+
+@freeze_time("2026-04-12 15:30:00", tz_offset=0)
+def test_var_replacement_is_case_insensitive() -> None:
+    ctx = AgentContext(agent_id="test", timezone="UTC")
+    result = ctx.build_system_prompt("{{datetime}} / {{DATE}} / {{Time}}")
+    assert "{{datetime}}" not in result
+    assert "{{DATE}}" not in result
+    assert "{{Time}}" not in result
+
+
+@freeze_time("2026-04-12 15:30:00", tz_offset=0)
+def test_datetime_uses_configured_timezone_offset() -> None:
+    ctx_utc = AgentContext(agent_id="test", timezone="UTC")
+    ctx_bsas = AgentContext(agent_id="test", timezone="America/Argentina/Buenos_Aires")
+    result_utc = ctx_utc.build_system_prompt("{{DATETIME}}")
+    result_bsas = ctx_bsas.build_system_prompt("{{DATETIME}}")
+    # Buenos Aires es UTC-3: 15:30 UTC → 12:30 local
+    assert "15:30" in result_utc
+    assert "12:30" in result_bsas
+
+
+def test_prompt_without_vars_unchanged() -> None:
+    ctx = AgentContext(agent_id="test", timezone="UTC")
+    prompt = "Sin variables aquí."
+    assert ctx.build_system_prompt(prompt) == prompt
+
+
+def test_unknown_var_left_as_is() -> None:
+    ctx = AgentContext(agent_id="test", timezone="UTC")
+    result = ctx.build_system_prompt("{{USER_NAME}} no se toca.")
+    assert "{{USER_NAME}}" in result
+
+
+@freeze_time("2026-04-12 15:30:00", tz_offset=0)
+def test_vars_resolved_in_extra_sections() -> None:
+    ctx = AgentContext(agent_id="test", timezone="UTC")
+    result = ctx.build_system_prompt(BASE_PROMPT, extra_sections=["\nHora: {{TIME}}"])
+    assert "{{TIME}}" not in result
+    assert "15:30" in result
+
+
+@freeze_time("2026-04-12 15:30:00", tz_offset=0)
+def test_invalid_timezone_falls_back_gracefully() -> None:
+    ctx = AgentContext(agent_id="test", timezone="Mars/Olympus_Mons")
+    # No debe lanzar excepción — usa fallback a TZ local del sistema
+    result = ctx.build_system_prompt("{{DATETIME}}")
+    assert "{{DATETIME}}" not in result
+
+
+@pytest.mark.parametrize("var", ["{{TIMEZONE}}", "{{DATETIME}}", "{{DATE}}", "{{TIME}}"])
+@freeze_time("2026-04-12 15:30:00", tz_offset=0)
+def test_all_vars_replaced_when_present(var: str) -> None:
+    ctx = AgentContext(agent_id="test", timezone="UTC")
+    result = ctx.build_system_prompt(var)
+    assert var not in result

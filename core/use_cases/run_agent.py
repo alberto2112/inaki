@@ -89,8 +89,8 @@ class RunAgentUseCase:
         self._extra_system_sections = list(sections)
 
     def _read_user_context(self) -> str:
-        """Lee ~/.inaki/user.md. Retorna '' si no existe."""
-        path = Path("~/.inaki/user.md").expanduser()
+        """Lee ~/.inaki/USER.md. Retorna '' si no existe."""
+        path = Path("~/.inaki/USER.md").expanduser()
         try:
             return path.read_text(encoding="utf-8")
         except (FileNotFoundError, OSError):

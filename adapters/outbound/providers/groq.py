@@ -67,6 +67,12 @@ class GroqProvider(BaseLLMProvider):
 
         choice = data["choices"][0]
         message = choice["message"]
+        logger.debug(
+            "Groq raw message keys=%s, tool_calls=%s, content_preview=%.200s",
+            list(message.keys()),
+            bool(message.get("tool_calls")),
+            message.get("content", "")[:200],
+        )
 
         if message.get("tool_calls"):
             return json.dumps({"tool_calls": message["tool_calls"]})

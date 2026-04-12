@@ -172,6 +172,12 @@ class AgentDelegationConfig(BaseModel):
     allowed_targets: list[str] = []
 
 
+class UserConfig(BaseModel):
+    """Preferencias del usuario."""
+
+    timezone: str = "UTC"
+
+
 # ---------------------------------------------------------------------------
 # AgentConfig — config completa y resuelta para un agente
 # ---------------------------------------------------------------------------
@@ -207,6 +213,7 @@ class GlobalConfig(BaseModel):
     scheduler: SchedulerConfig = SchedulerConfig()
     workspace: WorkspaceConfig = WorkspaceConfig()
     delegation: DelegationConfig = DelegationConfig()
+    user: UserConfig = UserConfig()
 
 
 # ---------------------------------------------------------------------------

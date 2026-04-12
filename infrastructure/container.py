@@ -25,6 +25,7 @@ from adapters.outbound.scheduler.builtin_tasks import (
 from adapters.outbound.scheduler.dispatch_adapters import (
     ChannelSenderAdapter,
     ConsolidationDispatchAdapter,
+    HttpCallerAdapter,
     LLMDispatcherAdapter,
     SchedulerDispatchPorts,
 )
@@ -385,6 +386,7 @@ class AppContainer:
             channel_sender=ChannelSenderAdapter(self),
             llm_dispatcher=LLMDispatcherAdapter(self.agents),
             consolidator=ConsolidationDispatchAdapter(self.consolidate_all_agents),
+            http_caller=HttpCallerAdapter(),
         )
         self.scheduler_service = SchedulerService(
             repo=self.scheduler_repo,

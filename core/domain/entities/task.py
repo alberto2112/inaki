@@ -17,6 +17,7 @@ class TriggerType(str, Enum):
     AGENT_SEND = "agent_send"
     SHELL_EXEC = "shell_exec"
     CONSOLIDATE_MEMORY = "consolidate_memory"
+    WEBHOOK = "webhook"
 
 
 class TaskStatus(str, Enum):
@@ -65,8 +66,18 @@ class ConsolidateMemoryPayload(BaseModel):
     type: Literal["consolidate_memory"] = "consolidate_memory"
 
 
+class WebhookPayload(BaseModel):
+    type: Literal["webhook"] = "webhook"
+    url: str
+    method: str = "POST"
+    headers: dict[str, str] = {}
+    body: str | None = None
+    timeout: int = 30
+    success_codes: list[int] = [200, 201, 202, 204]
+
+
 TriggerPayload = Annotated[
-    ChannelSendPayload | AgentSendPayload | ShellExecPayload | ConsolidateMemoryPayload,
+    ChannelSendPayload | AgentSendPayload | ShellExecPayload | ConsolidateMemoryPayload | WebhookPayload,
     Field(discriminator="type"),
 ]
 

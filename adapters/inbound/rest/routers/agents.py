@@ -1,4 +1,5 @@
 """Router de la REST API — endpoints por instancia de agente."""
+# TODO: implementar handler de channel_send para REST (set_channel_context + dispatch handler)
 
 from __future__ import annotations
 

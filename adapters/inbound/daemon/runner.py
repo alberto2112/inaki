@@ -44,7 +44,7 @@ async def _run_rest_server(agent_cfg, container, servers: list) -> None:
     await server.serve()
 
 
-async def _run_telegram_bot(agent_cfg, container) -> None:
+async def _run_telegram_bot(agent_cfg, container, app_container=None) -> None:
     """Arranca el bot de Telegram para un agente usando la API async nativa de PTB 21+."""
     from adapters.inbound.telegram.bot import TelegramBot
 
@@ -53,6 +53,10 @@ async def _run_telegram_bot(agent_cfg, container) -> None:
     except ValueError as exc:
         logger.warning("Telegram bot no iniciado para '%s': %s", agent_cfg.id, exc)
         return
+
+    # Registrar el bot en el gateway para que ChannelSenderAdapter pueda encontrarlo
+    if app_container is not None:
+        app_container.register_telegram_bot(agent_cfg.id, bot)
 
     logger.info("Telegram bot iniciando para agente '%s'", agent_cfg.id)
 
@@ -75,6 +79,7 @@ async def run_daemon(app_container, registry) -> None:
     Arranca todos los canales de todos los agentes en paralelo.
     Cancela graciosamente cuando recibe SIGTERM o SIGINT.
     """
+    # TODO: implementar handler de channel_send para daemon (dispatch handler para tareas sin conversación activa)
     # Scheduler startup
     await app_container.startup()
 
@@ -125,7 +130,7 @@ async def run_daemon(app_container, registry) -> None:
             logger.error("No se pudo obtener container para '%s': %s", agent_cfg.id, exc)
             continue
         task = asyncio.create_task(
-            _run_telegram_bot(agent_cfg, container),
+            _run_telegram_bot(agent_cfg, container, app_container),
             name=f"telegram:{agent_cfg.id}",
         )
         tasks.append(task)

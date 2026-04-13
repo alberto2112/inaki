@@ -11,9 +11,12 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from croniter import croniter
+
+if TYPE_CHECKING:
+    from core.domain.value_objects.channel_context import ChannelContext
 
 from adapters.outbound.history.sqlite_history_store import SQLiteHistoryStore
 from adapters.outbound.memory.sqlite_memory_repo import SQLiteMemoryRepository
@@ -59,6 +62,12 @@ class AgentContainer:
 
         # Idempotency guard for wire_delegation (task 5.1)
         self._delegation_wired: bool = False
+
+        # Idempotency guard for wire_scheduler
+        self._scheduler_wired: bool = False
+
+        # Contexto de canal activo — se setea en cada turno de conversación
+        self._channel_context: ChannelContext | None = None
 
         # Factories resuelven el proveedor correcto leyendo cfg.embedding.provider y cfg.llm.provider
         self._embedder = EmbeddingProviderFactory.create(cfg)
@@ -137,6 +146,14 @@ class AgentContainer:
         self._tools.register(WriteFileTool(workspace=workspace_path, containment=ws_cfg.containment))
         self._tools.register(PatchFileTool(workspace=workspace_path, containment=ws_cfg.containment))
 
+    def set_channel_context(self, ctx: "ChannelContext | None") -> None:
+        """Actualiza el contexto de canal activo para este agente."""
+        self._channel_context = ctx
+
+    def get_channel_context(self) -> "ChannelContext | None":
+        """Devuelve el contexto de canal activo, o None si no hay conversación en curso."""
+        return self._channel_context
+
     def wire_delegation(
         self,
         get_agent_container: Callable[[str], "AgentContainer | None"],
@@ -212,7 +229,13 @@ class AgentContainer:
 
         Must be called AFTER AppContainer has constructed schedule_task_uc
         (which depends on scheduler_repo, available only at AppContainer level).
+        Idempotente: segunda llamada es no-op. No-op también si schedule_task_uc es None.
         """
+        if schedule_task_uc is None:
+            return
+        if self._scheduler_wired:
+            return
+
         from adapters.outbound.tools.scheduler_tool import SchedulerTool
 
         self._tools.register(
@@ -220,8 +243,10 @@ class AgentContainer:
                 schedule_task_uc=schedule_task_uc,
                 agent_id=self.agent_config.id,
                 user_timezone=user_timezone,
+                get_channel_context=self.get_channel_context,
             )
         )
+        self._scheduler_wired = True
         logger.info("AgentContainer '%s': scheduler tool registrada", self.agent_config.id)
 
     def _build_discovery_section(
@@ -368,6 +393,9 @@ class AppContainer:
         self.registry = registry
         self.agents: dict[str, AgentContainer] = {}
 
+        # Registro de bots de Telegram — el daemon runner los registra al arrancar
+        self._telegram_bots: dict[str, object] = {}
+
         # Phase 1: build all AgentContainers (existing loop, unchanged)
         for agent_cfg in registry.list_all():
             try:
@@ -410,7 +438,7 @@ class AppContainer:
             on_mutation=self._on_scheduler_mutation,
         )
         dispatch_ports = SchedulerDispatchPorts(
-            channel_sender=ChannelSenderAdapter(self),
+            channel_sender=ChannelSenderAdapter(get_telegram_bot=self._get_telegram_bot),
             llm_dispatcher=LLMDispatcherAdapter(self.agents),
             consolidator=ConsolidationDispatchAdapter(self.consolidate_all_agents),
             http_caller=HttpCallerAdapter(),
@@ -430,6 +458,25 @@ class AppContainer:
                 logger.error(
                     "Error en wire_scheduler para agente '%s': %s", agent_id, exc
                 )
+
+    def register_telegram_bot(self, agent_id: str, bot: object) -> None:
+        """Registra el bot de Telegram para un agente.
+
+        Llamado por el daemon runner al arrancar cada bot. Permite que
+        ChannelSenderAdapter resuelva el bot en tiempo de ejecución (lazy).
+        """
+        self._telegram_bots[agent_id] = bot
+        logger.debug("Bot de Telegram registrado para agente '%s'", agent_id)
+
+    def _get_telegram_bot(self) -> object | None:
+        """Devuelve el primer bot de Telegram disponible, o None si no hay ninguno.
+
+        Es el callable que se pasa a ChannelSenderAdapter para resolución lazy.
+        Para uso multi-agente futuro se puede extender con agent_id como parámetro.
+        """
+        if not self._telegram_bots:
+            return None
+        return next(iter(self._telegram_bots.values()))
 
     def _on_scheduler_mutation(self) -> None:
         self.scheduler_service.invalidate()

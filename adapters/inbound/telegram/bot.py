@@ -15,6 +15,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 
 from adapters.inbound.telegram.message_mapper import telegram_update_to_input, format_response
 from core.domain.errors import AgentNotFoundError
+from core.domain.value_objects.channel_context import ChannelContext
 from infrastructure.config import AgentConfig
 from infrastructure.container import AgentContainer
 
@@ -93,6 +94,13 @@ class TelegramBot:
             except Exception:
                 pass  # Reacciones opcionales — no deben bloquear el handler
 
+        # Inyectar contexto de canal antes de ejecutar el agente
+        self._container.set_channel_context(
+            ChannelContext(
+                channel_type="telegram",
+                user_id=str(update.effective_user.id),
+            )
+        )
         try:
             response = await self._container.run_agent.execute(user_input)
             await update.message.reply_text(
@@ -111,6 +119,9 @@ class TelegramBot:
                     await update.message.set_reaction("❌")
                 except Exception:
                     pass
+        finally:
+            # Limpiar contexto de canal al finalizar el turno (éxito o error)
+            self._container.set_channel_context(None)
 
     def run_polling(self) -> None:
         """Inicia el bot en modo polling (bloqueante)."""

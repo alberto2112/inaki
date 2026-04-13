@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Callable, cast
 
 from pydantic import BaseModel
@@ -296,6 +297,10 @@ class SchedulerTool(ITool):
         trigger_type = TriggerType(trigger_type_raw)
 
         # --- Build entity ---
+        next_run: datetime | None = None
+        if task_kind == TaskKind.ONESHOT:
+            next_run = datetime.fromisoformat(parsed_schedule)
+
         task = ScheduledTask(
             name=name,
             description=str(params.get("description") or ""),
@@ -303,6 +308,7 @@ class SchedulerTool(ITool):
             trigger_type=trigger_type,
             trigger_payload=trigger_payload_obj,
             schedule=parsed_schedule,
+            next_run=next_run,
             executions_remaining=params.get("executions_remaining"),
             created_by=self._agent_id,  # always injected — never from LLM kwargs
         )

@@ -102,8 +102,14 @@ async def run_tool_loop(
         if not tool_calls:
             return raw
 
-        tool_results = []
+        # Agregar el mensaje del assistant con los tool calls al historial
+        # para que el LLM sepa que ÉL pidió ejecutar estas tools.
+        working_messages.append(
+            Message(role=Role.ASSISTANT, content="", tool_calls=tool_calls)
+        )
+
         for tc in tool_calls:
+            tc_id = tc.get("id", "")
             tool_name = tc.get("function", {}).get("name", "")
             args_raw = tc.get("function", {}).get("arguments", "{}")
             try:
@@ -115,15 +121,24 @@ async def run_tool_loop(
                 logger.warning(
                     "Circuit breaker abierto para '%s' — llamada bloqueada", tool_name
                 )
-                tool_results.append(
-                    f"[{tool_name}]: CIRCUIT OPEN — esta tool ya falló "
-                    f"{circuit_breaker_threshold} vez/veces en este turno. NO la vuelvas a llamar. "
-                    "Respondé al usuario con lo que sabés, o pedile ayuda para resolver el bloqueo."
-                )
+                working_messages.append(Message(
+                    role=Role.TOOL,
+                    content=(
+                        f"CIRCUIT OPEN — esta tool ya falló "
+                        f"{circuit_breaker_threshold} vez/veces en este turno. "
+                        "NO la vuelvas a llamar. Respondé al usuario con lo que "
+                        "sabés, o pedile ayuda para resolver el bloqueo."
+                    ),
+                    tool_call_id=tc_id,
+                ))
                 continue
 
             result = await tools.execute(tool_name, **kwargs)
-            tool_results.append(f"[{tool_name}]: {result.output}")
+            working_messages.append(Message(
+                role=Role.TOOL,
+                content=result.output,
+                tool_call_id=tc_id,
+            ))
             logger.debug("Tool '%s' ejecutada: success=%s", tool_name, result.success)
 
             if result.success:
@@ -137,11 +152,6 @@ async def run_tool_loop(
                         tool_name,
                         failure_counts[tool_name],
                     )
-
-        results_summary = "\n".join(tool_results)
-        working_messages.append(
-            Message(role=Role.USER, content=f"[Resultados de tools]\n{results_summary}")
-        )
 
     logger.warning("Máximo de iteraciones de tool calls alcanzado para '%s'", agent_id)
     raise ToolLoopMaxIterationsError(last_response=last_raw)

@@ -14,7 +14,6 @@ from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 from adapters.inbound.telegram.message_mapper import telegram_update_to_input, format_response
-from core.domain.errors import AgentNotFoundError
 from core.domain.value_objects.channel_context import ChannelContext
 from infrastructure.config import AgentConfig
 from infrastructure.container import AgentContainer
@@ -23,7 +22,6 @@ logger = logging.getLogger(__name__)
 
 
 class TelegramBot:
-
     def __init__(self, agent_cfg: AgentConfig, container: AgentContainer) -> None:
         self._agent_cfg = agent_cfg
         self._container = container
@@ -33,17 +31,14 @@ class TelegramBot:
         self._reactions: bool = tg_cfg.get("reactions", False)
 
         if not self._token:
-            raise ValueError(
-                f"Agente '{agent_cfg.id}': channels.telegram.token no configurado"
-            )
+            raise ValueError(f"Agente '{agent_cfg.id}': channels.telegram.token no configurado")
 
         self._app = Application.builder().token(self._token).build()
         self._app.add_handler(CommandHandler("start", self._cmd_start))
         self._app.add_handler(CommandHandler("consolidate", self._cmd_consolidate))
+        self._app.add_handler(CommandHandler("clear", self._cmd_clear))
         self._app.add_handler(CommandHandler("help", self._cmd_help))
-        self._app.add_handler(
-            MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message)
-        )
+        self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
 
     def _is_allowed(self, user_id: int) -> bool:
         if not self._allowed_ids:
@@ -62,6 +57,7 @@ class TelegramBot:
             return
         await update.message.reply_text(
             "/consolidate — Extraer recuerdos del historial\n"
+            "/clear — Limpiar historial sin archivar (igual que en CLI)\n"
             "/start — Presentación\n"
             "/help — Este mensaje"
         )
@@ -74,6 +70,17 @@ class TelegramBot:
             result = await self._container.consolidate_memory.execute()
             await update.message.reply_text(result)
         except Exception as exc:
+            await update.message.reply_text(f"Error: {exc}")
+
+    async def _cmd_clear(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Mismo comportamiento que `/clear` en CLI: borra el historial del agente."""
+        if not self._is_allowed(update.effective_user.id):
+            return
+        try:
+            await self._container.run_agent._history.clear(self._agent_cfg.id)
+            await update.message.reply_text("Historial limpiado.")
+        except Exception as exc:
+            logger.exception("Error en /clear Telegram para '%s'", self._agent_cfg.id)
             await update.message.reply_text(f"Error: {exc}")
 
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -103,9 +110,7 @@ class TelegramBot:
         )
         try:
             response = await self._container.run_agent.execute(user_input)
-            await update.message.reply_text(
-                format_response(response), parse_mode=ParseMode.HTML
-            )
+            await update.message.reply_text(format_response(response), parse_mode=ParseMode.HTML)
             if self._reactions:
                 try:
                     await update.message.set_reaction("✅")

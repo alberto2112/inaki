@@ -54,6 +54,7 @@ def mock_embedder() -> AsyncMock:
 def mock_skills() -> AsyncMock:
     skills = AsyncMock()
     skills.retrieve.return_value = []
+    skills.retrieve_with_scores.return_value = []
     return skills
 
 
@@ -74,6 +75,8 @@ def mock_history() -> AsyncMock:
 def mock_tools() -> MagicMock:
     tools = MagicMock()
     tools.get_schemas.return_value = []
+    tools.get_schemas_relevant = AsyncMock(return_value=[])
+    tools.get_schemas_relevant_with_scores = AsyncMock(return_value=[])
     return tools
 
 

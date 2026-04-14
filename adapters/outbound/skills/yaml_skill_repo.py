@@ -116,12 +116,12 @@ class YamlSkillRepository(ISkillRepository):
         await self._ensure_loaded()
         return list(self._skills)
 
-    async def retrieve(
+    async def retrieve_with_scores(
         self,
         query_embedding: list[float],
         top_k: int = 3,
         min_score: float = 0.0,
-    ) -> list[Skill]:
+    ) -> list[tuple[Skill, float]]:
         await self._ensure_loaded()
         if not self._skills:
             return []
@@ -133,4 +133,13 @@ class YamlSkillRepository(ISkillRepository):
         scored.sort(key=lambda x: x[1], reverse=True)
         if min_score > 0.0:
             scored = [(skill, s) for skill, s in scored if s >= min_score]
-        return [skill for skill, _ in scored[:top_k]]
+        return scored[:top_k]
+
+    async def retrieve(
+        self,
+        query_embedding: list[float],
+        top_k: int = 3,
+        min_score: float = 0.0,
+    ) -> list[Skill]:
+        pairs = await self.retrieve_with_scores(query_embedding, top_k, min_score)
+        return [skill for skill, _ in pairs]

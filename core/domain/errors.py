@@ -56,3 +56,40 @@ class ToolLoopMaxIterationsError(IñakiError):
     def __init__(self, last_response: str) -> None:
         super().__init__(f"Max iterations reached. Last response: {last_response!r}")
         self.last_response = last_response
+
+
+# ---------------------------------------------------------------------------
+# Daemon client
+# ---------------------------------------------------------------------------
+
+
+class DaemonError(IñakiError):
+    """Base para errores de comunicación con el daemon."""
+
+
+class DaemonNotRunningError(DaemonError):
+    """El daemon no está corriendo o no es alcanzable."""
+
+    def __init__(self, message: str | None = None) -> None:
+        super().__init__(
+            message
+            or "El daemon no está corriendo. Iniciá con `inaki daemon` o `systemctl start inaki`."
+        )
+
+
+class DaemonTimeoutError(DaemonError):
+    """Timeout al comunicarse con el daemon."""
+
+    def __init__(self, message: str | None = None) -> None:
+        super().__init__(
+            message or "Timeout esperando respuesta del daemon. Verificá que esté funcionando."
+        )
+
+
+class DaemonClientError(DaemonError):
+    """Error HTTP del daemon (status code != 2xx)."""
+
+    def __init__(self, status_code: int, detail: str) -> None:
+        super().__init__(f"Error del daemon (HTTP {status_code}): {detail}")
+        self.status_code = status_code
+        self.detail = detail

@@ -18,6 +18,32 @@ from typing import NoReturn
 logger = logging.getLogger(__name__)
 
 
+async def _run_admin_server(app_container, admin_cfg, servers: list) -> None:
+    """Arranca el admin server global del daemon."""
+    import uvicorn
+    from adapters.inbound.rest.admin.app import create_admin_app
+
+    if admin_cfg.auth_key is None:
+        logger.warning(
+            "Admin auth_key no configurada — endpoints protegidos devolverán 403. "
+            "Configurala en global.secrets.yaml: admin.auth_key"
+        )
+
+    app = create_admin_app(app_container, admin_auth_key=admin_cfg.auth_key)
+    config = uvicorn.Config(
+        app,
+        host=admin_cfg.host,
+        port=admin_cfg.port,
+        log_level="info",
+        access_log=True,
+    )
+    server = uvicorn.Server(config)
+    server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
+    servers.append(server)
+    logger.info("Admin server iniciado en %s:%d", admin_cfg.host, admin_cfg.port)
+    await server.serve()
+
+
 async def _run_rest_server(agent_cfg, container, servers: list) -> None:
     """Arranca un servidor uvicorn para un agente en su puerto configurado."""
     import uvicorn
@@ -96,6 +122,14 @@ async def run_daemon(app_container, registry) -> None:
     tasks: list[asyncio.Task] = []
     uvicorn_servers: list = []
 
+    # Admin server — global, puerto separado
+    admin_cfg = app_container.global_config.admin
+    admin_task = asyncio.create_task(
+        _run_admin_server(app_container, admin_cfg, uvicorn_servers),
+        name="admin",
+    )
+    tasks.append(admin_task)
+
     # REST servers
     for agent_cfg in registry.agents_with_channel("rest"):
         rest_cfg = agent_cfg.channels.get("rest", {})
@@ -162,10 +196,11 @@ async def run_daemon(app_container, registry) -> None:
         server.should_exit = True
 
     # Cancelar telegram bots (no tienen protocolo should_exit).
-    # Los tasks de uvicorn terminarán por su cuenta cuando should_exit
-    # tome efecto, pero igual los esperamos en el gather.
+    # Los tasks de uvicorn (rest:* y admin) terminarán por su cuenta
+    # cuando should_exit tome efecto, pero igual los esperamos en el gather.
+    _uvicorn_task_prefixes = ("rest:", "admin")
     for task in pending:
-        if not task.get_name().startswith("rest:"):
+        if not task.get_name().startswith(_uvicorn_task_prefixes):
             task.cancel()
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)

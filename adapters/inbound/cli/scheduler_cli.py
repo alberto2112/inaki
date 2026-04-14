@@ -36,6 +36,7 @@ from core.domain.errors import BuiltinTaskProtectedError, TaskNotFoundError
 
 if TYPE_CHECKING:
     from core.ports.inbound.scheduler_port import ISchedulerUseCase
+    from infrastructure.config import GlobalConfig
 
 # ---------------------------------------------------------------------------
 # Sub-app
@@ -67,11 +68,12 @@ _EDITABLE_FIELDS: set[str] = {
 # ---------------------------------------------------------------------------
 
 
-def _bootstrap_uc(ctx: typer.Context) -> "ISchedulerUseCase":
-    """Resolve dirs from ctx.obj, build AppContainer, return schedule_task_uc."""
-    import sys
+def _bootstrap_uc_legacy(ctx: typer.Context) -> "ISchedulerUseCase":
+    """Resolve dirs from ctx.obj, build AppContainer, return schedule_task_uc.
 
-    from main import _bootstrap, _resolve_dirs
+    LEGACY — será eliminado en Phase 2 una vez validado el bootstrap liviano.
+    """
+    from inaki.cli import _bootstrap, _resolve_dirs
     from infrastructure.container import AppContainer
 
     config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
@@ -84,6 +86,47 @@ def _bootstrap_uc(ctx: typer.Context) -> "ISchedulerUseCase":
 
     container = AppContainer(global_config, registry)
     return container.schedule_task_uc
+
+
+def _create_lightweight_uc(
+    config_dir: Path,
+) -> tuple["ISchedulerUseCase", "GlobalConfig"]:
+    """Crea ScheduleTaskUseCase con bootstrap mínimo — sin AppContainer."""
+    from infrastructure.config import load_global_config
+    from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRepo
+    from core.use_cases.schedule_task import ScheduleTaskUseCase
+
+    global_config, _ = load_global_config(config_dir)
+    repo = SQLiteSchedulerRepo(global_config.scheduler.db_path)
+    uc = ScheduleTaskUseCase(repo=repo, on_mutation=lambda: None)
+    return uc, global_config
+
+
+def _notify_daemon_reload(admin_base_url: str, auth_key: str | None) -> None:
+    """Notifica al daemon que recargue la caché del scheduler. Silencia todo error."""
+    from adapters.outbound.daemon_client import DaemonClient
+
+    try:
+        client = DaemonClient(admin_base_url=admin_base_url, auth_key=auth_key)
+        client.scheduler_reload()
+    except Exception:
+        pass  # Si el daemon no corre, no hay caché que invalidar
+
+
+def _bootstrap_uc(ctx: typer.Context) -> "ISchedulerUseCase":
+    """Bootstrap liviano — carga solo config + SQLiteSchedulerRepo + UseCase."""
+    return _bootstrap_uc_lightweight(ctx)
+
+
+def _bootstrap_uc_lightweight(ctx: typer.Context) -> "ISchedulerUseCase":
+    """Bootstrap liviano — carga solo config + SQLiteSchedulerRepo + UseCase."""
+    from inaki.cli import _resolve_dirs
+
+    config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
+    config_dir, _ = _resolve_dirs(config_dir_override)
+
+    uc, _ = _create_lightweight_uc(config_dir)
+    return uc
 
 
 def _run_async(coro: Any) -> Any:
@@ -200,8 +243,7 @@ def _edit_yaml_loop(
                 validated = ScheduledTask.model_validate(merged)
             except ValidationError as exc:
                 flat_errors = "; ".join(
-                    f"{'.'.join(str(l) for l in e['loc'])}: {e['msg']}"
-                    for e in exc.errors()
+                    f"{'.'.join(str(l) for l in e['loc'])}: {e['msg']}" for e in exc.errors()
                 )
                 typer.echo(
                     f"Validation error (attempt {attempt}/{max_attempts}): {flat_errors}",
@@ -215,9 +257,7 @@ def _edit_yaml_loop(
 
             # Build dict of only the keys that were explicitly present in parsed YAML
             edited_fields: dict[str, Any] = {
-                k: getattr(validated, k)
-                for k in _EDITABLE_FIELDS
-                if k in parsed
+                k: getattr(validated, k) for k in _EDITABLE_FIELDS if k in parsed
             }
 
             # Check for actual differences

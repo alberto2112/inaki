@@ -50,6 +50,7 @@ ExpandedPathList = Annotated[list[str], BeforeValidator(_expand_user_list)]
 # Sub-configs
 # ---------------------------------------------------------------------------
 
+
 class AppConfig(BaseModel):
     name: str = "Iñaki"
     log_level: str = "INFO"
@@ -61,7 +62,7 @@ class AppConfig(BaseModel):
 
 class LLMConfig(BaseModel):
     provider: str = "openrouter"
-    base_url: str | None = None   # None → cada provider usa su propio default
+    base_url: str | None = None  # None → cada provider usa su propio default
     model: str = "anthropic/claude-3-5-haiku"
     temperature: float = 0.7
     max_tokens: int = 2048
@@ -70,11 +71,11 @@ class LLMConfig(BaseModel):
 
 class EmbeddingConfig(BaseModel):
     provider: str = "e5_onnx"
-    model_path: ExpandedPath = "models/e5-small"   # solo e5_onnx
+    model_path: ExpandedPath = "models/e5-small"  # solo e5_onnx
     model: str = "text-embedding-3-small"  # solo openai
     dimension: int = 384
     base_url: str = "https://api.openai.com/v1"  # solo openai
-    api_key: str | None = None             # solo openai — en secrets
+    api_key: str | None = None  # solo openai — en secrets
     cache_db: ExpandedPath = "data/embedding_cache.db"
 
 
@@ -174,6 +175,14 @@ class AgentDelegationConfig(BaseModel):
     allowed_targets: list[str] = []
 
 
+class AdminConfig(BaseModel):
+    """Configuración del admin server del daemon."""
+
+    port: int = 6497
+    host: str = "127.0.0.1"
+    auth_key: str | None = None
+
+
 class UserConfig(BaseModel):
     """Preferencias del usuario."""
 
@@ -183,6 +192,7 @@ class UserConfig(BaseModel):
 # ---------------------------------------------------------------------------
 # AgentConfig — config completa y resuelta para un agente
 # ---------------------------------------------------------------------------
+
 
 class AgentConfig(BaseModel):
     id: str
@@ -204,6 +214,7 @@ class AgentConfig(BaseModel):
 # GlobalConfig — config del sistema (sin agentes)
 # ---------------------------------------------------------------------------
 
+
 class GlobalConfig(BaseModel):
     app: AppConfig
     llm: LLMConfig
@@ -215,12 +226,14 @@ class GlobalConfig(BaseModel):
     scheduler: SchedulerConfig = SchedulerConfig()
     workspace: WorkspaceConfig = WorkspaceConfig()
     delegation: DelegationConfig = DelegationConfig()
+    admin: AdminConfig = AdminConfig()
     user: UserConfig = UserConfig()
 
 
 # ---------------------------------------------------------------------------
 # Utilidades de merge
 # ---------------------------------------------------------------------------
+
 
 def _deep_merge(base: dict, override: dict) -> dict:
     """
@@ -368,6 +381,7 @@ def ensure_user_config(config_dir: Path, agents_dir: Path) -> None:
 # Carga de configuración
 # ---------------------------------------------------------------------------
 
+
 def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
     """
     Carga y mergea global.yaml + global.secrets.yaml.
@@ -392,6 +406,8 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
     scheduler = SchedulerConfig(**merged.get("scheduler", {}))
     workspace = WorkspaceConfig(**merged.get("workspace", {}))
     delegation = DelegationConfig(**merged.get("delegation", {}))
+    admin = AdminConfig(**merged.get("admin", {}))
+    user = UserConfig(**merged.get("user", {}))
 
     global_cfg = GlobalConfig(
         app=app,
@@ -404,6 +420,8 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
         scheduler=scheduler,
         workspace=workspace,
         delegation=delegation,
+        admin=admin,
+        user=user,
     )
     return global_cfg, merged
 
@@ -466,6 +484,7 @@ def load_agent_config(
 # AgentRegistry
 # ---------------------------------------------------------------------------
 
+
 class AgentRegistry:
     """
     Escanea el directorio de agentes al arrancar y construye el registro.
@@ -488,12 +507,17 @@ class AgentRegistry:
                 self._agents[agent_id] = cfg
                 logger.debug("Agente '%s' cargado: %s", agent_id, cfg.name)
 
-        logger.info("AgentRegistry: %d agente(s) cargado(s): %s", len(self._agents), list(self._agents))
+        logger.info(
+            "AgentRegistry: %d agente(s) cargado(s): %s", len(self._agents), list(self._agents)
+        )
 
     def get(self, agent_id: str) -> AgentConfig:
         if agent_id not in self._agents:
             from core.domain.errors import AgentNotFoundError
-            raise AgentNotFoundError(f"Agente '{agent_id}' no encontrado. Disponibles: {list(self._agents)}")
+
+            raise AgentNotFoundError(
+                f"Agente '{agent_id}' no encontrado. Disponibles: {list(self._agents)}"
+            )
         return self._agents[agent_id]
 
     def list_all(self) -> list[AgentConfig]:

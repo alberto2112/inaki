@@ -78,7 +78,7 @@ Enviar un mensaje diario/semanal a un canal de Telegram. Ejemplo: resumen de act
 trigger_type: channel_send
 trigger_payload:
   type: channel_send
-  channel_id: "telegram:123456789"
+  target: "telegram:123456789"
   text: "Buenos días. Este es el resumen del día."
 schedule: "0 9 * * 1-5"   # lunes a viernes 9 AM UTC
 task_kind: recurrent
@@ -124,7 +124,7 @@ schedule: "2025-12-31T23:59:00+00:00"
 trigger_type: channel_send
 trigger_payload:
   type: channel_send
-  channel_id: "telegram:123456789"
+  target: "telegram:123456789"
   text: "¡Feliz año nuevo!"
 ```
 
@@ -196,7 +196,7 @@ else:
 
 | Trigger | Acción |
 |---------|--------|
-| `channel_send` | `channel_sender.send_message(channel_id, text)` → None |
+| `channel_send` | `channel_sender.send_message(target, text)` → None |
 | `agent_send` | `llm_dispatcher.dispatch(agent_id, prompt, tools)` → str resultado; si `output_channel` definido, envía resultado al canal |
 | `shell_exec` | subprocess con command/working_dir/env_vars/timeout → stdout; RuntimeError si exit code != 0 |
 | `consolidate_memory` | `consolidator.consolidate_all()` → str resultado |
@@ -360,7 +360,7 @@ Envía un mensaje de texto a un canal.
 ```python
 class ChannelSendPayload(BaseModel):
     type: Literal["channel_send"] = "channel_send"
-    channel_id: str    # formato: "telegram:<user_id>" (prefijo:destino)
+    target: str    # formato: "telegram:<user_id>" (prefijo:destino)
     text: str          # texto del mensaje
 ```
 
@@ -368,7 +368,7 @@ class ChannelSendPayload(BaseModel):
 ```json
 {
   "type": "channel_send",
-  "channel_id": "telegram:123456789",
+  "target": "telegram:123456789",
   "text": "Recordatorio: reunión en 30 minutos."
 }
 ```

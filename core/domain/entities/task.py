@@ -35,8 +35,9 @@ class TaskStatus(str, Enum):
 
 class ChannelSendPayload(BaseModel):
     type: Literal["channel_send"] = "channel_send"
-    channel_id: str
+    target: str
     text: str
+    user_id: str | None = None
 
 
 class AgentSendPayload(BaseModel):

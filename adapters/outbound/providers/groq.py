@@ -30,13 +30,6 @@ class GroqProvider(BaseLLMProvider):
             "Content-Type": "application/json",
         }
 
-    def _build_messages(self, messages: list[Message], system_prompt: str) -> list[dict]:
-        result = [{"role": "system", "content": system_prompt}]
-        for m in messages:
-            if m.role in (Role.USER, Role.ASSISTANT):
-                result.append({"role": m.role.value, "content": m.content})
-        return result
-
     async def complete(
         self,
         messages: list[Message],
@@ -67,6 +60,11 @@ class GroqProvider(BaseLLMProvider):
 
         choice = data["choices"][0]
         message = choice["message"]
+        logger.info(
+            "Groq response: tool_calls=%s, content_preview=%.200s",
+            bool(message.get("tool_calls")),
+            (message.get("content") or "")[:200],
+        )
 
         if message.get("tool_calls"):
             return json.dumps({"tool_calls": message["tool_calls"]})

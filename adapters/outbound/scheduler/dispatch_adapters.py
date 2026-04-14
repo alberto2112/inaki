@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import httpx
 
@@ -11,20 +12,46 @@ from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
 if TYPE_CHECKING:
     from core.domain.entities.task import WebhookPayload
 
+# Canales que son inbound (CLI, REST, daemon) pero no tienen gateway de salida.
+_CANALES_INBOUND = {"cli", "rest", "daemon"}
+
 
 class ChannelSenderAdapter:
-    """Routes channel_id prefix to the correct gateway."""
+    """Enruta el prefijo de canal al gateway correspondiente.
 
-    def __init__(self, app_container: Any) -> None:
-        self._container = app_container
+    Args:
+        get_telegram_bot: Callable que devuelve el bot de Telegram en el momento
+            de uso (lazy). Desacopla el adaptador del contenedor y facilita el testing.
+    """
 
-    async def send_message(self, channel_id: str, text: str) -> None:
-        # parse prefix: "telegram:<user_id>"
-        prefix, _, target = channel_id.partition(":")
+    def __init__(self, get_telegram_bot: Callable) -> None:
+        self._get_telegram_bot = get_telegram_bot
+
+    async def send_message(self, target: str, text: str) -> None:
+        """Envía ``text`` al destino indicado por ``target``.
+
+        El formato de ``target`` es ``"<prefijo>:<destino>"``, por ejemplo
+        ``"telegram:12345"`` o ``"cli:stdout"``.
+
+        Raises:
+            ValueError: Si el prefijo no es ``"telegram"`` o es desconocido.
+        """
+        prefix, _, destination = target.partition(":")
         if prefix == "telegram":
-            await self._container.telegram_gateway.send_message(int(target), text)
+            bot = self._get_telegram_bot()
+            if bot is None:
+                raise ValueError(
+                    "Telegram no está configurado. "
+                    "El bot no fue registrado en el sistema."
+                )
+            await bot.send_message(int(destination), text)
+        elif prefix in _CANALES_INBOUND:
+            raise ValueError(
+                f"channel_send no soportado para canal '{prefix}'. "
+                "Solo 'telegram' está implementado."
+            )
         else:
-            raise ValueError(f"Unknown channel prefix: {prefix}")
+            raise ValueError(f"Prefijo de canal desconocido: '{prefix}'")
 
 
 class LLMDispatcherAdapter:

@@ -18,6 +18,11 @@ Coverage:
   - BuiltinTaskProtectedError → ToolResult(success=False)
   - Unexpected exception → ToolResult(success=False) with generic message
 - created_by is ALWAYS agent_id from constructor, never from kwargs
+- T4: channel_send → target auto-inyectado desde ChannelContext.routing_key
+- T4: channel_send + user_id override → target reconstruido con channel_type del contexto
+- T4: channel_send sin contexto → error descriptivo
+- T4: trigger no channel_send → sin inyección (comportamiento existente)
+- T4: LLM envía 'target' en payload → silenciosamente descartado
 """
 
 from __future__ import annotations
@@ -44,6 +49,7 @@ from core.domain.errors import (
     TaskNotFoundError,
     TooManyActiveTasksError,
 )
+from core.domain.value_objects.channel_context import ChannelContext
 from core.ports.outbound.tool_port import ToolResult
 
 
@@ -53,12 +59,14 @@ from core.ports.outbound.tool_port import ToolResult
 
 _AGENT_ID = "test-agent"
 _USER_TZ = "UTC"
+_DEFAULT_CHANNEL_CTX = ChannelContext(channel_type="telegram", user_id="123456")
 
 
 def _make_tool(
     agent_id: str = _AGENT_ID,
     user_timezone: str = _USER_TZ,
     uc: MagicMock | None = None,
+    get_channel_context=None,
 ) -> tuple[SchedulerTool, MagicMock]:
     """Returns (tool, mock_uc). mock_uc has all methods as AsyncMock by default."""
     if uc is None:
@@ -68,10 +76,14 @@ def _make_tool(
         uc.get_task = AsyncMock()
         uc.update_task = AsyncMock()
         uc.delete_task = AsyncMock()
+    # Por defecto usa el contexto de canal estándar de prueba
+    if get_channel_context is None:
+        get_channel_context = lambda: _DEFAULT_CHANNEL_CTX
     tool = SchedulerTool(
         schedule_task_uc=uc,
         agent_id=agent_id,
         user_timezone=user_timezone,
+        get_channel_context=get_channel_context,
     )
     return tool, uc
 
@@ -88,7 +100,7 @@ def _make_task(
         name=name,
         task_kind=task_kind,
         trigger_type=trigger_type,
-        trigger_payload=ChannelSendPayload(channel_id="ch1", text="hello"),
+        trigger_payload=ChannelSendPayload(target="telegram:ch1", text="hello"),
         schedule="2026-04-12T14:00:00Z",
         created_by=created_by,
         created_at=datetime(2026, 4, 10, 12, 0, 0, tzinfo=timezone.utc),
@@ -111,7 +123,7 @@ async def test_create_one_shot_relative_schedule() -> None:
         name="My Task",
         task_kind="one_shot",
         trigger_type="channel_send",
-        trigger_payload={"channel_id": "ch1", "text": "hello"},
+        trigger_payload={"text": "hello"},
         schedule="+2h",
     )
 
@@ -138,7 +150,7 @@ async def test_create_one_shot_iso_schedule() -> None:
         name="ISO Task",
         task_kind="one_shot",
         trigger_type="channel_send",
-        trigger_payload={"channel_id": "ch1", "text": "ping"},
+        trigger_payload={"text": "ping"},
         schedule="2026-06-01T10:00:00Z",
     )
 
@@ -162,7 +174,7 @@ async def test_create_recurring_cron_schedule() -> None:
         name="Cron Task",
         task_kind="recurring",
         trigger_type="channel_send",
-        trigger_payload={"channel_id": "ch1", "text": "daily"},
+        trigger_payload={"text": "daily"},
         schedule="0 8 * * *",
     )
 
@@ -179,7 +191,7 @@ async def test_create_trigger_type_agent_send() -> None:
     task = _make_task(task_id=4, trigger_type=TriggerType.AGENT_SEND)
     # Override payload with agent_send
     task = task.model_copy(update={
-        "trigger_payload": AgentSendPayload(agent_id="other-agent")
+        "trigger_payload": AgentSendPayload(agent_id="other-agent", task="do something")
     })
     uc.create_task.return_value = task
 
@@ -188,7 +200,7 @@ async def test_create_trigger_type_agent_send() -> None:
         name="Agent Task",
         task_kind="one_shot",
         trigger_type="agent_send",
-        trigger_payload={"agent_id": "other-agent"},
+        trigger_payload={"agent_id": "other-agent", "task": "do something"},
         schedule="2026-06-01T10:00:00Z",
     )
 
@@ -236,7 +248,7 @@ async def test_create_created_by_always_from_agent_id_not_kwargs() -> None:
         name="Task",
         task_kind="one_shot",
         trigger_type="channel_send",
-        trigger_payload={"channel_id": "ch1", "text": "hi"},
+        trigger_payload={"text": "hi"},
         schedule="2026-06-01T10:00:00Z",
         created_by="malicious-agent",  # must be ignored
     )
@@ -471,7 +483,7 @@ async def test_create_recurring_with_relative_schedule_is_error() -> None:
         name="Bad Recurring",
         task_kind="recurring",
         trigger_type="channel_send",
-        trigger_payload={"channel_id": "ch1", "text": "hello"},
+        trigger_payload={"text": "hello"},
         schedule="+5h",
     )
 
@@ -490,7 +502,7 @@ async def test_create_zero_duration_schedule_is_error() -> None:
         name="Zero Task",
         task_kind="one_shot",
         trigger_type="channel_send",
-        trigger_payload={"channel_id": "ch1", "text": "hi"},
+        trigger_payload={"text": "hi"},
         schedule="+0m",
     )
 
@@ -519,7 +531,7 @@ async def test_create_invalid_trigger_payload_is_error() -> None:
         name="Bad Payload",
         task_kind="one_shot",
         trigger_type="channel_send",
-        trigger_payload={"channel_id": "ch1"},  # missing 'text'
+        trigger_payload={},  # missing 'text'
         schedule="2026-06-01T10:00:00Z",
     )
 
@@ -536,7 +548,7 @@ async def test_create_missing_name_is_error() -> None:
         operation="create",
         task_kind="one_shot",
         trigger_type="channel_send",
-        trigger_payload={"channel_id": "ch1", "text": "hi"},
+        trigger_payload={"text": "hi"},
         schedule="2026-06-01T10:00:00Z",
     )
 
@@ -554,7 +566,7 @@ async def test_create_missing_schedule_is_error() -> None:
         name="Task",
         task_kind="one_shot",
         trigger_type="channel_send",
-        trigger_payload={"channel_id": "ch1", "text": "hi"},
+        trigger_payload={"text": "hi"},
     )
 
     assert result.success is False
@@ -571,7 +583,7 @@ async def test_create_invalid_task_kind_is_error() -> None:
         name="Task",
         task_kind="daily",
         trigger_type="channel_send",
-        trigger_payload={"channel_id": "ch1", "text": "hi"},
+        trigger_payload={"text": "hi"},
         schedule="2026-06-01T10:00:00Z",
     )
 
@@ -612,7 +624,7 @@ async def test_create_too_many_active_tasks_error() -> None:
         name="Task",
         task_kind="one_shot",
         trigger_type="channel_send",
-        trigger_payload={"channel_id": "ch1", "text": "hi"},
+        trigger_payload={"text": "hi"},
         schedule="2026-06-01T10:00:00Z",
     )
 
@@ -631,7 +643,7 @@ async def test_create_unexpected_exception_returns_error() -> None:
         name="Task",
         task_kind="one_shot",
         trigger_type="channel_send",
-        trigger_payload={"channel_id": "ch1", "text": "hi"},
+        trigger_payload={"text": "hi"},
         schedule="2026-06-01T10:00:00Z",
     )
 
@@ -727,7 +739,7 @@ async def test_create_maps_one_shot_to_domain_oneshot() -> None:
         name="Task",
         task_kind="one_shot",
         trigger_type="channel_send",
-        trigger_payload={"channel_id": "c", "text": "t"},
+        trigger_payload={"text": "t"},
         schedule="2026-06-01T10:00:00Z",
     )
 
@@ -747,9 +759,198 @@ async def test_create_maps_recurring_to_domain_recurrent() -> None:
         name="Task",
         task_kind="recurring",
         trigger_type="channel_send",
-        trigger_payload={"channel_id": "c", "text": "t"},
+        trigger_payload={"text": "t"},
         schedule="0 9 * * *",
     )
 
     call_arg = uc.create_task.call_args[0][0]
     assert call_arg.task_kind == TaskKind.RECURRENT
+
+
+# ---------------------------------------------------------------------------
+# T4: inyección de channel context en channel_send
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_create_channel_send_target_auto_inyectado_desde_contexto() -> None:
+    """channel_send con contexto → target se inyecta desde context.routing_key."""
+    ctx = ChannelContext(channel_type="telegram", user_id="999")
+    tool, uc = _make_tool(get_channel_context=lambda: ctx)
+    created = _make_task(task_id=10, name="Canal Task")
+    uc.create_task.return_value = created
+
+    result = await tool.execute(
+        operation="create",
+        name="Canal Task",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "mensaje programado"},
+        schedule="2026-06-01T10:00:00Z",
+    )
+
+    assert result.success is True
+    call_arg: ScheduledTask = uc.create_task.call_args[0][0]
+    assert isinstance(call_arg.trigger_payload, ChannelSendPayload)
+    assert call_arg.trigger_payload.target == "telegram:999"
+    assert call_arg.trigger_payload.text == "mensaje programado"
+
+
+@pytest.mark.asyncio
+async def test_create_channel_send_user_id_override_reconstruye_target() -> None:
+    """channel_send con user_id override → target usa channel_type del contexto + user_id del LLM."""
+    ctx = ChannelContext(channel_type="telegram", user_id="999")
+    tool, uc = _make_tool(get_channel_context=lambda: ctx)
+    created = _make_task(task_id=11, name="Override Task")
+    uc.create_task.return_value = created
+
+    result = await tool.execute(
+        operation="create",
+        name="Override Task",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "para otro usuario", "user_id": "777"},
+        schedule="2026-06-01T10:00:00Z",
+    )
+
+    assert result.success is True
+    call_arg: ScheduledTask = uc.create_task.call_args[0][0]
+    assert isinstance(call_arg.trigger_payload, ChannelSendPayload)
+    # target reconstruido con channel_type del contexto + user_id del LLM
+    assert call_arg.trigger_payload.target == "telegram:777"
+    assert call_arg.trigger_payload.user_id == "777"
+
+
+@pytest.mark.asyncio
+async def test_create_channel_send_sin_contexto_retorna_error() -> None:
+    """channel_send sin contexto de canal → error descriptivo."""
+    tool, uc = _make_tool(get_channel_context=lambda: None)
+
+    result = await tool.execute(
+        operation="create",
+        name="Sin Contexto",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "hola"},
+        schedule="2026-06-01T10:00:00Z",
+    )
+
+    assert result.success is False
+    assert "contexto" in result.output.lower() or "canal" in result.output.lower()
+    uc.create_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_create_no_channel_send_sin_inyeccion() -> None:
+    """trigger no channel_send → no se usa get_channel_context (comportamiento existente)."""
+    # Contexto que falla si se llama → no debe llamarse para agent_send
+    def ctx_falla():
+        raise RuntimeError("get_channel_context no debe llamarse para agent_send")
+
+    tool, uc = _make_tool(get_channel_context=ctx_falla)
+    task = _make_task(task_id=12, trigger_type=TriggerType.AGENT_SEND)
+    task = task.model_copy(update={
+        "trigger_payload": AgentSendPayload(agent_id="otro-agent", task="hacer algo")
+    })
+    uc.create_task.return_value = task
+
+    result = await tool.execute(
+        operation="create",
+        name="Agent Task",
+        task_kind="one_shot",
+        trigger_type="agent_send",
+        trigger_payload={"agent_id": "otro-agent", "task": "hacer algo"},
+        schedule="2026-06-01T10:00:00Z",
+    )
+
+    assert result.success is True
+
+
+@pytest.mark.asyncio
+async def test_create_channel_send_target_en_payload_descartado_silenciosamente() -> None:
+    """LLM envía 'target' en payload → descartado silenciosamente; se usa el del contexto."""
+    ctx = ChannelContext(channel_type="telegram", user_id="123")
+    tool, uc = _make_tool(get_channel_context=lambda: ctx)
+    created = _make_task(task_id=13, name="Target Strip")
+    uc.create_task.return_value = created
+
+    result = await tool.execute(
+        operation="create",
+        name="Target Strip",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "test", "target": "hacker:000"},  # debe ignorarse
+        schedule="2026-06-01T10:00:00Z",
+    )
+
+    assert result.success is True
+    call_arg: ScheduledTask = uc.create_task.call_args[0][0]
+    # target debe venir del contexto, no del LLM
+    assert call_arg.trigger_payload.target == "telegram:123"
+
+
+# ---------------------------------------------------------------------------
+# update — inyección de channel context para channel_send (verify fix)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_channel_send_inyecta_target_desde_contexto() -> None:
+    """update trigger_payload de channel_send → target inyectado desde contexto."""
+    tool, uc = _make_tool()
+    existing = _make_task(task_id=200, trigger_type=TriggerType.CHANNEL_SEND)
+    existing.trigger_payload = ChannelSendPayload(target="telegram:old_user", text="viejo")
+    uc.get_task.return_value = existing
+    updated = _make_task(task_id=200)
+    uc.update_task.return_value = updated
+
+    result = await tool.execute(
+        operation="update",
+        task_id=200,
+        trigger_payload={"text": "nuevo texto"},
+    )
+
+    assert result.success is True
+    kwargs = uc.update_task.call_args[1]
+    payload = kwargs["trigger_payload"]
+    # target debe conservar el existente (no el del LLM, que no lo mandó)
+    assert payload.target == "telegram:old_user"
+    assert payload.text == "nuevo texto"
+
+
+@pytest.mark.asyncio
+async def test_update_channel_send_user_id_override() -> None:
+    """update channel_send con user_id → target reconstruido con channel_type del contexto."""
+    tool, uc = _make_tool()
+    existing = _make_task(task_id=201, trigger_type=TriggerType.CHANNEL_SEND)
+    existing.trigger_payload = ChannelSendPayload(target="telegram:old_user", text="viejo")
+    uc.get_task.return_value = existing
+    updated = _make_task(task_id=201)
+    uc.update_task.return_value = updated
+
+    result = await tool.execute(
+        operation="update",
+        task_id=201,
+        trigger_payload={"text": "hola", "user_id": "999888"},
+    )
+
+    assert result.success is True
+    kwargs = uc.update_task.call_args[1]
+    payload = kwargs["trigger_payload"]
+    assert payload.target == "telegram:999888"
+
+
+@pytest.mark.asyncio
+async def test_update_channel_send_sin_contexto_error() -> None:
+    """update channel_send sin contexto de canal → error descriptivo."""
+    tool, uc = _make_tool(get_channel_context=lambda: None)
+    existing = _make_task(task_id=202, trigger_type=TriggerType.CHANNEL_SEND)
+    uc.get_task.return_value = existing
+
+    result = await tool.execute(
+        operation="update",
+        task_id=202,
+        trigger_payload={"text": "texto"},
+    )
+
+    assert result.success is False
+    assert "contexto de canal" in result.output.lower()

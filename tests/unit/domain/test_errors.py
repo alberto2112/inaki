@@ -36,3 +36,66 @@ def test_tool_loop_max_iterations_error_str_includes_last_response() -> None:
 def test_tool_loop_max_iterations_error_empty_response() -> None:
     exc = ToolLoopMaxIterationsError("")
     assert exc.last_response == ""
+
+
+# ---------------------------------------------------------------------------
+# DaemonError — excepciones del daemon client
+# ---------------------------------------------------------------------------
+
+from core.domain.errors import (
+    DaemonClientError,
+    DaemonError,
+    DaemonNotRunningError,
+    DaemonTimeoutError,
+)
+
+
+def test_daemon_error_is_inaki_error() -> None:
+    exc = DaemonError("test")
+    assert isinstance(exc, IñakiError)
+
+
+def test_daemon_not_running_error_is_daemon_error() -> None:
+    exc = DaemonNotRunningError()
+    assert isinstance(exc, DaemonError)
+
+
+def test_daemon_not_running_error_message_rioplatense() -> None:
+    exc = DaemonNotRunningError()
+    assert "inaki daemon" in str(exc).lower()
+
+
+def test_daemon_not_running_error_custom_message() -> None:
+    exc = DaemonNotRunningError("custom msg")
+    assert "custom msg" in str(exc)
+
+
+def test_daemon_timeout_error_is_daemon_error() -> None:
+    exc = DaemonTimeoutError()
+    assert isinstance(exc, DaemonError)
+
+
+def test_daemon_timeout_error_message() -> None:
+    exc = DaemonTimeoutError()
+    msg = str(exc).lower()
+    assert "timeout" in msg or "tiempo" in msg
+
+
+def test_daemon_client_error_is_daemon_error() -> None:
+    exc = DaemonClientError(status_code=500, detail="Internal")
+    assert isinstance(exc, DaemonError)
+
+
+def test_daemon_client_error_stores_status_code() -> None:
+    exc = DaemonClientError(status_code=401, detail="No autorizado")
+    assert exc.status_code == 401
+
+
+def test_daemon_client_error_stores_detail() -> None:
+    exc = DaemonClientError(status_code=403, detail="Forbidden")
+    assert exc.detail == "Forbidden"
+
+
+def test_daemon_client_error_str_includes_status() -> None:
+    exc = DaemonClientError(status_code=500, detail="Error interno")
+    assert "500" in str(exc)

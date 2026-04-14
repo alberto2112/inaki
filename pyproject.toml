@@ -39,10 +39,10 @@ dev = [
 ]
 
 [project.scripts]
-inaki = "main:app"
+inaki = "inaki.cli:app"
 
 [tool.setuptools.packages.find]
-include = ["core*", "adapters*", "infrastructure*"]
+include = ["inaki*", "core*", "adapters*", "infrastructure*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

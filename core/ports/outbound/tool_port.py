@@ -7,6 +7,7 @@ class ToolResult(BaseModel):
     output: str
     success: bool
     error: str | None = None
+    retryable: bool = True
 
 
 class ITool(ABC):
@@ -39,4 +40,14 @@ class IToolExecutor(ABC):
         min_score: float = 0.0,
     ) -> list[dict]:
         """Retorna los schemas de las tools más relevantes para el query via cosine similarity."""
+        ...
+
+    @abstractmethod
+    async def get_schemas_relevant_with_scores(
+        self,
+        query_embedding: list[float],
+        top_k: int = 5,
+        min_score: float = 0.0,
+    ) -> list[tuple[dict, float]]:
+        """Schemas seleccionados por RAG con score de similitud coseno (orden descendente por score)."""
         ...

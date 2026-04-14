@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any, cast
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 from pydantic import BaseModel
 
@@ -36,6 +37,7 @@ from core.domain.errors import (
     TooManyActiveTasksError,
 )
 from core.domain.utils.time_parser import parse_schedule
+from core.domain.value_objects.channel_context import ChannelContext
 from core.ports.outbound.tool_port import ITool, ToolResult
 
 if TYPE_CHECKING:
@@ -124,7 +126,9 @@ class SchedulerTool(ITool):
                 "type": "object",
                 "description": (
                     "Action-specific payload. "
-                    "For 'channel_send': {\"channel_id\": \"...\", \"text\": \"...\"}. "
+                    "For 'channel_send': {\"text\": \"...\", \"user_id\": \"...(opcional)\"}. "
+                    "El canal de destino se inyecta automáticamente del contexto de conversación — "
+                    "NO incluir 'channel_id' ni 'target'. "
                     "For 'agent_send': {\"agent_id\": \"...\", \"prompt_override\": \"...\"}. "
                     "For 'shell_exec': {\"command\": \"...\", \"working_dir\": null, "
                     "\"env_vars\": {}, \"timeout\": null}."
@@ -169,10 +173,12 @@ class SchedulerTool(ITool):
         schedule_task_uc: ISchedulerUseCase,
         agent_id: str,
         user_timezone: str,
+        get_channel_context: Callable[[], ChannelContext | None],
     ) -> None:
         self._uc = schedule_task_uc
         self._agent_id = agent_id
         self._user_timezone = user_timezone
+        self._get_channel_context = get_channel_context
 
     async def execute(self, **kwargs: Any) -> ToolResult:  # type: ignore[override]
         operation = str(kwargs.get("operation") or "").strip().lower()
@@ -258,6 +264,24 @@ class SchedulerTool(ITool):
                 except ValueError as exc:
                     return self._error(str(exc))
 
+        # --- Inyección de contexto de canal para channel_send ---
+        if trigger_type_raw == "channel_send":
+            context = self._get_channel_context()
+            if context is None:
+                return self._error(
+                    "No hay contexto de canal disponible. "
+                    "channel_send solo funciona en conversaciones interactivas."
+                )
+            # Descartar silenciosamente 'target' que el LLM pueda haber enviado
+            trigger_payload_raw.pop("target", None)
+            # Determinar target: si LLM envió user_id, reconstruir con channel_type del contexto
+            llm_user_id = trigger_payload_raw.pop("user_id", None)
+            if llm_user_id is not None:
+                trigger_payload_raw["target"] = f"{context.channel_type}:{llm_user_id}"
+                trigger_payload_raw["user_id"] = llm_user_id
+            else:
+                trigger_payload_raw["target"] = context.routing_key
+
         # --- Validate trigger payload ---
         payload_model_cls = _TRIGGER_PAYLOAD_MODELS[trigger_type_raw]
         try:
@@ -273,6 +297,10 @@ class SchedulerTool(ITool):
         trigger_type = TriggerType(trigger_type_raw)
 
         # --- Build entity ---
+        next_run: datetime | None = None
+        if task_kind == TaskKind.ONESHOT:
+            next_run = datetime.fromisoformat(parsed_schedule)
+
         task = ScheduledTask(
             name=name,
             description=str(params.get("description") or ""),
@@ -280,6 +308,7 @@ class SchedulerTool(ITool):
             trigger_type=trigger_type,
             trigger_payload=trigger_payload_obj,
             schedule=parsed_schedule,
+            next_run=next_run,
             executions_remaining=params.get("executions_remaining"),
             created_by=self._agent_id,  # always injected — never from LLM kwargs
         )
@@ -444,6 +473,22 @@ class SchedulerTool(ITool):
                 return self._error(
                     f"Cannot update trigger_payload for system trigger type '{trigger_type_str}'."
                 )
+            # Inyección de contexto de canal para channel_send (misma lógica que _create)
+            if trigger_type_str == "channel_send":
+                context = self._get_channel_context()
+                if context is None:
+                    return self._error(
+                        "No hay contexto de canal disponible. "
+                        "channel_send solo funciona en conversaciones interactivas."
+                    )
+                payload_raw.pop("target", None)
+                llm_user_id = payload_raw.pop("user_id", None)
+                if llm_user_id is not None:
+                    payload_raw["target"] = f"{context.channel_type}:{llm_user_id}"
+                    payload_raw["user_id"] = llm_user_id
+                else:
+                    payload_raw["target"] = existing.trigger_payload.target
+
             payload_model_cls = _TRIGGER_PAYLOAD_MODELS[trigger_type_str]
             try:
                 payload_raw["type"] = trigger_type_str

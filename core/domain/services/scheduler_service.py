@@ -200,7 +200,7 @@ class SchedulerService:
     async def _dispatch_trigger(self, task: ScheduledTask) -> str | None:
         payload = task.trigger_payload
         if isinstance(payload, ChannelSendPayload):
-            await self._dispatch.channel_sender.send_message(payload.channel_id, payload.text)
+            await self._dispatch.channel_sender.send_message(payload.target, payload.text)
             return None
         elif isinstance(payload, AgentSendPayload):
             result = await self._dispatch.llm_dispatcher.dispatch(

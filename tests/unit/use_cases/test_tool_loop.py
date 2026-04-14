@@ -266,11 +266,13 @@ async def test_circuit_breaker_blocks_after_threshold_failures():
 
 async def test_circuit_breaker_does_not_execute_tripped_tool():
     """Una tool en circuito abierto NO se ejecuta (tools.execute no se llama)."""
-    failing_result = ToolResult(tool_name="flaky", output="error", success=False)
+    failing_result = ToolResult(
+        tool_name="flaky", output="error", success=False, retryable=False,
+    )
     tool_call = _tool_call_response("flaky")
-    threshold = 1  # trip tras 1 fallo
+    threshold = 1  # trip tras 1 fallo no-retryable
 
-    # Iteración 1: fallo → trip
+    # Iteración 1: fallo no-retryable → trip
     # Iteración 2: bloqueado, mensaje CIRCUIT OPEN al LLM
     # Iteración 3: LLM responde sin tools
     llm = _make_llm(tool_call, tool_call, "Respuesta sin tools")
@@ -292,9 +294,8 @@ async def test_circuit_breaker_does_not_execute_tripped_tool():
     assert tools.execute.call_count == 1
 
 
-async def test_circuit_breaker_not_tripped_below_threshold():
-    """Por debajo del threshold, la tool sigue ejecutándose (no se abre el breaker)."""
-    # threshold=3, solo 2 fallos → no se dispara
+async def test_circuit_breaker_not_tripped_for_retryable_errors():
+    """Errores retryable (default) nunca disparan el circuit breaker."""
     failing_result = ToolResult(tool_name="flaky", output="error", success=False)
     tool_call = _tool_call_response("flaky")
 

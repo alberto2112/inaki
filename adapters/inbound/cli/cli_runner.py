@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from core.domain.value_objects.channel_context import ChannelContext
 from infrastructure.container import AppContainer
 from infrastructure.config import GlobalConfig, AgentRegistry
 
@@ -28,77 +29,81 @@ async def run_cli(app: AppContainer, agent_id: str) -> None:
         print(f"Error: {exc}")
         return
 
-    agent_cfg = app.registry.get(agent_id)
-    print(f"\n🤖 {agent_cfg.name} — {agent_cfg.description}")
-    print(f"   Modelo: {agent_cfg.llm.model} via {agent_cfg.llm.provider}")
-    print("   Escribe /help para ver comandos. Ctrl+C para salir.\n")
+    container.set_channel_context(ChannelContext(channel_type="cli", user_id="local"))
+    try:
+        agent_cfg = app.registry.get(agent_id)
+        print(f"\n🤖 {agent_cfg.name} — {agent_cfg.description}")
+        print(f"   Modelo: {agent_cfg.llm.model} via {agent_cfg.llm.provider}")
+        print("   Escribe /help para ver comandos. Ctrl+C para salir.\n")
 
-    while True:
-        try:
-            user_input = input("tú > ").strip()
-        except (KeyboardInterrupt, EOFError):
-            print("\nHasta luego.")
-            break
-
-        if not user_input:
-            continue
-
-        # Comandos especiales
-        if user_input in ("/exit", "/quit"):
-            print("Hasta luego.")
-            break
-
-        if user_input == "/help":
-            print(_HELP)
-            continue
-
-        if user_input == "/consolidate":
-            print("Consolidando memoria...", flush=True)
+        while True:
             try:
-                result = await container.consolidate_memory.execute()
-                print(f"✓ {result}")
-            except Exception as exc:
-                print(f"Error: {exc}")
-            continue
+                user_input = input("tú > ").strip()
+            except (KeyboardInterrupt, EOFError):
+                print("\nHasta luego.")
+                break
 
-        if user_input == "/history":
-            history = await container.run_agent._history.load(agent_id)
-            if not history:
-                print("(historial vacío)")
-            else:
-                for msg in history:
-                    print(f"{msg.role.value}: {msg.content}")
-            print()
-            continue
+            if not user_input:
+                continue
 
-        if user_input == "/clear":
-            await container.run_agent._history.clear(agent_id)
-            print("Historial limpiado.")
-            continue
+            # Comandos especiales
+            if user_input in ("/exit", "/quit"):
+                print("Hasta luego.")
+                break
 
-        if user_input == "/agents":
-            list_agents(app)
-            continue
+            if user_input == "/help":
+                print(_HELP)
+                continue
 
-        if user_input.startswith("/inspect"):
-            query = user_input[len("/inspect"):].strip()
-            if not query:
-                print("Uso: /inspect <mensaje>")
-            else:
+            if user_input == "/consolidate":
+                print("Consolidando memoria...", flush=True)
                 try:
-                    result = await container.run_agent.inspect(query)
-                    print_inspect(result)
+                    result = await container.consolidate_memory.execute()
+                    print(f"✓ {result}")
                 except Exception as exc:
                     print(f"Error: {exc}")
-            continue
+                continue
 
-        # Chat normal
-        try:
-            response = await container.run_agent.execute(user_input)
-            print(f"\niñaki > {response}\n")
-        except Exception as exc:
-            logger.exception("Error procesando mensaje")
-            print(f"Error: {exc}\n")
+            if user_input == "/history":
+                history = await container.run_agent._history.load(agent_id)
+                if not history:
+                    print("(historial vacío)")
+                else:
+                    for msg in history:
+                        print(f"{msg.role.value}: {msg.content}")
+                print()
+                continue
+
+            if user_input == "/clear":
+                await container.run_agent._history.clear(agent_id)
+                print("Historial limpiado.")
+                continue
+
+            if user_input == "/agents":
+                list_agents(app)
+                continue
+
+            if user_input.startswith("/inspect"):
+                query = user_input[len("/inspect"):].strip()
+                if not query:
+                    print("Uso: /inspect <mensaje>")
+                else:
+                    try:
+                        result = await container.run_agent.inspect(query)
+                        print_inspect(result)
+                    except Exception as exc:
+                        print(f"Error: {exc}")
+                continue
+
+            # Chat normal
+            try:
+                response = await container.run_agent.execute(user_input)
+                print(f"\niñaki > {response}\n")
+            except Exception as exc:
+                logger.exception("Error procesando mensaje")
+                print(f"Error: {exc}\n")
+    finally:
+        container.set_channel_context(None)
 
 
 def print_inspect(result) -> None:
@@ -118,8 +123,12 @@ def print_inspect(result) -> None:
     )
     print(f"\n🧠 Skills [{skills_rag_label}]:")
     if result.selected_skills:
-        for s in result.selected_skills:
-            print(f"   - {s.name}: {s.description}")
+        for i, s in enumerate(result.selected_skills):
+            extra = ""
+            if result.skills_rag_active and i < len(result.selected_skill_scores):
+                _, sc = result.selected_skill_scores[i]
+                extra = f" [score={sc:.4f}]"
+            print(f"   - {s.name}: {extra}")
     else:
         print("   (ninguna)")
 
@@ -130,9 +139,14 @@ def print_inspect(result) -> None:
     )
     print(f"\n🔧 Tools enviadas al LLM [{rag_label}]:")
     if result.selected_tool_schemas:
-        for schema in result.selected_tool_schemas:
+        for i, schema in enumerate(result.selected_tool_schemas):
             fn = schema.get("function", {})
-            print(f"   - {fn.get('name', '?')}: {fn.get('description', '')}")
+            name = fn.get("name", "?")
+            extra = ""
+            if result.tools_rag_active and i < len(result.selected_tool_scores):
+                _, sc = result.selected_tool_scores[i]
+                extra = f" [score={sc:.4f}]"
+            print(f"   - {name}: {fn.get('description', '')}{extra}")
     else:
         print("   (ninguna)")
 

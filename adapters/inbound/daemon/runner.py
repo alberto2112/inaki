@@ -18,6 +18,32 @@ from typing import NoReturn
 logger = logging.getLogger(__name__)
 
 
+async def _run_admin_server(app_container, admin_cfg, servers: list) -> None:
+    """Arranca el admin server global del daemon."""
+    import uvicorn
+    from adapters.inbound.rest.admin.app import create_admin_app
+
+    if admin_cfg.auth_key is None:
+        logger.warning(
+            "Admin auth_key no configurada — endpoints protegidos devolverán 403. "
+            "Configurala en global.secrets.yaml: admin.auth_key"
+        )
+
+    app = create_admin_app(app_container, admin_auth_key=admin_cfg.auth_key)
+    config = uvicorn.Config(
+        app,
+        host=admin_cfg.host,
+        port=admin_cfg.port,
+        log_level="info",
+        access_log=True,
+    )
+    server = uvicorn.Server(config)
+    server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
+    servers.append(server)
+    logger.info("Admin server iniciado en %s:%d", admin_cfg.host, admin_cfg.port)
+    await server.serve()
+
+
 async def _run_rest_server(agent_cfg, container, servers: list) -> None:
     """Arranca un servidor uvicorn para un agente en su puerto configurado."""
     import uvicorn
@@ -44,7 +70,7 @@ async def _run_rest_server(agent_cfg, container, servers: list) -> None:
     await server.serve()
 
 
-async def _run_telegram_bot(agent_cfg, container) -> None:
+async def _run_telegram_bot(agent_cfg, container, app_container=None) -> None:
     """Arranca el bot de Telegram para un agente usando la API async nativa de PTB 21+."""
     from adapters.inbound.telegram.bot import TelegramBot
 
@@ -53,6 +79,10 @@ async def _run_telegram_bot(agent_cfg, container) -> None:
     except ValueError as exc:
         logger.warning("Telegram bot no iniciado para '%s': %s", agent_cfg.id, exc)
         return
+
+    # Registrar el bot en el gateway para que ChannelSenderAdapter pueda encontrarlo
+    if app_container is not None:
+        app_container.register_telegram_bot(agent_cfg.id, bot)
 
     logger.info("Telegram bot iniciando para agente '%s'", agent_cfg.id)
 
@@ -75,6 +105,7 @@ async def run_daemon(app_container, registry) -> None:
     Arranca todos los canales de todos los agentes en paralelo.
     Cancela graciosamente cuando recibe SIGTERM o SIGINT.
     """
+    # TODO: implementar handler de channel_send para daemon (dispatch handler para tareas sin conversación activa)
     # Scheduler startup
     await app_container.startup()
 
@@ -90,6 +121,14 @@ async def run_daemon(app_container, registry) -> None:
 
     tasks: list[asyncio.Task] = []
     uvicorn_servers: list = []
+
+    # Admin server — global, puerto separado
+    admin_cfg = app_container.global_config.admin
+    admin_task = asyncio.create_task(
+        _run_admin_server(app_container, admin_cfg, uvicorn_servers),
+        name="admin",
+    )
+    tasks.append(admin_task)
 
     # REST servers
     for agent_cfg in registry.agents_with_channel("rest"):
@@ -125,7 +164,7 @@ async def run_daemon(app_container, registry) -> None:
             logger.error("No se pudo obtener container para '%s': %s", agent_cfg.id, exc)
             continue
         task = asyncio.create_task(
-            _run_telegram_bot(agent_cfg, container),
+            _run_telegram_bot(agent_cfg, container, app_container),
             name=f"telegram:{agent_cfg.id}",
         )
         tasks.append(task)
@@ -157,10 +196,11 @@ async def run_daemon(app_container, registry) -> None:
         server.should_exit = True
 
     # Cancelar telegram bots (no tienen protocolo should_exit).
-    # Los tasks de uvicorn terminarán por su cuenta cuando should_exit
-    # tome efecto, pero igual los esperamos en el gather.
+    # Los tasks de uvicorn (rest:* y admin) terminarán por su cuenta
+    # cuando should_exit tome efecto, pero igual los esperamos en el gather.
+    _uvicorn_task_prefixes = ("rest:", "admin")
     for task in pending:
-        if not task.get_name().startswith("rest:"):
+        if not task.get_name().startswith(_uvicorn_task_prefixes):
             task.cancel()
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)

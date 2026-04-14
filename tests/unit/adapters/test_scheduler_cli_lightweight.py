@@ -31,7 +31,7 @@ def test_lightweight_bootstrap_does_not_import_app_container(tmp_path: Path) -> 
     # Remover infrastructure.container del cache si existe
     modules_before = set(sys.modules.keys())
 
-    from adapters.inbound.cli.scheduler_cli import _bootstrap_uc_lightweight
+    from adapters.inbound.cli.scheduler_cli import _bootstrap_uc
 
     ctx = MagicMock()
     ctx.obj = {"config_dir": config_dir}
@@ -41,7 +41,7 @@ def test_lightweight_bootstrap_does_not_import_app_container(tmp_path: Path) -> 
     ) as mock_create:
         mock_uc = MagicMock()
         mock_create.return_value = (mock_uc, MagicMock())
-        _bootstrap_uc_lightweight(ctx)
+        _bootstrap_uc(ctx)
 
     # No debe haber importado AppContainer durante el bootstrap
     mock_create.assert_called_once()
@@ -51,7 +51,7 @@ def test_lightweight_bootstrap_returns_use_case(tmp_path: Path) -> None:
     config_dir = tmp_path / "config"
     _write_minimal_config(config_dir)
 
-    from adapters.inbound.cli.scheduler_cli import _bootstrap_uc_lightweight
+    from adapters.inbound.cli.scheduler_cli import _bootstrap_uc
 
     ctx = MagicMock()
     ctx.obj = {"config_dir": config_dir}
@@ -61,7 +61,7 @@ def test_lightweight_bootstrap_returns_use_case(tmp_path: Path) -> None:
     ) as mock_create:
         mock_uc = MagicMock()
         mock_create.return_value = (mock_uc, MagicMock())
-        result = _bootstrap_uc_lightweight(ctx)
+        result = _bootstrap_uc(ctx)
 
     assert result is mock_uc
 

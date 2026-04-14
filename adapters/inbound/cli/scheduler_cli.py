@@ -68,26 +68,6 @@ _EDITABLE_FIELDS: set[str] = {
 # ---------------------------------------------------------------------------
 
 
-def _bootstrap_uc_legacy(ctx: typer.Context) -> "ISchedulerUseCase":
-    """Resolve dirs from ctx.obj, build AppContainer, return schedule_task_uc.
-
-    LEGACY — será eliminado en Phase 2 una vez validado el bootstrap liviano.
-    """
-    from inaki.cli import _bootstrap, _resolve_dirs
-    from infrastructure.container import AppContainer
-
-    config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
-    config_dir, agents_dir = _resolve_dirs(config_dir_override)
-
-    try:
-        global_config, registry = _bootstrap(config_dir, agents_dir)
-    except SystemExit:
-        raise
-
-    container = AppContainer(global_config, registry)
-    return container.schedule_task_uc
-
-
 def _create_lightweight_uc(
     config_dir: Path,
 ) -> tuple["ISchedulerUseCase", "GlobalConfig"]:
@@ -114,11 +94,6 @@ def _notify_daemon_reload(admin_base_url: str, auth_key: str | None) -> None:
 
 
 def _bootstrap_uc(ctx: typer.Context) -> "ISchedulerUseCase":
-    """Bootstrap liviano — carga solo config + SQLiteSchedulerRepo + UseCase."""
-    return _bootstrap_uc_lightweight(ctx)
-
-
-def _bootstrap_uc_lightweight(ctx: typer.Context) -> "ISchedulerUseCase":
     """Bootstrap liviano — carga solo config + SQLiteSchedulerRepo + UseCase."""
     from inaki.cli import _resolve_dirs
 

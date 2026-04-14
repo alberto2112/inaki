@@ -86,37 +86,6 @@ def _run_cli(global_config, registry, agent_id: str) -> None:
     run(global_config, registry, agent_id)
 
 
-def _run_consolidate(global_config, registry, agent_id: str | None) -> None:
-    """
-    Ejecuta consolidación de memoria one-shot y sale.
-
-    Sin agent_id → itera todos los agentes habilitados con delay.
-    Con agent_id → consolida solo ese agente (ignora memory.enabled).
-    """
-    from infrastructure.container import AppContainer
-
-    app_container = AppContainer(global_config, registry)
-
-    async def _run() -> None:
-        if agent_id:
-            try:
-                container = app_container.get_agent(agent_id)
-            except Exception as exc:
-                print(f"Error: {exc}", file=sys.stderr)
-                sys.exit(1)
-            try:
-                result = await container.consolidate_memory.execute()
-                print(f"{agent_id}: {result}")
-            except Exception as exc:
-                print(f"Error consolidando '{agent_id}': {exc}", file=sys.stderr)
-                sys.exit(1)
-        else:
-            result = await app_container.consolidate_all_agents.execute()
-            print(result)
-
-    asyncio.run(_run())
-
-
 def _resolve_dirs(config_dir_override: Optional[Path]):
     """Resuelve config_dir y agents_dir, aplicando ensure_user_config si es necesario."""
     if config_dir_override:
@@ -155,22 +124,16 @@ def _require_daemon(client) -> None:
         raise typer.Exit(code=1)
 
 
-def _invoke_default_chat(config_dir_override: Optional[Path], standalone: bool = False) -> None:
+def _invoke_default_chat(config_dir_override: Optional[Path]) -> None:
     """Lanza el chat interactivo con el agente por defecto."""
     config_dir, agents_dir = _resolve_dirs(config_dir_override)
-    if standalone:
-        global_config, registry = _bootstrap(config_dir, agents_dir)
-        agent_id = global_config.app.default_agent
-        _run_cli(global_config, registry, agent_id)
-    else:
-        client, global_config = _build_daemon_client(config_dir)
-        _require_daemon(client)
-        # En modo daemon-client, delega al bootstrap completo ya que
-        # el chat interactivo CLI necesita el event loop local.
-        # TODO(phase-2): implementar chat via REST al daemon
-        _, registry = _bootstrap(config_dir, agents_dir)
-        agent_id = global_config.app.default_agent
-        _run_cli(global_config, registry, agent_id)
+    client, global_config = _build_daemon_client(config_dir)
+    _require_daemon(client)
+    # El chat interactivo CLI todavía requiere bootstrap local.
+    # TODO(feature/cli-chat-via-rest): migrar a REST al daemon.
+    _, registry = _bootstrap(config_dir, agents_dir)
+    agent_id = global_config.app.default_agent
+    _run_cli(global_config, registry, agent_id)
 
 
 @app.callback()
@@ -182,19 +145,13 @@ def _root(
         metavar="DIR",
         help="Directorio de configuración (default: ~/.inaki/config)",
     ),
-    standalone: bool = typer.Option(
-        False,
-        "--standalone",
-        help="Fuerza bootstrap completo sin requerir daemon (modo legacy)",
-    ),
 ) -> None:
     """Iñaki — asistente personal agentico."""
     ctx.ensure_object(dict)
     ctx.obj["config_dir"] = config
-    ctx.obj["standalone"] = standalone
     if ctx.invoked_subcommand is None:
         # bare `inaki` → default chat
-        _invoke_default_chat(config, standalone=standalone)
+        _invoke_default_chat(config)
 
 
 @app.command()
@@ -209,21 +166,15 @@ def chat(
 ) -> None:
     """Chat interactivo con un agente."""
     config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
-    standalone: bool = ctx.obj.get("standalone", False) if ctx.obj else False
     config_dir, agents_dir = _resolve_dirs(config_dir_override)
 
-    if standalone:
-        global_config, registry = _bootstrap(config_dir, agents_dir)
-        agent_id = agent or global_config.app.default_agent
-        _run_cli(global_config, registry, agent_id)
-    else:
-        client, global_config = _build_daemon_client(config_dir)
-        _require_daemon(client)
-        # Chat interactivo CLI requiere bootstrap completo local
-        # TODO(phase-2): implementar chat via REST al daemon
-        _, registry = _bootstrap(config_dir, agents_dir)
-        agent_id = agent or global_config.app.default_agent
-        _run_cli(global_config, registry, agent_id)
+    client, global_config = _build_daemon_client(config_dir)
+    _require_daemon(client)
+    # El chat interactivo CLI todavía requiere bootstrap local.
+    # TODO(feature/cli-chat-via-rest): migrar a REST al daemon.
+    _, registry = _bootstrap(config_dir, agents_dir)
+    agent_id = agent or global_config.app.default_agent
+    _run_cli(global_config, registry, agent_id)
 
 
 @app.command()
@@ -254,23 +205,15 @@ def inspect(
 ) -> None:
     """Inspecciona el pipeline RAG para un mensaje sin llamar al LLM."""
     config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
-    standalone: bool = ctx.obj.get("standalone", False) if ctx.obj else False
-    config_dir, agents_dir = _resolve_dirs(config_dir_override)
+    config_dir, _ = _resolve_dirs(config_dir_override)
 
-    if standalone:
-        global_config, registry = _bootstrap(config_dir, agents_dir)
-        agent_id = agent or global_config.app.default_agent
-        from adapters.inbound.cli.cli_runner import run_inspect
+    client, global_config = _build_daemon_client(config_dir)
+    _require_daemon(client)
+    agent_id = agent or global_config.app.default_agent
+    import json
 
-        run_inspect(global_config, registry, agent_id, message)
-    else:
-        client, global_config = _build_daemon_client(config_dir)
-        _require_daemon(client)
-        agent_id = agent or global_config.app.default_agent
-        import json
-
-        result = client.inspect(agent_id, message)
-        print(json.dumps(result, indent=2, ensure_ascii=False))
+    result = client.inspect(agent_id, message)
+    print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
 @app.command()
@@ -285,19 +228,14 @@ def consolidate(
 ) -> None:
     """Consolida la memoria y sale."""
     config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
-    standalone: bool = ctx.obj.get("standalone", False) if ctx.obj else False
-    config_dir, agents_dir = _resolve_dirs(config_dir_override)
+    config_dir, _ = _resolve_dirs(config_dir_override)
 
-    if standalone:
-        global_config, registry = _bootstrap(config_dir, agents_dir)
-        _run_consolidate(global_config, registry, agent)
-    else:
-        client, _ = _build_daemon_client(config_dir)
-        _require_daemon(client)
-        import json
+    client, _ = _build_daemon_client(config_dir)
+    _require_daemon(client)
+    import json
 
-        result = client.consolidate(agent)
-        print(json.dumps(result, indent=2, ensure_ascii=False))
+    result = client.consolidate(agent)
+    print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
 @app.command()

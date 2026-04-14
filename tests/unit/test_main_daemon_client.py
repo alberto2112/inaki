@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 import yaml
 from typer.testing import CliRunner
 
@@ -66,25 +65,12 @@ def test_build_daemon_client_uses_admin_config(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Standalone flag — fuerza bootstrap completo
-# ---------------------------------------------------------------------------
-
-
-def test_standalone_flag_exists() -> None:
-    """Verifica que --standalone es una opción válida del root command."""
-    from inaki.cli import app
-
-    result = runner.invoke(app, ["--help"])
-    assert "--standalone" in result.output
-
-
-# ---------------------------------------------------------------------------
 # Chat sin daemon → error claro
 # ---------------------------------------------------------------------------
 
 
 def test_chat_without_daemon_shows_error(tmp_path: Path) -> None:
-    """Si el daemon no corre y no hay --standalone, chat muestra error."""
+    """Si el daemon no corre, chat muestra error."""
     config_dir, agents_dir = _write_minimal_config(tmp_path)
 
     from inaki.cli import app
@@ -99,24 +85,3 @@ def test_chat_without_daemon_shows_error(tmp_path: Path) -> None:
 
     assert result.exit_code != 0
     assert "daemon" in result.output.lower()
-
-
-def test_chat_with_standalone_uses_legacy_bootstrap(tmp_path: Path) -> None:
-    """Con --standalone, chat usa el bootstrap completo legacy."""
-    config_dir, agents_dir = _write_minimal_config(tmp_path)
-
-    from inaki.cli import app
-
-    with (
-        patch("inaki.cli._resolve_dirs", return_value=(config_dir, agents_dir)),
-        patch("inaki.cli._bootstrap") as mock_bootstrap,
-        patch("inaki.cli._run_cli") as mock_run_cli,
-    ):
-        mock_config = MagicMock()
-        mock_config.app.default_agent = "general"
-        mock_bootstrap.return_value = (mock_config, MagicMock())
-
-        result = runner.invoke(app, ["--standalone", "chat", "--agent", "general"])
-
-    mock_bootstrap.assert_called_once()
-    mock_run_cli.assert_called_once()

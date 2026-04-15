@@ -122,7 +122,66 @@ workspace:
                                  # Afecta a read_file, write_file, patch_file.
                                  # run_shell NO está sujeto a esta config.
                                  # Overrideable por agente en agents/{id}.yaml.
+
+admin:
+  host: "127.0.0.1"             # Interfaz de escucha del admin server (loopback = más seguro)
+  port: 6497                    # Puerto del admin server
+  chat_timeout: 300.0           # Timeout (segundos) para esperar respuesta del agente
+                                # en POST /admin/chat/turn. Aumentar para modelos lentos.
+  # auth_key → en global.secrets.yaml
 ```
+
+### Admin server — endpoints expuestos
+
+El admin server expone los siguientes endpoints bajo `http://{admin.host}:{admin.port}/`:
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| GET | `/health` | Ping de salud (sin auth) |
+| POST | `/inspect` | Inspect RAG para un agente (requiere X-Admin-Key) |
+| POST | `/consolidate` | Consolidar memoria de agente(s) (requiere X-Admin-Key) |
+| POST | `/scheduler/reload` | Recargar scheduler (requiere X-Admin-Key) |
+| POST | `/admin/chat/turn` | Enviar un turno de chat al agente (requiere X-Admin-Key) |
+| GET | `/admin/chat/history` | Obtener historial del agente (requiere X-Admin-Key) |
+| DELETE | `/admin/chat/history` | Limpiar historial del agente (requiere X-Admin-Key) |
+| GET | `/admin/agents` | Listar agentes registrados (requiere X-Admin-Key) |
+
+#### POST `/admin/chat/turn`
+
+```json
+// Request body
+{
+  "agent_id": "dev",
+  "session_id": "uuid-del-cliente-cli",
+  "message": "Hola, ¿cómo estás?"
+}
+
+// Response 200
+{
+  "reply": "Estoy bien, ¿en qué te ayudo?",
+  "agent_id": "dev",
+  "session_id": "uuid-del-cliente-cli"
+}
+```
+
+Errores posibles: `401` (sin X-Admin-Key), `404` (agent_id no registrado), `422` (body inválido), `500` (error interno del agente).
+
+#### GET `/admin/chat/history?agent_id=dev`
+
+```json
+// Response 200
+{
+  "agent_id": "dev",
+  "messages": [
+    {"role": "user", "content": "Hola", "timestamp": "2026-01-01T12:00:00"},
+    {"role": "assistant", "content": "¡Hola!", "timestamp": "2026-01-01T12:00:01"}
+  ]
+}
+```
+
+#### DELETE `/admin/chat/history?agent_id=dev`
+
+Retorna `204 No Content`. Borra el historial activo del agente (afecta a todos los canales — CLI, Telegram, etc.).
 
 ---
 

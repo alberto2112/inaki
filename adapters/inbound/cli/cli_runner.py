@@ -1,15 +1,26 @@
-"""CLI adapter para Iñaki."""
+"""CLI adapter para Iñaki — REPL sync sobre IDaemonClient.
+
+El chat interactivo delega al daemon vía HTTP. No instancia AppContainer.
+Solo usa IDaemonClient (port) para todas las operaciones de conversación.
+"""
 
 from __future__ import annotations
 
-import asyncio
+import json
 import logging
+import uuid
 
-from core.domain.value_objects.channel_context import ChannelContext
-from infrastructure.container import AppContainer
-from infrastructure.config import GlobalConfig, AgentRegistry
+from rich.console import Console
+
+from core.domain.errors import (
+    DaemonClientError,
+    DaemonNotRunningError,
+    DaemonTimeoutError,
+)
+from core.ports.outbound.daemon_client_port import IDaemonClient
 
 logger = logging.getLogger(__name__)
+console = Console()
 
 _HELP = """Comandos especiales:
   /consolidate       — Extraer recuerdos del historial y archivarlo
@@ -21,145 +32,138 @@ _HELP = """Comandos especiales:
 """
 
 
-async def run_cli(app: AppContainer, agent_id: str) -> None:
-    """Chat interactivo con un agente."""
-    try:
-        container = app.get_agent(agent_id)
-    except Exception as exc:
-        print(f"Error: {exc}")
-        return
+def run_cli(client: IDaemonClient, agent_id: str) -> None:
+    """Chat interactivo sync con un agente via daemon HTTP.
 
-    container.set_channel_context(ChannelContext(channel_type="cli", user_id="local"))
-    try:
-        agent_cfg = app.registry.get(agent_id)
-        print(f"\n🤖 {agent_cfg.name} — {agent_cfg.description}")
-        print(f"   Modelo: {agent_cfg.llm.model} via {agent_cfg.llm.provider}")
-        print("   Escribe /help para ver comandos. Ctrl+C para salir.\n")
+    Genera un session_id UUID en memoria al inicio del proceso.
+    Todas las llamadas al daemon usan ese session_id.
+    """
+    session_id = str(uuid.uuid4())
 
-        while True:
+    print(f"\niñaki > Conectado al agente '{agent_id}'. Escribe /help para ver comandos. Ctrl+C para salir.\n")
+
+    while True:
+        try:
+            user_input = input("tú > ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\nHasta luego.")
+            return
+
+        if not user_input:
+            continue
+
+        # Comandos especiales
+        if user_input in ("/exit", "/quit"):
+            print("Hasta luego.")
+            return
+
+        if user_input == "/help":
+            print(_HELP)
+            continue
+
+        if user_input == "/clear":
             try:
-                user_input = input("tú > ").strip()
-            except (KeyboardInterrupt, EOFError):
-                print("\nHasta luego.")
-                break
-
-            if not user_input:
-                continue
-
-            # Comandos especiales
-            if user_input in ("/exit", "/quit"):
-                print("Hasta luego.")
-                break
-
-            if user_input == "/help":
-                print(_HELP)
-                continue
-
-            if user_input == "/consolidate":
-                print("Consolidando memoria...", flush=True)
-                try:
-                    result = await container.consolidate_memory.execute()
-                    print(f"✓ {result}")
-                except Exception as exc:
-                    print(f"Error: {exc}")
-                continue
-
-            if user_input == "/history":
-                history = await container.run_agent._history.load(agent_id)
-                if not history:
-                    print("(historial vacío)")
-                else:
-                    for msg in history:
-                        print(f"{msg.role.value}: {msg.content}")
-                print()
-                continue
-
-            if user_input == "/clear":
-                await container.run_agent._history.clear(agent_id)
+                client.chat_clear(agent_id)
                 print("Historial limpiado.")
-                continue
+            except DaemonNotRunningError as exc:
+                print(f"\n{exc}\nSaliendo.")
+                return
+            except DaemonClientError as exc:
+                print(f"\nError: {exc}")
+            continue
 
-            if user_input == "/agents":
-                list_agents(app)
-                continue
-
-            if user_input.startswith("/inspect"):
-                query = user_input[len("/inspect"):].strip()
-                if not query:
-                    print("Uso: /inspect <mensaje>")
-                else:
-                    try:
-                        result = await container.run_agent.inspect(query)
-                        print_inspect(result)
-                    except Exception as exc:
-                        print(f"Error: {exc}")
-                continue
-
-            # Chat normal
+        if user_input == "/history":
             try:
-                response = await container.run_agent.execute(user_input)
-                print(f"\niñaki > {response}\n")
-            except Exception as exc:
-                logger.exception("Error procesando mensaje")
-                print(f"Error: {exc}\n")
-    finally:
-        container.set_channel_context(None)
+                msgs = client.chat_history(agent_id)
+            except DaemonNotRunningError as exc:
+                print(f"\n{exc}\nSaliendo.")
+                return
+            except DaemonClientError as exc:
+                print(f"\nError: {exc}")
+                continue
+            if not msgs:
+                print("(historial vacío)")
+            else:
+                for msg in msgs:
+                    print(f"{msg['role']}: {msg['content']}")
+            print()
+            continue
+
+        if user_input == "/consolidate":
+            try:
+                result = client.consolidate(agent_id)
+                print(f"✓ {result}")
+            except DaemonNotRunningError as exc:
+                print(f"\n{exc}\nSaliendo.")
+                return
+            except DaemonClientError as exc:
+                print(f"\nError: {exc}")
+            continue
+
+        if user_input == "/agents":
+            try:
+                agentes = client.list_agents()
+                if agentes:
+                    print("\nAgentes disponibles:")
+                    for a in agentes:
+                        print(f"  - {a}")
+                    print()
+                else:
+                    print("(no hay agentes registrados)")
+            except DaemonNotRunningError as exc:
+                print(f"\n{exc}")
+                continue
+            except DaemonClientError as exc:
+                print(f"\nError al listar agentes: {exc}")
+            continue
+
+        if user_input.startswith("/inspect"):
+            query = user_input[len("/inspect"):].strip()
+            if not query:
+                print("Uso: /inspect <mensaje>")
+            else:
+                try:
+                    result = client.inspect(agent_id, query)
+                    print_inspect(result)
+                except DaemonNotRunningError as exc:
+                    print(f"\n{exc}\nSaliendo.")
+                    return
+                except DaemonClientError as exc:
+                    print(f"\nError: {exc}")
+            continue
+
+        # --- Turno de chat normal ---
+        try:
+            with console.status("Pensando...", spinner="dots"):
+                reply = client.chat_turn(agent_id, session_id, user_input)
+            print(f"\niñaki > {reply}\n")
+        except KeyboardInterrupt:
+            print("\nHasta luego.")
+            return
+        except DaemonNotRunningError as exc:
+            print(f"\n{exc}\nSaliendo.")
+            return
+        except DaemonTimeoutError as exc:
+            print(f"\nTimeout esperando respuesta del daemon. Intentá de nuevo.")
+            logger.warning("Timeout en chat_turn: %s", exc)
+            continue
+        except DaemonClientError as exc:
+            print(f"\nError: {exc}")
+            continue
 
 
 def print_inspect(result) -> None:
     """Imprime el resultado de un inspect de forma legible."""
     W = 60
     print(f"\n{'━' * W}")
-    print(f"  RAG Inspect: \"{result.user_input}\"")
+    print(f"  RAG Inspect: \"{result.get('user_input', '?')}\"")
     print(f"{'━' * W}\n")
-
-    print("📍 Digest de memoria:")
-    print(result.memory_digest or "   (sin digest)")
-
-    skills_rag_label = (
-        f"RAG activo — {len(result.selected_skills)}/{len(result.all_skills)} seleccionadas"
-        if result.skills_rag_active
-        else f"RAG inactivo — enviando todas ({len(result.all_skills)})"
-    )
-    print(f"\n🧠 Skills [{skills_rag_label}]:")
-    if result.selected_skills:
-        for i, s in enumerate(result.selected_skills):
-            extra = ""
-            if result.skills_rag_active and i < len(result.selected_skill_scores):
-                _, sc = result.selected_skill_scores[i]
-                extra = f" [score={sc:.4f}]"
-            print(f"   - {s.name}: {extra}")
-    else:
-        print("   (ninguna)")
-
-    rag_label = (
-        f"RAG activo — {len(result.selected_tool_schemas)}/{len(result.all_tool_schemas)} seleccionadas"
-        if result.tools_rag_active
-        else f"RAG inactivo — enviando todas ({len(result.all_tool_schemas)})"
-    )
-    print(f"\n🔧 Tools enviadas al LLM [{rag_label}]:")
-    if result.selected_tool_schemas:
-        for i, schema in enumerate(result.selected_tool_schemas):
-            fn = schema.get("function", {})
-            name = fn.get("name", "?")
-            extra = ""
-            if result.tools_rag_active and i < len(result.selected_tool_scores):
-                _, sc = result.selected_tool_scores[i]
-                extra = f" [score={sc:.4f}]"
-            print(f"   - {name}: {fn.get('description', '')}{extra}")
-    else:
-        print("   (ninguna)")
-
-    print(f"\n📋 System Prompt final:")
-    print(f"   {'─' * (W - 3)}")
-    for line in result.system_prompt.splitlines():
-        print(f"   {line}")
-    print(f"   {'─' * (W - 3)}\n")
+    print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
-def list_agents(app: AppContainer) -> None:
-    """Imprime tabla de agentes disponibles."""
-    agents = app.registry.list_all()
+def list_agents_from_registry(registry) -> None:
+    """Imprime tabla de agentes desde un registry liviano."""
+    agents = registry.list_all()
     print(f"\n{'ID':<12} {'Nombre':<16} Descripción")
     print("-" * 60)
     for a in agents:
@@ -167,33 +171,22 @@ def list_agents(app: AppContainer) -> None:
     print()
 
 
-def run(global_config: GlobalConfig, registry: AgentRegistry, agent_id: str) -> None:
-    """Entry point síncrono para el CLI."""
-    app = AppContainer(global_config, registry)
-
+def run(global_config, registry, client: IDaemonClient, agent_id: str) -> None:
+    """Entry point síncrono para el CLI — nueva firma sin AppContainer."""
     if agent_id == "list":
-        list_agents(app)
+        list_agents_from_registry(registry)
         return
 
-    asyncio.run(run_cli(app, agent_id))
+    run_cli(client, agent_id)
 
 
 def run_inspect(
-    global_config: GlobalConfig,
-    registry: AgentRegistry,
+    global_config,
+    registry,
+    client: IDaemonClient,
     agent_id: str,
     query: str,
 ) -> None:
     """One-shot inspect desde --inspect flag de main.py."""
-    app = AppContainer(global_config, registry)
-
-    async def _run():
-        try:
-            container = app.get_agent(agent_id)
-        except Exception as exc:
-            print(f"Error: {exc}")
-            return
-        result = await container.run_agent.inspect(query)
-        print_inspect(result)
-
-    asyncio.run(_run())
+    result = client.inspect(agent_id, query)
+    print(json.dumps(result, indent=2, ensure_ascii=False))

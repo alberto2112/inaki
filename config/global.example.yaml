@@ -256,6 +256,26 @@ workspace:
 #   timeout_seconds: 60          # presupuesto de reloj por llamada delegada (asyncio.wait_for)
 
 
+# -----------------------------------------------------------------------------
+# [admin] — Admin server del daemon (endpoints de gestión)
+# -----------------------------------------------------------------------------
+admin:
+  host: "127.0.0.1"             # Interfaz de escucha del admin server
+                                # "127.0.0.1" = solo loopback (recomendado en producción)
+                                # "0.0.0.0"   = todas las interfaces (con cuidado)
+
+  port: 6497                    # Puerto del admin server
+                                # Producción Pi 5: mantener en 6497 o cambiar si hay conflicto
+
+  chat_timeout: 300.0           # Timeout en segundos para turnos de chat vía REST
+                                # (POST /admin/chat/turn). El CLI espera hasta este tiempo
+                                # antes de levantar DaemonTimeoutError.
+                                # Aumentar para modelos locales lentos (Raspberry Pi).
+                                # Default: 300 (5 minutos)
+
+  # auth_key: "clave-secreta"   # Clave para el header X-Admin-Key → MOVER A global.secrets.yaml
+
+
 # =============================================================================
 # CONFIGURACIÓN POR AGENTE — config/agents/{id}.yaml
 # =============================================================================

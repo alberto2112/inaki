@@ -49,24 +49,7 @@ container.run_agent.execute(body.message)
 return ChatResponse(agent_id, agent_name, response)
 ```
 
-### REST API — Streaming SSE
-
-```
-App Android: POST /chat/stream
-    ↓
-routers/agents.py: chat_stream(body, container)
-    ↓ [construye context directamente, sin pasar por RunAgentUseCase]
-embed_query → memory.search → skills.retrieve → build_system_prompt
-    ↓
-llm.stream(messages, system_prompt) → AsyncIterator[str]
-    ↓
-StreamingResponse(event_generator(), media_type="text/event-stream")
-    ↓ [tokens en tiempo real]
-"data: Hola\n\n"
-"data: , soy\n\n"
-"data: Iñaki\n\n"
-"data: [DONE]\n\n"
-```
+<!-- SSE streaming endpoint eliminado en el cambio cli-chat-via-rest. Si en el futuro se requiere streaming UX, debe diseñarse pasando por RunAgentUseCase.execute(). -->
 
 ---
 

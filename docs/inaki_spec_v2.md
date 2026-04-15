@@ -711,7 +711,6 @@ Header `X-API-Key` requerido en todos los endpoints. La clave se define en el bl
 ```
 GET  /info                      → info del agente (id, name, description)
 POST /chat                      → chat, respuesta completa JSON
-POST /chat/stream               → chat, streaming SSE (tokens en tiempo real)
 POST /consolidate               → ejecutar consolidación de memoria
 GET  /history                   → ver historial activo
 DELETE /history                 → limpiar historial sin archivar
@@ -733,10 +732,6 @@ class AgentInfo(BaseModel):
     name: str
     description: str
 ```
-
-### Streaming SSE
-
-El endpoint `/chat/stream` devuelve tokens en tiempo real usando `StreamingResponse` de FastAPI con media type `text/event-stream`. La app Android muestra la respuesta token a token, igual que un chat moderno.
 
 ---
 

@@ -99,3 +99,45 @@ def test_daemon_client_error_stores_detail() -> None:
 def test_daemon_client_error_str_includes_status() -> None:
     exc = DaemonClientError(status_code=500, detail="Error interno")
     assert "500" in str(exc)
+
+
+# ---------------------------------------------------------------------------
+# Tarea 2.1 — UnknownAgentError y DaemonAuthError
+# ---------------------------------------------------------------------------
+
+from core.domain.errors import UnknownAgentError, DaemonAuthError  # noqa: E402
+
+
+def test_unknown_agent_error_es_subclase_de_daemon_client_error() -> None:
+    exc = UnknownAgentError(agent_id="dev")
+    assert isinstance(exc, DaemonClientError)
+
+
+def test_unknown_agent_error_es_subclase_de_daemon_error() -> None:
+    exc = UnknownAgentError(agent_id="dev")
+    assert isinstance(exc, DaemonError)
+
+
+def test_unknown_agent_error_incluye_agent_id_en_mensaje() -> None:
+    exc = UnknownAgentError(agent_id="mi-agente")
+    assert "mi-agente" in str(exc)
+
+
+def test_unknown_agent_error_almacena_agent_id() -> None:
+    exc = UnknownAgentError(agent_id="general")
+    assert exc.agent_id == "general"
+
+
+def test_daemon_auth_error_es_subclase_de_daemon_client_error() -> None:
+    exc = DaemonAuthError()
+    assert isinstance(exc, DaemonClientError)
+
+
+def test_daemon_auth_error_es_subclase_de_daemon_error() -> None:
+    exc = DaemonAuthError()
+    assert isinstance(exc, DaemonError)
+
+
+def test_daemon_auth_error_mensaje_hace_referencia_a_auth_key() -> None:
+    exc = DaemonAuthError()
+    assert "auth_key" in str(exc).lower() or "admin-key" in str(exc).lower() or "x-admin-key" in str(exc).lower()

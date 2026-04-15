@@ -93,3 +93,24 @@ class DaemonClientError(DaemonError):
         super().__init__(f"Error del daemon (HTTP {status_code}): {detail}")
         self.status_code = status_code
         self.detail = detail
+
+
+class UnknownAgentError(DaemonClientError):
+    """El agent_id solicitado no existe en el daemon (HTTP 404)."""
+
+    def __init__(self, agent_id: str) -> None:
+        super().__init__(
+            status_code=404,
+            detail=f"Agente '{agent_id}' no existe en el daemon.",
+        )
+        self.agent_id = agent_id
+
+
+class DaemonAuthError(DaemonClientError):
+    """Autenticación rechazada por el daemon (HTTP 401/403)."""
+
+    def __init__(self, status_code: int = 401) -> None:
+        super().__init__(
+            status_code=status_code,
+            detail="Auth inválida. Verificá la X-Admin-Key en ~/.inaki/config/global.secrets.yaml.",
+        )

@@ -77,7 +77,7 @@ class TelegramBot:
         if not self._is_allowed(update.effective_user.id):
             return
         try:
-            await self._container.run_agent._history.clear(self._agent_cfg.id)
+            await self._container.run_agent.clear_history()
             await update.message.reply_text("Historial limpiado.")
         except Exception as exc:
             logger.exception("Error en /clear Telegram para '%s'", self._agent_cfg.id)

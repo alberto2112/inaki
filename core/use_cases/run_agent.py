@@ -20,11 +20,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-
 from core.domain.entities.message import Message, Role
 from core.domain.entities.skill import Skill
 from core.domain.errors import ToolLoopMaxIterationsError
 from core.domain.value_objects.agent_context import AgentContext
+from core.domain.value_objects.agent_info import AgentInfoDTO
 from core.ports.outbound.embedding_port import IEmbeddingProvider
 from core.ports.outbound.history_port import IHistoryStore
 from core.ports.outbound.llm_port import ILLMProvider
@@ -35,6 +35,7 @@ from core.use_cases._tool_loop import run_tool_loop
 from infrastructure.config import AgentConfig
 
 logger = logging.getLogger(__name__)
+
 
 @dataclass
 class InspectResult:
@@ -87,6 +88,14 @@ class RunAgentUseCase:
     def wire_user_timezone(self, tz: str | None) -> None:
         """Inyecta la timezone del usuario para la interpolación de variables en el system prompt."""
         self._user_timezone = tz
+
+    def get_agent_info(self) -> AgentInfoDTO:
+        """Retorna información pública del agente sin exponer _cfg."""
+        return AgentInfoDTO(
+            id=self._cfg.id,
+            name=self._cfg.name,
+            description=self._cfg.description,
+        )
 
     def set_extra_system_sections(self, sections: list[str]) -> None:
         """
@@ -175,6 +184,14 @@ class RunAgentUseCase:
         await self._history.append(agent_id, Message(role=Role.ASSISTANT, content=response))
 
         return response
+
+    async def get_history(self) -> list[Message]:
+        """Devuelve el historial activo del agente (sin archivados ni infused)."""
+        return await self._history.load(self._cfg.id)
+
+    async def clear_history(self) -> None:
+        """Limpia el historial activo del agente."""
+        await self._history.clear(self._cfg.id)
 
     async def inspect(self, user_input: str) -> InspectResult:
         """

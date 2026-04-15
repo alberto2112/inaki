@@ -56,7 +56,7 @@ inaki/
 │   │   │   ├── app.py                     # create_agent_app() — una instancia por agente
 │   │   │   ├── schemas.py                 # ChatRequest, ChatResponse, AgentInfo...
 │   │   │   └── routers/
-│   │   │       └── agents.py              # GET /info, POST /chat, POST /chat/stream...
+│   │   │       └── agents.py              # GET /info, POST /chat, POST /consolidate, GET+DELETE /history
 │   │   └── daemon/
 │   │       └── runner.py                  # run_daemon() — levanta todos los canales en asyncio
 │   │

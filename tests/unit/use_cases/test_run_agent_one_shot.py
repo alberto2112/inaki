@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, call
 
 from core.domain.entities.message import Message, Role
 from core.domain.errors import ToolLoopMaxIterationsError
+from core.domain.value_objects.llm_response import LLMResponse
 from core.ports.outbound.tool_port import ToolResult
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from infrastructure.config import (
@@ -54,7 +55,7 @@ def _make_agent_config(agent_id: str = "test-child") -> AgentConfig:
 
 def _make_llm(response: str = "Resultado final") -> AsyncMock:
     llm = AsyncMock()
-    llm.complete.return_value = response
+    llm.complete.return_value = LLMResponse.of_text(response)
     return llm
 
 

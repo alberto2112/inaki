@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from core.domain.entities.message import Message, Role
 from core.domain.errors import ToolLoopMaxIterationsError
+from core.domain.value_objects.llm_response import LLMResponse
 from core.ports.outbound.tool_port import ToolResult
 from core.use_cases._tool_loop import run_tool_loop
 
@@ -17,26 +18,34 @@ from core.use_cases._tool_loop import run_tool_loop
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _tool_call_response(tool_name: str, arguments: dict | None = None) -> str:
-    """Construye la respuesta JSON que el LLM emitiría para llamar una tool."""
-    return json.dumps(
-        {
-            "tool_calls": [
-                {
-                    "function": {
-                        "name": tool_name,
-                        "arguments": json.dumps(arguments or {}),
-                    }
+def _tool_call_response(tool_name: str, arguments: dict | None = None) -> LLMResponse:
+    """Construye la respuesta estructurada que el LLM emitiría para llamar una tool."""
+    return LLMResponse(
+        text_blocks=[],
+        tool_calls=[
+            {
+                "function": {
+                    "name": tool_name,
+                    "arguments": json.dumps(arguments or {}),
                 }
-            ]
-        }
+            }
+        ],
+        raw="",
     )
 
 
-def _make_llm(*responses: str) -> AsyncMock:
-    """LLM mock que devuelve las respuestas en orden."""
+def _make_llm(*responses: LLMResponse | str) -> AsyncMock:
+    """LLM mock que devuelve las respuestas en orden.
+
+    Acepta ``LLMResponse`` o ``str`` (los strings se envuelven con
+    ``LLMResponse.of_text`` por conveniencia).
+    """
     llm = AsyncMock()
-    llm.complete.side_effect = list(responses)
+    normalized: list[LLMResponse] = [
+        r if isinstance(r, LLMResponse) else LLMResponse.of_text(r)
+        for r in responses
+    ]
+    llm.complete.side_effect = normalized
     return llm
 
 
@@ -181,7 +190,8 @@ async def test_max_iterations_raises_tool_loop_max_iterations_error():
         )
 
     error = exc_info.value
-    assert error.last_response == tool_call_last
+    # tool-only response → last_response es "" (sin text_blocks)
+    assert error.last_response == ""
 
 
 async def test_max_iterations_last_response_is_the_last_llm_output():
@@ -207,7 +217,8 @@ async def test_max_iterations_last_response_is_the_last_llm_output():
             agent_id="agent",
         )
 
-    assert exc_info.value.last_response == responses[-1]
+    # tool-only response → last_response es "" (sin text_blocks)
+    assert exc_info.value.last_response == ""
 
 
 async def test_max_iterations_one_iteration():
@@ -229,7 +240,8 @@ async def test_max_iterations_one_iteration():
             agent_id="agent",
         )
 
-    assert exc_info.value.last_response == tool_call
+    # tool-only response → last_response es "" (sin text_blocks)
+    assert exc_info.value.last_response == ""
 
 
 # ---------------------------------------------------------------------------
@@ -377,17 +389,17 @@ async def test_empty_tool_schemas_passes_none_to_llm():
 
 async def test_malformed_json_args_fall_back_to_empty_kwargs():
     """Si los argumentos de la tool no son JSON válido, la tool se llama con kwargs vacíos."""
-    raw_call = json.dumps(
-        {
-            "tool_calls": [
-                {
-                    "function": {
-                        "name": "mytool",
-                        "arguments": "no-es-json",
-                    }
+    raw_call = LLMResponse(
+        text_blocks=[],
+        tool_calls=[
+            {
+                "function": {
+                    "name": "mytool",
+                    "arguments": "no-es-json",
                 }
-            ]
-        }
+            }
+        ],
+        raw="",
     )
 
     llm = _make_llm(raw_call, "Final")

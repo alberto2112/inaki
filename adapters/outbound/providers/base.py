@@ -1,6 +1,7 @@
 from abc import abstractmethod
 from collections.abc import AsyncIterator
 from core.domain.entities.message import Message, Role
+from core.domain.value_objects.llm_response import LLMResponse
 from core.ports.outbound.llm_port import ILLMProvider
 
 
@@ -19,9 +20,11 @@ class BaseLLMProvider(ILLMProvider):
         result: list[dict] = [{"role": "system", "content": system_prompt}]
         for m in messages:
             if m.role == Role.ASSISTANT and m.tool_calls:
+                # OpenAI-compatible: un mismo mensaje assistant puede tener
+                # content textual Y tool_calls. Si no hubo texto, pasamos None.
                 result.append({
                     "role": "assistant",
-                    "content": None,
+                    "content": m.content if m.content else None,
                     "tool_calls": m.tool_calls,
                 })
             elif m.role == Role.TOOL:
@@ -40,7 +43,7 @@ class BaseLLMProvider(ILLMProvider):
         messages: list[Message],
         system_prompt: str,
         tools: list[dict] | None = None,
-    ) -> str: ...
+    ) -> LLMResponse: ...
 
     @abstractmethod
     async def stream(

@@ -113,12 +113,14 @@ class ConsolidateMemoryUseCase:
         )
         prompt = _EXTRACTOR_PROMPT_TEMPLATE.format(history=history_text)
 
-        # 3. Llamar al LLM extractor
+        # 3. Llamar al LLM extractor (consolidación no usa tools → esperamos
+        # solo text_blocks; .text concatena por si viniera más de un bloque).
         try:
-            raw_json = await self._llm.complete(
+            response = await self._llm.complete(
                 messages=[],
                 system_prompt=prompt,
             )
+            raw_json = response.text
         except Exception as exc:
             raise ConsolidationError(f"El LLM falló durante la extracción: {exc}") from exc
 

@@ -67,7 +67,7 @@ class LLMDispatcherAdapter:
         agent = self._agents.get(agent_id)
         if agent is None:
             raise ValueError(f"Agent '{agent_id}' not found")
-        return await agent.run_agent.run(prompt or "", tools_override=tools_override)
+        return await agent.run_agent.execute(prompt or "", tools_override=tools_override)
 
 
 class ConsolidationDispatchAdapter:

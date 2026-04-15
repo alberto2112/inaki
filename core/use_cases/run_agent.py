@@ -129,7 +129,20 @@ class RunAgentUseCase:
             logger.warning("No se pudo leer el digest %s: %s", path, exc)
             return ""
 
-    async def execute(self, user_input: str) -> str:
+    async def execute(
+        self,
+        user_input: str,
+        tools_override: list[dict] | None = None,
+    ) -> str:
+        """Ejecuta un turno del agente.
+
+        Args:
+            user_input: mensaje del usuario para este turno.
+            tools_override: si se provee, fuerza ese conjunto de tool schemas
+                y bypasea la selección RAG de tools. La selección RAG de skills
+                sigue activa. Usado por triggers ``agent_send`` del scheduler
+                para restringir qué tools puede usar el agente en ese turno.
+        """
         agent_id = self._cfg.id
 
         history = await self._history.load(agent_id)
@@ -137,9 +150,11 @@ class RunAgentUseCase:
         all_skills = await self._skills.list_all()
         all_schemas = self._tools.get_schemas()
         skills_rag_active = len(all_skills) > self._cfg.skills.rag_min_skills
-        tools_rag_active = len(all_schemas) > self._cfg.tools.rag_min_tools
+        tools_rag_active = (
+            tools_override is None and len(all_schemas) > self._cfg.tools.rag_min_tools
+        )
         retrieved_skills: list[Skill] = all_skills
-        tool_schemas: list[dict] = all_schemas
+        tool_schemas: list[dict] = tools_override if tools_override is not None else all_schemas
 
         if skills_rag_active or tools_rag_active:
             query_vec = await self._embedder.embed_query(user_input)

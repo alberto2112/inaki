@@ -345,3 +345,83 @@ async def test_set_extra_system_sections_replaces_existing(
     assert "FIRST-SECTION" not in captured_prompt, (
         "First section must have been replaced by the second"
     )
+
+
+# ---------------------------------------------------------------------------
+# tools_override — usado por triggers agent_send del scheduler
+# ---------------------------------------------------------------------------
+
+async def test_execute_tools_override_forces_schemas_and_bypasses_rag(
+    mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools
+):
+    """
+    Cuando se provee ``tools_override``, ``run_tool_loop`` recibe esas schemas
+    exactas y la selección RAG de tools se bypasea (get_schemas_relevant NO se
+    llama aunque el umbral RAG esté activo).
+    """
+    mock_skills.list_all.return_value = []
+    # Muchas tool schemas "reales" — normalmente activaría RAG
+    mock_tools.get_schemas.return_value = [{"name": f"tool_{i}"} for i in range(20)]
+    mock_llm.complete.return_value = "ok"
+
+    uc = _make_use_case(
+        {"tools": ToolsConfig(rag_min_tools=5)},
+        mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools,
+    )
+
+    override = [{"name": "solo_esta_tool"}]
+    with patch("core.use_cases.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")) as mock_loop:
+        await uc.execute("hola", tools_override=override)
+
+    # RAG de tools NO debe haberse disparado
+    mock_tools.get_schemas_relevant.assert_not_called()
+    # run_tool_loop recibe exactamente el override
+    passed_schemas = mock_loop.call_args.kwargs["tool_schemas"]
+    assert passed_schemas == override
+
+
+async def test_execute_no_override_uses_full_schemas_when_rag_inactive(
+    mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools
+):
+    """
+    Sin ``tools_override``, el comportamiento previo se preserva: cuando RAG
+    de tools está inactivo, se usa ``get_schemas()`` completo.
+    """
+    mock_skills.list_all.return_value = []
+    all_schemas = [{"name": "tool_a"}, {"name": "tool_b"}]
+    mock_tools.get_schemas.return_value = all_schemas
+    mock_llm.complete.return_value = "ok"
+
+    uc = _make_use_case(
+        {"tools": ToolsConfig(rag_min_tools=10)},  # umbral alto → RAG inactivo
+        mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools,
+    )
+
+    with patch("core.use_cases.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")) as mock_loop:
+        await uc.execute("hola")
+
+    mock_tools.get_schemas_relevant.assert_not_called()
+    assert mock_loop.call_args.kwargs["tool_schemas"] == all_schemas
+
+
+async def test_execute_tools_override_empty_list_disables_all_tools(
+    mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools
+):
+    """
+    ``tools_override=[]`` es distinto de ``None``: fuerza al agente a correr
+    sin ninguna tool. Caso de uso: tarea programada que solo genera texto.
+    """
+    mock_skills.list_all.return_value = []
+    mock_tools.get_schemas.return_value = [{"name": "tool_a"}]
+    mock_llm.complete.return_value = "ok"
+
+    uc = _make_use_case(
+        {"tools": ToolsConfig(rag_min_tools=0)},  # RAG activo si override fuera None
+        mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools,
+    )
+
+    with patch("core.use_cases.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")) as mock_loop:
+        await uc.execute("hola", tools_override=[])
+
+    mock_tools.get_schemas_relevant.assert_not_called()
+    assert mock_loop.call_args.kwargs["tool_schemas"] == []

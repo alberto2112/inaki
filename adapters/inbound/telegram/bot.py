@@ -128,6 +128,14 @@ class TelegramBot:
             # Limpiar contexto de canal al finalizar el turno (éxito o error)
             self._container.set_channel_context(None)
 
+    async def send_message(self, chat_id: int, text: str) -> None:
+        """Envía un mensaje proactivo fuera del contexto de un handler.
+
+        Usado por `ChannelSenderAdapter` para triggers `channel_send` del
+        scheduler. Delega en el bot interno de `python-telegram-bot`.
+        """
+        await self._app.bot.send_message(chat_id=chat_id, text=text)
+
     def run_polling(self) -> None:
         """Inicia el bot en modo polling (bloqueante)."""
         logger.info(

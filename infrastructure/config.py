@@ -181,6 +181,8 @@ class AdminConfig(BaseModel):
     port: int = 6497
     host: str = "127.0.0.1"
     auth_key: str | None = None
+    chat_timeout: float = 300.0
+    """Timeout en segundos para turnos de chat vía REST (POST /admin/chat/turn)."""
 
 
 class UserConfig(BaseModel):

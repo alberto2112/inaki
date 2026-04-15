@@ -79,11 +79,11 @@ def _run_daemon(global_config, registry) -> None:
     asyncio.run(run_daemon(app_container, registry))
 
 
-def _run_cli(global_config, registry, agent_id: str) -> None:
-    """Chat interactivo via CLI."""
-    from adapters.inbound.cli.cli_runner import run
+def _run_cli(client, agent_id: str) -> None:
+    """Chat interactivo via daemon HTTP — sin AppContainer."""
+    from adapters.inbound.cli.cli_runner import run_cli
 
-    run(global_config, registry, agent_id)
+    run_cli(client, agent_id)
 
 
 def _resolve_dirs(config_dir_override: Optional[Path]):
@@ -110,6 +110,7 @@ def _build_daemon_client(config_dir: Path):
     client = DaemonClient(
         admin_base_url=f"http://{admin.host}:{admin.port}",
         auth_key=admin.auth_key,
+        chat_timeout=admin.chat_timeout,
     )
     return client, global_config
 
@@ -125,15 +126,12 @@ def _require_daemon(client) -> None:
 
 
 def _invoke_default_chat(config_dir_override: Optional[Path]) -> None:
-    """Lanza el chat interactivo con el agente por defecto."""
-    config_dir, agents_dir = _resolve_dirs(config_dir_override)
+    """Lanza el chat interactivo con el agente por defecto via daemon HTTP."""
+    config_dir, _ = _resolve_dirs(config_dir_override)
     client, global_config = _build_daemon_client(config_dir)
     _require_daemon(client)
-    # El chat interactivo CLI todavía requiere bootstrap local.
-    # TODO(feature/cli-chat-via-rest): migrar a REST al daemon.
-    _, registry = _bootstrap(config_dir, agents_dir)
     agent_id = global_config.app.default_agent
-    _run_cli(global_config, registry, agent_id)
+    _run_cli(client, agent_id)
 
 
 @app.callback()
@@ -164,17 +162,14 @@ def chat(
         help="ID del agente o 'list' para listar agentes disponibles",
     ),
 ) -> None:
-    """Chat interactivo con un agente."""
+    """Chat interactivo con un agente via daemon HTTP."""
     config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
-    config_dir, agents_dir = _resolve_dirs(config_dir_override)
+    config_dir, _ = _resolve_dirs(config_dir_override)
 
     client, global_config = _build_daemon_client(config_dir)
     _require_daemon(client)
-    # El chat interactivo CLI todavía requiere bootstrap local.
-    # TODO(feature/cli-chat-via-rest): migrar a REST al daemon.
-    _, registry = _bootstrap(config_dir, agents_dir)
     agent_id = agent or global_config.app.default_agent
-    _run_cli(global_config, registry, agent_id)
+    _run_cli(client, agent_id)
 
 
 @app.command()

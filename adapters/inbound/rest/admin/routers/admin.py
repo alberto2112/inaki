@@ -6,7 +6,9 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from adapters.inbound.rest.admin.routers.deps import check_admin_auth
 from adapters.inbound.rest.admin.schemas import (
+    AgentsResponse,
     ConsolidateRequest,
     ConsolidateResponse,
     HealthResponse,
@@ -20,28 +22,6 @@ router = APIRouter()
 
 
 # ---------------------------------------------------------------------------
-# Auth dependency
-# ---------------------------------------------------------------------------
-
-
-def _check_admin_auth(request: Request) -> None:
-    """Verifica X-Admin-Key contra la key configurada.
-
-    - auth_key is None → 403 (fail-closed: sin key configurada, no se permite acceso)
-    - Header ausente o incorrecto → 401
-    """
-    auth_key: str | None = request.app.state.admin_auth_key
-    if auth_key is None:
-        raise HTTPException(
-            status_code=403,
-            detail="Admin auth_key no configurada. Agregala en global.secrets.yaml.",
-        )
-    provided = request.headers.get("X-Admin-Key")
-    if not provided or provided != auth_key:
-        raise HTTPException(status_code=401, detail="X-Admin-Key inválida o ausente")
-
-
-# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -51,10 +31,24 @@ async def health() -> HealthResponse:
     return HealthResponse()
 
 
+@router.get(
+    "/admin/agents",
+    response_model=AgentsResponse,
+    dependencies=[Depends(check_admin_auth)],
+)
+async def list_agents(request: Request) -> AgentsResponse:
+    """Lista los agentes registrados en el daemon.
+
+    Retorna la lista de IDs de agentes disponibles para chat y otras operaciones.
+    """
+    app_container = request.app.state.app_container
+    return AgentsResponse(agents=list(app_container.agents.keys()))
+
+
 @router.post(
     "/scheduler/reload",
     response_model=SchedulerReloadResponse,
-    dependencies=[Depends(_check_admin_auth)],
+    dependencies=[Depends(check_admin_auth)],
 )
 async def scheduler_reload(request: Request) -> SchedulerReloadResponse:
     scheduler_service = request.app.state.app_container.scheduler_service
@@ -62,7 +56,7 @@ async def scheduler_reload(request: Request) -> SchedulerReloadResponse:
     return SchedulerReloadResponse()
 
 
-@router.post("/inspect", dependencies=[Depends(_check_admin_auth)])
+@router.post("/inspect", dependencies=[Depends(check_admin_auth)])
 async def inspect_endpoint(body: InspectRequest, request: Request) -> dict:
     app_container = request.app.state.app_container
     agents = app_container.agents
@@ -79,7 +73,7 @@ async def inspect_endpoint(body: InspectRequest, request: Request) -> dict:
 @router.post(
     "/consolidate",
     response_model=ConsolidateResponse,
-    dependencies=[Depends(_check_admin_auth)],
+    dependencies=[Depends(check_admin_auth)],
 )
 async def consolidate_endpoint(
     request: Request,

@@ -9,6 +9,7 @@ Sigue exactamente el mismo patrón que sqlite_history_store.py:
 
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -57,7 +58,8 @@ CREATE TABLE IF NOT EXISTS task_logs (
     finished_at TEXT,
     status      TEXT    NOT NULL,
     output      TEXT,
-    error       TEXT
+    error       TEXT,
+    metadata    TEXT
 );
 """
 
@@ -291,10 +293,12 @@ class SQLiteSchedulerRepo:
     async def save_log(self, log: TaskLog) -> TaskLog:
         async with self._conn() as conn:
             await self._ensure_schema_conn(conn)
+            metadata_json = json.dumps(log.metadata) if log.metadata else None
             cursor = await conn.execute(
                 """
-                INSERT INTO task_logs (task_id, started_at, finished_at, status, output, error)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO task_logs
+                    (task_id, started_at, finished_at, status, output, error, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     log.task_id,
@@ -303,6 +307,7 @@ class SQLiteSchedulerRepo:
                     log.status,
                     log.output,
                     log.error,
+                    metadata_json,
                 ),
             )
             await conn.commit()

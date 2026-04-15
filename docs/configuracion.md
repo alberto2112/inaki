@@ -112,6 +112,9 @@ scheduler:
   db_path: "data/scheduler.db"   # Base de datos de tareas programadas
   max_retries: 3
   output_truncation_size: 65536
+  channel_fallback:              # Cascada de resolución para dispatch de canales (ver abajo)
+    default: null                # str|null — sink por defecto si no hay override ni nativo
+    overrides: {}                # dict[channel_type, target] — override por canal origen
 
 workspace:
   path: "~/inaki-workspace"      # Directorio raíz permitido para file tools (default global)
@@ -436,3 +439,78 @@ filas preexistentes formaban parte de un estado estable).
 
 `/clear` (slash command) sigue haciendo wipe total — es el mecanismo manual
 para descartar el hilo. Separado de la consolidación.
+
+## Scheduler — `channel_fallback` (routing de canales)
+
+El scheduler puede agendar tareas desde cualquier canal inbound (CLI, REST,
+daemon, Telegram). Al dispararse, el `ChannelRouter` resuelve el `target` del
+mensaje contra una cascada de fallbacks. Nunca falla por "canal no soportado":
+si nada matchea, el mensaje se escribe en un archivo hardcoded.
+
+### Cascada de resolución
+
+Dado un `target` de forma `<prefix>:<destino>` (p. ej. `cli:local`, `telegram:12345`):
+
+1. **Sink nativo** — si el `prefix` tiene un sink registrado en el container
+   (hoy: `telegram`), usa ese sink directamente.
+2. **Override** — si `channel_fallback.overrides[<prefix>]` existe, se
+   redirige al target ahí configurado.
+3. **Default** — si `channel_fallback.default` está seteado, se redirige ahí.
+4. **Hardcoded** — último recurso: `file:///tmp/inaki-schedule-output.log`.
+   Siempre funciona (crea el archivo y directorio si no existe).
+
+### Sinks soportados
+
+| Prefix | Descripción | Ejemplo target |
+|--------|-------------|----------------|
+| `telegram:` | Envía vía el bot de Telegram registrado. | `telegram:12345` |
+| `file://` | Append a archivo. Crea dir padre. Sin sandbox. | `file:///var/log/inaki.log` |
+| `null:` | Descarta silenciosamente. | `null:` |
+
+### Ejemplos de config
+
+```yaml
+# Ejemplo 1: mandar todo lo que venga de CLI/REST/daemon a Telegram.
+scheduler:
+  channel_fallback:
+    overrides:
+      cli: "telegram:12345"
+      rest: "telegram:12345"
+      daemon: "telegram:12345"
+```
+
+```yaml
+# Ejemplo 2: default uniforme — lo que no sea nativo va a un archivo.
+scheduler:
+  channel_fallback:
+    default: "file:///home/pi/.inaki/data/schedule-output.log"
+```
+
+```yaml
+# Ejemplo 3: silenciar un canal específico, resto al default.
+scheduler:
+  channel_fallback:
+    default: "telegram:99999"
+    overrides:
+      daemon: "null:"    # daemon no notifica a nadie
+```
+
+### Trazabilidad
+
+Cada envío persiste en `task_logs.metadata` (JSON) un par
+`{original_target, resolved_target}`. Ejemplo de query:
+
+```sql
+SELECT task_id, metadata FROM task_logs WHERE status = 'success';
+-- → {"original_target":"cli:local","resolved_target":"file:///tmp/inaki-schedule-output.log"}
+```
+
+Útil para auditar dónde cayó realmente un mensaje cuando hubo un fallback.
+
+### FileSink — formato de línea
+
+```
+2026-04-15T03:00:00+00:00 | texto del mensaje
+```
+
+Una línea por envío, timestamp ISO8601 UTC. Append-only.

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-from adapters.outbound.scheduler.dispatch_adapters import ChannelSenderAdapter
+from adapters.outbound.sinks.telegram_sink import TelegramSink as ChannelSenderAdapter
 
 
 # ---------------------------------------------------------------------------

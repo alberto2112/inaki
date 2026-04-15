@@ -1,107 +1,133 @@
-"""Unit tests para ChannelSenderAdapter y HttpCallerAdapter."""
+"""Unit tests para ChannelRouter (migra los de ChannelSenderAdapter) y HttpCallerAdapter."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
-from adapters.outbound.scheduler.dispatch_adapters import ChannelSenderAdapter, HttpCallerAdapter
+from adapters.outbound.scheduler.dispatch_adapters import ChannelRouter, HttpCallerAdapter
+from adapters.outbound.sinks.sink_factory import SinkFactory
+from adapters.outbound.sinks.telegram_sink import TelegramSink
 from core.domain.entities.task import WebhookPayload
+from infrastructure.config import ChannelFallbackConfig
 
 
 # ---------------------------------------------------------------------------
-# ChannelSenderAdapter
+# ChannelRouter — camino Telegram nativo
 # ---------------------------------------------------------------------------
 
 
-def _make_channel_sender(bot: MagicMock | None = None) -> tuple[ChannelSenderAdapter, MagicMock]:
-    """Crea un ChannelSenderAdapter con un bot mockeado."""
+def _make_router_with_telegram(
+    bot: MagicMock | None = None,
+    fallback: ChannelFallbackConfig | None = None,
+) -> tuple[ChannelRouter, MagicMock]:
     mock_bot = bot if bot is not None else MagicMock()
     mock_bot.send_message = AsyncMock()
-    get_telegram_bot: Callable = MagicMock(return_value=mock_bot)
-    adapter = ChannelSenderAdapter(get_telegram_bot=get_telegram_bot)
-    return adapter, mock_bot
+    get_bot = MagicMock(return_value=mock_bot)
+    telegram_sink = TelegramSink(get_telegram_bot=get_bot)
+    factory = SinkFactory(get_telegram_bot=get_bot)
+    router = ChannelRouter(
+        native_sinks={"telegram": telegram_sink},
+        fallback_config=fallback or ChannelFallbackConfig(),
+        sink_factory=factory.from_target,
+    )
+    return router, mock_bot
 
 
-class TestChannelSenderAdapterTelegram:
+class TestChannelRouterTelegramNativo:
     async def test_telegram_prefix_llama_send_message_con_user_id_entero(self) -> None:
-        adapter, mock_bot = _make_channel_sender()
+        router, mock_bot = _make_router_with_telegram()
 
-        await adapter.send_message("telegram:12345", "Hola!")
+        await router.send_message("telegram:12345", "Hola!")
 
         mock_bot.send_message.assert_awaited_once_with(12345, "Hola!")
 
     async def test_telegram_prefix_convierte_user_id_a_int(self) -> None:
-        adapter, mock_bot = _make_channel_sender()
+        router, mock_bot = _make_router_with_telegram()
 
-        await adapter.send_message("telegram:99999", "Mensaje de prueba")
+        await router.send_message("telegram:99999", "Mensaje de prueba")
 
         args, _ = mock_bot.send_message.call_args
         assert isinstance(args[0], int)
         assert args[0] == 99999
 
-    async def test_telegram_prefix_invoca_get_telegram_bot_callable(self) -> None:
-        mock_bot = MagicMock()
-        mock_bot.send_message = AsyncMock()
-        mock_get_bot: MagicMock = MagicMock(return_value=mock_bot)
-        adapter = ChannelSenderAdapter(get_telegram_bot=mock_get_bot)
-
-        await adapter.send_message("telegram:777", "test")
-
-        mock_get_bot.assert_called_once()
-
     async def test_telegram_prefix_pasa_texto_correcto(self) -> None:
-        adapter, mock_bot = _make_channel_sender()
+        router, mock_bot = _make_router_with_telegram()
         texto = "Recordatorio: reunión a las 10am"
 
-        await adapter.send_message("telegram:42", texto)
+        await router.send_message("telegram:42", texto)
 
         mock_bot.send_message.assert_awaited_once_with(42, texto)
 
 
-class TestChannelSenderAdapterCanalNoSoportado:
-    async def test_cli_prefix_lanza_value_error_descriptivo(self) -> None:
-        adapter, _ = _make_channel_sender()
+class TestChannelRouterCanalesInboundConFallback:
+    """Antes los canales inbound (cli/rest/daemon) lanzaban ValueError.
 
-        with pytest.raises(ValueError, match="cli"):
-            await adapter.send_message("cli:alguno", "texto")
+    Con ChannelRouter + fallback ya NUNCA lanzan por canal: siempre cae
+    en override → default → hardcoded. Mantenemos la intención del test
+    original (evitar errores silenciosos) pero verificando el nuevo contrato.
+    """
 
-    async def test_rest_prefix_lanza_value_error_descriptivo(self) -> None:
-        adapter, _ = _make_channel_sender()
+    async def test_cli_prefix_con_default_null_no_lanza(self) -> None:
+        cfg = ChannelFallbackConfig(default="null:")
+        router, _ = _make_router_with_telegram(fallback=cfg)
 
-        with pytest.raises(ValueError, match="rest"):
-            await adapter.send_message("rest:alguno", "texto")
+        result = await router.send_message("cli:alguno", "texto")
 
-    async def test_daemon_prefix_lanza_value_error_descriptivo(self) -> None:
-        adapter, _ = _make_channel_sender()
+        assert result.original_target == "cli:alguno"
+        assert result.resolved_target == "null:"
 
-        with pytest.raises(ValueError, match="daemon"):
-            await adapter.send_message("daemon:alguno", "texto")
+    async def test_rest_prefix_con_override_no_lanza(self) -> None:
+        cfg = ChannelFallbackConfig(overrides={"rest": "null:x"})
+        router, _ = _make_router_with_telegram(fallback=cfg)
 
-    async def test_prefijo_desconocido_lanza_value_error(self) -> None:
-        adapter, _ = _make_channel_sender()
+        result = await router.send_message("rest:alguno", "texto")
 
-        with pytest.raises(ValueError, match="mqtt"):
-            await adapter.send_message("mqtt:topic/test", "texto")
+        assert result.resolved_target == "null:x"
 
-    async def test_mensaje_error_cli_menciona_solo_telegram_implementado(self) -> None:
-        adapter, _ = _make_channel_sender()
+    async def test_daemon_prefix_sin_config_cae_en_hardcoded(self, tmp_path) -> None:
+        # Redirigimos el hardcoded a tmp_path para no tocar /tmp real.
+        factory = SinkFactory(get_telegram_bot=lambda: None)
+        destino = tmp_path / "hc.log"
+        router = ChannelRouter(
+            native_sinks={},
+            fallback_config=ChannelFallbackConfig(),
+            sink_factory=factory.from_target,
+            hardcoded_fallback=f"file://{destino}",
+        )
 
-        with pytest.raises(ValueError, match="telegram"):
-            await adapter.send_message("cli:alguno", "texto")
+        result = await router.send_message("daemon:alguno", "texto")
+
+        assert result.original_target == "daemon:alguno"
+        assert result.resolved_target == f"file://{destino}"
+        assert destino.exists()
+
+    async def test_prefijo_desconocido_cae_en_fallback_no_lanza(self) -> None:
+        cfg = ChannelFallbackConfig(default="null:")
+        router, _ = _make_router_with_telegram(fallback=cfg)
+
+        result = await router.send_message("mqtt:topic/test", "texto")
+
+        assert result.resolved_target == "null:"
 
 
-class TestChannelSenderAdapterBotNone:
+class TestChannelRouterTelegramBotNone:
     async def test_telegram_bot_none_lanza_value_error_descriptivo(self) -> None:
-        """Si get_telegram_bot devuelve None → ValueError con mensaje claro."""
+        """Si el sink nativo de Telegram aplica y el bot no está registrado,
+        TelegramSink levanta ValueError — el router no oculta ese error."""
         get_bot = MagicMock(return_value=None)
-        adapter = ChannelSenderAdapter(get_telegram_bot=get_bot)
+        telegram_sink = TelegramSink(get_telegram_bot=get_bot)
+        factory = SinkFactory(get_telegram_bot=get_bot)
+        router = ChannelRouter(
+            native_sinks={"telegram": telegram_sink},
+            fallback_config=ChannelFallbackConfig(),
+            sink_factory=factory.from_target,
+        )
 
         with pytest.raises(ValueError, match="no está configurado|no fue registrado"):
-            await adapter.send_message("telegram:12345", "Hola")
+            await router.send_message("telegram:12345", "Hola")
 
 
 def _make_payload(**kwargs: object) -> WebhookPayload:

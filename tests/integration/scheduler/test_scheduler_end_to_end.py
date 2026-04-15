@@ -95,7 +95,7 @@ async def test_oneshot_completes_after_execution(
 ) -> None:
     task = await repo.save_task(_oneshot_past())
     # Patch dispatch trigger to succeed immediately
-    service._dispatch_trigger = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    service._dispatch_trigger = AsyncMock(return_value=(None, None))  # type: ignore[method-assign]
 
     await service._run_once()
 
@@ -114,7 +114,7 @@ async def test_recurrent_recomputes_next_run(
     repo: SQLiteSchedulerRepo,
 ) -> None:
     task = await repo.save_task(_recurrent_past())
-    service._dispatch_trigger = AsyncMock(return_value="output")  # type: ignore[method-assign]
+    service._dispatch_trigger = AsyncMock(return_value=("output", None))  # type: ignore[method-assign]
 
     await service._run_once()
 
@@ -135,7 +135,7 @@ async def test_recurrent_countdown_hits_zero_then_completed(
     repo: SQLiteSchedulerRepo,
 ) -> None:
     task = await repo.save_task(_recurrent_past(executions_remaining=1))
-    service._dispatch_trigger = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    service._dispatch_trigger = AsyncMock(return_value=(None, None))  # type: ignore[method-assign]
 
     await service._run_once()
 

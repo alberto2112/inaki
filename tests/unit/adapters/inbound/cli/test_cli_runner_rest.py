@@ -26,6 +26,7 @@ from unittest.mock import call, create_autospec, patch
 import pytest
 
 from core.domain.errors import DaemonNotRunningError, DaemonTimeoutError
+from core.domain.value_objects.chat_turn_result import ChatTurnResult
 from core.ports.outbound.daemon_client_port import IDaemonClient
 
 
@@ -38,7 +39,7 @@ from core.ports.outbound.daemon_client_port import IDaemonClient
 def mock_client() -> IDaemonClient:
     """IDaemonClient mockeado con autospec — las assertions son reales."""
     client = create_autospec(IDaemonClient, instance=True)
-    client.chat_turn.return_value = "Respuesta del agente"
+    client.chat_turn.return_value = ChatTurnResult(reply="Respuesta del agente")
     client.chat_clear.return_value = None
     client.chat_history.return_value = []
     return client
@@ -70,7 +71,7 @@ def test_run_cli_genera_uuid_unico_por_llamada(mock_client: MagicMock) -> None:
 
     def capturar_session_id(agent_id, session_id, mensaje):
         capturados.append(session_id)
-        return "resp"
+        return ChatTurnResult(reply="resp")
 
     mock_client.chat_turn.side_effect = capturar_session_id
 
@@ -172,7 +173,7 @@ def test_mensaje_normal_imprime_respuesta(mock_client: MagicMock, capsys) -> Non
     """Mensaje normal imprime la respuesta del agente."""
     from adapters.inbound.cli.cli_runner import run_cli
 
-    mock_client.chat_turn.return_value = "Respuesta de prueba"
+    mock_client.chat_turn.return_value = ChatTurnResult(reply="Respuesta de prueba")
 
     with patch("builtins.input", side_effect=["hola", "/exit"]):
         run_cli(mock_client, "dev")
@@ -217,7 +218,7 @@ def test_daemon_timeout_continua_loop(mock_client: MagicMock, capsys) -> None:
     from adapters.inbound.cli.cli_runner import run_cli
 
     # Primer turno: timeout. Segundo turno: éxito.
-    mock_client.chat_turn.side_effect = [DaemonTimeoutError(), "ok"]
+    mock_client.chat_turn.side_effect = [DaemonTimeoutError(), ChatTurnResult(reply="ok")]
 
     with patch("builtins.input", side_effect=["primer mensaje", "segundo mensaje", "/exit"]):
         run_cli(mock_client, "dev")
@@ -283,7 +284,7 @@ def test_agents_maneja_error_de_conexion(mock_client: MagicMock, capsys) -> None
     from core.domain.errors import DaemonNotRunningError
 
     mock_client.list_agents.side_effect = DaemonNotRunningError()
-    mock_client.chat_turn.return_value = "respuesta post-error"
+    mock_client.chat_turn.return_value = ChatTurnResult(reply="respuesta post-error")
 
     # Secuencia: /agents (falla) → mensaje normal → /exit
     with patch("builtins.input", side_effect=["/agents", "hola después del error", "/exit"]):

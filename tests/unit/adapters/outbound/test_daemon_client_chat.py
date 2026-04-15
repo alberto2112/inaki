@@ -82,7 +82,25 @@ def test_chat_turn_parsea_reply(client: DaemonClient) -> None:
         mock_post.return_value = mock_resp
         result = client.chat_turn("dev", "sess-1", "hola")
 
-    assert result == "Respuesta del agente"
+    assert result.reply == "Respuesta del agente"
+    assert result.intermediates == []
+
+
+def test_chat_turn_parsea_intermediates(client: DaemonClient) -> None:
+    """chat_turn retorna los bloques intermedios cuando el daemon los incluye."""
+    with patch("httpx.post") as mock_post:
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {
+            "reply": "Listo",
+            "agent_id": "dev",
+            "session_id": "s",
+            "intermediates": ["ok, voy a buscar", "tengo los datos"],
+        }
+        mock_post.return_value = mock_resp
+        result = client.chat_turn("dev", "s", "hola")
+
+    assert result.reply == "Listo"
+    assert result.intermediates == ["ok, voy a buscar", "tengo los datos"]
 
 
 def test_chat_turn_usa_chat_timeout(client: DaemonClient) -> None:

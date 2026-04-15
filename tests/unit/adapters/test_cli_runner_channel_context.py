@@ -15,13 +15,14 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from core.domain.errors import DaemonNotRunningError
+from core.domain.value_objects.chat_turn_result import ChatTurnResult
 
 
 @pytest.fixture
 def mock_client():
     """IDaemonClient mockeado."""
     client = MagicMock()
-    client.chat_turn.return_value = "respuesta"
+    client.chat_turn.return_value = ChatTurnResult(reply="respuesta")
     client.chat_clear.return_value = None
     client.chat_history.return_value = []
     return client
@@ -35,7 +36,7 @@ def test_run_cli_usa_mismo_session_id_en_todos_los_turnos(mock_client) -> None:
 
     def capturar(agent_id, session_id, mensaje):
         session_ids_capturados.append(session_id)
-        return "resp"
+        return ChatTurnResult(reply="resp")
 
     mock_client.chat_turn.side_effect = capturar
 

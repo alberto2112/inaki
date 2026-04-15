@@ -14,6 +14,7 @@ from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 from adapters.inbound.telegram.message_mapper import telegram_update_to_input, format_response
+from adapters.outbound.intermediate_sinks.telegram_live import TelegramLiveIntermediateSink
 from core.domain.value_objects.channel_context import ChannelContext
 from infrastructure.config import AgentConfig
 from infrastructure.container import AgentContainer
@@ -108,8 +109,17 @@ class TelegramBot:
                 user_id=str(update.effective_user.id),
             )
         )
+        # Sink en vivo: cada bloque de texto intermedio que el LLM emita junto
+        # con tool_calls se enviará como un mensaje Telegram inmediatamente,
+        # antes de que la tool se ejecute. El mensaje FINAL sigue yendo por el
+        # return de execute() y se envía con formato HTML.
+        live_sink = TelegramLiveIntermediateSink(
+            bot=self, chat_id=update.effective_chat.id
+        )
         try:
-            response = await self._container.run_agent.execute(user_input)
+            response = await self._container.run_agent.execute(
+                user_input, intermediate_sink=live_sink
+            )
             await update.message.reply_text(format_response(response), parse_mode=ParseMode.HTML)
             if self._reactions:
                 try:

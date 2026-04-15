@@ -196,7 +196,7 @@ else:
 
 | Trigger | Acción |
 |---------|--------|
-| `channel_send` | `channel_sender.send_message(target, text)` → None |
+| `channel_send` | `channel_router.send_message(target, text)` → `DispatchResult(original_target, resolved_target)` — el router aplica cascada de fallbacks (nativo → override → default → hardcoded `/tmp/inaki-schedule-output.log`). Ver [configuracion.md — `channel_fallback`](configuracion.md#scheduler--channel_fallback-routing-de-canales). El par `{original_target, resolved_target}` se persiste en `task_logs.metadata` (JSON) para trazabilidad. |
 | `agent_send` | `llm_dispatcher.dispatch(agent_id, prompt, tools)` → str resultado; si `output_channel` definido, envía resultado al canal |
 | `shell_exec` | subprocess con command/working_dir/env_vars/timeout → stdout; RuntimeError si exit code != 0 |
 | `consolidate_memory` | `consolidator.consolidate_all()` → str resultado |
@@ -668,7 +668,9 @@ CREATE TABLE IF NOT EXISTS task_logs (
 | Puerto inbound | [core/ports/inbound/scheduler_port.py](../core/ports/inbound/scheduler_port.py) | `ISchedulerUseCase` |
 | Puerto outbound | [core/ports/outbound/scheduler_port.py](../core/ports/outbound/scheduler_port.py) | `ISchedulerRepository` (Protocol) |
 | Repositorio | [adapters/outbound/scheduler/sqlite_scheduler_repo.py](../adapters/outbound/scheduler/sqlite_scheduler_repo.py) | `SQLiteSchedulerRepo` |
-| Dispatch adapters | [adapters/outbound/scheduler/dispatch_adapters.py](../adapters/outbound/scheduler/dispatch_adapters.py) | `ChannelSenderAdapter`, `LLMDispatcherAdapter`, `ConsolidationDispatchAdapter`, `SchedulerDispatchPorts` |
+| Dispatch adapters | [adapters/outbound/scheduler/dispatch_adapters.py](../adapters/outbound/scheduler/dispatch_adapters.py) | `ChannelRouter`, `LLMDispatcherAdapter`, `ConsolidationDispatchAdapter`, `HttpCallerAdapter`, `SchedulerDispatchPorts` |
+| Outbound sinks | [adapters/outbound/sinks/](../adapters/outbound/sinks/) | `TelegramSink`, `FileSink`, `NullSink`, `SinkFactory` (puerto: `core/ports/outbound/outbound_sink_port.py::IOutboundSink`) |
+| Value objects | [core/domain/value_objects/dispatch_result.py](../core/domain/value_objects/dispatch_result.py) | `DispatchResult(original_target, resolved_target)` |
 | Tareas builtin | [adapters/outbound/scheduler/builtin_tasks.py](../adapters/outbound/scheduler/builtin_tasks.py) | `build_consolidate_memory_task()`, `CONSOLIDATE_MEMORY_TASK_ID` |
 | Config | [infrastructure/config.py](../infrastructure/config.py) | `SchedulerConfig`, `GlobalConfig` |
 | DI Container | [infrastructure/container.py](../infrastructure/container.py) | `AppContainer` |

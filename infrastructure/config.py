@@ -118,11 +118,37 @@ class ChatHistoryConfig(BaseModel):
     max_messages: int = 0  # 0 = sin límite; N = últimos N mensajes al LLM
 
 
+class ChannelFallbackConfig(BaseModel):
+    """Config de fallbacks para el routing de canales del scheduler.
+
+    Cuando una task dispara un envío a un canal que no tiene sink nativo
+    (p. ej. ``cli``, ``rest``, ``daemon``), el ``ChannelRouter`` resuelve
+    el destino efectivo aplicando esta cascada:
+
+      1. Sink nativo registrado para el prefix del target.
+      2. Entry en ``overrides`` para el ``channel_type`` del target.
+      3. ``default`` global (si está configurado).
+      4. Fallback hardcoded: ``file:///tmp/inaki-schedule-output.log``.
+
+    Atributos:
+        default: Target string (p. ej. ``"file:///var/log/x.log"``,
+            ``"telegram:12345"``, ``"null:"``) usado cuando no hay override
+            específico. ``None`` delega al fallback hardcoded.
+        overrides: Mapa ``channel_type → target string`` para redirigir
+            canales concretos. Ejemplo: ``{"cli": "telegram:123"}`` envía
+            los mensajes que nacieron desde CLI hacia ese chat de Telegram.
+    """
+
+    default: str | None = None
+    overrides: dict[str, str] = {}
+
+
 class SchedulerConfig(BaseModel):
     enabled: bool = True
     db_path: ExpandedPath = "data/scheduler.db"
     max_retries: int = 3
     output_truncation_size: int = 65536
+    channel_fallback: ChannelFallbackConfig = ChannelFallbackConfig()
 
 
 class SkillsConfig(BaseModel):

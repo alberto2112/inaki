@@ -13,3 +13,10 @@ class TaskLog(BaseModel):
     status: str   # "success" | "failed" | "missed"
     output: str | None = None
     error: str | None = None
+    metadata: dict | None = None
+    """Metadatos arbitrarios serializados a JSON en la DB.
+
+    Uso actual: trazabilidad del dispatch de canales —
+    ``{"original_target": "...", "resolved_target": "..."}``.
+    Campo genérico para admitir futuras claves sin migración de schema.
+    """

@@ -131,11 +131,12 @@ class SchedulerService:
         error: str | None = None
         success = False
         attempt = 0
+        dispatch_metadata: dict | None = None
 
         for attempt in range(self._config.max_retries + 1):
             started_at = datetime.now(timezone.utc)
             try:
-                output = await self._dispatch_trigger(task)
+                output, dispatch_metadata = await self._dispatch_trigger(task)
                 success = True
                 break
             except Exception as exc:
@@ -158,11 +159,16 @@ class SchedulerService:
                 )
 
         if success:
-            await self._finalize_task(task, output)
+            await self._finalize_task(task, output, dispatch_metadata)
         else:
             await self._repo.update_status(task.id, TaskStatus.FAILED, retry_count=attempt + 1)
 
-    async def _finalize_task(self, task: ScheduledTask, output: str | None) -> None:
+    async def _finalize_task(
+        self,
+        task: ScheduledTask,
+        output: str | None,
+        dispatch_metadata: dict | None = None,
+    ) -> None:
         now = datetime.now(timezone.utc)
         truncated = output[: self._config.output_truncation_size] if output else None
         if task.log_enabled:
@@ -173,6 +179,7 @@ class SchedulerService:
                     finished_at=now,
                     status="success",
                     output=truncated,
+                    metadata=dispatch_metadata,
                 )
             )
         if task.task_kind == TaskKind.ONESHOT:
@@ -197,25 +204,43 @@ class SchedulerService:
                     retry_count=0,
                 )
 
-    async def _dispatch_trigger(self, task: ScheduledTask) -> str | None:
+    async def _dispatch_trigger(
+        self, task: ScheduledTask
+    ) -> tuple[str | None, dict | None]:
+        """Ejecuta el trigger y devuelve ``(output, dispatch_metadata)``.
+
+        ``dispatch_metadata`` contiene ``{original_target, resolved_target}`` cuando
+        hubo un envío por canal (directo o via ``output_channel``); ``None`` en caso
+        contrario.
+        """
         payload = task.trigger_payload
         if isinstance(payload, ChannelSendPayload):
-            await self._dispatch.channel_sender.send_message(payload.target, payload.text)
-            return None
+            dr = await self._dispatch.channel_sender.send_message(
+                payload.target, payload.text
+            )
+            return None, {
+                "original_target": dr.original_target,
+                "resolved_target": dr.resolved_target,
+            }
         elif isinstance(payload, AgentSendPayload):
             result = await self._dispatch.llm_dispatcher.dispatch(
                 payload.agent_id, payload.task, payload.tools_override
             )
             if payload.output_channel:
-                await self._dispatch.channel_sender.send_message(payload.output_channel, result)
-                return None
-            return result
+                dr = await self._dispatch.channel_sender.send_message(
+                    payload.output_channel, result
+                )
+                return None, {
+                    "original_target": dr.original_target,
+                    "resolved_target": dr.resolved_target,
+                }
+            return result, None
         elif isinstance(payload, ShellExecPayload):
-            return await self._run_shell(payload)
+            return await self._run_shell(payload), None
         elif isinstance(payload, ConsolidateMemoryPayload):
-            return await self._dispatch.consolidator.consolidate_all()
+            return await self._dispatch.consolidator.consolidate_all(), None
         elif isinstance(payload, WebhookPayload):
-            return await self._dispatch.http_caller.call(payload)
+            return await self._dispatch.http_caller.call(payload), None
         else:
             raise InvalidTriggerTypeError(f"Unknown payload type: {type(payload)}")
 

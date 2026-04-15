@@ -9,6 +9,7 @@ import pytest
 from freezegun import freeze_time
 
 from core.domain.entities.task import (
+    ChannelSendPayload,
     ConsolidateMemoryPayload,
     ScheduledTask,
     TaskKind,
@@ -18,6 +19,7 @@ from core.domain.entities.task import (
 )
 from core.domain.entities.task_log import TaskLog
 from core.domain.services.scheduler_service import SchedulerService
+from core.domain.value_objects.dispatch_result import DispatchResult
 
 
 # ---------------------------------------------------------------------------
@@ -148,12 +150,12 @@ async def test_execute_task_on_success_calls_finalize(
     service: SchedulerService, mock_repo: AsyncMock
 ) -> None:
     task = _make_task()
-    service._dispatch_trigger = AsyncMock(return_value="output")  # type: ignore[method-assign]
+    service._dispatch_trigger = AsyncMock(return_value=("output", None))  # type: ignore[method-assign]
     service._finalize_task = AsyncMock()  # type: ignore[method-assign]
 
     await service._execute_task(task)
 
-    service._finalize_task.assert_awaited_once_with(task, "output")  # type: ignore[attr-defined]
+    service._finalize_task.assert_awaited_once_with(task, "output", None)  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +204,8 @@ async def test_dispatch_webhook_calls_http_caller(
     result = await service._dispatch_trigger(task)
 
     service._dispatch.http_caller.call.assert_awaited_once_with(task.trigger_payload)
-    assert result == "webhook response"
+    # _dispatch_trigger ahora devuelve (output, metadata)
+    assert result == ("webhook response", None)
 
 
 async def test_dispatch_webhook_return_value_propagated_to_finalize(
@@ -214,7 +217,7 @@ async def test_dispatch_webhook_return_value_propagated_to_finalize(
 
     await service._execute_task(task)
 
-    service._finalize_task.assert_awaited_once_with(task, "webhook response")  # type: ignore[attr-defined]
+    service._finalize_task.assert_awaited_once_with(task, "webhook response", None)  # type: ignore[attr-defined]
 
 
 async def test_dispatch_webhook_failure_propagates_as_execute_failure(
@@ -229,3 +232,77 @@ async def test_dispatch_webhook_failure_propagates_as_execute_failure(
     calls = mock_repo.update_status.call_args_list
     final_statuses = [c.args[1] for c in calls]
     assert TaskStatus.FAILED in final_statuses
+
+
+# ---------------------------------------------------------------------------
+# Metadata propagation: DispatchResult → TaskLog.metadata  (tarea 4.7)
+# ---------------------------------------------------------------------------
+
+
+def _make_channel_task() -> ScheduledTask:
+    return ScheduledTask(
+        id=300,
+        name="channel-test",
+        task_kind=TaskKind.ONESHOT,
+        trigger_type=TriggerType.CHANNEL_SEND,
+        trigger_payload=ChannelSendPayload(target="cli:local", text="hola"),
+        schedule="2025-12-01T10:00:00+00:00",
+        status=TaskStatus.PENDING,
+    )
+
+
+async def test_channel_send_propaga_metadata_a_tasklog(
+    service: SchedulerService, mock_repo: AsyncMock
+) -> None:
+    """Tras un channel_send, el TaskLog persistido por _finalize_task debe
+    contener metadata {original_target, resolved_target}."""
+    task = _make_channel_task()
+    service._dispatch.channel_sender.send_message = AsyncMock(
+        return_value=DispatchResult(
+            original_target="cli:local",
+            resolved_target="file:///tmp/inaki-schedule-output.log",
+        )
+    )
+
+    await service._execute_task(task)
+
+    # Buscar la llamada save_log con status="success"
+    success_logs = [
+        c.args[0]
+        for c in mock_repo.save_log.call_args_list
+        if isinstance(c.args[0], TaskLog) and c.args[0].status == "success"
+    ]
+    assert len(success_logs) == 1
+    log = success_logs[0]
+    assert log.metadata == {
+        "original_target": "cli:local",
+        "resolved_target": "file:///tmp/inaki-schedule-output.log",
+    }
+
+
+async def test_dispatch_trigger_channel_send_devuelve_metadata(
+    service: SchedulerService,
+) -> None:
+    task = _make_channel_task()
+    service._dispatch.channel_sender.send_message = AsyncMock(
+        return_value=DispatchResult(
+            original_target="cli:local", resolved_target="null:"
+        )
+    )
+
+    output, metadata = await service._dispatch_trigger(task)
+
+    assert output is None
+    assert metadata == {"original_target": "cli:local", "resolved_target": "null:"}
+
+
+async def test_dispatch_trigger_consolidate_devuelve_metadata_none(
+    service: SchedulerService,
+) -> None:
+    """Payloads que no son channel_send no tienen metadata de routing."""
+    task = _make_task()  # ConsolidateMemoryPayload
+
+    output, metadata = await service._dispatch_trigger(task)
+
+    assert output == "ok"
+    assert metadata is None

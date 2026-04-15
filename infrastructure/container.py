@@ -25,12 +25,14 @@ from adapters.outbound.scheduler.builtin_tasks import (
     build_consolidate_memory_task,
 )
 from adapters.outbound.scheduler.dispatch_adapters import (
-    ChannelSenderAdapter,
+    ChannelRouter,
     ConsolidationDispatchAdapter,
     HttpCallerAdapter,
     LLMDispatcherAdapter,
     SchedulerDispatchPorts,
 )
+from adapters.outbound.sinks.sink_factory import SinkFactory
+from adapters.outbound.sinks.telegram_sink import TelegramSink
 from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRepo
 from adapters.outbound.embedding.sqlite_embedding_cache import SqliteEmbeddingCache
 from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
@@ -437,8 +439,15 @@ class AppContainer:
             repo=self.scheduler_repo,
             on_mutation=self._on_scheduler_mutation,
         )
+        telegram_sink = TelegramSink(get_telegram_bot=self._get_telegram_bot)
+        sink_factory = SinkFactory(get_telegram_bot=self._get_telegram_bot)
+        channel_router = ChannelRouter(
+            native_sinks={"telegram": telegram_sink},
+            fallback_config=scheduler_cfg.channel_fallback,
+            sink_factory=sink_factory.from_target,
+        )
         dispatch_ports = SchedulerDispatchPorts(
-            channel_sender=ChannelSenderAdapter(get_telegram_bot=self._get_telegram_bot),
+            channel_sender=channel_router,
             llm_dispatcher=LLMDispatcherAdapter(self.agents),
             consolidator=ConsolidationDispatchAdapter(self.consolidate_all_agents),
             http_caller=HttpCallerAdapter(),

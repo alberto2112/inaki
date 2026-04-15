@@ -23,6 +23,10 @@ import logging
 
 from core.domain.entities.message import Message, Role
 from core.domain.errors import ToolLoopMaxIterationsError
+from core.ports.outbound.intermediate_sink_port import (
+    IIntermediateSink,
+    NullIntermediateSink,
+)
 from core.ports.outbound.llm_port import ILLMProvider
 from core.ports.outbound.tool_port import IToolExecutor
 
@@ -39,6 +43,7 @@ async def run_tool_loop(
     max_iterations: int,
     circuit_breaker_threshold: int,
     agent_id: str,
+    intermediate_sink: IIntermediateSink | None = None,
 ) -> str:
     """
     Ejecuta el loop LLM + tool-dispatch hasta obtener respuesta final o
@@ -62,6 +67,7 @@ async def run_tool_loop(
             respuesta final. El atributo `.last_response` contiene el último texto
             del LLM en ese momento.
     """
+    sink: IIntermediateSink = intermediate_sink or NullIntermediateSink()
     working_messages = list(messages)
     failure_counts: dict[str, int] = {}
     tripped: set[str] = set()
@@ -80,10 +86,14 @@ async def run_tool_loop(
 
         # Iteración con tool calls. El assistant puede haber emitido texto
         # narrando lo que va a hacer ("ok, voy a buscar esto...") junto
-        # con los tool_calls en la MISMA respuesta. Ese texto se preserva
-        # en el mensaje assistant para que el propio LLM lo vea en la
-        # siguiente iteración. La emisión al sink inbound (mensajes
-        # intermedios al usuario) se conectará en una fase posterior.
+        # con los tool_calls en la MISMA respuesta. Ese texto se empuja al
+        # sink inbound ANTES de ejecutar las tools para que el usuario vea
+        # progreso en vivo, y se preserva también en el mensaje assistant
+        # del contexto para que el propio LLM lo vea en la siguiente
+        # iteración.
+        for block in response.text_blocks:
+            if block.strip():
+                await sink.emit(block)
         working_messages.append(
             Message(
                 role=Role.ASSISTANT,

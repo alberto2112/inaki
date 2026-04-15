@@ -418,3 +418,108 @@ async def test_malformed_json_args_fall_back_to_empty_kwargs():
 
     assert result == "Final"
     tools.execute.assert_called_once_with("mytool")
+
+
+# ---------------------------------------------------------------------------
+# Intermediate sink
+# ---------------------------------------------------------------------------
+
+
+class _RecordingSink:
+    """Sink de test que registra en orden todos los mensajes emitidos."""
+
+    def __init__(self) -> None:
+        self.emitted: list[str] = []
+
+    async def emit(self, text: str) -> None:
+        self.emitted.append(text)
+
+
+async def test_intermediate_sink_receives_text_blocks_before_tool_execution():
+    """Si el LLM emite texto + tool_calls en la misma respuesta, el sink
+    recibe ese texto ANTES de que se ejecute la tool."""
+    narrating_call = LLMResponse(
+        text_blocks=["Ok, voy a buscar esto."],
+        tool_calls=[
+            {"function": {"name": "mytool", "arguments": "{}"}}
+        ],
+        raw="",
+    )
+    llm = _make_llm(narrating_call, "Listo, encontrado.")
+    tools = _make_tools()
+    sink = _RecordingSink()
+
+    # tools.execute debe observar que el sink ya recibió el mensaje
+    emitted_at_tool_time: list[list[str]] = []
+
+    async def _observe_execute(name, **kwargs):
+        emitted_at_tool_time.append(list(sink.emitted))
+        return ToolResult(tool_name=name, output="ok", success=True)
+
+    tools.execute = AsyncMock(side_effect=_observe_execute)
+
+    result = await run_tool_loop(
+        llm=llm,
+        tools=tools,
+        messages=_base_messages(),
+        system_prompt="Prompt",
+        tool_schemas=[{"name": "mytool"}],
+        max_iterations=5,
+        circuit_breaker_threshold=3,
+        agent_id="agent",
+        intermediate_sink=sink,
+    )
+
+    assert result == "Listo, encontrado."
+    assert sink.emitted == ["Ok, voy a buscar esto."]
+    # Cuando la tool se ejecutó, el sink YA había recibido el mensaje intermedio
+    assert emitted_at_tool_time == [["Ok, voy a buscar esto."]]
+
+
+async def test_intermediate_sink_not_called_when_response_is_final_text():
+    """Si el LLM responde directamente sin tool_calls, el sink NO se invoca —
+    el mensaje final se entrega vía return, no vía sink."""
+    llm = _make_llm("Respuesta directa.")
+    tools = _make_tools()
+    sink = _RecordingSink()
+
+    result = await run_tool_loop(
+        llm=llm,
+        tools=tools,
+        messages=_base_messages(),
+        system_prompt="Prompt",
+        tool_schemas=[{"name": "mytool"}],
+        max_iterations=5,
+        circuit_breaker_threshold=3,
+        agent_id="agent",
+        intermediate_sink=sink,
+    )
+
+    assert result == "Respuesta directa."
+    assert sink.emitted == []
+
+
+async def test_intermediate_sink_skips_empty_text_blocks():
+    """Si el LLM emite tool_calls SIN texto, no se empuja string vacío al sink."""
+    silent_call = LLMResponse(
+        text_blocks=[],
+        tool_calls=[{"function": {"name": "mytool", "arguments": "{}"}}],
+        raw="",
+    )
+    llm = _make_llm(silent_call, "Final")
+    tools = _make_tools()
+    sink = _RecordingSink()
+
+    await run_tool_loop(
+        llm=llm,
+        tools=tools,
+        messages=_base_messages(),
+        system_prompt="Prompt",
+        tool_schemas=[{"name": "mytool"}],
+        max_iterations=5,
+        circuit_breaker_threshold=3,
+        agent_id="agent",
+        intermediate_sink=sink,
+    )
+
+    assert sink.emitted == []

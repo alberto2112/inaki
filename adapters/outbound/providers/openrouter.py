@@ -66,6 +66,7 @@ class OpenRouterProvider(BaseLLMProvider):
         message = choice["message"]
         content = message.get("content") or ""
         tool_calls = message.get("tool_calls") or []
+        logger.info("%s", self._format_response_log("OpenRouter", content, tool_calls))
 
         return LLMResponse(
             text_blocks=[content] if content else [],

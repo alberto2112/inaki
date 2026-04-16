@@ -122,6 +122,7 @@ class OllamaProvider(BaseLLMProvider):
         message = data.get("message", {})
         content = message.get("content") or ""
         tool_calls = self._normalize_tool_calls(message.get("tool_calls") or [])
+        logger.info("%s", self._format_response_log("Ollama", content, tool_calls))
 
         return LLMResponse(
             text_blocks=[content] if content else [],

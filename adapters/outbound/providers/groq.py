@@ -63,11 +63,7 @@ class GroqProvider(BaseLLMProvider):
         message = choice["message"]
         content = message.get("content") or ""
         tool_calls = message.get("tool_calls") or []
-        logger.info(
-            "Groq response: tool_calls=%s, content_preview=%.200s",
-            bool(tool_calls),
-            content[:200],
-        )
+        logger.info("%s", self._format_response_log("Groq", content, tool_calls))
 
         return LLMResponse(
             text_blocks=[content] if content else [],

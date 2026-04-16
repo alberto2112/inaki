@@ -9,6 +9,22 @@ class BaseLLMProvider(ILLMProvider):
     """Clase base para todos los proveedores LLM. Define contrato común."""
 
     @staticmethod
+    def _format_response_log(provider: str, content: str, tool_calls: list[dict]) -> str:
+        """Formato unificado del log INFO por cada respuesta del LLM.
+
+        Si hay tool_calls → enumera nombre(args_truncados) de cada call.
+        Si no → preview del contenido textual.
+        """
+        if tool_calls:
+            summary = ", ".join(
+                f"{tc.get('function', {}).get('name', '?')}"
+                f"({str(tc.get('function', {}).get('arguments', ''))[:120]})"
+                for tc in tool_calls
+            )
+            return f"{provider} response: tool_calls=[{summary}]"
+        return f"{provider} response: content_preview={content[:200]}"
+
+    @staticmethod
     def _build_messages(messages: list[Message], system_prompt: str) -> list[dict]:
         """Construye la lista de mensajes para el API del LLM.
 

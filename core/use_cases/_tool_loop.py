@@ -133,7 +133,13 @@ async def run_tool_loop(
                 content=result.output,
                 tool_call_id=tc_id,
             ))
-            logger.debug("Tool '%s' ejecutada: success=%s", tool_name, result.success)
+            logger.info(
+                "Tool '%s' ejecutada: success=%s, kwargs=%.200s, output=%.200s",
+                tool_name,
+                result.success,
+                str(kwargs),
+                result.output or "",
+            )
 
             if result.success:
                 failure_counts[tool_name] = 0

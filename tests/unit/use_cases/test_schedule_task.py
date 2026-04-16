@@ -31,7 +31,9 @@ def _make_task(task_id: int = 0) -> ScheduledTask:
 @pytest.fixture()
 def mock_repo() -> AsyncMock:
     repo = AsyncMock()
-    repo.get_task.return_value = None
+    # Default: la task existe. Los tests que necesitan probar "not found" lo
+    # sobreescriben con `mock_repo.get_task.return_value = None`.
+    repo.get_task.return_value = _make_task(task_id=150)
     return repo
 
 
@@ -115,3 +117,122 @@ async def test_get_task_returns_task(
     mock_repo.get_task.return_value = task
     result = await uc.get_task(150)
     assert result.id == 150
+
+
+# ---------------------------------------------------------------------------
+# update_task — runtime reset on invalidating edits
+# ---------------------------------------------------------------------------
+
+async def test_update_task_builtin_raises(uc: ScheduleTaskUseCase) -> None:
+    with pytest.raises(BuiltinTaskProtectedError):
+        await uc.update_task(1, name="x")
+
+
+async def test_update_invalidating_field_wakes_failed_task(
+    uc: ScheduleTaskUseCase, mock_repo: AsyncMock
+) -> None:
+    """Editar trigger_payload de una task en 'failed' debe devolverla a 'pending'
+    y limpiar retry_count/next_run para que el scheduler la vuelva a tomar."""
+    from datetime import datetime, timezone
+
+    existing = _make_task(task_id=150).model_copy(update={
+        "status": TaskStatus.FAILED,
+        "retry_count": 3,
+        "next_run": datetime(2020, 1, 1, tzinfo=timezone.utc),  # stale
+    })
+    mock_repo.get_task.return_value = existing
+    mock_repo.save_task.side_effect = lambda t: t
+
+    await uc.update_task(150, trigger_payload=ConsolidateMemoryPayload())
+
+    saved = mock_repo.save_task.await_args[0][0]
+    assert saved.status == TaskStatus.PENDING
+    assert saved.retry_count == 0
+    assert saved.next_run is None  # repo lo recomputa en save_task
+
+
+async def test_update_invalidating_field_preserves_disabled(
+    uc: ScheduleTaskUseCase, mock_repo: AsyncMock
+) -> None:
+    """Una task 'disabled' NO debe despertarse solo porque se edita el schedule.
+    Respetamos la intención explícita del usuario. retry_count/next_run sí se limpian."""
+    existing = _make_task(task_id=150).model_copy(update={
+        "status": TaskStatus.DISABLED,
+        "retry_count": 2,
+    })
+    mock_repo.get_task.return_value = existing
+    mock_repo.save_task.side_effect = lambda t: t
+
+    await uc.update_task(150, schedule="2099-01-01T00:00:00+00:00")
+
+    saved = mock_repo.save_task.await_args[0][0]
+    assert saved.status == TaskStatus.DISABLED  # sigue disabled
+    assert saved.retry_count == 0
+    assert saved.next_run is None
+
+
+async def test_update_non_invalidating_field_no_reset(
+    uc: ScheduleTaskUseCase, mock_repo: AsyncMock
+) -> None:
+    """Cambios cosméticos (name, description) NO tocan el runtime."""
+    from datetime import datetime, timezone
+
+    existing_next = datetime(2099, 6, 1, tzinfo=timezone.utc)
+    existing = _make_task(task_id=150).model_copy(update={
+        "status": TaskStatus.FAILED,
+        "retry_count": 3,
+        "next_run": existing_next,
+    })
+    mock_repo.get_task.return_value = existing
+    mock_repo.save_task.side_effect = lambda t: t
+
+    await uc.update_task(150, name="renamed")
+
+    saved = mock_repo.save_task.await_args[0][0]
+    assert saved.name == "renamed"
+    assert saved.status == TaskStatus.FAILED  # no se toca
+    assert saved.retry_count == 3
+    assert saved.next_run == existing_next
+
+
+async def test_update_explicit_status_override_respected(
+    uc: ScheduleTaskUseCase, mock_repo: AsyncMock
+) -> None:
+    """Si el caller pasa status explícito junto con un campo invalidante,
+    el override gana sobre el reset automático a pending (setdefault)."""
+    existing = _make_task(task_id=150).model_copy(update={
+        "status": TaskStatus.FAILED,
+    })
+    mock_repo.get_task.return_value = existing
+    mock_repo.save_task.side_effect = lambda t: t
+
+    await uc.update_task(
+        150,
+        trigger_payload=ConsolidateMemoryPayload(),
+        status=TaskStatus.DISABLED,  # override explícito
+    )
+
+    saved = mock_repo.save_task.await_args[0][0]
+    assert saved.status == TaskStatus.DISABLED  # no pisado por el reset
+
+
+async def test_update_invalidating_recomputes_for_pending_task(
+    uc: ScheduleTaskUseCase, mock_repo: AsyncMock
+) -> None:
+    """Una task 'pending' con schedule nuevo debe quedar pending pero con
+    next_run limpio para que el repo lo recompute desde el cron/ISO nuevo."""
+    from datetime import datetime, timezone
+
+    existing = _make_task(task_id=150).model_copy(update={
+        "status": TaskStatus.PENDING,
+        "next_run": datetime(2020, 1, 1, tzinfo=timezone.utc),  # stale
+    })
+    mock_repo.get_task.return_value = existing
+    mock_repo.save_task.side_effect = lambda t: t
+
+    await uc.update_task(150, schedule="2099-01-01T00:00:00+00:00")
+
+    saved = mock_repo.save_task.await_args[0][0]
+    assert saved.status == TaskStatus.PENDING
+    assert saved.next_run is None
+    assert saved.schedule == "2099-01-01T00:00:00+00:00"

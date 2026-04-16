@@ -15,6 +15,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Campos cuya edición invalida el estado runtime (cuándo/qué/cómo ejecuta).
+# Cambiar cualquiera de ellos implica resetear status/retry_count/next_run para
+# que el scheduler vuelva a considerar la tarea con la definición nueva.
+_INVALIDATING_FIELDS = frozenset(
+    {"schedule", "trigger_payload", "task_kind", "trigger_type", "executions_remaining"}
+)
+
+
 class ScheduleTaskUseCase(ISchedulerUseCase):
 
     def __init__(
@@ -68,5 +76,21 @@ class ScheduleTaskUseCase(ISchedulerUseCase):
                 f"Task {task_id} is a builtin and cannot be modified via update_task."
             )
         task = await self.get_task(task_id)
+
+        # Si la edición toca un campo invalidante, el estado runtime queda
+        # stale respecto de la definición nueva. Reseteamos:
+        #   - status  → pending (excepto si la task estaba disabled: respetamos
+        #                        la intención explícita del usuario)
+        #   - retry_count → 0 (borrón y cuenta nueva)
+        #   - next_run → None (el repo lo recomputa vía _resolve_next_run con
+        #                      el schedule nuevo)
+        # setdefault preserva overrides explícitos del caller (ej: el LLM
+        # podría forzar status=disabled aun cuando edita schedule).
+        if _INVALIDATING_FIELDS.intersection(kwargs):
+            if task.status != TaskStatus.DISABLED:
+                kwargs.setdefault("status", TaskStatus.PENDING)
+            kwargs.setdefault("retry_count", 0)
+            kwargs.setdefault("next_run", None)
+
         updated = task.model_copy(update=kwargs)
         return await self._repo.save_task(updated)

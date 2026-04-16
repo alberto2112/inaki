@@ -319,7 +319,7 @@ class SchedulerTool(ITool):
 
         return ToolResult(
             tool_name=self.name,
-            output=json.dumps({"id": created.id, "name": created.name}),
+            output=json.dumps(self._echo_task(created, op="created")),
             success=True,
         )
 
@@ -505,7 +505,7 @@ class SchedulerTool(ITool):
 
         return ToolResult(
             tool_name=self.name,
-            output=json.dumps({"id": updated.id, "name": updated.name}),
+            output=json.dumps(self._echo_task(updated, op="updated")),
             success=True,
         )
 
@@ -536,6 +536,32 @@ class SchedulerTool(ITool):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _echo_task(self, task: ScheduledTask, *, op: str) -> dict[str, Any]:
+        """
+        Echo autoconfirmable de una task tras create/update.
+
+        Devuelve un objeto con:
+          - flag booleano explícito (`created=True` o `updated=True`) análogo al
+            `deleted=True` de `_delete`;
+          - campos autoritativos persistidos (schedule, next_run_at, task_status).
+
+        El LLM necesita estos campos para saber sin ambigüedad que la operación
+        tomó y con qué valores finales — en particular `next_run_at` (recomputado
+        por el repo vía `_resolve_next_run`) y `task_status` (que puede haber sido
+        reseteado a pending en edits invalidantes; ver
+        `ScheduleTaskUseCase.update_task`).
+        """
+        return {
+            f"{op}": True,
+            "id": task.id,
+            "name": task.name,
+            "task_kind": _TASK_KIND_TO_LLM.get(task.task_kind.value, task.task_kind.value),
+            "trigger_type": task.trigger_type.value,
+            "schedule": task.schedule,
+            "next_run_at": task.next_run.isoformat() if task.next_run else None,
+            "task_status": task.status.value,
+        }
 
     def _error(self, message: str) -> ToolResult:
         return ToolResult(

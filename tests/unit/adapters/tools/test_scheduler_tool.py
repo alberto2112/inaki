@@ -954,3 +954,130 @@ async def test_update_channel_send_sin_contexto_error() -> None:
 
     assert result.success is False
     assert "contexto de canal" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# Echo autoconfirmable en create/update
+#
+# Regresión: el output devuelto al LLM tras `create`/`update` solo incluía
+# `{id, name}`. Sin echo de `schedule`, `next_run_at` ni `task_status`, algunos
+# LLMs interpretaban el resultado como ambiguo y reintentaban la operación,
+# produciendo tareas duplicadas. El echo completo es el único contrato estable
+# porque `_tool_loop` propaga SOLO `result.output` al LLM (el flag `success` del
+# envelope no se ve).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_create_echo_includes_all_confirm_fields() -> None:
+    """`create` debe devolver flag booleano + echo de schedule/next_run_at/task_status."""
+    tool, uc = _make_tool()
+    created = _make_task(task_id=100, name="Echo Task", task_kind=TaskKind.RECURRENT)
+    created = created.model_copy(update={
+        "schedule": "0 8 * * *",
+        "next_run": datetime(2026, 6, 1, 8, 0, 0, tzinfo=timezone.utc),
+        "status": TaskStatus.PENDING,
+    })
+    uc.create_task.return_value = created
+
+    result = await tool.execute(
+        operation="create",
+        name="Echo Task",
+        task_kind="recurring",
+        trigger_type="channel_send",
+        trigger_payload={"text": "daily"},
+        schedule="0 8 * * *",
+    )
+
+    assert result.success is True
+    data = json.loads(result.output)
+    # Flag booleano explícito (paralelo a `deleted=True` de _delete)
+    assert data["created"] is True
+    # Echo autoritativo post-persistencia
+    assert data["id"] == 100
+    assert data["name"] == "Echo Task"
+    assert data["task_kind"] == "recurring"
+    assert data["trigger_type"] == "channel_send"
+    assert data["schedule"] == "0 8 * * *"
+    assert data["next_run_at"] == "2026-06-01T08:00:00+00:00"
+    assert data["task_status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_create_echo_next_run_at_null_when_repo_cant_resolve() -> None:
+    """Si el repo no pudo resolver next_run, el echo lo refleja como null — no lo omite."""
+    tool, uc = _make_tool()
+    created = _make_task(task_id=101, name="Sin Next Run")
+    created = created.model_copy(update={"next_run": None})
+    uc.create_task.return_value = created
+
+    result = await tool.execute(
+        operation="create",
+        name="Sin Next Run",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "x"},
+        schedule="2026-06-01T10:00:00Z",
+    )
+
+    assert result.success is True
+    data = json.loads(result.output)
+    assert data["created"] is True
+    assert data["next_run_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_update_echo_reflects_runtime_reset() -> None:
+    """
+    Tras un edit invalidante, el use case resetea status/retry/next_run.
+    El echo debe reflejar el estado POST-reset para que el LLM vea sin
+    ambigüedad que la task salió del modo zombie.
+    """
+    tool, uc = _make_tool()
+    # Simulamos la task ya con el reset aplicado por ScheduleTaskUseCase.update_task.
+    # El mock devuelve lo que queremos ver echo'ado, independiente del schedule
+    # que el caller le haya pasado al tool.
+    post_reset = _make_task(task_id=200, name="Post Reset")
+    post_reset = post_reset.model_copy(update={
+        "schedule": "2026-06-01T09:00:00+00:00",
+        "status": TaskStatus.PENDING,  # reset desde FAILED
+        "next_run": datetime(2026, 6, 1, 9, 0, 0, tzinfo=timezone.utc),
+    })
+    uc.update_task.return_value = post_reset
+
+    result = await tool.execute(
+        operation="update",
+        task_id=200,
+        schedule="2026-06-01T09:00:00Z",
+    )
+
+    assert result.success is True
+    data = json.loads(result.output)
+    assert data["updated"] is True
+    assert data["id"] == 200
+    assert data["schedule"] == "2026-06-01T09:00:00+00:00"
+    assert data["task_status"] == "pending"
+    assert data["next_run_at"] == "2026-06-01T09:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_update_echo_preserves_disabled_status() -> None:
+    """
+    Si la task estaba disabled, el use case la mantiene disabled aun tras
+    edit invalidante. El echo debe mostrarlo: es la señal de que el LLM NO
+    debe reintentar un enable implícito.
+    """
+    tool, uc = _make_tool()
+    post_update = _make_task(task_id=201, name="Sigue Disabled")
+    post_update = post_update.model_copy(update={"status": TaskStatus.DISABLED})
+    uc.update_task.return_value = post_update
+
+    result = await tool.execute(
+        operation="update",
+        task_id=201,
+        schedule="2099-01-01T00:00:00Z",
+    )
+
+    assert result.success is True
+    data = json.loads(result.output)
+    assert data["updated"] is True
+    assert data["task_status"] == "disabled"

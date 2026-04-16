@@ -135,8 +135,13 @@ def run_cli(client: IDaemonClient, agent_id: str) -> None:
         # --- Turno de chat normal ---
         try:
             with console.status("Pensando...", spinner="dots"):
-                reply = client.chat_turn(agent_id, session_id, user_input)
-            print(f"\niñaki > {reply}\n")
+                turn_result = client.chat_turn(agent_id, session_id, user_input)
+            # Mensajes intermedios (narración emitida junto con tool_calls):
+            # los mostramos antes de la respuesta final para que el usuario
+            # vea la progresión del turno tal cual la hizo el agente.
+            for intermediate in turn_result.intermediates:
+                print(f"\niñaki > {intermediate}")
+            print(f"\niñaki > {turn_result.reply}\n")
         except KeyboardInterrupt:
             print("\nHasta luego.")
             return

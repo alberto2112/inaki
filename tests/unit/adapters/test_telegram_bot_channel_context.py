@@ -76,7 +76,7 @@ async def test_handle_message_setea_channel_context_antes_de_execute():
     def _set_ctx(c):
         call_order.append(f"set_channel_context({c})")
 
-    async def _execute(inp):
+    async def _execute(inp, intermediate_sink=None):
         call_order.append("execute")
         return "respuesta"
 

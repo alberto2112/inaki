@@ -8,6 +8,12 @@ alcanzar el límite de iteraciones.
 Usado por:
 - RunAgentUseCase (conversational)
 - RunAgentOneShotUseCase (one-shot / delegation child)
+
+Contrato con el provider:
+- ``ILLMProvider.complete()`` devuelve ``LLMResponse`` con ``text_blocks``
+  y ``tool_calls`` separados. Si ``tool_calls`` está vacío → la respuesta
+  es final y retornamos el texto. Si hay tool_calls, ejecutamos las tools
+  y seguimos iterando.
 """
 
 from __future__ import annotations
@@ -17,33 +23,14 @@ import logging
 
 from core.domain.entities.message import Message, Role
 from core.domain.errors import ToolLoopMaxIterationsError
+from core.ports.outbound.intermediate_sink_port import (
+    IIntermediateSink,
+    NullIntermediateSink,
+)
 from core.ports.outbound.llm_port import ILLMProvider
 from core.ports.outbound.tool_port import IToolExecutor
 
 logger = logging.getLogger(__name__)
-
-
-def _extract_tool_calls(raw: str) -> tuple[list[dict], str | None]:
-    """Extrae tool calls del JSON devuelto por el LLM.
-
-    Returns:
-        (tool_calls, error): tool_calls si el parseo fue exitoso,
-        o ([], error_message) si el JSON es malformado para que el LLM
-        pueda corregirse.
-    """
-    stripped = raw.strip()
-    if not stripped.startswith("{"):
-        return [], None
-    try:
-        data = json.loads(stripped)
-        return data.get("tool_calls", []), None
-    except json.JSONDecodeError as exc:
-        return [], (
-            f"Tu respuesta parece un tool call pero el JSON es inválido: {exc}. "
-            "Asegurate de que el campo 'arguments' sea un string con JSON escapado, "
-            'por ejemplo: "arguments": "{\\"key\\": \\"value\\"}". '
-            "Intentalo de nuevo con JSON válido."
-        )
 
 
 async def run_tool_loop(
@@ -56,6 +43,7 @@ async def run_tool_loop(
     max_iterations: int,
     circuit_breaker_threshold: int,
     agent_id: str,
+    intermediate_sink: IIntermediateSink | None = None,
 ) -> str:
     """
     Ejecuta el loop LLM + tool-dispatch hasta obtener respuesta final o
@@ -79,36 +67,42 @@ async def run_tool_loop(
             respuesta final. El atributo `.last_response` contiene el último texto
             del LLM en ese momento.
     """
+    sink: IIntermediateSink = intermediate_sink or NullIntermediateSink()
     working_messages = list(messages)
     failure_counts: dict[str, int] = {}
     tripped: set[str] = set()
-    last_raw: str = ""
+    last_text: str = ""
 
     for iteration in range(max_iterations):
-        raw = await llm.complete(
+        response = await llm.complete(
             working_messages,
             system_prompt,
             tools=tool_schemas if tool_schemas else None,
         )
-        last_raw = raw
+        last_text = response.text
 
-        tool_calls, parse_error = _extract_tool_calls(raw)
-        if parse_error:
-            logger.warning("Tool call JSON malformado del LLM: %s", parse_error)
-            working_messages.append(
-                Message(role=Role.USER, content=f"[Error de formato]\n{parse_error}")
-            )
-            continue
-        if not tool_calls:
-            return raw
+        if not response.tool_calls:
+            return response.text
 
-        # Agregar el mensaje del assistant con los tool calls al historial
-        # para que el LLM sepa que ÉL pidió ejecutar estas tools.
+        # Iteración con tool calls. El assistant puede haber emitido texto
+        # narrando lo que va a hacer ("ok, voy a buscar esto...") junto
+        # con los tool_calls en la MISMA respuesta. Ese texto se empuja al
+        # sink inbound ANTES de ejecutar las tools para que el usuario vea
+        # progreso en vivo, y se preserva también en el mensaje assistant
+        # del contexto para que el propio LLM lo vea en la siguiente
+        # iteración.
+        for block in response.text_blocks:
+            if block.strip():
+                await sink.emit(block)
         working_messages.append(
-            Message(role=Role.ASSISTANT, content="", tool_calls=tool_calls)
+            Message(
+                role=Role.ASSISTANT,
+                content=response.text,
+                tool_calls=response.tool_calls,
+            )
         )
 
-        for tc in tool_calls:
+        for tc in response.tool_calls:
             tc_id = tc.get("id", "")
             tool_name = tc.get("function", {}).get("name", "")
             args_raw = tc.get("function", {}).get("arguments", "{}")
@@ -154,4 +148,4 @@ async def run_tool_loop(
                     )
 
     logger.warning("Máximo de iteraciones de tool calls alcanzado para '%s'", agent_id)
-    raise ToolLoopMaxIterationsError(last_response=last_raw)
+    raise ToolLoopMaxIterationsError(last_response=last_text)

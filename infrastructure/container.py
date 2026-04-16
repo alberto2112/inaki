@@ -266,9 +266,17 @@ class AgentContainer:
 
             # Available agents for delegation
 
-            You can delegate tasks to the following agents via the `delegate` tool:
+            You can delegate tasks to other agents via the `delegate` tool.
 
-            - **<id>** — <description>.
+            ## When to delegate
+            - ...heuristics...
+
+            ## When NOT to delegate
+            - ...anti-heuristics...
+
+            ## Available agents
+
+            - **<id>** (<name>) — <description>.
               Tools: <tool1>, <tool2>, ...
         """
         target_ids = self.agent_config.delegation.allowed_targets
@@ -288,12 +296,13 @@ class AgentContainer:
                 )
                 continue
 
+            name = target_container.agent_config.name
             description = target_container.agent_config.description
             # Collect tool names from the target's registry (all registered tools)
             tool_names = list(target_container._tools._tools.keys())
             tool_list = ", ".join(tool_names) if tool_names else "(no tools)"
 
-            lines.append(f"- **{target_id}** — {description}.")
+            lines.append(f"- **{target_id}** ({name}) — {description}.")
             lines.append(f"  Tools: {tool_list}")
 
         if not lines:
@@ -302,7 +311,22 @@ class AgentContainer:
 
         header = (
             "# Available agents for delegation\n\n"
-            "You can delegate tasks to the following agents via the `delegate` tool:\n"
+            "You can delegate tasks to other agents via the `delegate` tool.\n\n"
+            "## When to delegate\n\n"
+            "- The task matches another agent's specialty "
+            "(see their description and tools below).\n"
+            "- You lack a tool that the target agent has.\n"
+            "- The task requires multiple tool calls to complete, especially multi-step "
+            "workflows like: \"search the web about X, summarize the highlights, and send "
+            "the result to Y\". Delegating keeps your context clean and lets a specialized "
+            "agent orchestrate the steps.\n\n"
+            "## When NOT to delegate\n\n"
+            "- The task is trivial or you already have the tools to solve it in 1-2 steps.\n"
+            "- You need tight back-and-forth with the user — the child is stateless and "
+            "returns a single structured result.\n"
+            "- You already delegated the same task and it failed — try a different approach "
+            "or ask the user.\n\n"
+            "## Available agents\n"
         )
         return "\n" + header + "\n" + "\n".join(lines)
 

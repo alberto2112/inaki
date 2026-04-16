@@ -71,8 +71,12 @@ class DelegateTool(ITool):
     """
 
     name = "delegate"
+    # NOTE: keep this description as plain text — no markdown, no newlines.
+    # Structured guidance on when to delegate lives in the agent-discovery
+    # section injected by AgentContainer.wire_delegation.
     description = (
-        "Delegate a task to another agent. "
+        "Delegate a task to a specialized agent when the task requires expertise or tools you don't have, "
+        "or involves multiple steps better handled end-to-end by another agent. "
         "Returns a structured result with status, summary, details, and reason."
     )
     parameters_schema = {

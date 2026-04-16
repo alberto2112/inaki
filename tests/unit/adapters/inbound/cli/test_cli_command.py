@@ -27,7 +27,8 @@ def _make_mock_client(health_ok: bool = True) -> MagicMock:
     """Construye un DaemonClient mock con health controlable."""
     client = MagicMock()
     client.health.return_value = health_ok
-    client.chat_turn.return_value = "resp"
+    from core.domain.value_objects.chat_turn_result import ChatTurnResult
+    client.chat_turn.return_value = ChatTurnResult(reply="resp")
     return client
 
 

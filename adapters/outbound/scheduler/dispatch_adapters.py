@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from core.domain.value_objects.dispatch_result import DispatchResult
+from core.ports.outbound.intermediate_sink_port import IIntermediateSink
 from core.ports.outbound.llm_dispatcher_port import ILLMDispatcher
 from core.ports.outbound.outbound_sink_port import IOutboundSink
 from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
@@ -45,6 +46,18 @@ class ChannelRouter:
         self._factory = sink_factory
         self._hardcoded = hardcoded_fallback
 
+    def build_intermediate_sink(self, target: str) -> IIntermediateSink:
+        """Fabrica un ``IIntermediateSink`` que emite cada texto vía ``send_message``
+        hacia ``target``. Lo usa el scheduler para propagar intermedios en vivo
+        al canal destino durante un ``agent_send``.
+        """
+        # Import local para evitar el ciclo adapters→adapters al cargar.
+        from adapters.outbound.intermediate_sinks.channel_router import (
+            ChannelRouterIntermediateSink,
+        )
+
+        return ChannelRouterIntermediateSink(router=self, target=target)
+
     async def send_message(self, target: str, text: str) -> DispatchResult:
         prefix, sep, _ = target.partition(":")
         if not sep:
@@ -82,11 +95,16 @@ class LLMDispatcherAdapter:
         agent_id: str,
         prompt: str | None = None,
         tools_override: list[dict] | None = None,
+        intermediate_sink: IIntermediateSink | None = None,
     ) -> str:
         agent = self._agents.get(agent_id)
         if agent is None:
             raise ValueError(f"Agent '{agent_id}' not found")
-        return await agent.run_agent.execute(prompt or "", tools_override=tools_override)
+        return await agent.run_agent.execute(
+            prompt or "",
+            tools_override=tools_override,
+            intermediate_sink=intermediate_sink,
+        )
 
 
 class ConsolidationDispatchAdapter:

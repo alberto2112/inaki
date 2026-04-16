@@ -9,6 +9,7 @@ import pytest
 from core.domain.entities.memory import MemoryEntry
 from core.domain.entities.message import Message, Role
 from core.domain.errors import ConsolidationError
+from core.domain.value_objects.llm_response import LLMResponse
 from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
 from infrastructure.config import MemoryConfig
 
@@ -46,7 +47,7 @@ def messages_in_history(mock_history):
 
 
 async def test_consolidation_trims_on_success(use_case, mock_llm, mock_memory, mock_history, messages_in_history):
-    mock_llm.complete.return_value = '[{"content": "Le gusta Python", "relevance": 0.9, "tags": ["tech"]}]'
+    mock_llm.complete.return_value = LLMResponse.of_text('[{"content": "Le gusta Python", "relevance": 0.9, "tags": ["tech"]}]')
 
     result = await use_case.execute()
 
@@ -60,7 +61,7 @@ async def test_consolidation_attributes_agent_id_to_stored_memory(
     use_case, mock_llm, mock_memory, mock_history, messages_in_history
 ):
     """Cada MemoryEntry persistido debe llevar el agent_id del agente que lo extrajo."""
-    mock_llm.complete.return_value = (
+    mock_llm.complete.return_value = LLMResponse.of_text(
         '[{"content": "fact A", "relevance": 0.9, "tags": []},'
         ' {"content": "fact B", "relevance": 0.8, "tags": []}]'
     )
@@ -79,7 +80,7 @@ async def test_consolidation_marks_messages_as_infused_after_persist(
     use_case, mock_llm, mock_memory, mock_history, messages_in_history
 ):
     """Tras persistir los recuerdos, se marcan los mensajes como infused."""
-    mock_llm.complete.return_value = '[{"content": "Le gusta Python", "relevance": 0.9, "tags": []}]'
+    mock_llm.complete.return_value = LLMResponse.of_text('[{"content": "Le gusta Python", "relevance": 0.9, "tags": []}]')
 
     await use_case.execute()
 
@@ -90,7 +91,7 @@ async def test_consolidation_mark_infused_called_before_trim(
     use_case, mock_llm, mock_memory, mock_history, messages_in_history
 ):
     """mark_infused debe ocurrir ANTES del trim para que el gate cierre a tiempo."""
-    mock_llm.complete.return_value = "[]"
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
     call_order: list[str] = []
     mock_history.mark_infused.side_effect = lambda *a, **kw: call_order.append("mark_infused") or 0
     mock_history.trim.side_effect = lambda *a, **kw: call_order.append("trim")
@@ -104,7 +105,7 @@ async def test_consolidation_mark_infused_failure_aborts_and_skips_trim(
     use_case, mock_llm, mock_memory, mock_history, messages_in_history
 ):
     """Si mark_infused falla, propagamos y NO truncamos."""
-    mock_llm.complete.return_value = '[{"content": "fact", "relevance": 0.9, "tags": []}]'
+    mock_llm.complete.return_value = LLMResponse.of_text('[{"content": "fact", "relevance": 0.9, "tags": []}]')
     mock_history.mark_infused.side_effect = Exception("UPDATE failed")
 
     with pytest.raises(ConsolidationError):
@@ -137,7 +138,7 @@ async def test_consolidation_does_not_trim_on_llm_failure(use_case, mock_llm, mo
 
 
 async def test_consolidation_does_not_trim_on_store_failure(use_case, mock_llm, mock_memory, mock_history, messages_in_history):
-    mock_llm.complete.return_value = '[{"content": "Le gusta Python", "relevance": 0.9, "tags": []}]'
+    mock_llm.complete.return_value = LLMResponse.of_text('[{"content": "Le gusta Python", "relevance": 0.9, "tags": []}]')
     mock_memory.store.side_effect = Exception("DB error")
 
     with pytest.raises(ConsolidationError):
@@ -157,20 +158,20 @@ async def test_consolidation_returns_message_when_no_pending_messages(use_case, 
 
 async def test_consolidation_handles_empty_facts_list(use_case, mock_llm, mock_history, messages_in_history):
     """LLM dice no hay recuerdos relevantes → truncamos igual."""
-    mock_llm.complete.return_value = "[]"
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
     result = await use_case.execute()
     mock_history.trim.assert_called_once_with("test", keep_last=20)
 
 
 async def test_consolidation_strips_markdown_json(use_case, mock_llm, mock_memory, mock_history, messages_in_history):
     """El LLM a veces envuelve el JSON en ```json ... ```"""
-    mock_llm.complete.return_value = '```json\n[{"content": "test", "relevance": 0.8, "tags": []}]\n```'
+    mock_llm.complete.return_value = LLMResponse.of_text('```json\n[{"content": "test", "relevance": 0.8, "tags": []}]\n```')
     await use_case.execute()
     mock_memory.store.assert_called_once()
 
 
 async def test_consolidation_raises_on_invalid_json(use_case, mock_llm, mock_history, messages_in_history):
-    mock_llm.complete.return_value = "esto no es json"
+    mock_llm.complete.return_value = LLMResponse.of_text("esto no es json")
     with pytest.raises(ConsolidationError):
         await use_case.execute()
     mock_history.trim.assert_not_called()
@@ -182,7 +183,7 @@ async def test_consolidation_formats_message_with_timestamp(use_case, mock_llm, 
     mock_history.load_uninfused.return_value = [
         Message(role=Role.USER, content="prefiero café sin azúcar", timestamp=ts),
     ]
-    mock_llm.complete.return_value = "[]"
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
 
     await use_case.execute()
 
@@ -196,7 +197,7 @@ async def test_consolidation_formats_message_without_timestamp(use_case, mock_ll
     mock_history.load_uninfused.return_value = [
         Message(role=Role.USER, content="prefiero café sin azúcar", timestamp=None),
     ]
-    mock_llm.complete.return_value = "[]"
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
 
     await use_case.execute()
 
@@ -208,7 +209,7 @@ async def test_consolidation_formats_message_without_timestamp(use_case, mock_ll
 
 # SC-17
 async def test_consolidation_sets_created_at_from_llm_timestamp(use_case, mock_llm, mock_memory, mock_history, messages_in_history):
-    mock_llm.complete.return_value = '[{"content": "test", "relevance": 0.9, "tags": [], "timestamp": "2026-04-09T15:30:00Z"}]'
+    mock_llm.complete.return_value = LLMResponse.of_text('[{"content": "test", "relevance": 0.9, "tags": [], "timestamp": "2026-04-09T15:30:00Z"}]')
 
     await use_case.execute()
 
@@ -220,7 +221,7 @@ async def test_consolidation_filters_below_min_relevance_score(
     use_case, mock_llm, mock_memory, mock_history, messages_in_history
 ):
     """Hechos con relevance < min_relevance_score no se embedean ni persisten."""
-    mock_llm.complete.return_value = (
+    mock_llm.complete.return_value = LLMResponse.of_text(
         '[{"content": "alto", "relevance": 0.9, "tags": []},'
         ' {"content": "medio-alto", "relevance": 0.51, "tags": []},'
         ' {"content": "bajo", "relevance": 0.3, "tags": []},'
@@ -241,7 +242,7 @@ async def test_consolidation_filters_all_when_all_below_threshold(
     use_case, mock_llm, mock_memory, mock_history, messages_in_history
 ):
     """Si TODOS los hechos están por debajo del umbral, no persistimos pero truncamos."""
-    mock_llm.complete.return_value = '[{"content": "bajo", "relevance": 0.1, "tags": []}]'
+    mock_llm.complete.return_value = LLMResponse.of_text('[{"content": "bajo", "relevance": 0.1, "tags": []}]')
 
     await use_case.execute()
 
@@ -264,7 +265,7 @@ async def test_consolidation_uses_sentinel_fallback_when_keep_last_is_zero(
     mock_history.load_uninfused.return_value = [
         Message(role=Role.USER, content="hola"),
     ]
-    mock_llm.complete.return_value = "[]"
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
 
     uc = ConsolidateMemoryUseCase(
         llm=mock_llm,
@@ -282,7 +283,7 @@ async def test_consolidation_uses_sentinel_fallback_when_keep_last_is_zero(
 
 # SC-18
 async def test_consolidation_falls_back_to_now_when_no_timestamp(use_case, mock_llm, mock_memory, mock_history, messages_in_history):
-    mock_llm.complete.return_value = '[{"content": "test", "relevance": 0.9, "tags": []}]'
+    mock_llm.complete.return_value = LLMResponse.of_text('[{"content": "test", "relevance": 0.9, "tags": []}]')
     before = datetime.now(timezone.utc)
 
     await use_case.execute()
@@ -314,7 +315,7 @@ async def test_digest_file_written_with_correct_format(
         Message(role=Role.USER, content="me gusta Python"),
         Message(role=Role.ASSISTANT, content="Anotado."),
     ]
-    mock_llm.complete.return_value = '[{"content": "Le gusta Python", "relevance": 0.9, "tags": ["tech", "python"]}]'
+    mock_llm.complete.return_value = LLMResponse.of_text('[{"content": "Le gusta Python", "relevance": 0.9, "tags": ["tech", "python"]}]')
 
     entry_with_tags = _make_entry(
         "Le gusta Python", ["tech", "python"], datetime(2026, 4, 9, tzinfo=timezone.utc)
@@ -349,7 +350,7 @@ async def test_digest_file_written_with_correct_format(
 async def test_get_recent_called_with_configured_digest_size(
     use_case, mock_llm, mock_memory, mock_history, messages_in_history, memory_config
 ):
-    mock_llm.complete.return_value = "[]"
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
 
     await use_case.execute()
 
@@ -360,7 +361,7 @@ async def test_get_recent_called_with_configured_digest_size(
 async def test_trim_called_after_digest(
     use_case, mock_llm, mock_memory, mock_history, messages_in_history
 ):
-    mock_llm.complete.return_value = "[]"
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
     call_order = []
     mock_memory.get_recent.side_effect = lambda *a, **kw: call_order.append("get_recent") or []
     mock_history.trim.side_effect = lambda *a, **kw: call_order.append("trim")
@@ -376,7 +377,7 @@ async def test_trim_called_after_digest(
 async def test_write_digest_ioerror_does_not_abort_consolidation(
     use_case, mock_llm, mock_memory, mock_history, messages_in_history
 ):
-    mock_llm.complete.return_value = "[]"
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
 
     with patch.object(Path, "write_text", side_effect=OSError("disk full")):
         result = await use_case.execute()
@@ -397,7 +398,7 @@ async def test_parent_directory_created_for_digest(
     mock_history.load_uninfused.return_value = [
         Message(role=Role.USER, content="hola"),
     ]
-    mock_llm.complete.return_value = "[]"
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
 
     uc = ConsolidateMemoryUseCase(
         llm=mock_llm,

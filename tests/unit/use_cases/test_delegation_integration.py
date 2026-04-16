@@ -24,6 +24,7 @@ from adapters.outbound.tools.delegate_tool import DelegateTool, _RESULT_FORMAT_F
 from adapters.outbound.tools.tool_registry import ToolRegistry
 from core.domain.errors import ToolLoopMaxIterationsError
 from core.domain.value_objects.delegation_result import DelegationResult
+from core.domain.value_objects.llm_response import LLMResponse
 from core.use_cases.run_agent import RunAgentUseCase
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from infrastructure.config import (
@@ -104,23 +105,31 @@ def _make_global_config(
     )
 
 
-def _make_scripted_llm(responses: list[str]) -> AsyncMock:
+def _make_scripted_llm(responses: list[LLMResponse | str]) -> AsyncMock:
     """
     Return a mock LLM whose complete() method yields scripted responses in order.
     Raises AssertionError if called more times than responses are available.
+
+    Cada entrada puede ser un ``LLMResponse`` directamente o un ``str`` (se
+    envuelve en ``LLMResponse.of_text`` por conveniencia).
     """
     llm = AsyncMock()
     call_count = [0]
 
+    normalized: list[LLMResponse] = [
+        r if isinstance(r, LLMResponse) else LLMResponse.of_text(r)
+        for r in responses
+    ]
+
     async def _complete(messages, system_prompt, tools=None):
         idx = call_count[0]
         call_count[0] += 1
-        if idx >= len(responses):
+        if idx >= len(normalized):
             raise AssertionError(
                 f"LLM mock called {call_count[0]} times but only "
-                f"{len(responses)} response(s) scripted."
+                f"{len(normalized)} response(s) scripted."
             )
-        return responses[idx]
+        return normalized[idx]
 
     llm.complete.side_effect = _complete
     return llm
@@ -204,18 +213,20 @@ def _wire_both(
     return _get_agent_container
 
 
-def _tool_call_response(agent_id: str, task: str) -> str:
+def _tool_call_response(agent_id: str, task: str) -> LLMResponse:
     """Build a scripted LLM response that represents a delegate tool call."""
-    return json.dumps({
-        "tool_calls": [
+    return LLMResponse(
+        text_blocks=[],
+        tool_calls=[
             {
                 "function": {
                     "name": "delegate",
                     "arguments": json.dumps({"agent_id": agent_id, "task": task}),
                 }
             }
-        ]
-    })
+        ],
+        raw="",
+    )
 
 
 def _valid_child_response(
@@ -529,7 +540,7 @@ async def test_failure_timeout():
 
     async def _slow_complete(messages, system_prompt, tools=None):
         await asyncio.sleep(10)  # much longer than 1s timeout
-        return _valid_child_response()  # never reached
+        return LLMResponse.of_text(_valid_child_response())  # never reached
 
     child_llm.complete.side_effect = _slow_complete
 
@@ -574,16 +585,18 @@ async def test_failure_max_iterations_exceeded():
     ])
 
     # Child LLM ALWAYS returns a tool call for "dummy_tool" → never final text
-    child_tool_call = json.dumps({
-        "tool_calls": [
+    child_tool_call = LLMResponse(
+        text_blocks=[],
+        tool_calls=[
             {
                 "function": {
                     "name": "dummy_tool",
                     "arguments": "{}",
                 }
             }
-        ]
-    })
+        ],
+        raw="",
+    )
     child_llm = AsyncMock()
     child_llm.complete.return_value = child_tool_call
 

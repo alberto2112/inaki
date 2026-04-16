@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator
 import httpx
 
 from adapters.outbound.providers.base import BaseLLMProvider
-from core.domain.entities.message import Message, Role
+from core.domain.entities.message import Message
 from core.domain.errors import LLMError
 from core.domain.value_objects.llm_response import LLMResponse
 from infrastructure.config import LLMConfig
@@ -33,13 +33,6 @@ class OpenRouterProvider(BaseLLMProvider):
             "Content-Type": "application/json",
             "HTTP-Referer": "https://github.com/inaki",
         }
-
-    def _build_messages(self, messages: list[Message], system_prompt: str) -> list[dict]:
-        result = [{"role": "system", "content": system_prompt}]
-        for m in messages:
-            if m.role in (Role.USER, Role.ASSISTANT):
-                result.append({"role": m.role.value, "content": m.content})
-        return result
 
     async def complete(
         self,

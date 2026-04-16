@@ -34,17 +34,31 @@ class OllamaProvider(BaseLLMProvider):
         de string JSON a dict, porque Ollama nativo espera dict — no string.
         Sin esta conversión, el parser de Ollama tropieza con las llaves embebidas
         en el string y devuelve 400 ("Value looks like object, but can't find closing '}'").
+
+        Construye tool_calls nuevos en vez de mutar los del Message original —
+        si la misma conversación viaja después a un provider OpenAI-compat, los
+        arguments deben seguir siendo string JSON.
         """
         result = super()._build_messages(messages, system_prompt)
         for msg in result:
-            for tc in msg.get("tool_calls") or []:
-                args = tc.get("function", {}).get("arguments")
+            tool_calls = msg.get("tool_calls")
+            if not tool_calls:
+                continue
+            new_tool_calls = []
+            for tc in tool_calls:
+                fn = tc.get("function", {})
+                args = fn.get("arguments")
                 if isinstance(args, str):
                     try:
-                        tc["function"]["arguments"] = json.loads(args)
+                        args = json.loads(args)
                     except json.JSONDecodeError:
                         # Si no parsea, lo dejamos: Ollama devolverá un error claro.
                         pass
+                new_tool_calls.append({
+                    **tc,
+                    "function": {**fn, "arguments": args},
+                })
+            msg["tool_calls"] = new_tool_calls
         return result
 
     @staticmethod

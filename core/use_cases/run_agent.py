@@ -23,8 +23,10 @@ from pathlib import Path
 from core.domain.entities.message import Message, Role
 from core.domain.entities.skill import Skill
 from core.domain.errors import ToolLoopMaxIterationsError
+from core.domain.services.sticky_selector import apply_sticky
 from core.domain.value_objects.agent_context import AgentContext
 from core.domain.value_objects.agent_info import AgentInfoDTO
+from core.domain.value_objects.conversation_state import ConversationState
 from core.ports.outbound.embedding_port import IEmbeddingProvider
 from core.ports.outbound.history_port import IHistoryStore
 from core.ports.outbound.intermediate_sink_port import IIntermediateSink
@@ -61,7 +63,6 @@ class InspectResult:
 
 
 class RunAgentUseCase:
-
     def __init__(
         self,
         llm: ILLMProvider,
@@ -163,23 +164,48 @@ class RunAgentUseCase:
         retrieved_skills: list[Skill] = all_skills
         tool_schemas: list[dict] = tools_override if tools_override is not None else all_schemas
 
+        prev_state = await self._history.load_state(agent_id)
+        new_sticky_skills = dict(prev_state.sticky_skills)
+        new_sticky_tools = dict(prev_state.sticky_tools)
+        state_dirty = False
+
         if skills_rag_active or tools_rag_active:
             query_vec = await self._embedder.embed_query(user_input)
             if skills_rag_active:
-                retrieved_skills = await self._skills.retrieve(
+                rag_skills = await self._skills.retrieve(
                     query_vec,
                     top_k=self._cfg.skills.rag_top_k,
                     min_score=self._cfg.skills.rag_min_score,
                 )
+                rag_ids = {s.id for s in rag_skills}
+                active_ids, new_sticky_skills = apply_sticky(
+                    rag_ids, prev_state.sticky_skills, self._cfg.skills.sticky_ttl
+                )
+                skills_by_id = {s.id: s for s in all_skills}
+                retrieved_skills = [skills_by_id[i] for i in active_ids if i in skills_by_id]
+                state_dirty = True
             if tools_rag_active:
-                tool_schemas = await self._tools.get_schemas_relevant(
+                rag_schemas = await self._tools.get_schemas_relevant(
                     query_vec,
                     top_k=self._cfg.tools.rag_top_k,
                     min_score=self._cfg.tools.rag_min_score,
                 )
+                rag_names = {sch["function"]["name"] for sch in rag_schemas}
+                active_names, new_sticky_tools = apply_sticky(
+                    rag_names, prev_state.sticky_tools, self._cfg.tools.sticky_ttl
+                )
+                schemas_by_name = {sch["function"]["name"]: sch for sch in all_schemas}
+                tool_schemas = [schemas_by_name[n] for n in active_names if n in schemas_by_name]
+                state_dirty = True
 
         user_context = self._read_user_context()
-        context = AgentContext(agent_id=agent_id, user_context=user_context, memory_digest=digest_text, skills=retrieved_skills, timezone=self._user_timezone)
+        context = AgentContext(
+            agent_id=agent_id,
+            user_context=user_context,
+            memory_digest=digest_text,
+            skills=retrieved_skills,
+            timezone=self._user_timezone,
+        )
         system_prompt = context.build_system_prompt(
             self._cfg.system_prompt,
             extra_sections=self._extra_system_sections or None,
@@ -202,6 +228,15 @@ class RunAgentUseCase:
             )
         except ToolLoopMaxIterationsError as e:
             response = e.last_response
+
+        if state_dirty:
+            await self._history.save_state(
+                agent_id,
+                ConversationState(
+                    sticky_skills=new_sticky_skills,
+                    sticky_tools=new_sticky_tools,
+                ),
+            )
 
         await self._history.append(agent_id, user_msg)
         await self._history.append(agent_id, Message(role=Role.ASSISTANT, content=response))
@@ -248,12 +283,16 @@ class RunAgentUseCase:
                     min_score=self._cfg.tools.rag_min_score,
                 )
                 selected_schemas = [sch for sch, _ in scored_tools]
-                tool_scores = [
-                    (sch["function"]["name"], sc) for sch, sc in scored_tools
-                ]
+                tool_scores = [(sch["function"]["name"], sc) for sch, sc in scored_tools]
 
         user_context = self._read_user_context()
-        context = AgentContext(agent_id=self._cfg.id, user_context=user_context, memory_digest=digest_text, skills=retrieved_skills, timezone=self._user_timezone)
+        context = AgentContext(
+            agent_id=self._cfg.id,
+            user_context=user_context,
+            memory_digest=digest_text,
+            skills=retrieved_skills,
+            timezone=self._user_timezone,
+        )
         system_prompt = context.build_system_prompt(self._cfg.system_prompt)
 
         return InspectResult(
@@ -269,4 +308,3 @@ class RunAgentUseCase:
             selected_tool_scores=tool_scores,
             system_prompt=system_prompt,
         )
-

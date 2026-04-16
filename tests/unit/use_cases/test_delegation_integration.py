@@ -22,7 +22,7 @@ import pytest
 
 from adapters.outbound.tools.delegate_tool import DelegateTool, _RESULT_FORMAT_FOOTER
 from adapters.outbound.tools.tool_registry import ToolRegistry
-from core.domain.errors import ToolLoopMaxIterationsError
+from core.domain.value_objects.conversation_state import ConversationState
 from core.domain.value_objects.delegation_result import DelegationResult
 from core.domain.value_objects.llm_response import LLMResponse
 from core.use_cases.run_agent import RunAgentUseCase
@@ -174,7 +174,12 @@ def _build_container(
         memory=AsyncMock(search=AsyncMock(return_value=[])),
         embedder=container._embedder,
         skills=AsyncMock(list_all=AsyncMock(return_value=[]), retrieve=AsyncMock(return_value=[])),
-        history=AsyncMock(load=AsyncMock(return_value=[]), append=AsyncMock()),
+        history=AsyncMock(
+            load=AsyncMock(return_value=[]),
+            append=AsyncMock(),
+            load_state=AsyncMock(return_value=ConversationState()),
+            save_state=AsyncMock(),
+        ),
         tools=container._tools,
         agent_config=agent_config,
     )

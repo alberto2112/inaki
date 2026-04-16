@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from core.domain.entities.message import Message, Role
+from core.domain.value_objects.conversation_state import ConversationState
 from core.domain.value_objects.llm_response import LLMResponse
 from infrastructure.config import (
     AgentConfig,
@@ -69,6 +69,8 @@ def mock_history() -> AsyncMock:
     history.mark_infused.return_value = 0
     history.trim.return_value = None
     history.clear.return_value = None
+    history.load_state.return_value = ConversationState()
+    history.save_state.return_value = None
     return history
 
 

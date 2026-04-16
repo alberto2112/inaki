@@ -5,12 +5,14 @@ Un registro por mensaje: tabla `history` en data/history.db.
 Solo se persisten mensajes user y assistant — nunca tool calls.
 
 Schema:
-  history — una fila por mensaje con flag `infused` (0=pendiente de extracción,
-  1=ya procesado por el extractor de recuerdos).
+  history     — una fila por mensaje con flag `infused` (0=pendiente, 1=procesado).
+  agent_state — una fila por agente con el estado conversacional (sticky TTLs)
+                serializado en JSON.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -20,6 +22,7 @@ from typing import AsyncIterator
 import aiosqlite
 
 from core.domain.entities.message import Message, Role
+from core.domain.value_objects.conversation_state import ConversationState
 from core.ports.outbound.history_port import IHistoryStore
 from infrastructure.config import ChatHistoryConfig
 
@@ -44,9 +47,15 @@ _CREATE_INFUSED_INDEX = """
 CREATE INDEX IF NOT EXISTS idx_history_uninfused ON history(agent_id, infused);
 """
 
+_CREATE_STATE_TABLE = """
+CREATE TABLE IF NOT EXISTS agent_state (
+    agent_id   TEXT PRIMARY KEY,
+    state_json TEXT NOT NULL
+);
+"""
+
 
 class SQLiteHistoryStore(IHistoryStore):
-
     def __init__(self, cfg: ChatHistoryConfig) -> None:
         self._db_path = cfg.db_path
         self._max_n = cfg.max_messages
@@ -62,6 +71,7 @@ class SQLiteHistoryStore(IHistoryStore):
         await conn.execute(_CREATE_TABLE)
         await conn.execute(_CREATE_INDEX)
         await conn.execute(_CREATE_INFUSED_INDEX)
+        await conn.execute(_CREATE_STATE_TABLE)
         await conn.commit()
 
     async def append(self, agent_id: str, message: Message) -> None:
@@ -105,9 +115,7 @@ class SQLiteHistoryStore(IHistoryStore):
         async with self._conn() as conn:
             await self._ensure_schema(conn)
             rows = await conn.execute_fetchall(
-                "SELECT role, content, created_at FROM history "
-                "WHERE agent_id = ? "
-                "ORDER BY id ASC",
+                "SELECT role, content, created_at FROM history WHERE agent_id = ? ORDER BY id ASC",
                 (agent_id,),
             )
         return [self._row_to_message(r) for r in rows]
@@ -170,6 +178,58 @@ class SQLiteHistoryStore(IHistoryStore):
         async with self._conn() as conn:
             await self._ensure_schema(conn)
             await conn.execute("DELETE FROM history WHERE agent_id = ?", (agent_id,))
+            await conn.execute("DELETE FROM agent_state WHERE agent_id = ?", (agent_id,))
+            await conn.commit()
+
+    async def load_state(self, agent_id: str) -> ConversationState:
+        async with self._conn() as conn:
+            await self._ensure_schema(conn)
+            async with conn.execute(
+                "SELECT state_json FROM agent_state WHERE agent_id = ?",
+                (agent_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+
+        if row is None:
+            return ConversationState()
+
+        try:
+            data = json.loads(row["state_json"])
+        except (json.JSONDecodeError, TypeError) as exc:
+            logger.warning(
+                "state_json corrupto para agente '%s' (%s) — se ignora y se parte de estado vacío",
+                agent_id,
+                exc,
+            )
+            return ConversationState()
+
+        sticky_skills = {
+            str(k): int(v)
+            for k, v in (data.get("sticky_skills") or {}).items()
+            if isinstance(v, int) and v > 0
+        }
+        sticky_tools = {
+            str(k): int(v)
+            for k, v in (data.get("sticky_tools") or {}).items()
+            if isinstance(v, int) and v > 0
+        }
+        return ConversationState(sticky_skills=sticky_skills, sticky_tools=sticky_tools)
+
+    async def save_state(self, agent_id: str, state: ConversationState) -> None:
+        payload = json.dumps(
+            {
+                "sticky_skills": state.sticky_skills,
+                "sticky_tools": state.sticky_tools,
+            },
+            ensure_ascii=False,
+        )
+        async with self._conn() as conn:
+            await self._ensure_schema(conn)
+            await conn.execute(
+                "INSERT INTO agent_state (agent_id, state_json) VALUES (?, ?) "
+                "ON CONFLICT(agent_id) DO UPDATE SET state_json = excluded.state_json",
+                (agent_id, payload),
+            )
             await conn.commit()
 
     def _row_to_message(self, row: aiosqlite.Row) -> Message:

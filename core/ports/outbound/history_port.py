@@ -1,9 +1,9 @@
 from abc import ABC, abstractmethod
 from core.domain.entities.message import Message
+from core.domain.value_objects.conversation_state import ConversationState
 
 
 class IHistoryStore(ABC):
-
     @abstractmethod
     async def append(self, agent_id: str, message: Message) -> None: ...
 
@@ -53,5 +53,23 @@ class IHistoryStore(ABC):
 
     @abstractmethod
     async def clear(self, agent_id: str) -> None:
-        """Elimina todo el historial del agente. Usado por el slash `/clear`."""
+        """Elimina todo el historial del agente. Usado por el slash `/clear`.
+
+        Debe limpiar tanto los mensajes como el estado conversacional asociado
+        (sticky skills/tools), manteniendo ambos en sincronía.
+        """
+        ...
+
+    @abstractmethod
+    async def load_state(self, agent_id: str) -> ConversationState:
+        """Retorna el estado conversacional persistido del agente.
+
+        Si no existe estado previo (primer turno o tras ``clear``), devuelve un
+        ``ConversationState`` vacío. Nunca retorna ``None``.
+        """
+        ...
+
+    @abstractmethod
+    async def save_state(self, agent_id: str, state: ConversationState) -> None:
+        """Persiste el estado conversacional del agente (upsert)."""
         ...

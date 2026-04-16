@@ -51,6 +51,15 @@ class ChatTurnResponse(BaseModel):
     reply: str = Field(..., description="Respuesta final del asistente")
     agent_id: str = Field(..., description="ID del agente que respondió")
     session_id: str = Field(..., description="UUID de sesión (echo del request)")
+    intermediates: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Bloques de texto que el LLM emitió junto con tool_calls durante el "
+            "turno (narración tipo \"ok, voy a buscar esto...\"). En orden de "
+            "emisión. El cliente los muestra ANTES de ``reply`` para que el "
+            "usuario vea el progreso del turno."
+        ),
+    )
 
 
 class HistoryMessage(BaseModel):

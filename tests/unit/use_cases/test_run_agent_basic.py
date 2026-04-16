@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 from core.use_cases.run_agent import RunAgentUseCase, InspectResult
 from core.domain.entities.message import Message, Role
 from core.domain.entities.skill import Skill
+from core.domain.value_objects.llm_response import LLMResponse
 from infrastructure.config import (
     AgentConfig,
     LLMConfig,
@@ -32,13 +33,13 @@ def use_case(agent_config, mock_llm, mock_memory, mock_embedder, mock_skills, mo
 
 
 async def test_execute_returns_llm_response(use_case, mock_llm):
-    mock_llm.complete.return_value = "Hola, soy Iñaki"
+    mock_llm.complete.return_value = LLMResponse.of_text("Hola, soy Iñaki")
     response = await use_case.execute("Hola")
     assert response == "Hola, soy Iñaki"
 
 
 async def test_execute_persists_user_and_assistant_messages(use_case, mock_llm, mock_history):
-    mock_llm.complete.return_value = "Respuesta"
+    mock_llm.complete.return_value = LLMResponse.of_text("Respuesta")
     await use_case.execute("Hola")
 
     calls = mock_history.append.call_args_list
@@ -272,7 +273,7 @@ async def test_extra_system_sections_threaded_to_llm(
     """
     mock_skills.list_all.return_value = []
     mock_tools.get_schemas.return_value = []
-    mock_llm.complete.return_value = "ok"
+    mock_llm.complete.return_value = LLMResponse.of_text("ok")
 
     uc = RunAgentUseCase(
         llm=mock_llm, memory=mock_memory, embedder=mock_embedder,
@@ -302,7 +303,7 @@ async def test_extra_system_sections_empty_by_default(
     """
     mock_skills.list_all.return_value = []
     mock_tools.get_schemas.return_value = []
-    mock_llm.complete.return_value = "ok"
+    mock_llm.complete.return_value = LLMResponse.of_text("ok")
 
     uc = RunAgentUseCase(
         llm=mock_llm, memory=mock_memory, embedder=mock_embedder,
@@ -327,7 +328,7 @@ async def test_set_extra_system_sections_replaces_existing(
     """
     mock_skills.list_all.return_value = []
     mock_tools.get_schemas.return_value = []
-    mock_llm.complete.return_value = "ok"
+    mock_llm.complete.return_value = LLMResponse.of_text("ok")
 
     uc = RunAgentUseCase(
         llm=mock_llm, memory=mock_memory, embedder=mock_embedder,
@@ -362,7 +363,7 @@ async def test_execute_tools_override_forces_schemas_and_bypasses_rag(
     mock_skills.list_all.return_value = []
     # Muchas tool schemas "reales" — normalmente activaría RAG
     mock_tools.get_schemas.return_value = [{"name": f"tool_{i}"} for i in range(20)]
-    mock_llm.complete.return_value = "ok"
+    mock_llm.complete.return_value = LLMResponse.of_text("ok")
 
     uc = _make_use_case(
         {"tools": ToolsConfig(rag_min_tools=5)},
@@ -390,7 +391,7 @@ async def test_execute_no_override_uses_full_schemas_when_rag_inactive(
     mock_skills.list_all.return_value = []
     all_schemas = [{"name": "tool_a"}, {"name": "tool_b"}]
     mock_tools.get_schemas.return_value = all_schemas
-    mock_llm.complete.return_value = "ok"
+    mock_llm.complete.return_value = LLMResponse.of_text("ok")
 
     uc = _make_use_case(
         {"tools": ToolsConfig(rag_min_tools=10)},  # umbral alto → RAG inactivo
@@ -413,7 +414,7 @@ async def test_execute_tools_override_empty_list_disables_all_tools(
     """
     mock_skills.list_all.return_value = []
     mock_tools.get_schemas.return_value = [{"name": "tool_a"}]
-    mock_llm.complete.return_value = "ok"
+    mock_llm.complete.return_value = LLMResponse.of_text("ok")
 
     uc = _make_use_case(
         {"tools": ToolsConfig(rag_min_tools=0)},  # RAG activo si override fuera None

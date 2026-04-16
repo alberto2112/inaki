@@ -27,6 +27,7 @@ from core.domain.value_objects.agent_context import AgentContext
 from core.domain.value_objects.agent_info import AgentInfoDTO
 from core.ports.outbound.embedding_port import IEmbeddingProvider
 from core.ports.outbound.history_port import IHistoryStore
+from core.ports.outbound.intermediate_sink_port import IIntermediateSink
 from core.ports.outbound.llm_port import ILLMProvider
 from core.ports.outbound.memory_port import IMemoryRepository
 from core.ports.outbound.skill_port import ISkillRepository
@@ -133,6 +134,7 @@ class RunAgentUseCase:
         self,
         user_input: str,
         tools_override: list[dict] | None = None,
+        intermediate_sink: IIntermediateSink | None = None,
     ) -> str:
         """Ejecuta un turno del agente.
 
@@ -142,6 +144,11 @@ class RunAgentUseCase:
                 y bypasea la selección RAG de tools. La selección RAG de skills
                 sigue activa. Usado por triggers ``agent_send`` del scheduler
                 para restringir qué tools puede usar el agente en ese turno.
+            intermediate_sink: si se provee, recibe los bloques de texto
+                emitidos por el LLM junto con tool_calls (mensajes intermedios
+                tipo "ok, voy a buscar..."). El mensaje FINAL del turno NO pasa
+                por el sink — se retorna por el return. Default ``None`` → no
+                se emiten intermedios (backwards-compat).
         """
         agent_id = self._cfg.id
 
@@ -191,6 +198,7 @@ class RunAgentUseCase:
                 max_iterations=self._cfg.tools.tool_call_max_iterations,
                 circuit_breaker_threshold=self._cfg.tools.circuit_breaker_threshold,
                 agent_id=self._cfg.id,
+                intermediate_sink=intermediate_sink,
             )
         except ToolLoopMaxIterationsError as e:
             response = e.last_response

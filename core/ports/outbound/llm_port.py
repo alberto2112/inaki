@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from core.domain.entities.message import Message
+from core.domain.value_objects.llm_response import LLMResponse
 
 
 class ILLMProvider(ABC):
@@ -11,7 +12,7 @@ class ILLMProvider(ABC):
         messages: list[Message],
         system_prompt: str,
         tools: list[dict] | None = None,
-    ) -> str: ...
+    ) -> LLMResponse: ...
 
     @abstractmethod
     async def stream(

@@ -9,6 +9,7 @@ import pytest
 from freezegun import freeze_time
 
 from core.domain.entities.task import (
+    AgentSendPayload,
     ChannelSendPayload,
     ConsolidateMemoryPayload,
     ScheduledTask,
@@ -306,3 +307,67 @@ async def test_dispatch_trigger_consolidate_devuelve_metadata_none(
 
     assert output == "ok"
     assert metadata is None
+
+
+# ---------------------------------------------------------------------------
+# AgentSendPayload — sink intermedio via output_channel
+# ---------------------------------------------------------------------------
+
+
+def _make_agent_task(output_channel: str | None) -> ScheduledTask:
+    return ScheduledTask(
+        id=400,
+        name="agent-test",
+        task_kind=TaskKind.ONESHOT,
+        trigger_type=TriggerType.AGENT_SEND,
+        trigger_payload=AgentSendPayload(
+            agent_id="dev",
+            task="haceme un resumen",
+            tools_override=None,
+            output_channel=output_channel,
+        ),
+        schedule="2025-12-01T10:00:00+00:00",
+        status=TaskStatus.PENDING,
+    )
+
+
+async def test_agent_send_con_output_channel_pasa_sink_construido_al_dispatcher(
+    service: SchedulerService,
+) -> None:
+    """Con output_channel: ChannelRouter.build_intermediate_sink se invoca y el
+    sink resultante llega al llm_dispatcher como ``intermediate_sink=``."""
+    task = _make_agent_task(output_channel="telegram:7")
+    sentinel_sink = object()
+    service._dispatch.channel_sender.build_intermediate_sink = MagicMock(
+        return_value=sentinel_sink
+    )
+    service._dispatch.channel_sender.send_message = AsyncMock(
+        return_value=DispatchResult(
+            original_target="telegram:7", resolved_target="telegram:7"
+        )
+    )
+    service._dispatch.llm_dispatcher.dispatch = AsyncMock(return_value="reply final")
+
+    await service._dispatch_trigger(task)
+
+    service._dispatch.channel_sender.build_intermediate_sink.assert_called_once_with(
+        "telegram:7"
+    )
+    service._dispatch.llm_dispatcher.dispatch.assert_awaited_once()
+    call_kwargs = service._dispatch.llm_dispatcher.dispatch.await_args.kwargs
+    assert call_kwargs["intermediate_sink"] is sentinel_sink
+
+
+async def test_agent_send_sin_output_channel_no_construye_sink(
+    service: SchedulerService,
+) -> None:
+    """Sin output_channel: no hay sink — el dispatcher recibe None."""
+    task = _make_agent_task(output_channel=None)
+    service._dispatch.channel_sender.build_intermediate_sink = MagicMock()
+    service._dispatch.llm_dispatcher.dispatch = AsyncMock(return_value="reply")
+
+    await service._dispatch_trigger(task)
+
+    service._dispatch.channel_sender.build_intermediate_sink.assert_not_called()
+    call_kwargs = service._dispatch.llm_dispatcher.dispatch.await_args.kwargs
+    assert call_kwargs["intermediate_sink"] is None

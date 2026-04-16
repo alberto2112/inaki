@@ -23,6 +23,7 @@ from adapters.inbound.rest.admin.schemas import (
     HistoryMessage,
     HistoryResponse,
 )
+from adapters.outbound.intermediate_sinks.buffering import BufferingIntermediateSink
 from core.domain.value_objects.channel_context import ChannelContext
 
 logger = logging.getLogger(__name__)
@@ -75,10 +76,13 @@ async def chat_turn(body: ChatTurnRequest, request: Request) -> ChatTurnResponse
 
     agent_container = _resolver_agente(request, body.agent_id)
     ctx = ChannelContext(channel_type="cli", user_id=body.session_id)
+    sink = BufferingIntermediateSink()
 
     try:
         agent_container.set_channel_context(ctx)
-        reply = await agent_container.run_agent.execute(body.message)
+        reply = await agent_container.run_agent.execute(
+            body.message, intermediate_sink=sink
+        )
     except Exception as exc:
         duration_ms = int((time.monotonic() - t0) * 1000)
         logger.error(
@@ -111,6 +115,7 @@ async def chat_turn(body: ChatTurnRequest, request: Request) -> ChatTurnResponse
         reply=reply,
         agent_id=body.agent_id,
         session_id=body.session_id,
+        intermediates=sink.messages,
     )
 
 

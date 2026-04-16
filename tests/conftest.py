@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from core.domain.entities.message import Message, Role
+from core.domain.value_objects.llm_response import LLMResponse
 from infrastructure.config import (
     AgentConfig,
     LLMConfig,
@@ -30,7 +31,7 @@ def agent_config() -> AgentConfig:
 @pytest.fixture
 def mock_llm() -> AsyncMock:
     llm = AsyncMock()
-    llm.complete.return_value = "Respuesta de test"
+    llm.complete.return_value = LLMResponse.of_text("Respuesta de test")
     return llm
 
 

@@ -11,6 +11,7 @@ import httpx
 from adapters.outbound.providers.base import BaseLLMProvider
 from core.domain.entities.message import Message, Role
 from core.domain.errors import LLMError
+from core.domain.value_objects.llm_response import LLMResponse
 from infrastructure.config import LLMConfig
 
 PROVIDER_NAME = "openai"
@@ -42,7 +43,7 @@ class OpenAIProvider(BaseLLMProvider):
         messages: list[Message],
         system_prompt: str,
         tools: list[dict] | None = None,
-    ) -> str:
+    ) -> LLMResponse:
         payload: dict = {
             "model": self._cfg.model,
             "messages": self._build_messages(messages, system_prompt),
@@ -67,11 +68,14 @@ class OpenAIProvider(BaseLLMProvider):
 
         choice = data["choices"][0]
         message = choice["message"]
+        content = message.get("content") or ""
+        tool_calls = message.get("tool_calls") or []
 
-        if message.get("tool_calls"):
-            return json.dumps({"tool_calls": message["tool_calls"]})
-
-        return message.get("content", "")
+        return LLMResponse(
+            text_blocks=[content] if content else [],
+            tool_calls=tool_calls,
+            raw=json.dumps(message, ensure_ascii=False),
+        )
 
     async def stream(
         self,

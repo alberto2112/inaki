@@ -11,6 +11,7 @@ import httpx
 from adapters.outbound.providers.base import BaseLLMProvider
 from core.domain.entities.message import Message, Role
 from core.domain.errors import LLMError
+from core.domain.value_objects.llm_response import LLMResponse
 from infrastructure.config import LLMConfig
 
 PROVIDER_NAME = "ollama"
@@ -36,7 +37,11 @@ class OllamaProvider(BaseLLMProvider):
         messages: list[Message],
         system_prompt: str,
         tools: list[dict] | None = None,
-    ) -> str:
+    ) -> LLMResponse:
+        # NOTA: el adapter actual de Ollama NO soporta tool calling — el parámetro
+        # ``tools`` se ignora deliberadamente. Cuando se quiera agregar tool
+        # calling via prompt-parsing, extender este método. Por ahora, respuesta
+        # siempre text-only → degrada grácilmente en el tool loop.
         payload = {
             "model": self._cfg.model,
             "messages": self._build_messages(messages, system_prompt),
@@ -57,7 +62,7 @@ class OllamaProvider(BaseLLMProvider):
         except httpx.HTTPError as exc:
             raise LLMError(f"Ollama HTTP error: {exc}") from exc
 
-        return data["message"]["content"]
+        return LLMResponse.of_text(data["message"]["content"])
 
     async def stream(
         self,

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from core.domain.value_objects.chat_turn_result import ChatTurnResult
+
 
 class IDaemonClient(Protocol):
     """Interfaz para comunicarse con el daemon de Iñaki vía HTTP."""
@@ -24,8 +26,11 @@ class IDaemonClient(Protocol):
         """Ejecuta consolidación de memoria en el daemon."""
         ...
 
-    def chat_turn(self, agent_id: str, session_id: str, mensaje: str) -> str:
-        """Envía un turno de chat al daemon y retorna la respuesta del agente.
+    def chat_turn(self, agent_id: str, session_id: str, mensaje: str) -> ChatTurnResult:
+        """Envía un turno de chat al daemon y retorna el resultado completo.
+
+        Incluye la respuesta final y los bloques intermedios que el LLM
+        emitió durante el turno (narración junto con tool_calls).
 
         Raises:
             DaemonNotRunningError: si el daemon no es alcanzable.

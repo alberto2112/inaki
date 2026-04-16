@@ -18,6 +18,7 @@ from core.domain.errors import (
     DaemonTimeoutError,
     UnknownAgentError,
 )
+from core.domain.value_objects.chat_turn_result import ChatTurnResult
 
 logger = logging.getLogger(__name__)
 
@@ -95,8 +96,12 @@ class DaemonClient:
     # chat_turn — turno de conversación con el agente (Design §B2)
     # ------------------------------------------------------------------
 
-    def chat_turn(self, agent_id: str, session_id: str, mensaje: str) -> str:
-        """Envía un turno de chat al daemon y retorna la respuesta del agente.
+    def chat_turn(self, agent_id: str, session_id: str, mensaje: str) -> ChatTurnResult:
+        """Envía un turno de chat al daemon y retorna el resultado completo.
+
+        Incluye la respuesta final y los bloques intermedios emitidos durante
+        el turno (texto que acompaña tool_calls). El campo ``intermediates``
+        puede estar ausente en daemons antiguos — lo tratamos como lista vacía.
 
         Raises:
             DaemonNotRunningError: si el daemon no es alcanzable.
@@ -112,7 +117,10 @@ class DaemonClient:
             error_map=self._CHAT_ERROR_MAP,
             agent_id=agent_id,
         )
-        return data["reply"]
+        return ChatTurnResult(
+            reply=data["reply"],
+            intermediates=list(data.get("intermediates") or []),
+        )
 
     # ------------------------------------------------------------------
     # chat_history — historial de mensajes del agente (Design §B2)

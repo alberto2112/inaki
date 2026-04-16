@@ -223,8 +223,21 @@ class SchedulerService:
                 "resolved_target": dr.resolved_target,
             }
         elif isinstance(payload, AgentSendPayload):
+            # Cuando hay output_channel, armamos un sink que reenvía los
+            # bloques intermedios del LLM (narración junto con tool_calls)
+            # al mismo canal en VIVO — antes de ejecutar cada tool. Así el
+            # destinatario ve el progreso del agente tal y como sucede,
+            # no solo el reply final.
+            live_sink = None
+            if payload.output_channel:
+                live_sink = self._dispatch.channel_sender.build_intermediate_sink(
+                    payload.output_channel
+                )
             result = await self._dispatch.llm_dispatcher.dispatch(
-                payload.agent_id, payload.task, payload.tools_override
+                payload.agent_id,
+                payload.task,
+                payload.tools_override,
+                intermediate_sink=live_sink,
             )
             if payload.output_channel:
                 dr = await self._dispatch.channel_sender.send_message(

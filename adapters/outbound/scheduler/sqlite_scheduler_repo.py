@@ -92,7 +92,10 @@ class SQLiteSchedulerRepo:
 
     async def save_task(self, task: ScheduledTask) -> ScheduledTask:
         payload_json = _serialize_payload(task.trigger_payload)
-        next_run_ts: float | None = task.next_run.timestamp() if task.next_run else None
+        resolved_next_run = self._resolve_next_run(task)
+        next_run_ts: float | None = (
+            resolved_next_run.timestamp() if resolved_next_run else None
+        )
 
         async with self._conn() as conn:
             await self._ensure_schema_conn(conn)
@@ -317,19 +320,15 @@ class SQLiteSchedulerRepo:
         """
         Insert builtin task only if it doesn't already exist (INSERT OR IGNORE).
 
-        If the task is RECURRENT and `next_run` is None, compute it from the
-        cron schedule so the task is actually due at some point. Otherwise it
-        would sit in the DB with `next_run = NULL` and never be picked up by
-        `list_due_pending` (NULL fails the `next_run <= ?` predicate).
+        La invariante "RECURRENT/ONESHOT enabled+pending nunca se persiste con
+        next_run=NULL" se centraliza en `_resolve_next_run` y se aplica también
+        en `save_task`.
         """
         payload_json = _serialize_payload(task.trigger_payload)
-        next_run = task.next_run
-        if next_run is None and task.task_kind == TaskKind.RECURRENT:
-            now = datetime.now(timezone.utc)
-            next_run = datetime.fromtimestamp(
-                croniter(task.schedule, now).get_next(), tz=timezone.utc
-            )
-        next_run_ts: float | None = next_run.timestamp() if next_run else None
+        resolved_next_run = self._resolve_next_run(task)
+        next_run_ts: float | None = (
+            resolved_next_run.timestamp() if resolved_next_run else None
+        )
         async with self._conn() as conn:
             await self._ensure_schema_conn(conn)
             await conn.execute(
@@ -364,6 +363,35 @@ class SQLiteSchedulerRepo:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _resolve_next_run(self, task: ScheduledTask) -> datetime | None:
+        """
+        Resuelve `next_run` para una tarea que puede venir con None.
+
+        - Si `task.next_run` ya está seteado, lo devuelve sin tocar.
+        - RECURRENT sin next_run → se computa la próxima ocurrencia con croniter
+          desde `task.schedule`.
+        - ONESHOT sin next_run → se parsea `task.schedule` como ISO 8601
+          (el contrato upstream garantiza que ya vino validado).
+
+        Invariante que sostiene esto: una tarea enabled+pending NUNCA debe
+        persistirse con next_run=NULL. El loop del scheduler filtra por
+        `WHERE next_run <= ?` y en SQLite `NULL <= x` evalúa a NULL (falso),
+        así que una fila con NULL queda invisible para siempre.
+        """
+        if task.next_run is not None:
+            return task.next_run
+        if task.task_kind == TaskKind.RECURRENT:
+            now = datetime.now(timezone.utc)
+            return datetime.fromtimestamp(
+                croniter(task.schedule, now).get_next(), tz=timezone.utc
+            )
+        if task.task_kind == TaskKind.ONESHOT:
+            try:
+                return datetime.fromisoformat(task.schedule)
+            except ValueError:
+                return None
+        return None
 
     async def _ensure_schema_conn(self, conn: aiosqlite.Connection) -> None:
         await conn.execute(_CREATE_TASKS_TABLE)

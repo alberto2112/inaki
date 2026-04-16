@@ -105,6 +105,82 @@ async def test_seed_builtin_computes_next_run_for_recurrent(repo: SQLiteSchedule
 
 
 # ---------------------------------------------------------------------------
+# save_task — resuelve next_run cuando llega None
+# ---------------------------------------------------------------------------
+
+async def test_save_task_computes_next_run_for_recurrent(repo: SQLiteSchedulerRepo) -> None:
+    """
+    Regresión: una tarea RECURRENT creada por el LLM tool (path save_task)
+    llegaba con next_run=None y se persistía como NULL, quedando invisible
+    para list_due_pending. save_task debe computar next_run vía croniter.
+    """
+    task = ScheduledTask(
+        id=0,
+        name="recurring via save_task",
+        task_kind=TaskKind.RECURRENT,
+        trigger_type=TriggerType.CONSOLIDATE_MEMORY,
+        trigger_payload=ConsolidateMemoryPayload(),
+        schedule="0 3 * * *",
+    )
+    assert task.next_run is None  # precondición: el caller no lo seteó
+
+    saved = await repo.save_task(task)
+
+    roundtrip = await repo.get_task(saved.id)
+    assert roundtrip is not None
+    assert roundtrip.next_run is not None
+    now = datetime.now(timezone.utc)
+    assert roundtrip.next_run > now
+
+
+async def test_save_task_computes_next_run_for_oneshot_from_iso(repo: SQLiteSchedulerRepo) -> None:
+    """
+    Simétrico al anterior: ONESHOT sin next_run también se resuelve, parseando
+    `schedule` como ISO 8601. Evita la regresión #771 a nivel repo.
+    """
+    iso_schedule = "2099-01-01T03:00:00+00:00"
+    task = ScheduledTask(
+        id=0,
+        name="oneshot via save_task",
+        task_kind=TaskKind.ONESHOT,
+        trigger_type=TriggerType.CONSOLIDATE_MEMORY,
+        trigger_payload=ConsolidateMemoryPayload(),
+        schedule=iso_schedule,
+    )
+    assert task.next_run is None
+
+    saved = await repo.save_task(task)
+
+    roundtrip = await repo.get_task(saved.id)
+    assert roundtrip is not None
+    assert roundtrip.next_run == datetime.fromisoformat(iso_schedule)
+
+
+async def test_save_task_preserves_explicit_next_run(repo: SQLiteSchedulerRepo) -> None:
+    """
+    Si el caller ya trae un `next_run` seteado, save_task NO debe recomputarlo.
+    Esto preserva el flujo normal (p. ej. rescheduling post-ejecución) donde
+    el valor ya viene decidido río arriba.
+    """
+    explicit = datetime(2099, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+    task = ScheduledTask(
+        id=0,
+        name="explicit next_run",
+        task_kind=TaskKind.RECURRENT,
+        trigger_type=TriggerType.CONSOLIDATE_MEMORY,
+        trigger_payload=ConsolidateMemoryPayload(),
+        schedule="0 3 * * *",
+        next_run=explicit,
+    )
+
+    saved = await repo.save_task(task)
+
+    roundtrip = await repo.get_task(saved.id)
+    assert roundtrip is not None
+    assert roundtrip.next_run == explicit
+
+
+# ---------------------------------------------------------------------------
 # get_next_due
 # ---------------------------------------------------------------------------
 

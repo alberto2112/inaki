@@ -31,7 +31,7 @@ def _make_task(
         name=name,
         task_kind=TaskKind.ONESHOT,
         trigger_type=TriggerType.AGENT_SEND,
-        trigger_payload=AgentSendPayload(agent_id="agent-x"),
+        trigger_payload=AgentSendPayload(agent_id="agent-x", task="noop"),
         schedule="2026-06-01T10:00:00+00:00",
         created_by=created_by,
         status=status,
@@ -88,9 +88,9 @@ async def test_count_active_by_agent_counts_only_matching_agent(
     repo: SQLiteSchedulerRepo,
 ) -> None:
     """Rows for agent-a must not be counted when querying for agent-b."""
-    task_a1 = await repo.save_task(_make_task("a1", created_by="agent-a"))
-    task_a2 = await repo.save_task(_make_task("a2", created_by="agent-a"))
-    task_b1 = await repo.save_task(_make_task("b1", created_by="agent-b"))
+    await repo.save_task(_make_task("a1", created_by="agent-a"))
+    await repo.save_task(_make_task("a2", created_by="agent-a"))
+    await repo.save_task(_make_task("b1", created_by="agent-b"))
 
     count_a = await repo.count_active_by_agent("agent-a")
     count_b = await repo.count_active_by_agent("agent-b")

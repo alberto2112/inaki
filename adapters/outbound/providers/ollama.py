@@ -26,6 +26,27 @@ class OllamaProvider(BaseLLMProvider):
         self._cfg = cfg
         self._base_url = cfg.base_url or "http://localhost:11434"
 
+    def _build_messages(self, messages: list[Message], system_prompt: str) -> list[dict]:
+        """Construye el payload de mensajes para Ollama.
+
+        Hereda la lógica del base (que ya soporta ASSISTANT+tool_calls y rol TOOL
+        en formato OpenAI) y luego DESNORMALIZA ``tool_calls[].function.arguments``
+        de string JSON a dict, porque Ollama nativo espera dict — no string.
+        Sin esta conversión, el parser de Ollama tropieza con las llaves embebidas
+        en el string y devuelve 400 ("Value looks like object, but can't find closing '}'").
+        """
+        result = super()._build_messages(messages, system_prompt)
+        for msg in result:
+            for tc in msg.get("tool_calls") or []:
+                args = tc.get("function", {}).get("arguments")
+                if isinstance(args, str):
+                    try:
+                        tc["function"]["arguments"] = json.loads(args)
+                    except json.JSONDecodeError:
+                        # Si no parsea, lo dejamos: Ollama devolverá un error claro.
+                        pass
+        return result
+
     @staticmethod
     def _normalize_tool_calls(raw_tool_calls: list[dict]) -> list[dict]:
         """Normaliza tool_calls de Ollama al formato OpenAI-compatible.
@@ -76,6 +97,11 @@ class OllamaProvider(BaseLLMProvider):
                 )
                 resp.raise_for_status()
                 data = resp.json()
+        except httpx.HTTPStatusError as exc:
+            body = exc.response.text[:500]
+            raise LLMError(
+                f"Ollama HTTP {exc.response.status_code}: {body}"
+            ) from exc
         except httpx.HTTPError as exc:
             raise LLMError(f"Ollama HTTP error: {exc}") from exc
 

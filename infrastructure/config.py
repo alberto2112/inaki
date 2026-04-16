@@ -155,7 +155,7 @@ class SkillsConfig(BaseModel):
     rag_min_skills: int = 10
     rag_top_k: int = 3
     rag_min_score: float = 0.0
-    sticky_ttl: int = 0  # 0 = disabled; N > 0 → una skill seleccionada sobrevive N turnos
+    sticky_ttl: int = 3  # Turnos que una skill seleccionada sobrevive; 0 = disabled
 
 
 class ToolsConfig(BaseModel):
@@ -164,7 +164,7 @@ class ToolsConfig(BaseModel):
     rag_min_score: float = 0.0
     tool_call_max_iterations: int = 5
     circuit_breaker_threshold: int = 2
-    sticky_ttl: int = 0  # 0 = disabled; N > 0 → una tool seleccionada sobrevive N turnos
+    sticky_ttl: int = 3  # Turnos que una tool seleccionada sobrevive; 0 = disabled
 
 
 ContainmentMode = Literal["strict", "warn", "off"]

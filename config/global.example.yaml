@@ -187,9 +187,9 @@ tools:
   rag_min_score: 0.0            # Score mínimo de cosine similarity (0.0-1.0)
                                 # para incluir una tool. 0.0 = sin filtro.
                                 # Recomendado: 0.3-0.5 para filtrar ruido.
-  sticky_ttl: 0                 # Turnos que una tool seleccionada por RAG sigue
+  sticky_ttl: 3                 # Turnos que una tool seleccionada por RAG sigue
                                 # disponible aunque el RAG no la re-seleccione.
-                                # 0 = feature deshabilitada (comportamiento previo).
+                                # 0 = feature deshabilitada.
                                 # N > 0 = la tool sobrevive N turnos; si el RAG la
                                 # vuelve a elegir, el TTL se refresca al máximo.
                                 # Útil para follow-ups cortos ("y del siguiente?",
@@ -209,15 +209,14 @@ skills:
   rag_min_score: 0.0            # Score mínimo de cosine similarity (0.0-1.0)
                                 # para incluir una skill. 0.0 = sin filtro.
                                 # Recomendado: 0.3-0.5 para filtrar ruido.
-  sticky_ttl: 0                 # Turnos que una skill seleccionada por RAG sigue
+  sticky_ttl: 3                 # Turnos que una skill seleccionada por RAG sigue
                                 # inyectada en el system prompt aunque el RAG no
-                                # la re-seleccione. 0 = feature deshabilitada
-                                # (comportamiento previo). N > 0 = la skill sobrevive
-                                # N turnos; si el RAG la vuelve a elegir, el TTL se
-                                # refresca al máximo. Útil para follow-ups cortos
-                                # ("y del siguiente?", "sí") donde el embedding del
-                                # último user_input no tiene señal suficiente.
-                                # Recomendado: 3-5.
+                                # la re-seleccione. 0 = feature deshabilitada.
+                                # N > 0 = la skill sobrevive N turnos; si el RAG
+                                # la vuelve a elegir, el TTL se refresca al máximo.
+                                # Útil para follow-ups cortos ("y del siguiente?",
+                                # "sí") donde el embedding del último user_input
+                                # no tiene señal suficiente. Recomendado: 3-5.
 
 
 # -----------------------------------------------------------------------------

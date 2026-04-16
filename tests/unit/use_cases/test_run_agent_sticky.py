@@ -69,13 +69,16 @@ async def test_sticky_disabled_does_not_save_state_with_rag_inactive(
     mock_history,
     mock_tools,
 ):
-    """Con RAG inactivo y sticky_ttl=0 (default), save_state NO debe llamarse."""
+    """Con RAG inactivo y sticky_ttl=0 (deshabilitado), save_state NO debe llamarse."""
     mock_skills.list_all.return_value = []
     mock_tools.get_schemas.return_value = []
     mock_llm.complete.return_value = LLMResponse.of_text("ok")
 
     uc = _make_use_case(
-        {"skills": SkillsConfig(rag_min_skills=10), "tools": ToolsConfig(rag_min_tools=10)},
+        {
+            "skills": SkillsConfig(rag_min_skills=10, sticky_ttl=0),
+            "tools": ToolsConfig(rag_min_tools=10, sticky_ttl=0),
+        },
         mock_llm,
         mock_memory,
         mock_embedder,

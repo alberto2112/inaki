@@ -6,6 +6,7 @@ import pytest
 
 from adapters.outbound.history.sqlite_history_store import SQLiteHistoryStore
 from core.domain.entities.message import Message, Role
+from core.domain.value_objects.conversation_state import ConversationState
 from infrastructure.config import ChatHistoryConfig
 
 
@@ -146,6 +147,7 @@ async def test_trim_isolated_per_agent(history_store):
 # infused flag — load_uninfused + mark_infused
 # ---------------------------------------------------------------------------
 
+
 async def test_new_messages_are_uninfused_by_default(history_store):
     for i in range(3):
         await history_store.append("agent1", Message(role=Role.USER, content=f"msg {i}"))
@@ -210,6 +212,7 @@ async def test_mark_infused_isolated_per_agent(history_store):
 # ---------------------------------------------------------------------------
 # Migración: DB legacy sin columna `infused`
 # ---------------------------------------------------------------------------
+
 
 async def test_migration_adds_infused_column_and_marks_existing_rows(tmp_path):
     """
@@ -322,3 +325,132 @@ async def test_multi_agent_isolation(history_store):
 
     msgs_a_after = await history_store.load("agent_a")
     assert len(msgs_a_after) == 1  # agent_a unaffected
+
+
+# ---------------------------------------------------------------------------
+# ConversationState — load_state / save_state
+# ---------------------------------------------------------------------------
+
+
+async def test_load_state_without_prior_returns_empty(history_store):
+    state = await history_store.load_state("agent1")
+    assert isinstance(state, ConversationState)
+    assert state.sticky_skills == {}
+    assert state.sticky_tools == {}
+
+
+async def test_save_and_load_state_roundtrip(history_store):
+    original = ConversationState(
+        sticky_skills={"agenda": 3, "clima": 1},
+        sticky_tools={"list_events": 2},
+    )
+    await history_store.save_state("agent1", original)
+
+    loaded = await history_store.load_state("agent1")
+    assert loaded.sticky_skills == {"agenda": 3, "clima": 1}
+    assert loaded.sticky_tools == {"list_events": 2}
+
+
+async def test_save_state_upserts(history_store):
+    """Guardar dos veces reemplaza, no duplica."""
+    await history_store.save_state("agent1", ConversationState(sticky_skills={"a": 5}))
+    await history_store.save_state("agent1", ConversationState(sticky_skills={"b": 2}))
+
+    loaded = await history_store.load_state("agent1")
+    assert loaded.sticky_skills == {"b": 2}
+    assert loaded.sticky_tools == {}
+
+
+async def test_state_isolated_per_agent(history_store):
+    await history_store.save_state("agent_a", ConversationState(sticky_skills={"x": 3}))
+    await history_store.save_state("agent_b", ConversationState(sticky_tools={"y": 1}))
+
+    state_a = await history_store.load_state("agent_a")
+    state_b = await history_store.load_state("agent_b")
+
+    assert state_a.sticky_skills == {"x": 3}
+    assert state_a.sticky_tools == {}
+    assert state_b.sticky_skills == {}
+    assert state_b.sticky_tools == {"y": 1}
+
+
+async def test_save_empty_state_is_persisted(history_store):
+    """Guardar estado vacío debe persistir explícitamente (no es un no-op)."""
+    await history_store.save_state("agent1", ConversationState(sticky_skills={"a": 2}))
+    await history_store.save_state("agent1", ConversationState())
+
+    loaded = await history_store.load_state("agent1")
+    assert loaded.sticky_skills == {}
+    assert loaded.sticky_tools == {}
+
+
+async def test_clear_also_wipes_state(history_store):
+    """/clear debe borrar tanto mensajes como estado conversacional."""
+    await history_store.append("agent1", Message(role=Role.USER, content="hola"))
+    await history_store.save_state("agent1", ConversationState(sticky_skills={"a": 3}))
+
+    await history_store.clear("agent1")
+
+    assert await history_store.load("agent1") == []
+    loaded_state = await history_store.load_state("agent1")
+    assert loaded_state.sticky_skills == {}
+    assert loaded_state.sticky_tools == {}
+
+
+async def test_clear_one_agent_preserves_other_state(history_store):
+    await history_store.save_state("agent_a", ConversationState(sticky_skills={"x": 2}))
+    await history_store.save_state("agent_b", ConversationState(sticky_skills={"y": 2}))
+
+    await history_store.clear("agent_a")
+
+    state_a = await history_store.load_state("agent_a")
+    state_b = await history_store.load_state("agent_b")
+    assert state_a.sticky_skills == {}
+    assert state_b.sticky_skills == {"y": 2}
+
+
+async def test_load_state_filters_non_positive_ttls(history_store):
+    """
+    Defensivo: si un TTL corrupto (<=0 o no-int) llega al JSON, el loader lo descarta
+    en vez de propagarlo. Los valores válidos se conservan.
+    """
+    import json
+    import aiosqlite
+
+    async with aiosqlite.connect(history_store._db_path) as conn:
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS agent_state (agent_id TEXT PRIMARY KEY, state_json TEXT NOT NULL)"
+        )
+        payload = json.dumps(
+            {
+                "sticky_skills": {"valid": 2, "zero": 0, "negative": -1, "bad": "x"},
+                "sticky_tools": {},
+            }
+        )
+        await conn.execute(
+            "INSERT OR REPLACE INTO agent_state VALUES (?, ?)",
+            ("agent1", payload),
+        )
+        await conn.commit()
+
+    state = await history_store.load_state("agent1")
+    assert state.sticky_skills == {"valid": 2}
+
+
+async def test_load_state_with_corrupt_json_returns_empty(history_store):
+    """JSON inválido no debe crashear el load — retorna estado vacío y loguea."""
+    import aiosqlite
+
+    async with aiosqlite.connect(history_store._db_path) as conn:
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS agent_state (agent_id TEXT PRIMARY KEY, state_json TEXT NOT NULL)"
+        )
+        await conn.execute(
+            "INSERT OR REPLACE INTO agent_state VALUES (?, ?)",
+            ("agent1", "{not valid json"),
+        )
+        await conn.commit()
+
+    state = await history_store.load_state("agent1")
+    assert state.sticky_skills == {}
+    assert state.sticky_tools == {}

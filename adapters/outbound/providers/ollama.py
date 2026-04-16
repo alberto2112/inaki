@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from collections.abc import AsyncIterator
 
 import httpx
 
 from adapters.outbound.providers.base import BaseLLMProvider
-from core.domain.entities.message import Message, Role
+from core.domain.entities.message import Message
 from core.domain.errors import LLMError
 from core.domain.value_objects.llm_response import LLMResponse
 from infrastructure.config import LLMConfig
@@ -25,12 +26,29 @@ class OllamaProvider(BaseLLMProvider):
         self._cfg = cfg
         self._base_url = cfg.base_url or "http://localhost:11434"
 
-    def _build_messages(self, messages: list[Message], system_prompt: str) -> list[dict]:
-        result = [{"role": "system", "content": system_prompt}]
-        for m in messages:
-            if m.role in (Role.USER, Role.ASSISTANT):
-                result.append({"role": m.role.value, "content": m.content})
-        return result
+    @staticmethod
+    def _normalize_tool_calls(raw_tool_calls: list[dict]) -> list[dict]:
+        """Normaliza tool_calls de Ollama al formato OpenAI-compatible.
+
+        Ollama nativo no devuelve ``id`` y entrega ``arguments`` como dict.
+        El resto del sistema (tool loop, ``Message.tool_call_id``) asume formato
+        OpenAI: ``id`` presente y ``arguments`` como string JSON.
+        """
+        normalized: list[dict] = []
+        for tc in raw_tool_calls:
+            fn = tc.get("function", {})
+            args = fn.get("arguments", {})
+            if isinstance(args, dict):
+                args = json.dumps(args, ensure_ascii=False)
+            normalized.append({
+                "id": tc.get("id") or f"call_{uuid.uuid4().hex[:24]}",
+                "type": "function",
+                "function": {
+                    "name": fn.get("name", ""),
+                    "arguments": args,
+                },
+            })
+        return normalized
 
     async def complete(
         self,
@@ -38,11 +56,7 @@ class OllamaProvider(BaseLLMProvider):
         system_prompt: str,
         tools: list[dict] | None = None,
     ) -> LLMResponse:
-        # NOTA: el adapter actual de Ollama NO soporta tool calling — el parámetro
-        # ``tools`` se ignora deliberadamente. Cuando se quiera agregar tool
-        # calling via prompt-parsing, extender este método. Por ahora, respuesta
-        # siempre text-only → degrada grácilmente en el tool loop.
-        payload = {
+        payload: dict = {
             "model": self._cfg.model,
             "messages": self._build_messages(messages, system_prompt),
             "stream": False,
@@ -51,6 +65,9 @@ class OllamaProvider(BaseLLMProvider):
                 "num_predict": self._cfg.max_tokens,
             },
         }
+        if tools:
+            payload["tools"] = tools
+
         try:
             async with httpx.AsyncClient(timeout=120) as client:
                 resp = await client.post(
@@ -62,7 +79,15 @@ class OllamaProvider(BaseLLMProvider):
         except httpx.HTTPError as exc:
             raise LLMError(f"Ollama HTTP error: {exc}") from exc
 
-        return LLMResponse.of_text(data["message"]["content"])
+        message = data.get("message", {})
+        content = message.get("content") or ""
+        tool_calls = self._normalize_tool_calls(message.get("tool_calls") or [])
+
+        return LLMResponse(
+            text_blocks=[content] if content else [],
+            tool_calls=tool_calls,
+            raw=json.dumps(message, ensure_ascii=False),
+        )
 
     async def stream(
         self,

@@ -1,20 +1,54 @@
 #!/bin/bash
 # Instala y habilita el servicio systemd de Iñaki.
-# Ejecutar como root: sudo bash systemd/install.sh
+# Ejecutar con sudo desde el directorio raíz del repo:
+#   sudo bash systemd/install.sh
 
 set -e
 
-INAKI_DIR="/home/pi/inaki"
-SERVICE_FILE="$INAKI_DIR/systemd/inaki.service"
-SYSTEMD_DIR="/etc/systemd/system"
-
-if [ ! -f "$SERVICE_FILE" ]; then
-    echo "Error: $SERVICE_FILE no encontrado. Ejecutar desde el directorio raíz de Iñaki."
+if [ "$EUID" -ne 0 ]; then
+    echo "Error: este script debe ejecutarse con sudo."
     exit 1
 fi
 
-echo "Copiando inaki.service a $SYSTEMD_DIR..."
-cp "$SERVICE_FILE" "$SYSTEMD_DIR/inaki.service"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INAKI_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+SERVICE_TEMPLATE="$SCRIPT_DIR/inaki.service"
+SYSTEMD_DIR="/etc/systemd/system"
+SERVICE_TARGET="$SYSTEMD_DIR/inaki.service"
+
+# Usuario real (el que invocó sudo), no root
+RUN_USER="${SUDO_USER:-$USER}"
+RUN_GROUP="$(id -gn "$RUN_USER")"
+
+VENV_PYTHON="$INAKI_DIR/.venv/bin/python"
+
+if [ ! -f "$SERVICE_TEMPLATE" ]; then
+    echo "Error: $SERVICE_TEMPLATE no encontrado."
+    exit 1
+fi
+
+if [ ! -x "$VENV_PYTHON" ]; then
+    echo "Error: no existe $VENV_PYTHON. Creá el venv e instalá deps antes:"
+    echo "  python3 -m venv .venv && .venv/bin/pip install -e ."
+    exit 1
+fi
+
+echo "Instalando Iñaki:"
+echo "  Repo:    $INAKI_DIR"
+echo "  Usuario: $RUN_USER ($RUN_GROUP)"
+echo "  Python:  $VENV_PYTHON"
+echo ""
+
+# Genera el service file con valores reales
+echo "Generando $SERVICE_TARGET..."
+sed \
+    -e "s|^User=.*|User=$RUN_USER|" \
+    -e "s|^Group=.*|Group=$RUN_GROUP|" \
+    -e "s|^WorkingDirectory=.*|WorkingDirectory=$INAKI_DIR|" \
+    -e "s|^ExecStart=.*|ExecStart=$VENV_PYTHON main.py daemon|" \
+    "$SERVICE_TEMPLATE" > "$SERVICE_TARGET"
+
+chmod 644 "$SERVICE_TARGET"
 
 echo "Recargando systemd..."
 systemctl daemon-reload
@@ -23,7 +57,7 @@ echo "Habilitando servicio (arranque automático al boot)..."
 systemctl enable inaki
 
 echo "Iniciando servicio..."
-systemctl start inaki
+systemctl restart inaki
 
 echo ""
 echo "✓ Servicio instalado y arrancado."

@@ -173,8 +173,10 @@ async def test_max_iterations_raises_tool_loop_max_iterations_error():
     tool_call_2 = _tool_call_response("mytool")
     # La tercera respuesta (última iteración) también es una tool call → agota el límite
     tool_call_last = _tool_call_response("mytool")
+    # Fallback LLM call (sin tools) tras max_iterations → fuerza texto final.
+    fallback = "Llegué al límite sin poder resolver."
 
-    llm = _make_llm(tool_call_1, tool_call_2, tool_call_last)
+    llm = _make_llm(tool_call_1, tool_call_2, tool_call_last, fallback)
     tools = _make_tools()
 
     with pytest.raises(ToolLoopMaxIterationsError) as exc_info:
@@ -190,8 +192,9 @@ async def test_max_iterations_raises_tool_loop_max_iterations_error():
         )
 
     error = exc_info.value
-    # tool-only response → last_response es "" (sin text_blocks)
-    assert error.last_response == ""
+    # El fallback sin tools rellena last_response con el texto forzado.
+    assert error.last_response == fallback
+    assert llm.complete.call_count == 4
 
 
 async def test_max_iterations_last_response_is_the_last_llm_output():
@@ -199,7 +202,8 @@ async def test_max_iterations_last_response_is_the_last_llm_output():
     responses = [
         _tool_call_response("tool_a"),
         _tool_call_response("tool_b"),
-        _tool_call_response("tool_c"),  # <-- ésta debe ser last_response
+        _tool_call_response("tool_c"),
+        "explicación final del LLM sin tools",  # fallback call
     ]
 
     llm = _make_llm(*responses)
@@ -217,15 +221,16 @@ async def test_max_iterations_last_response_is_the_last_llm_output():
             agent_id="agent",
         )
 
-    # tool-only response → last_response es "" (sin text_blocks)
-    assert exc_info.value.last_response == ""
+    # Tras el fallback sin tools, last_response trae la explicación textual.
+    assert exc_info.value.last_response == "explicación final del LLM sin tools"
 
 
 async def test_max_iterations_one_iteration():
     """max_iterations=1 → si el único turno devuelve tool calls → raise."""
     tool_call = _tool_call_response("mytool")
+    fallback = "no pude resolverlo en una sola iteración"
 
-    llm = _make_llm(tool_call)
+    llm = _make_llm(tool_call, fallback)
     tools = _make_tools()
 
     with pytest.raises(ToolLoopMaxIterationsError) as exc_info:
@@ -240,7 +245,56 @@ async def test_max_iterations_one_iteration():
             agent_id="agent",
         )
 
-    # tool-only response → last_response es "" (sin text_blocks)
+    assert exc_info.value.last_response == fallback
+
+
+async def test_max_iterations_fallback_call_is_made_without_tools():
+    """El fallback tras max_iterations debe llamar al LLM con tools=None."""
+    tool_call = _tool_call_response("mytool")
+    fallback = "explicación final"
+
+    llm = _make_llm(tool_call, fallback)
+    tools = _make_tools()
+
+    with pytest.raises(ToolLoopMaxIterationsError):
+        await run_tool_loop(
+            llm=llm,
+            tools=tools,
+            messages=_base_messages(),
+            system_prompt="Prompt",
+            tool_schemas=[{"name": "mytool"}],
+            max_iterations=1,
+            circuit_breaker_threshold=10,
+            agent_id="agent",
+        )
+
+    # Primera llamada: con tools. Segunda (fallback): tools=None.
+    assert llm.complete.call_count == 2
+    last_call_kwargs = llm.complete.call_args_list[-1].kwargs
+    assert last_call_kwargs.get("tools") is None
+
+
+async def test_max_iterations_fallback_failure_yields_empty_last_response():
+    """Si el fallback LLM call falla, last_response queda vacío pero no se propaga la excepción del fallback."""
+    tool_call = _tool_call_response("mytool")
+
+    llm = AsyncMock()
+    # Primera llamada devuelve tool_call, segunda (fallback) tira.
+    llm.complete.side_effect = [tool_call, RuntimeError("LLM caído")]
+    tools = _make_tools()
+
+    with pytest.raises(ToolLoopMaxIterationsError) as exc_info:
+        await run_tool_loop(
+            llm=llm,
+            tools=tools,
+            messages=_base_messages(),
+            system_prompt="Prompt",
+            tool_schemas=[{"name": "mytool"}],
+            max_iterations=1,
+            circuit_breaker_threshold=10,
+            agent_id="agent",
+        )
+
     assert exc_info.value.last_response == ""
 
 

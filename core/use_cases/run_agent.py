@@ -277,7 +277,10 @@ class RunAgentUseCase:
                 intermediate_sink=intermediate_sink,
             )
         except ToolLoopMaxIterationsError as e:
-            response = e.last_response
+            response = e.last_response or (
+                "No pude completar la tarea: se alcanzó el límite de "
+                "iteraciones de tools sin obtener una respuesta final."
+            )
 
         if state_dirty:
             await self._history.save_state(

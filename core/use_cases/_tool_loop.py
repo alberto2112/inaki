@@ -154,4 +154,25 @@ async def run_tool_loop(
                     )
 
     logger.warning("Máximo de iteraciones de tool calls alcanzado para '%s'", agent_id)
+
+    # Recuperación: si la última iteración fue tool-only (sin texto), hacemos
+    # una llamada final SIN tools para forzar al LLM a producir una explicación
+    # textual de la situación. Esto evita que el caller reciba un string vacío
+    # (que por ejemplo en Telegram dispara "Message text is empty") y le da al
+    # usuario información accionable sobre por qué se agotó el loop.
+    if not last_text.strip():
+        try:
+            fallback = await llm.complete(
+                working_messages,
+                system_prompt,
+                tools=None,
+            )
+            last_text = fallback.text
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Fallback LLM call tras max_iterations falló para '%s': %s",
+                agent_id,
+                exc,
+            )
+
     raise ToolLoopMaxIterationsError(last_response=last_text)

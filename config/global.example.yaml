@@ -292,6 +292,48 @@ admin:
   # auth_key: "clave-secreta"   # Clave para el header X-Admin-Key → MOVER A global.secrets.yaml
 
 
+# -----------------------------------------------------------------------------
+# [transcription] — Proveedor de transcripción de audio (voz en Telegram)
+# -----------------------------------------------------------------------------
+#
+# Habilita la transcripción de mensajes de voz, audio y video_note en el canal
+# de Telegram. Se activa cuando `channels.telegram.voice_enabled: true` en el
+# agente (default). Si un agente tiene `voice_enabled: true` sin bloque
+# `transcription:` resuelto, el bootstrap falla con un error claro.
+#
+# ⚠ PRIVACIDAD: el audio se envía al proveedor externo (ej. Groq). Si el
+# contenido es sensible, poné `channels.telegram.voice_enabled: false` en ese
+# agente, o elegí un proveedor local cuando exista.
+#
+# transcription:
+#   provider: "groq"            # Proveedor activo. Opciones:
+#                               #   "groq" — Whisper vía Groq API (rápido, barato)
+#                               # Añadir proveedor: crear adapters/outbound/transcription/{name}.py
+#                               # con PROVIDER_NAME = "{name}" (descubrimiento automático).
+#
+#   model: "whisper-large-v3-turbo"
+#                               # Modelo de transcripción. Ejemplos Groq:
+#                               #   "whisper-large-v3-turbo"  — rápido, multilingüe
+#                               #   "whisper-large-v3"         — más preciso, más lento
+#
+#   base_url: "https://api.groq.com/openai/v1"
+#                               # URL base del proveedor. Default para Groq.
+#
+#   language: "es"              # Código ISO-639-1 del idioma esperado (opcional).
+#                               # Si es null, el proveedor autodetecta.
+#                               # Recomendado fijarlo ("es", "en") para mejor accuracy.
+#
+#   timeout_seconds: 60         # Timeout en segundos para la llamada HTTP.
+#                               # Aumentar si mandás audios largos o la red es lenta.
+#
+#   max_audio_mb: 25            # Tamaño máximo permitido del audio (MB).
+#                               # Audios más grandes se rechazan ANTES de llamar al
+#                               # proveedor (reacción ❌ + mensaje al usuario).
+#                               # Límite de Groq: 25 MB.
+#
+#   # api_key: "gsk_..."        # API key del proveedor → MOVER A global.secrets.yaml
+
+
 # =============================================================================
 # CONFIGURACIÓN POR AGENTE — config/agents/{id}.yaml
 # =============================================================================
@@ -330,8 +372,14 @@ admin:
 #     allowed_user_ids: ["123456789", "987654321"]
 #                             # Lista de Telegram user IDs autorizados
 #                             # Vacío ([]) = todos pueden interactuar
-#     reactions: true         # Reaccionar con emojis (👀 procesando, ✅ ok, ❌ error)
+#     reactions: true         # Reaccionar con emojis (👀 procesando, ✅ ok, ❌ error,
+#                             # 👂 transcribiendo audio)
 #     debug: false            # Log de mensajes entrantes y salientes
+#     voice_enabled: true     # Acepta mensajes de voz/audio/video_note y los
+#                             # transcribe (requiere bloque [transcription]).
+#                             # Ponelo en false para que el agente ignore audios
+#                             # (drop silencioso — ni reacción ni reply).
+#                             # Default: true.
 #     # token → en agents/{id}.secrets.yaml
 #
 #   rest:
@@ -353,6 +401,8 @@ admin:
 # config/global.secrets.yaml:
 # llm:
 #   api_key: "sk-or-..."       # API key del proveedor LLM (shared entre todos los agentes)
+# transcription:
+#   api_key: "gsk_..."         # API key del proveedor de transcripción (solo si voice_enabled)
 
 # config/agents/general.secrets.yaml:
 # channels:

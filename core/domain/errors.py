@@ -18,6 +18,25 @@ class EmbeddingError(IñakiError):
     """Error al generar embeddings."""
 
 
+class TranscriptionError(IñakiError):
+    """Error al transcribir audio (provider remoto, timeout, formato, etc.)."""
+
+
+class TranscriptionFileTooLargeError(TranscriptionError):
+    """El audio supera el límite del provider de transcripción."""
+
+    def __init__(self, size_bytes: int, limit_bytes: int) -> None:
+        super().__init__(
+            f"Audio demasiado grande: {size_bytes} bytes > límite {limit_bytes} bytes"
+        )
+        self.size_bytes = size_bytes
+        self.limit_bytes = limit_bytes
+
+
+class UnknownTranscriptionProviderError(TranscriptionError):
+    """El provider de transcripción solicitado no está registrado en la factory."""
+
+
 class ToolError(IñakiError):
     """Error al ejecutar una tool."""
 

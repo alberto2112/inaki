@@ -89,3 +89,11 @@ def mock_embedding_cache() -> AsyncMock:
     cache.get.return_value = None
     cache.put.return_value = None
     return cache
+
+
+@pytest.fixture
+def mock_transcription() -> AsyncMock:
+    """Mock de ITranscriptionProvider — devuelve texto fake por defecto."""
+    transcription = AsyncMock()
+    transcription.transcribe.return_value = "transcripción de prueba"
+    return transcription

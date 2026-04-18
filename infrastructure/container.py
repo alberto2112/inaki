@@ -38,8 +38,9 @@ from adapters.outbound.embedding.sqlite_embedding_cache import SqliteEmbeddingCa
 from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
 from adapters.outbound.tools.tool_registry import ToolRegistry
 from core.domain.entities.task import TaskStatus
-from core.domain.errors import AgentNotFoundError
+from core.domain.errors import AgentNotFoundError, IñakiError
 from core.domain.services.scheduler_service import SchedulerService
+from core.ports.outbound.transcription_port import ITranscriptionProvider
 from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
 from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
 from core.use_cases.run_agent import RunAgentUseCase
@@ -48,6 +49,7 @@ from core.use_cases.schedule_task import ScheduleTaskUseCase
 from infrastructure.config import AgentConfig, AgentRegistry, GlobalConfig
 from infrastructure.factories.embedding_factory import EmbeddingProviderFactory
 from infrastructure.factories.llm_factory import LLMProviderFactory
+from infrastructure.factories.transcription_factory import TranscriptionProviderFactory
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +91,10 @@ class AgentContainer:
         )
         self._register_tools()
         self._register_extensions(global_config.app.ext_dirs)
+
+        # Transcripción (voz Telegram) — se resuelve bajo reglas cruzadas con
+        # channels.telegram.voice_enabled; si el agente no usa voz, queda None.
+        self._transcription = self._resolve_transcription(cfg)
 
         self.run_agent = RunAgentUseCase(
             llm=self._llm,
@@ -147,6 +153,41 @@ class AgentContainer:
         self._tools.register(ReadFileTool(workspace=workspace_path, containment=ws_cfg.containment))
         self._tools.register(WriteFileTool(workspace=workspace_path, containment=ws_cfg.containment))
         self._tools.register(PatchFileTool(workspace=workspace_path, containment=ws_cfg.containment))
+
+    @staticmethod
+    def _resolve_transcription(cfg: AgentConfig) -> ITranscriptionProvider | None:
+        """Decide si crear un `ITranscriptionProvider` para este agente.
+
+        Reglas (espejan la validación cruzada de la spec):
+        - Si el agente NO tiene canal `telegram` → `None` (no hay voz posible).
+        - Si `channels.telegram.voice_enabled` es explícitamente `False` → `None`.
+        - Si `voice_enabled` es `True` (default cuando hay telegram) y existe
+          `cfg.transcription` → crea la instancia vía factory.
+        - Si `voice_enabled` está activo y `cfg.transcription` es `None` →
+          error claro en bootstrap (no degradamos silenciosamente).
+        """
+        tg_cfg = cfg.channels.get("telegram")
+        if tg_cfg is None:
+            return None
+
+        voice_enabled = tg_cfg.get("voice_enabled", True)
+        if voice_enabled is False:
+            return None
+
+        if cfg.transcription is None:
+            raise IñakiError(
+                f"Agent '{cfg.id}': channels.telegram.voice_enabled=True requiere "
+                "un bloque 'transcription:' en la config (del agente o global). "
+                "Agregá `transcription:` con provider y api_key, o poné "
+                "channels.telegram.voice_enabled=false para deshabilitar voz."
+            )
+
+        return TranscriptionProviderFactory.create(cfg.transcription)
+
+    @property
+    def transcription(self) -> ITranscriptionProvider | None:
+        """Provider de transcripción para este agente (o None si voz deshabilitada)."""
+        return self._transcription
 
     def set_channel_context(self, ctx: "ChannelContext | None") -> None:
         """Actualiza el contexto de canal activo para este agente."""

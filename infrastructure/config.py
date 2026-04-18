@@ -268,7 +268,42 @@ class AdminConfig(BaseModel):
 class UserConfig(BaseModel):
     """Preferencias del usuario."""
 
-    timezone: str = "UTC"
+    timezone: str = ""
+    """
+    Timezone IANA (ej: "America/Argentina/Buenos_Aires").
+
+    Si queda vacío, se autodetecta desde el host vía `tzlocal` con fallback a
+    "UTC". Si el valor no es una zona IANA válida, se loggea un warning y se
+    autodetecta igual.
+    """
+
+    @field_validator("timezone", mode="after")
+    @classmethod
+    def _resolve_timezone(cls, v: str) -> str:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        if v:
+            try:
+                ZoneInfo(v)
+                return v
+            except (ZoneInfoNotFoundError, ValueError):
+                logger.warning(
+                    "user.timezone='%s' no es una zona IANA válida — autodetectando",
+                    v,
+                )
+
+        try:
+            import tzlocal
+
+            detected = tzlocal.get_localzone_name()
+            if detected:
+                logger.info("user.timezone autodetectado desde el host: %s", detected)
+                return detected
+        except Exception as exc:
+            logger.warning("No se pudo autodetectar timezone del host: %s", exc)
+
+        logger.info("user.timezone fallback a UTC")
+        return "UTC"
 
 
 # ---------------------------------------------------------------------------

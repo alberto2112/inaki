@@ -356,6 +356,26 @@ admin:
 #   # api_key: "gsk_..."        # API key del proveedor → MOVER A global.secrets.yaml
 
 
+# -----------------------------------------------------------------------------
+# [user] — Preferencias del usuario
+# -----------------------------------------------------------------------------
+user:
+  # timezone: "America/Argentina/Buenos_Aires"
+                                # Timezone IANA usada por el scheduler para
+                                # interpretar expresiones naturales ("mañana a
+                                # las 9") y cron strings.
+                                #
+                                # Si se deja vacío o se omite, se autodetecta
+                                # desde el host (vía tzlocal) con fallback a
+                                # "UTC" si no se puede detectar.
+                                #
+                                # Listado de zonas válidas:
+                                #   https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+                                #
+                                # Ejemplos: "Europe/Madrid", "America/New_York",
+                                # "Asia/Tokyo", "UTC".
+
+
 # =============================================================================
 # CONFIGURACIÓN POR AGENTE — config/agents/{id}.yaml
 # =============================================================================

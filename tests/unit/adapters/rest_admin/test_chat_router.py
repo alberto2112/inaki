@@ -30,7 +30,7 @@ Escenarios cubiertos (spec admin-chat/spec.md):
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -96,7 +96,7 @@ async def test_post_turn_happy_path(chat_app, mock_run_agent) -> None:
     assert data["reply"] == "Hola, ¿en qué te ayudo?"
     assert data["agent_id"] == "dev"
     assert data["session_id"] == TURN_BODY["session_id"]
-    mock_run_agent.execute.assert_awaited_once_with("hola")
+    mock_run_agent.execute.assert_awaited_once_with("hola", intermediate_sink=ANY)
 
 
 # ---------------------------------------------------------------------------

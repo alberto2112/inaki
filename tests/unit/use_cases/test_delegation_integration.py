@@ -353,13 +353,8 @@ async def test_happy_path_end_to_end(tmp_path):
     # the last message before the final call is [Resultados de tools] containing JSON.
     parent_second_call_messages = parent_llm.complete.call_args_list[1].args[0]
     tool_result_msg = parent_second_call_messages[-1]
-    assert "[delegate]:" in tool_result_msg.content, (
-        "Second parent LLM call must include delegate tool result in messages"
-    )
-    # Extract the JSON embedded in the tool result message
-    json_start = tool_result_msg.content.index("[delegate]:") + len("[delegate]: ")
-    raw_json = tool_result_msg.content[json_start:].strip()
-    dr = DelegationResult.model_validate_json(raw_json)
+    # El tool result se inyecta como JSON puro en el content del mensaje TOOL.
+    dr = DelegationResult.model_validate_json(tool_result_msg.content)
     assert dr.status == "success", f"DelegationResult must be status=success. Got: {dr.status}"
 
 
@@ -384,8 +379,7 @@ async def _run_delegation_and_extract_result(
     parent_llm = parent_container._llm
     second_call_messages = parent_llm.complete.call_args_list[1].args[0]
     tool_result_msg = second_call_messages[-1]
-    json_str = tool_result_msg.content.split("[delegate]:", 1)[1].strip()
-    return DelegationResult.model_validate_json(json_str)
+    return DelegationResult.model_validate_json(tool_result_msg.content)
 
 
 async def test_failure_target_not_allowed():
@@ -750,8 +744,7 @@ async def test_failure_modes_canonical_reason_strings(scenario: str, expected_re
     parent_llm = parent_container._llm
     second_call_messages = parent_llm.complete.call_args_list[1].args[0]
     tool_result_msg = second_call_messages[-1]
-    json_str = tool_result_msg.content.split("[delegate]:", 1)[1].strip()
-    dr = DelegationResult.model_validate_json(json_str)
+    dr = DelegationResult.model_validate_json(tool_result_msg.content)
 
     assert dr.status == "failed"
     if expected_reason.startswith("child_exception:"):
@@ -986,8 +979,7 @@ async def test_child_with_delegation_disabled_can_be_delegation_target(tmp_path)
     # Assertion 2: DelegationResult must have status="success"
     second_call_messages = parent_llm.complete.call_args_list[1].args[0]
     tool_result_msg = second_call_messages[-1]
-    json_str = tool_result_msg.content.split("[delegate]:", 1)[1].strip()
-    dr = DelegationResult.model_validate_json(json_str)
+    dr = DelegationResult.model_validate_json(tool_result_msg.content)
     assert dr.status == "success", (
         f"DelegationResult must be status=success when child has delegation.enabled=False. "
         f"Got: {dr.status!r}, reason: {dr.reason!r}"

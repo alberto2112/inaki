@@ -237,6 +237,8 @@ channels:
     allowed_user_ids: ["123456789"]  # Lista vacía = todos permitidos
     reactions: true                  # Reaccionar con emojis a los mensajes
     debug: false
+    voice_enabled: true              # Acepta voz/audio/video_note (default: true)
+                                     # Requiere bloque [transcription] resuelto
   rest:
     host: "0.0.0.0"
     port: 6498                       # Cada agente tiene su propio puerto
@@ -282,6 +284,54 @@ especificar siempre un path absoluto.
 
 ---
 
+## `transcription` — transcripción de voz (Telegram)
+
+Habilita la transcripción de mensajes de voz, audio y video_note en Telegram.
+Se define en `config/global.yaml` (o sobrescribible per-agent) y se activa con
+`channels.telegram.voice_enabled: true` (default).
+
+```yaml
+transcription:
+  provider: "groq"                     # Auto-descubierto desde adapters/outbound/transcription/
+  model: "whisper-large-v3-turbo"
+  base_url: "https://api.groq.com/openai/v1"
+  language: "es"                        # ISO-639-1; null = autodetect
+  timeout_seconds: 60
+  max_audio_mb: 25                      # Límite de Groq; audios mayores se rechazan sin llamar al provider
+  # api_key: "gsk_..."                  # → global.secrets.yaml
+```
+
+**Feature flag en el agente:**
+
+```yaml
+channels:
+  telegram:
+    voice_enabled: true   # default — acepta voz/audio/video_note
+    # voice_enabled: false — drop silencioso, el bot ignora audios
+```
+
+**Flujo del handler de voz:**
+
+1. Usuario autorizado (`allowed_user_ids`) — sino, drop silencioso.
+2. `voice_enabled: true` — sino, drop silencioso.
+3. Tamaño ≤ `max_audio_mb` — sino, reacción ❌ + reply con el tamaño.
+4. Reacción 👂 al inicio.
+5. Transcripción → mismo pipeline que un mensaje de texto (reply HTML + ✅/❌).
+
+**Errores comunes al arrancar:**
+
+- Agente con `voice_enabled: true` y sin bloque `transcription:` resuelto
+  → falla en el bootstrap con un error claro pidiendo añadir `transcription:`
+  o poner `voice_enabled: false`.
+- `transcription.api_key` ausente → `TranscriptionError` al instanciar el provider.
+
+> ⚠ **Privacidad:** el audio se envía al proveedor externo (hoy: Groq). Para
+> contenido sensible poné `voice_enabled: false` en ese agente o esperá a que
+> exista un proveedor local. La app NO persiste el audio; sí queda el texto
+> transcripto en el chat_history y puede alimentar la memoria.
+
+---
+
 ## `config/agents/{id}.secrets.yaml`
 
 ```yaml
@@ -302,6 +352,9 @@ channels:
 | `llm` (bloque) | Merge campo a campo. Ausentes se heredan. |
 | `llm.api_key` | Solo en secrets. Si ausente en agente → hereda del global. |
 | `embedding` | Merge campo a campo si se define. |
+| `transcription` (bloque) | Merge campo a campo. Normalmente definido en `global.yaml`. |
+| `transcription.api_key` | Solo en secrets. Si ausente y `voice_enabled: true` → el provider falla al instanciar. |
+| `channels.telegram.voice_enabled` | Per-agent. Default `true`. Si `true` requiere bloque `transcription:`. |
 | `memory.db_path` / `digest_path` / `default_top_k` / `min_relevance_score` / `schedule` / `delay_seconds` / `keep_last_messages` | **Solo en `global.yaml`**. Un agente no puede overridearlos (semánticamente no tiene sentido: la memoria es global compartida). |
 | `memory.enabled` | **Solo per-agent en `agents/{id}.yaml`**. Default `true`. Filtra qué agentes participan en la consolidación nocturna global. |
 | `channels` | Solo en el agente. No existe en global. |

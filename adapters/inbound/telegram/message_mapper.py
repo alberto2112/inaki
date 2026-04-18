@@ -18,6 +18,36 @@ def telegram_update_to_input(update: Update) -> str | None:
     return None
 
 
+async def extract_audio_payload(message) -> tuple[bytes, str, int] | None:
+    """Detecta voice/audio/video_note en un Message y devuelve (bytes, mime, size).
+
+    Retorna ``None`` si el mensaje no contiene ninguno de los tres tipos.
+    Prioridad: voice > audio > video_note (los tres nunca coinciden en Telegram,
+    pero la prioridad es explícita por defensa).
+
+    Defaults de mime cuando el payload no lo informa:
+    - voice → ``audio/ogg`` (Telegram usa OGG/Opus).
+    - audio → ``audio/mpeg``.
+    - video_note → ``video/mp4`` (Telegram garantiza MP4).
+    """
+    if message.voice:
+        payload = message.voice
+        mime = getattr(payload, "mime_type", None) or "audio/ogg"
+    elif message.audio:
+        payload = message.audio
+        mime = getattr(payload, "mime_type", None) or "audio/mpeg"
+    elif message.video_note:
+        payload = message.video_note
+        mime = "video/mp4"
+    else:
+        return None
+
+    file = await payload.get_file()
+    data = await file.download_as_bytearray()
+    size = int(getattr(payload, "file_size", None) or 0)
+    return bytes(data), mime, size
+
+
 def format_response(response: str) -> str:
     """
     Convierte la respuesta markdown del LLM al subset HTML de Telegram.

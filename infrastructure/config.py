@@ -79,6 +79,18 @@ class EmbeddingConfig(BaseModel):
     cache_db: ExpandedPath = "data/embedding_cache.db"
 
 
+class TranscriptionConfig(BaseModel):
+    """Config del provider de transcripción de audio (opcional)."""
+
+    provider: str = "groq"
+    model: str = "whisper-large-v3-turbo"
+    base_url: str | None = None  # None → el adapter usa su default (p. ej. Groq)
+    language: str | None = None  # None → auto-detect por el modelo
+    api_key: str | None = None  # en secrets
+    timeout_seconds: int = 60  # segundos para el request HTTP
+    max_audio_mb: int = 25  # límite de tamaño de audio (MB) — Groq Whisper: 25
+
+
 _KEEP_LAST_MESSAGES_FALLBACK = 84
 
 
@@ -237,6 +249,7 @@ class AgentConfig(BaseModel):
     tools: ToolsConfig = ToolsConfig()
     workspace: WorkspaceConfig = WorkspaceConfig()
     delegation: AgentDelegationConfig = AgentDelegationConfig()
+    transcription: TranscriptionConfig | None = None
     channels: dict[str, dict[str, Any]] = {}
 
 
@@ -258,6 +271,7 @@ class GlobalConfig(BaseModel):
     delegation: DelegationConfig = DelegationConfig()
     admin: AdminConfig = AdminConfig()
     user: UserConfig = UserConfig()
+    transcription: TranscriptionConfig | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -368,6 +382,7 @@ def _render_default_global_yaml() -> str:
         "tools": ToolsConfig().model_dump(),
         "scheduler": SchedulerConfig().model_dump(),
         "workspace": WorkspaceConfig().model_dump(),
+        "transcription": TranscriptionConfig().model_dump(exclude={"api_key"}),
         "user": UserConfig().model_dump(),
     }
     body = yaml.safe_dump(defaults, sort_keys=False, default_flow_style=False)
@@ -438,6 +453,11 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
     delegation = DelegationConfig(**merged.get("delegation", {}))
     admin = AdminConfig(**merged.get("admin", {}))
     user = UserConfig(**merged.get("user", {}))
+    transcription = (
+        TranscriptionConfig(**merged["transcription"])
+        if merged.get("transcription") is not None
+        else None
+    )
 
     global_cfg = GlobalConfig(
         app=app,
@@ -452,6 +472,7 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
         delegation=delegation,
         admin=admin,
         user=user,
+        transcription=transcription,
     )
     return global_cfg, merged
 
@@ -490,6 +511,12 @@ def load_agent_config(
     merged = _deep_merge(global_raw, agent_raw)
 
     try:
+        transcription_raw = merged.get("transcription")
+        transcription = (
+            TranscriptionConfig(**transcription_raw)
+            if transcription_raw is not None
+            else None
+        )
         return AgentConfig(
             id=merged["id"],
             name=merged["name"],
@@ -503,6 +530,7 @@ def load_agent_config(
             tools=ToolsConfig(**merged.get("tools", {})),
             workspace=WorkspaceConfig(**merged.get("workspace", {})),
             delegation=AgentDelegationConfig(**merged.get("delegation", {})),
+            transcription=transcription,
             channels=merged.get("channels", {}),
         )
     except (KeyError, ValueError) as exc:

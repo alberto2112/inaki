@@ -56,6 +56,11 @@ class OpenAIProvider(BaseLLMProvider):
                 )
                 resp.raise_for_status()
                 data = resp.json()
+        except httpx.HTTPStatusError as exc:
+            body = exc.response.text[:500]
+            raise LLMError(
+                f"OpenAI HTTP {exc.response.status_code}: {body}"
+            ) from exc
         except httpx.HTTPError as exc:
             raise LLMError(f"OpenAI HTTP error: {exc}") from exc
 
@@ -105,5 +110,11 @@ class OpenAIProvider(BaseLLMProvider):
                                 yield content
                         except (json.JSONDecodeError, KeyError):
                             continue
+        except httpx.HTTPStatusError as exc:
+            await exc.response.aread()
+            body = exc.response.text[:500]
+            raise LLMError(
+                f"OpenAI HTTP {exc.response.status_code}: {body}"
+            ) from exc
         except httpx.HTTPError as exc:
             raise LLMError(f"OpenAI stream error: {exc}") from exc

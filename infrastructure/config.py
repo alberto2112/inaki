@@ -179,6 +179,19 @@ class ToolsConfig(BaseModel):
     sticky_ttl: int = 3  # Turnos que una tool seleccionada sobrevive; 0 = disabled
 
 
+class RagConfig(BaseModel):
+    """Políticas transversales al pipeline RAG (skills + tools).
+
+    ``min_words_threshold``: si el user_input tiene MENOS palabras que este
+    umbral Y existe una selección sticky previa (skills o tools), el turno
+    saltea el cálculo del embedding y hereda la selección del turno anterior
+    intacta (no decrementa TTL, no persiste estado). ``0`` desactiva la
+    feature y mantiene el comportamiento histórico (RAG corre siempre).
+    """
+
+    min_words_threshold: int = 0
+
+
 ContainmentMode = Literal["strict", "warn", "off"]
 
 
@@ -247,6 +260,7 @@ class AgentConfig(BaseModel):
     chat_history: ChatHistoryConfig
     skills: SkillsConfig = SkillsConfig()
     tools: ToolsConfig = ToolsConfig()
+    rag: RagConfig = RagConfig()
     workspace: WorkspaceConfig = WorkspaceConfig()
     delegation: AgentDelegationConfig = AgentDelegationConfig()
     transcription: TranscriptionConfig | None = None
@@ -266,6 +280,7 @@ class GlobalConfig(BaseModel):
     chat_history: ChatHistoryConfig
     skills: SkillsConfig = SkillsConfig()
     tools: ToolsConfig = ToolsConfig()
+    rag: RagConfig = RagConfig()
     scheduler: SchedulerConfig = SchedulerConfig()
     workspace: WorkspaceConfig = WorkspaceConfig()
     delegation: DelegationConfig = DelegationConfig()

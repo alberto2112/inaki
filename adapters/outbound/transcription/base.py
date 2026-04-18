@@ -14,6 +14,20 @@ from typing import Any
 
 from core.ports.outbound.transcription_port import ITranscriptionProvider
 
+# Groq (y OpenAI Whisper) usan la extensión del filename para detectar el formato
+# cuando el content-type multipart no es suficiente.
+_MIME_EXT: dict[str, str] = {
+    "audio/ogg": ".ogg",
+    "audio/mpeg": ".mp3",
+    "audio/mp4": ".mp4",
+    "audio/wav": ".wav",
+    "audio/webm": ".webm",
+    "audio/x-m4a": ".m4a",
+    "audio/m4a": ".m4a",
+    "video/mp4": ".mp4",
+    "video/webm": ".webm",
+}
+
 
 class BaseTranscriptionProvider(ITranscriptionProvider):
     """Clase base para todos los proveedores de transcripción."""
@@ -33,12 +47,13 @@ class BaseTranscriptionProvider(ITranscriptionProvider):
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Construye (files, data) para un POST multipart a endpoints estilo OpenAI.
 
-        - `files["file"] = (filename, bytes, mime)` — `audio` es nombre genérico;
-          Whisper ignora el nombre y usa el mime para detectar el formato.
+        - `files["file"] = (filename, bytes, mime)` — el filename incluye la extensión
+          derivada del mime para que Whisper detecte el formato correctamente.
         - `data["model"]` siempre presente.
         - `data["language"]` sólo si es un string no vacío (evita mandar '' al provider).
         """
-        files: dict[str, Any] = {"file": ("audio", audio, mime)}
+        ext = _MIME_EXT.get(mime, "")
+        files: dict[str, Any] = {"file": (f"audio{ext}", audio, mime)}
         data: dict[str, Any] = {"model": model}
         if language:
             data["language"] = language

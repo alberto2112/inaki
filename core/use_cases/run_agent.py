@@ -40,6 +40,29 @@ from infrastructure.config import AgentConfig
 logger = logging.getLogger(__name__)
 
 
+def _should_bypass_rag_for_short_input(
+    *,
+    user_input: str,
+    min_words_threshold: int,
+    prev_state: ConversationState,
+) -> bool:
+    """Decide si el turno debe saltear el embed + re-selección RAG.
+
+    Se skipea cuando todas estas condiciones se cumplen:
+      - el threshold está activado (``> 0``),
+      - el input tiene MENOS palabras que el threshold,
+      - existe alguna selección sticky previa (skills o tools) de la cual heredar.
+
+    Si no hay sticky previo (primer turno o TTL ya expiró) el RAG corre normal,
+    aunque el input sea corto — no hay contexto del cual heredar.
+    """
+    if min_words_threshold <= 0:
+        return False
+    if len(user_input.split()) >= min_words_threshold:
+        return False
+    return bool(prev_state.sticky_skills or prev_state.sticky_tools)
+
+
 @dataclass
 class InspectResult:
     """
@@ -169,7 +192,34 @@ class RunAgentUseCase:
         new_sticky_tools = dict(prev_state.sticky_tools)
         state_dirty = False
 
-        if skills_rag_active or tools_rag_active:
+        short_input_bypass = _should_bypass_rag_for_short_input(
+            user_input=user_input,
+            min_words_threshold=self._cfg.rag.min_words_threshold,
+            prev_state=prev_state,
+        )
+
+        if short_input_bypass:
+            # Input corto con selección sticky previa → heredar intacta.
+            # No se calcula embedding, no se toca el TTL, no se persiste estado.
+            if skills_rag_active and prev_state.sticky_skills:
+                skills_by_id = {s.id: s for s in all_skills}
+                retrieved_skills = [
+                    skills_by_id[i] for i in prev_state.sticky_skills if i in skills_by_id
+                ]
+            if tools_rag_active and prev_state.sticky_tools:
+                schemas_by_name = {sch["function"]["name"]: sch for sch in all_schemas}
+                tool_schemas = [
+                    schemas_by_name[n] for n in prev_state.sticky_tools if n in schemas_by_name
+                ]
+            logger.info(
+                "[rag] short-input bypass (agent=%s words=%d threshold=%d sticky_skills=%d sticky_tools=%d)",
+                agent_id,
+                len(user_input.split()),
+                self._cfg.rag.min_words_threshold,
+                len(prev_state.sticky_skills),
+                len(prev_state.sticky_tools),
+            )
+        elif skills_rag_active or tools_rag_active:
             query_vec = await self._embedder.embed_query(user_input)
             if skills_rag_active:
                 rag_skills = await self._skills.retrieve(
@@ -266,7 +316,26 @@ class RunAgentUseCase:
         skill_scores: list[tuple[str, float]] = []
         tool_scores: list[tuple[str, float]] = []
 
-        if skills_rag_active or tools_rag_active:
+        prev_state = await self._history.load_state(self._cfg.id)
+        short_input_bypass = _should_bypass_rag_for_short_input(
+            user_input=user_input,
+            min_words_threshold=self._cfg.rag.min_words_threshold,
+            prev_state=prev_state,
+        )
+
+        if short_input_bypass:
+            # Refleja la realidad de execute(): selección heredada del sticky previo.
+            if skills_rag_active and prev_state.sticky_skills:
+                skills_by_id = {s.id: s for s in all_skills}
+                retrieved_skills = [
+                    skills_by_id[i] for i in prev_state.sticky_skills if i in skills_by_id
+                ]
+            if tools_rag_active and prev_state.sticky_tools:
+                schemas_by_name = {sch["function"]["name"]: sch for sch in all_schemas}
+                selected_schemas = [
+                    schemas_by_name[n] for n in prev_state.sticky_tools if n in schemas_by_name
+                ]
+        elif skills_rag_active or tools_rag_active:
             query_vec = await self._embedder.embed_query(user_input)
             if skills_rag_active:
                 scored_skills = await self._skills.retrieve_with_scores(

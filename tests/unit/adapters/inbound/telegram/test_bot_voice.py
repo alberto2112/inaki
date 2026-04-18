@@ -160,9 +160,9 @@ async def test_happy_path_transcribe_y_pipeline(agent_cfg, mock_container) -> No
     assert pipe_call.args[0] == "hola mundo"
     # Reply final enviado.
     update.message.reply_text.assert_awaited()
-    # Reacción 👂 al inicio y ✅ al final (reactions=True).
+    # Reacción 🔊 al inicio (transcribiendo) y ✅ al final (reactions=True).
     reactions_sent = [c.args[0] for c in update.message.set_reaction.await_args_list]
-    assert "👂" in reactions_sent
+    assert "🔊" in reactions_sent
     assert "✅" in reactions_sent
 
 

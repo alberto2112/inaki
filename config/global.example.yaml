@@ -220,6 +220,34 @@ skills:
 
 
 # -----------------------------------------------------------------------------
+# [rag] — Políticas transversales al pipeline RAG (skills + tools)
+# -----------------------------------------------------------------------------
+rag:
+  min_words_threshold: 0        # Mínimo de palabras del user_input para activar
+                                # el cálculo de embedding y la re-selección RAG.
+                                # Por debajo de ese umbral (y si existe una
+                                # selección sticky del turno previo), se saltea
+                                # el embedding y se hereda la selección anterior
+                                # intacta — sin decrementar TTL ni persistir
+                                # estado. 0 = feature deshabilitada (el RAG corre
+                                # siempre, comportamiento histórico).
+                                #
+                                # Motivación: en follow-ups cortos ("sí", "dale",
+                                # "y eso?") el embedding tiene poca señal y
+                                # generalmente el contexto es el mismo del turno
+                                # anterior. Skipear ahorra una llamada al
+                                # embedder y evita "resetear" la selección.
+                                #
+                                # Palabra = len(user_input.split()).
+                                #
+                                # Primer turno con sticky vacío → el RAG corre
+                                # normalmente aunque el input sea corto (no hay
+                                # contexto del cual heredar).
+                                #
+                                # Recomendado: 5 para activar; 0 para desactivar.
+
+
+# -----------------------------------------------------------------------------
 # [workspace] — Directorio de trabajo del agente (sandbox de las tools de FS)
 # -----------------------------------------------------------------------------
 #

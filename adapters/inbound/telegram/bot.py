@@ -119,7 +119,7 @@ class TelegramBot:
     ) -> None:
         """Handler único para `voice`, `audio` y `video_note`.
 
-        Flujo: allow → voice_enabled → 👂 → descarga+mime → size-check →
+        Flujo: allow → voice_enabled → 🔊 → descarga+mime → size-check →
         transcribir → reinyectar el texto en el mismo pipeline que `_handle_message`.
         """
         if not self._is_allowed(update.effective_user.id):
@@ -157,7 +157,7 @@ class TelegramBot:
             )
             return
 
-        await self._set_reaction(update, "👂")
+        await self._set_reaction(update, "🔊")
 
         # Transcribir — errores del provider se reportan al usuario pero NO
         # corren el pipeline (sin texto no hay nada que ejecutar).

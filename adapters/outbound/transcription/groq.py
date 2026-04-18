@@ -61,6 +61,11 @@ class GroqTranscriptionProvider(BaseTranscriptionProvider):
                     data=data,
                 )
                 resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            body = exc.response.text
+            raise TranscriptionError(
+                f"Groq {exc.response.status_code}: {body}"
+            ) from exc
         except httpx.HTTPError as exc:
             raise TranscriptionError(f"Groq HTTP error: {exc}") from exc
 

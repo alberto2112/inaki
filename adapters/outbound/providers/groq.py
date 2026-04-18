@@ -56,6 +56,11 @@ class GroqProvider(BaseLLMProvider):
                 )
                 resp.raise_for_status()
                 data = resp.json()
+        except httpx.HTTPStatusError as exc:
+            body = exc.response.text[:500]
+            raise LLMError(
+                f"Groq HTTP {exc.response.status_code}: {body}"
+            ) from exc
         except httpx.HTTPError as exc:
             raise LLMError(f"Groq HTTP error: {exc}") from exc
 
@@ -105,5 +110,11 @@ class GroqProvider(BaseLLMProvider):
                                 yield content
                         except (json.JSONDecodeError, KeyError):
                             continue
+        except httpx.HTTPStatusError as exc:
+            await exc.response.aread()
+            body = exc.response.text[:500]
+            raise LLMError(
+                f"Groq HTTP {exc.response.status_code}: {body}"
+            ) from exc
         except httpx.HTTPError as exc:
             raise LLMError(f"Groq stream error: {exc}") from exc

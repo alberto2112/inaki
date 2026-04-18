@@ -45,9 +45,29 @@ def test_build_multipart_sin_language() -> None:
         mime="audio/ogg",
         model="whisper-large-v3-turbo",
     )
-    assert files["file"] == ("audio", b"\x00\x01", "audio/ogg")
+    # El filename lleva extensión derivada del mime para que Whisper detecte el formato.
+    assert files["file"] == ("audio.ogg", b"\x00\x01", "audio/ogg")
     assert data == {"model": "whisper-large-v3-turbo"}
     assert "language" not in data
+
+
+def test_build_multipart_extension_derivada_del_mime() -> None:
+    """El filename incluye la extensión correcta para cada MIME conocido."""
+    casos = [
+        ("audio/ogg", ".ogg"),
+        ("audio/mpeg", ".mp3"),
+        ("audio/wav", ".wav"),
+        ("video/mp4", ".mp4"),
+        ("audio/x-desconocido", ""),  # mime desconocido → sin extensión
+    ]
+    for mime, ext_esperada in casos:
+        files, _ = BaseTranscriptionProvider._build_multipart(
+            audio=b"x", mime=mime, model="m"
+        )
+        filename = files["file"][0]
+        assert filename == f"audio{ext_esperada}", (
+            f"mime={mime!r}: esperaba 'audio{ext_esperada}', got {filename!r}"
+        )
 
 
 def test_build_multipart_con_language() -> None:

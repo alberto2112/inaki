@@ -15,7 +15,7 @@ def _write_minimal_config(config_dir: Path) -> None:
     (config_dir / "global.yaml").write_text(
         yaml.safe_dump({
             "app": {"name": "Test"},
-            "scheduler": {"db_path": ":memory:"},
+            "scheduler": {"db_filename": ":memory:"},
         }),
         encoding="utf-8",
     )

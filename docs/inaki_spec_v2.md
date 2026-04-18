@@ -420,8 +420,6 @@ AgentConfig resuelto y completo
 app:
   name: "Iñaki"
   log_level: "INFO"
-  data_dir: "/home/pi/inaki/data"
-  models_dir: "/home/pi/inaki/models"
   default_agent: "general"       # Agente usado por CLI si no se pasa --agent
 
 llm:
@@ -433,16 +431,16 @@ llm:
   # api_key: en global.secrets.yaml
 
 embedding:
-  model_path: "/home/pi/inaki/models/e5-small"
+  model_dirname: "models/e5-small"
   dimension: 384
 
 memory:
-  db_path: "/home/pi/inaki/data/inaki.db"
+  db_filename: "data/inaki.db"
   default_top_k: 5
 
 history:
-  active_dir: "/home/pi/inaki/data/history/active"
-  archive_dir: "/home/pi/inaki/data/history/archive"
+  active_dir: "~/.inaki/data/history/active"
+  archive_dir: "~/.inaki/data/history/archive"
 ```
 
 ### `config/global.secrets.yaml` *(gitignoreado)*
@@ -861,7 +859,7 @@ llm:
 
 embedding:
   provider: "e5_onnx"
-  model_path: "/home/pi/inaki/models/e5-small"
+  model_dirname: "models/e5-small"
   dimension: 384
 ```
 
@@ -901,7 +899,7 @@ class AgentContainer:
         # Factories resuelven el proveedor correcto leyendo cfg.llm.provider
         # y cfg.embedding.provider — sin imports hardcodeados
         self._embedder = EmbeddingProviderFactory.create(cfg)
-        self._memory = SQLiteMemoryRepository(cfg.memory.db_path, self._embedder)
+        self._memory = SQLiteMemoryRepository(cfg.memory.db_filename, self._embedder)
         self._llm = LLMProviderFactory.create(cfg)
         self._skills = YamlSkillRepository(self._embedder)
         self._history = FileHistoryStore(

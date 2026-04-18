@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import yaml
-from pydantic import BaseModel, BeforeValidator, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,36 @@ ExpandedPath = Annotated[str, BeforeValidator(_expand_user_str)]
 ExpandedPathList = Annotated[list[str], BeforeValidator(_expand_user_list)]
 
 
+# Raíz hardcoded para datos de runtime del usuario (DBs, models, digest markdown).
+# Convive con `~/.inaki/config/` y `~/.inaki/agents/` (bootstrap del sistema).
+_INAKI_HOME = Path.home() / ".inaki"
+
+# Valores SQLite especiales que NO deben interpretarse como paths.
+_SQLITE_SPECIAL = {":memory:"}
+
+
+def _resolve_runtime_path(v: Any) -> Any:
+    """
+    Resuelve un path de runtime contra `~/.inaki/`.
+
+    - Valores no-str pasan sin tocar (ya vienen normalizados).
+    - Valores especiales de SQLite (`:memory:`) pasan tal cual.
+    - Paths absolutos (incluyendo `~/...` tras expansión) se usan tal cual.
+    - Paths relativos se anclan bajo `_INAKI_HOME`.
+    """
+    if not isinstance(v, str):
+        return v
+    if v in _SQLITE_SPECIAL:
+        return v
+    p = Path(v).expanduser()
+    if p.is_absolute():
+        return str(p)
+    return str(_INAKI_HOME / p)
+
+
+RuntimePath = Annotated[str, BeforeValidator(_resolve_runtime_path)]
+
+
 # ---------------------------------------------------------------------------
 # Sub-configs
 # ---------------------------------------------------------------------------
@@ -54,8 +84,6 @@ ExpandedPathList = Annotated[list[str], BeforeValidator(_expand_user_list)]
 class AppConfig(BaseModel):
     name: str = "Iñaki"
     log_level: str = "INFO"
-    data_dir: ExpandedPath = "data"
-    models_dir: ExpandedPath = "models"
     ext_dirs: ExpandedPathList = ["ext", "~/.inaki/ext"]
     default_agent: str = "general"
 
@@ -70,13 +98,15 @@ class LLMConfig(BaseModel):
 
 
 class EmbeddingConfig(BaseModel):
+    model_config = ConfigDict(validate_default=True)  # RuntimePath en los defaults
+
     provider: str = "e5_onnx"
-    model_path: ExpandedPath = "models/e5-small"  # solo e5_onnx
+    model_dirname: RuntimePath = "models/e5-small"  # solo e5_onnx — relativo a ~/.inaki/
     model: str = "text-embedding-3-small"  # solo openai
     dimension: int = 384
     base_url: str = "https://api.openai.com/v1"  # solo openai
     api_key: str | None = None  # solo openai — en secrets
-    cache_db: ExpandedPath = "data/embedding_cache.db"
+    cache_filename: RuntimePath = "data/embedding_cache.db"  # relativo a ~/.inaki/
 
 
 class TranscriptionConfig(BaseModel):
@@ -95,24 +125,17 @@ _KEEP_LAST_MESSAGES_FALLBACK = 84
 
 
 class MemoryConfig(BaseModel):
-    db_path: ExpandedPath = "data/inaki.db"
+    model_config = ConfigDict(validate_default=True)  # RuntimePath en los defaults
+
+    db_filename: RuntimePath = "data/inaki.db"  # relativo a ~/.inaki/
     default_top_k: int = 5
     digest_size: int = 14
-    digest_path: Path = Path("~/.inaki/mem/last_memories.md")
+    digest_filename: RuntimePath = "mem/last_memories.md"  # relativo a ~/.inaki/
     min_relevance_score: float = 0.5
     schedule: str = "0 3 * * *"
     delay_seconds: int = 2
     keep_last_messages: int = 0
     enabled: bool = True
-
-    @field_validator("digest_path", mode="before")
-    @classmethod
-    def _expand_digest_path(cls, v) -> Path:
-        return Path(v).expanduser()
-
-    def model_post_init(self, __context: object) -> None:
-        # Expand ~ in the default value (field_validator does not run on class defaults)
-        object.__setattr__(self, "digest_path", self.digest_path.expanduser())
 
     def resolved_keep_last_messages(self) -> int:
         """
@@ -126,7 +149,9 @@ class MemoryConfig(BaseModel):
 
 
 class ChatHistoryConfig(BaseModel):
-    db_path: ExpandedPath = "data/history.db"
+    model_config = ConfigDict(validate_default=True)  # RuntimePath en los defaults
+
+    db_filename: RuntimePath = "data/history.db"  # relativo a ~/.inaki/
     max_messages: int = 0  # 0 = sin límite; N = últimos N mensajes al LLM
 
 
@@ -156,8 +181,10 @@ class ChannelFallbackConfig(BaseModel):
 
 
 class SchedulerConfig(BaseModel):
+    model_config = ConfigDict(validate_default=True)  # RuntimePath en los defaults
+
     enabled: bool = True
-    db_path: ExpandedPath = "data/scheduler.db"
+    db_filename: RuntimePath = "data/scheduler.db"  # relativo a ~/.inaki/
     max_retries: int = 3
     output_truncation_size: int = 65536
     channel_fallback: ChannelFallbackConfig = ChannelFallbackConfig()
@@ -384,14 +411,11 @@ _DELEGATION_SECTION_COMMENT = """\
 
 def _render_default_global_yaml() -> str:
     """Serializa los defaults de las clases Pydantic como YAML con header."""
-    mem = MemoryConfig().model_dump()
-    # Path no es serializable por yaml.safe_dump — convertir a str
-    mem["digest_path"] = str(mem["digest_path"])
     defaults = {
         "app": AppConfig().model_dump(),
         "llm": LLMConfig().model_dump(exclude={"api_key"}),
         "embedding": EmbeddingConfig().model_dump(exclude={"api_key"}),
-        "memory": mem,
+        "memory": MemoryConfig().model_dump(),
         "chat_history": ChatHistoryConfig().model_dump(),
         "skills": SkillsConfig().model_dump(),
         "tools": ToolsConfig().model_dump(),

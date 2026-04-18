@@ -28,6 +28,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 
 from core.domain.entities.memory import MemoryEntry
 from core.domain.entities.message import Role
@@ -236,7 +237,7 @@ class ConsolidateMemoryUseCase:
         try:
             latest = await self._memory.get_recent(self._memory_cfg.digest_size)
             markdown = self._render_digest(latest)
-            path = self._memory_cfg.digest_path
+            path = Path(self._memory_cfg.digest_filename)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(markdown, encoding="utf-8")
             logger.info("Digest regenerado: %s (%d recuerdos)", path, len(latest))

@@ -35,9 +35,9 @@ def _make_use_case(
         description="Agente de test",
         system_prompt="Eres un asistente de test.",
         llm=LLMConfig(provider="openrouter", model="test-model", api_key="test-key"),
-        embedding=EmbeddingConfig(provider="e5_onnx", model_path="models/test"),
-        memory=MemoryConfig(db_path=":memory:", default_top_k=3),
-        chat_history=ChatHistoryConfig(db_path="/tmp/inaki_test/history.db"),
+        embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
+        memory=MemoryConfig(db_filename=":memory:", default_top_k=3),
+        chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history.db"),
         skills=overrides.get("skills", SkillsConfig()),
         tools=overrides.get("tools", ToolsConfig()),
     )

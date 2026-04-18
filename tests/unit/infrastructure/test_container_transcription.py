@@ -42,9 +42,9 @@ def _mk_cfg(
         description="agente de test",
         system_prompt="prompt",
         llm=LLMConfig(provider="openrouter", model="m", api_key="k"),
-        embedding=EmbeddingConfig(provider="e5_onnx", model_path="models/test"),
-        memory=MemoryConfig(db_path=":memory:"),
-        chat_history=ChatHistoryConfig(db_path="/tmp/inaki_test/hist.db"),
+        embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
+        memory=MemoryConfig(db_filename=":memory:"),
+        chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/hist.db"),
         transcription=transcription,
         channels=channels or {},
     )

@@ -31,12 +31,6 @@ app:
   log_level: "INFO"           # Nivel de log: DEBUG | INFO | WARNING | ERROR | CRITICAL
                               # DEBUG muestra llamadas HTTP, embeddings, tool calls
 
-  data_dir: "data"            # Directorio para datos en runtime (SQLite, history)
-                              # Producción Pi 5: "/home/pi/inaki/data"
-
-  models_dir: "models"        # Directorio para modelos ONNX locales
-                              # Producción Pi 5: "/home/pi/inaki/models"
-
   default_agent: "general"    # Agente usado por CLI sin flag --agent
                               # Debe coincidir con un archivo en config/agents/
 
@@ -91,30 +85,31 @@ embedding:
                               # Añadir proveedor: crear adapters/outbound/embedding/{name}.py
                               # con PROVIDER_NAME = "{name}"
 
-  model_path: "models/e5-small"
-                              # Directorio con los archivos del modelo ONNX:
-                              #   models/e5-small/model.onnx
-                              #   models/e5-small/tokenizer.json
+  model_dirname: "models/e5-small"
+                              # Directorio con los archivos del modelo ONNX, relativo
+                              # a ~/.inaki/. Si se pone absoluto, se usa tal cual.
+                              # Estructura esperada:
+                              #   ~/.inaki/models/e5-small/model.onnx
+                              #   ~/.inaki/models/e5-small/tokenizer.json
                               # Descargar desde HuggingFace: intfloat/multilingual-e5-small
-                              # Producción: "/home/pi/inaki/models/e5-small"
 
   dimension: 384              # Dimensión del vector de embedding
                               # multilingual-e5-small → 384 (no cambiar)
                               # ⚠ Cambiar esto requiere borrar y recrear la DB de memorias
-  
-  cache_db: "data/embedding_cache.db"
-                              # Ruta a la base de datos SQLite del cache de embeddings
-                              # Producción: "/home/pi/inaki/data/embedding_cache.db"
+
+  cache_filename: "data/embedding_cache.db"
+                              # Fichero SQLite del cache de embeddings, relativo a
+                              # ~/.inaki/. Si se pone absoluto, se usa tal cual.
 
 
 # -----------------------------------------------------------------------------
 # [memory] — Memoria a largo plazo (SQLite + sqlite-vec)
 # -----------------------------------------------------------------------------
 memory:
-  db_path: "data/inaki.db"    # Ruta a la base de datos SQLite
+  db_filename: "data/inaki.db"  # Fichero SQLite relativo a ~/.inaki/.
+                              # Si se pone absoluto, se usa tal cual.
                               # Contiene tablas: memories, memory_embeddings (vec0)
                               # Memoria GLOBAL: compartida entre todos los agentes
-                              # Producción: "/home/pi/inaki/data/inaki.db"
 
   default_top_k: 5            # Número de recuerdos recuperados por RAG en cada turno
                               # Aumentar para más contexto (mayor coste de tokens)
@@ -123,12 +118,11 @@ memory:
   digest_size: 14             # Nº de recuerdos más recientes volcados al digest markdown
                               # tras cada /consolidate. Orden: created_at DESC.
 
-  digest_path: "~/.inaki/mem/last_memories.md"
-                              # Ruta del fichero markdown leído por el prompt builder
-                              # en cada turno. Soporta expansión de ~ (home del usuario).
-                              # Parte del principio user-data-separation: los datos del
-                              # usuario viven fuera del árbol del proyecto.
-                              # Producción Pi 5: "/home/pi/.inaki/mem/last_memories.md"
+  digest_filename: "mem/last_memories.md"
+                              # Fichero markdown leído por el prompt builder en cada
+                              # turno, relativo a ~/.inaki/. Si se pone absoluto, se
+                              # usa tal cual. Parte del principio user-data-separation:
+                              # los datos del usuario viven fuera del árbol del proyecto.
 
   min_relevance_score: 0.5    # Umbral mínimo (0.0-1.0) para persistir un recuerdo
                               # extraído por el LLM. Hechos con relevance < umbral
@@ -170,9 +164,9 @@ memory:
 # [chat_history] — Historial de conversación a corto plazo (SQLite)
 # -----------------------------------------------------------------------------
 chat_history:
-  db_path: "data/history.db"  # Ruta a la base de datos SQLite del historial
-                              # Separada de inaki.db (que usa sqlite-vec)
-                              # Producción: "/home/pi/inaki/data/history.db"
+  db_filename: "data/history.db"  # Fichero SQLite relativo a ~/.inaki/.
+                              # Si se pone absoluto, se usa tal cual.
+                              # Separado de inaki.db (que usa sqlite-vec).
 
   max_messages: 21            # Últimos N mensajes inyectados al LLM (0 = sin límite)
 

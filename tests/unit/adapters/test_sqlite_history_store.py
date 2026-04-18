@@ -12,14 +12,14 @@ from infrastructure.config import ChatHistoryConfig
 
 @pytest.fixture
 def history_store(tmp_path):
-    cfg = ChatHistoryConfig(db_path=str(tmp_path / "test_history.db"))
+    cfg = ChatHistoryConfig(db_filename=str(tmp_path / "test_history.db"))
     return SQLiteHistoryStore(cfg)
 
 
 @pytest.fixture
 def history_store_limited(tmp_path):
     cfg = ChatHistoryConfig(
-        db_path=str(tmp_path / "test_history_limited.db"),
+        db_filename=str(tmp_path / "test_history_limited.db"),
         max_messages=3,
     )
     return SQLiteHistoryStore(cfg)
@@ -247,7 +247,7 @@ async def test_migration_adds_infused_column_and_marks_existing_rows(tmp_path):
         await conn.commit()
 
     # 2. Abrimos con el store nuevo — debe migrar al primer _ensure_schema
-    cfg = ChatHistoryConfig(db_path=str(db_path))
+    cfg = ChatHistoryConfig(db_filename=str(db_path))
     store = SQLiteHistoryStore(cfg)
 
     # 3. load_uninfused debe devolver 0 (migración marcó todo como infused=1)

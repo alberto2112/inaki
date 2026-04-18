@@ -1,4 +1,4 @@
-"""Tests para MemoryConfig — campos digest_size / digest_path y expansión de ~."""
+"""Tests de resolución de paths de runtime y campos de MemoryConfig."""
 
 from __future__ import annotations
 
@@ -14,26 +14,13 @@ from infrastructure.config import (
     SchedulerConfig,
 )
 
+HOME = str(Path.home())
+INAKI_HOME = f"{HOME}/.inaki"
+
 
 def test_default_digest_size() -> None:
     cfg = MemoryConfig()
     assert cfg.digest_size == 14
-
-
-def test_default_digest_path_is_absolute() -> None:
-    cfg = MemoryConfig()
-    assert cfg.digest_path.is_absolute()
-
-
-def test_default_digest_path_no_tilde() -> None:
-    cfg = MemoryConfig()
-    assert "~" not in str(cfg.digest_path)
-
-
-def test_default_digest_path_resolves_to_home() -> None:
-    cfg = MemoryConfig()
-    home = Path.home()
-    assert cfg.digest_path == home / ".inaki" / "mem" / "last_memories.md"
 
 
 def test_explicit_digest_size() -> None:
@@ -41,65 +28,110 @@ def test_explicit_digest_size() -> None:
     assert cfg.digest_size == 20
 
 
-def test_explicit_digest_path_expands_tilde() -> None:
-    cfg = MemoryConfig(digest_path="~/test.md")
-    assert cfg.digest_path.is_absolute()
-    assert "~" not in str(cfg.digest_path)
+# ---------------------------------------------------------------------------
+# Defaults — anclados bajo ~/.inaki/
+# ---------------------------------------------------------------------------
 
 
-def test_explicit_digest_path_is_path_type() -> None:
-    cfg = MemoryConfig(digest_path="~/test.md")
-    assert isinstance(cfg.digest_path, Path)
+def test_default_memory_db_filename_resolves_to_inaki_home() -> None:
+    cfg = MemoryConfig()
+    assert cfg.db_filename == f"{INAKI_HOME}/data/inaki.db"
 
 
-def test_tilde_expansion_happens_at_load_time() -> None:
-    """El valor devuelto es siempre un Path absoluto, nunca el string original."""
-    cfg = MemoryConfig(digest_size=20, digest_path="~/.inaki/mem/x.md")
-    assert cfg.digest_path.is_absolute()
-    assert cfg.digest_path == Path.home() / ".inaki" / "mem" / "x.md"
+def test_default_digest_filename_resolves_to_inaki_home() -> None:
+    cfg = MemoryConfig()
+    assert cfg.digest_filename == f"{INAKI_HOME}/mem/last_memories.md"
+
+
+def test_default_chat_history_db_filename_resolves_to_inaki_home() -> None:
+    cfg = ChatHistoryConfig()
+    assert cfg.db_filename == f"{INAKI_HOME}/data/history.db"
+
+
+def test_default_scheduler_db_filename_resolves_to_inaki_home() -> None:
+    cfg = SchedulerConfig()
+    assert cfg.db_filename == f"{INAKI_HOME}/data/scheduler.db"
+
+
+def test_default_embedding_model_dirname_resolves_to_inaki_home() -> None:
+    cfg = EmbeddingConfig()
+    assert cfg.model_dirname == f"{INAKI_HOME}/models/e5-small"
+
+
+def test_default_embedding_cache_filename_resolves_to_inaki_home() -> None:
+    cfg = EmbeddingConfig()
+    assert cfg.cache_filename == f"{INAKI_HOME}/data/embedding_cache.db"
 
 
 # ---------------------------------------------------------------------------
-# Expansión de ~ en todos los path-like strings
+# RuntimePath — paths relativos se anclan a ~/.inaki/
 # ---------------------------------------------------------------------------
 
-HOME = str(Path.home())
+
+def test_relative_path_anchored_under_inaki_home() -> None:
+    cfg = MemoryConfig(db_filename="custom/inaki.db")
+    assert cfg.db_filename == f"{INAKI_HOME}/custom/inaki.db"
 
 
-def test_memory_db_path_expands_tilde() -> None:
-    cfg = MemoryConfig(db_path="~/.inaki/mem/memories.db")
-    assert cfg.db_path == f"{HOME}/.inaki/mem/memories.db"
-    assert "~" not in cfg.db_path
+def test_relative_bare_filename_anchored_under_inaki_home() -> None:
+    cfg = MemoryConfig(db_filename="inaki.db")
+    assert cfg.db_filename == f"{INAKI_HOME}/inaki.db"
 
 
-def test_chat_history_db_path_expands_tilde() -> None:
-    cfg = ChatHistoryConfig(db_path="~/.inaki/mem/context.db")
-    assert cfg.db_path == f"{HOME}/.inaki/mem/context.db"
-    assert "~" not in cfg.db_path
+def test_relative_digest_filename_anchored_under_inaki_home() -> None:
+    cfg = MemoryConfig(digest_filename="digest.md")
+    assert cfg.digest_filename == f"{INAKI_HOME}/digest.md"
 
 
-def test_scheduler_db_path_expands_tilde() -> None:
-    cfg = SchedulerConfig(db_path="~/.inaki/scheduler.db")
-    assert cfg.db_path == f"{HOME}/.inaki/scheduler.db"
-    assert "~" not in cfg.db_path
+# ---------------------------------------------------------------------------
+# RuntimePath — paths absolutos se usan tal cual (escape hatch)
+# ---------------------------------------------------------------------------
 
 
-def test_embedding_model_path_expands_tilde() -> None:
-    cfg = EmbeddingConfig(model_path="~/.inaki/models/e5")
-    assert cfg.model_path == f"{HOME}/.inaki/models/e5"
-    assert "~" not in cfg.model_path
+def test_absolute_path_used_as_is() -> None:
+    cfg = MemoryConfig(db_filename="/srv/inaki/foo.db")
+    assert cfg.db_filename == "/srv/inaki/foo.db"
 
 
-def test_app_data_dir_expands_tilde() -> None:
-    cfg = AppConfig(data_dir="~/inaki_ws/logs/")
-    assert cfg.data_dir.startswith(HOME)
-    assert "~" not in cfg.data_dir
+def test_tilde_path_expands_to_absolute_and_not_anchored() -> None:
+    """Tras expansión, el path ya es absoluto → no se prepende ~/.inaki/."""
+    cfg = ChatHistoryConfig(db_filename="~/custom/history.db")
+    assert cfg.db_filename == f"{HOME}/custom/history.db"
 
 
-def test_app_models_dir_expands_tilde() -> None:
-    cfg = AppConfig(models_dir="~/.inaki/models/")
-    assert cfg.models_dir.startswith(HOME)
-    assert "~" not in cfg.models_dir
+def test_absolute_scheduler_path_used_as_is() -> None:
+    cfg = SchedulerConfig(db_filename="/var/lib/inaki/sched.db")
+    assert cfg.db_filename == "/var/lib/inaki/sched.db"
+
+
+def test_absolute_model_dirname_used_as_is() -> None:
+    cfg = EmbeddingConfig(model_dirname="/opt/models/e5")
+    assert cfg.model_dirname == "/opt/models/e5"
+
+
+# ---------------------------------------------------------------------------
+# RuntimePath — valor especial de SQLite :memory: no se interpreta como path
+# ---------------------------------------------------------------------------
+
+
+def test_sqlite_memory_special_passes_through() -> None:
+    cfg = MemoryConfig(db_filename=":memory:")
+    assert cfg.db_filename == ":memory:"
+
+
+def test_sqlite_memory_special_in_history() -> None:
+    cfg = ChatHistoryConfig(db_filename=":memory:")
+    assert cfg.db_filename == ":memory:"
+
+
+def test_sqlite_memory_special_in_scheduler() -> None:
+    cfg = SchedulerConfig(db_filename=":memory:")
+    assert cfg.db_filename == ":memory:"
+
+
+# ---------------------------------------------------------------------------
+# AppConfig.ext_dirs — expansión por elemento (sin anchoring runtime)
+# ---------------------------------------------------------------------------
 
 
 def test_app_ext_dirs_expand_tilde_per_element() -> None:
@@ -108,12 +140,6 @@ def test_app_ext_dirs_expand_tilde_per_element() -> None:
     assert cfg.ext_dirs[1] == f"{HOME}/.inaki/ext"
     assert cfg.ext_dirs[2] == "/abs/path"
     assert all("~" not in p for p in cfg.ext_dirs)
-
-
-def test_relative_paths_without_tilde_are_unchanged() -> None:
-    """Paths relativos sin ~ pasan tal cual — no se convierten a absolutos."""
-    cfg = MemoryConfig(db_path="data/inaki.db")
-    assert cfg.db_path == "data/inaki.db"
 
 
 # ---------------------------------------------------------------------------

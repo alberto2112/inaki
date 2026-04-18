@@ -75,8 +75,8 @@ class AgentContainer:
 
         # Factories resuelven el proveedor correcto leyendo cfg.embedding.provider y cfg.llm.provider
         self._embedder = EmbeddingProviderFactory.create(cfg)
-        self._embedding_cache = SqliteEmbeddingCache(cfg.embedding.cache_db)
-        self._memory = SQLiteMemoryRepository(cfg.memory.db_path, self._embedder)
+        self._embedding_cache = SqliteEmbeddingCache(cfg.embedding.cache_filename)
+        self._memory = SQLiteMemoryRepository(cfg.memory.db_filename, self._embedder)
         self._llm = LLMProviderFactory.create(cfg)
         self._skills = YamlSkillRepository(
             embedder=self._embedder,
@@ -499,7 +499,7 @@ class AppContainer:
 
         # Scheduler wiring
         scheduler_cfg = global_config.scheduler
-        self.scheduler_repo = SQLiteSchedulerRepo(scheduler_cfg.db_path)
+        self.scheduler_repo = SQLiteSchedulerRepo(scheduler_cfg.db_filename)
         self.schedule_task_uc = ScheduleTaskUseCase(
             repo=self.scheduler_repo,
             on_mutation=self._on_scheduler_mutation,

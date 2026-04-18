@@ -63,7 +63,7 @@ async def test_channel_send_cli_cae_en_hardcoded_file_y_persiste_metadata(
         consolidator=ConsolidationDispatchAdapter(None),  # type: ignore[arg-type]
         http_caller=HttpCallerAdapter(),
     )
-    config = SchedulerConfig(db_path=str(tmp_path / "sched.db"))
+    config = SchedulerConfig(db_filename=str(tmp_path / "sched.db"))
     service = SchedulerService(repo=repo, dispatch=dispatch, config=config)
 
     task = await repo.save_task(

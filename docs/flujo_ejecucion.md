@@ -31,7 +31,7 @@ main.py
 │   ├── Para cada AgentConfig en registry:
 │   │   └── AgentContainer(agent_cfg, global_config)
 │   │       ├── EmbeddingProviderFactory.create(cfg) → IEmbeddingProvider
-│   │       ├── SQLiteMemoryRepository(db_path, embedder)
+│   │       ├── SQLiteMemoryRepository(db_filename, embedder)
 │   │       ├── LLMProviderFactory.create(cfg) → ILLMProvider
 │   │       ├── YamlSkillRepository(embedder)
 │   │       ├── SQLiteHistoryStore(history_cfg)
@@ -45,7 +45,7 @@ main.py
 │   ├── ConsolidateAllAgentsUseCase(enabled_agents, delay_seconds)
 │   │
 │   └── Scheduler wiring:
-│       ├── SQLiteSchedulerRepo(scheduler_cfg.db_path)
+│       ├── SQLiteSchedulerRepo(scheduler_cfg.db_filename)
 │       ├── ScheduleTaskUseCase(repo, on_mutation)
 │       ├── SchedulerDispatchPorts(
 │       │       channel_sender=ChannelSenderAdapter(self),
@@ -150,7 +150,7 @@ AgentContainer.__init__
 │   └── E5OnnxProvider(embedding_cfg)
 │       └── _ensure_loaded() — carga model.onnx y tokenizer.json en primer uso (lazy)
 │
-├── SQLiteMemoryRepository(db_path, embedder)
+├── SQLiteMemoryRepository(db_filename, embedder)
 │   └── _ensure_schema() — CREATE TABLE IF NOT EXISTS en primer uso (lazy)
 │
 ├── LLMProviderFactory.create(cfg)
@@ -160,7 +160,7 @@ AgentContainer.__init__
 │   └── _ensure_loaded() — carga y embeds los YAML registrados vía add_file() en primer uso (lazy)
 │
 ├── SQLiteHistoryStore(history_cfg)
-│   └── mkdir(parent de db_path) si no existe — schema creado lazy en primer uso
+│   └── mkdir(parent de db_filename) si no existe — schema creado lazy en primer uso
 │
 └── ToolRegistry()
     ├── register(ShellTool())

@@ -32,7 +32,7 @@ class E5OnnxProvider(BaseEmbeddingProvider):
         self._cfg = cfg
         self._session = None
         self._tokenizer = None
-        self._model_path = Path(cfg.model_path)
+        self._model_path = Path(cfg.model_dirname)
         self._dimension = cfg.dimension
 
     def _ensure_loaded(self) -> None:

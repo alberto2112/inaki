@@ -187,10 +187,10 @@ put(hash, provider, dim, embedding)
 | Campo | Default | Descripción |
 |-------|---------|-------------|
 | `provider` | `"e5_onnx"` | Proveedor de embeddings |
-| `model_path` | `"models/e5-small"` | Ruta al modelo ONNX (solo e5_onnx) |
+| `model_dirname` | `"models/e5-small"` | Directorio del modelo ONNX (relativo a `~/.inaki/`, solo e5_onnx) |
 | `model` | `"text-embedding-3-small"` | Nombre de modelo (solo openai) |
 | `dimension` | `384` | Dimensión del vector de embedding |
-| `cache_db` | `"data/embedding_cache.db"` | Ruta al archivo SQLite del cache |
+| `cache_filename` | `"data/embedding_cache.db"` | Fichero SQLite del cache (relativo a `~/.inaki/`) |
 
 ### `SkillsConfig`
 

@@ -90,9 +90,9 @@ def _make_use_case(overrides: dict, mock_llm, mock_memory, mock_embedder, mock_s
         description="Agente de test",
         system_prompt="Eres un asistente de test.",
         llm=LLMConfig(provider="openrouter", model="test-model", api_key="test-key"),
-        embedding=EmbeddingConfig(provider="e5_onnx", model_path="models/test"),
-        memory=overrides.get("memory", MemoryConfig(db_path=":memory:", default_top_k=3)),
-        chat_history=ChatHistoryConfig(db_path="/tmp/inaki_test/history.db"),
+        embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
+        memory=overrides.get("memory", MemoryConfig(db_filename=":memory:", default_top_k=3)),
+        chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history.db"),
         skills=overrides.get("skills", SkillsConfig()),
         tools=overrides.get("tools", ToolsConfig()),
     )
@@ -176,7 +176,7 @@ async def test_digest_present_injected_into_system_prompt(
     digest_file.write_text("# Test digest\n- [2026-04-09] Hello", encoding="utf-8")
 
     mock_skills.list_all.return_value = []
-    mem_cfg = MemoryConfig(db_path=":memory:", default_top_k=3, digest_path=str(digest_file))
+    mem_cfg = MemoryConfig(db_filename=":memory:", default_top_k=3, digest_filename=str(digest_file))
     uc = _make_use_case(
         {"memory": mem_cfg},
         mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools,
@@ -196,7 +196,7 @@ async def test_digest_absent_no_exception(
     nonexistent = tmp_path / "does_not_exist.md"
 
     mock_skills.list_all.return_value = []
-    mem_cfg = MemoryConfig(db_path=":memory:", default_top_k=3, digest_path=str(nonexistent))
+    mem_cfg = MemoryConfig(db_filename=":memory:", default_top_k=3, digest_filename=str(nonexistent))
     uc = _make_use_case(
         {"memory": mem_cfg},
         mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools,

@@ -17,9 +17,9 @@ from infrastructure.config import MemoryConfig
 @pytest.fixture
 def memory_config(tmp_path: Path) -> MemoryConfig:
     return MemoryConfig(
-        db_path=":memory:",
+        db_filename=":memory:",
         digest_size=3,
-        digest_path=str(tmp_path / "mem" / "digest.md"),
+        digest_filename=str(tmp_path / "mem" / "digest.md"),
         min_relevance_score=0.5,
         keep_last_messages=20,
     )
@@ -255,9 +255,9 @@ async def test_consolidation_uses_sentinel_fallback_when_keep_last_is_zero(
 ):
     """keep_last_messages=0 es sentinel → resuelve al fallback del sistema (84)."""
     cfg = MemoryConfig(
-        db_path=":memory:",
+        db_filename=":memory:",
         digest_size=3,
-        digest_path=str(tmp_path / "mem" / "digest.md"),
+        digest_filename=str(tmp_path / "mem" / "digest.md"),
         min_relevance_score=0.5,
         keep_last_messages=0,  # sentinel
     )
@@ -335,7 +335,7 @@ async def test_digest_file_written_with_correct_format(
     )
     await uc.execute()
 
-    digest_file = memory_config.digest_path
+    digest_file = Path(memory_config.digest_filename)
     assert digest_file.exists()
     content = digest_file.read_text(encoding="utf-8")
     assert content.startswith("# Recuerdos sobre el usuario")
@@ -393,7 +393,7 @@ async def test_parent_directory_created_for_digest(
     nested_path = tmp_path / "a" / "b" / "c" / "digest.md"
     assert not nested_path.parent.exists()
 
-    cfg = MemoryConfig(digest_size=2, digest_path=str(nested_path))
+    cfg = MemoryConfig(digest_size=2, digest_filename=str(nested_path))
     mock_memory.get_recent.return_value = []
     mock_history.load_uninfused.return_value = [
         Message(role=Role.USER, content="hola"),

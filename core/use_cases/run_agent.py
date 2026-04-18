@@ -141,7 +141,7 @@ class RunAgentUseCase:
 
     def _read_digest(self) -> str:
         """Lee el digest markdown. Retorna '' si no existe o falla la lectura."""
-        path = self._cfg.memory.digest_path  # already an expanded Path (validator)
+        path = Path(self._cfg.memory.digest_filename)
         try:
             return path.read_text(encoding="utf-8")
         except FileNotFoundError:

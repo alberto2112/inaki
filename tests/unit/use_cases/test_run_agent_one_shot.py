@@ -45,9 +45,9 @@ def _make_agent_config(agent_id: str = "test-child") -> AgentConfig:
         description="Agente child de test",
         system_prompt="Sos un agente de test.",
         llm=LLMConfig(provider="openrouter", model="test-model", api_key="test-key"),
-        embedding=EmbeddingConfig(provider="e5_onnx", model_path="models/test"),
-        memory=MemoryConfig(db_path=":memory:", default_top_k=3),
-        chat_history=ChatHistoryConfig(db_path="/tmp/inaki_test/history_oneshot.db"),
+        embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
+        memory=MemoryConfig(db_filename=":memory:", default_top_k=3),
+        chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history_oneshot.db"),
         tools=ToolsConfig(circuit_breaker_threshold=2),
         delegation=AgentDelegationConfig(enabled=True),
     )

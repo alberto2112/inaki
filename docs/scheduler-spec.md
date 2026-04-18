@@ -542,7 +542,7 @@ Archivo de configuración global: `~/.inaki/config/global.yaml`
 ```yaml
 scheduler:
   enabled: true                    # Habilita/deshabilita el scheduler al arrancar
-  db_path: "data/scheduler.db"     # Ruta SQLite (soporta ~); relativa al user data dir
+  db_filename: "data/scheduler.db" # Fichero SQLite relativo a ~/.inaki/ (o absoluto)
   max_retries: 3                   # Reintentos máximos por tarea fallida
   output_truncation_size: 65536    # Bytes máximos a almacenar en task_logs.output
 ```
@@ -609,7 +609,7 @@ Archivo: [core/domain/errors.py](../core/domain/errors.py)
 
 ## 11. Esquema SQLite
 
-Base de datos: `~/.inaki/data/scheduler.db` (o la ruta configurada en `scheduler.db_path`)
+Base de datos: `~/.inaki/data/scheduler.db` (o la ruta configurada en `scheduler.db_filename`)
 
 ### Tabla `scheduled_tasks`
 
@@ -696,7 +696,7 @@ CLI ──► ScheduleTaskUseCase ──► ISchedulerRepository
 
 ```python
 # infrastructure/container.py
-scheduler_repo = SQLiteSchedulerRepo(config.scheduler.db_path)
+scheduler_repo = SQLiteSchedulerRepo(config.scheduler.db_filename)
 
 schedule_task_uc = ScheduleTaskUseCase(
     repo=scheduler_repo,

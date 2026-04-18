@@ -10,9 +10,9 @@ from infrastructure.config import AgentRegistry
 
 _GLOBAL_RAW: dict = {
     "llm": {"provider": "openrouter", "model": "anthropic/claude-3-5-haiku"},
-    "embedding": {"provider": "e5_onnx", "model_path": "models/e5-small"},
-    "memory": {"db_path": "data/inaki.db"},
-    "history": {"db_path": "data/history.db"},
+    "embedding": {"provider": "e5_onnx", "model_dirname": "models/e5-small"},
+    "memory": {"db_filename": "data/inaki.db"},
+    "history": {"db_filename": "data/history.db"},
 }
 
 

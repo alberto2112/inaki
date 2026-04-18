@@ -57,9 +57,9 @@ CREATE TABLE IF NOT EXISTS agent_state (
 
 class SQLiteHistoryStore(IHistoryStore):
     def __init__(self, cfg: ChatHistoryConfig) -> None:
-        self._db_path = cfg.db_path
+        self._db_path = cfg.db_filename
         self._max_n = cfg.max_messages
-        Path(cfg.db_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(cfg.db_filename).parent.mkdir(parents=True, exist_ok=True)
 
     @asynccontextmanager
     async def _conn(self) -> AsyncIterator[aiosqlite.Connection]:

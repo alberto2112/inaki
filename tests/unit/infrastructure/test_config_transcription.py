@@ -86,9 +86,9 @@ def test_load_global_config_parsea_bloque_transcription(tmp_path: Path) -> None:
     (cfg_dir / "global.yaml").write_text(
         "app: {name: Test}\n"
         "llm: {provider: groq, model: m, api_key: k}\n"
-        "embedding: {provider: e5_onnx, model_path: /tmp/m}\n"
-        "memory: {db_path: ':memory:'}\n"
-        "chat_history: {db_path: /tmp/h.db}\n"
+        "embedding: {provider: e5_onnx, model_dirname: /tmp/m}\n"
+        "memory: {db_filename: ':memory:'}\n"
+        "chat_history: {db_filename: /tmp/h.db}\n"
         "transcription: {provider: groq, model: whisper-large-v3, api_key: sk-g}\n",
         encoding="utf-8",
     )
@@ -110,9 +110,9 @@ def test_load_agent_config_mergea_transcription_4_layers(tmp_path: Path) -> None
     (cfg_dir / "global.yaml").write_text(
         "app: {name: Test}\n"
         "llm: {provider: groq, model: m, api_key: k}\n"
-        "embedding: {provider: e5_onnx, model_path: /tmp/m}\n"
-        "memory: {db_path: ':memory:'}\n"
-        "chat_history: {db_path: /tmp/h.db}\n"
+        "embedding: {provider: e5_onnx, model_dirname: /tmp/m}\n"
+        "memory: {db_filename: ':memory:'}\n"
+        "chat_history: {db_filename: /tmp/h.db}\n"
         "transcription: {provider: groq, model: whisper-large-v3-turbo}\n",
         encoding="utf-8",
     )
@@ -148,9 +148,9 @@ def test_agent_config_sin_transcription_queda_en_none(tmp_path: Path) -> None:
     (cfg_dir / "global.yaml").write_text(
         "app: {name: Test}\n"
         "llm: {provider: groq, model: m, api_key: k}\n"
-        "embedding: {provider: e5_onnx, model_path: /tmp/m}\n"
-        "memory: {db_path: ':memory:'}\n"
-        "chat_history: {db_path: /tmp/h.db}\n",
+        "embedding: {provider: e5_onnx, model_dirname: /tmp/m}\n"
+        "memory: {db_filename: ':memory:'}\n"
+        "chat_history: {db_filename: /tmp/h.db}\n",
         encoding="utf-8",
     )
     _, global_raw = load_global_config(cfg_dir)

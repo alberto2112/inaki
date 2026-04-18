@@ -48,8 +48,6 @@ El CLI siempre funciona.
 app:
   name: "Iñaki"           # Nombre del sistema
   log_level: "INFO"       # DEBUG | INFO | WARNING | ERROR
-  data_dir: "data"        # Directorio de datos en runtime
-  models_dir: "models"    # Directorio de modelos ONNX
   default_agent: "general" # Agente usado por CLI sin --agent
 
 llm:
@@ -62,16 +60,16 @@ llm:
 
 embedding:
   provider: "e5_onnx"     # e5_onnx (local ONNX) | openai
-  model_path: "models/e5-small"  # Ruta al directorio con model.onnx + tokenizer.json
+  model_dirname: "models/e5-small"  # Dir con model.onnx + tokenizer.json (relativo a ~/.inaki/)
   dimension: 384          # Dimensión del vector (384 para e5-small)
 
 memory:
-  db_path: "data/inaki.db"       # Base de datos SQLite con sqlite-vec
+  db_filename: "data/inaki.db"  # Fichero SQLite con sqlite-vec (relativo a ~/.inaki/)
                                  # Memoria GLOBAL — compartida entre todos los agentes
   default_top_k: 5               # Número de recuerdos recuperados por RAG
   digest_size: 14                # Nº de recuerdos volcados al digest markdown
-  digest_path: "~/.inaki/mem/last_memories.md"
-                                 # Ruta al digest leído por el prompt builder en cada turno
+  digest_filename: "mem/last_memories.md"
+                                 # Digest leído por el prompt builder (relativo a ~/.inaki/)
   min_relevance_score: 0.5       # Umbral mínimo (0.0-1.0) para persistir un hecho extraído
                                  # por el LLM. Filtra ANTES de embedear (ahorra tokens).
   schedule: "0 3 * * *"          # Cron global: cuándo corre la consolidación nocturna.
@@ -103,13 +101,13 @@ skills:
                                  # para incluir una skill. 0.0 = sin filtro.
 
 chat_history:
-  db_path: "data/history.db"     # Base de datos SQLite del historial de conversación
-                                 # (separada de inaki.db que usa sqlite-vec)
+  db_filename: "data/history.db"  # Fichero SQLite del historial (relativo a ~/.inaki/)
+                                 # separado de inaki.db (que usa sqlite-vec)
   max_messages: 21               # Últimos N mensajes inyectados al LLM (0 = sin límite)
 
 scheduler:
   enabled: true                  # Arranca el SchedulerService en modo daemon
-  db_path: "data/scheduler.db"   # Base de datos de tareas programadas
+  db_filename: "data/scheduler.db"  # Fichero SQLite de tareas programadas (relativo a ~/.inaki/)
   max_retries: 3
   output_truncation_size: 65536
   channel_fallback:              # Cascada de resolución para dispatch de canales (ver abajo)
@@ -355,7 +353,7 @@ channels:
 | `transcription` (bloque) | Merge campo a campo. Normalmente definido en `global.yaml`. |
 | `transcription.api_key` | Solo en secrets. Si ausente y `voice_enabled: true` → el provider falla al instanciar. |
 | `channels.telegram.voice_enabled` | Per-agent. Default `true`. Si `true` requiere bloque `transcription:`. |
-| `memory.db_path` / `digest_path` / `default_top_k` / `min_relevance_score` / `schedule` / `delay_seconds` / `keep_last_messages` | **Solo en `global.yaml`**. Un agente no puede overridearlos (semánticamente no tiene sentido: la memoria es global compartida). |
+| `memory.db_filename` / `digest_filename` / `default_top_k` / `min_relevance_score` / `schedule` / `delay_seconds` / `keep_last_messages` | **Solo en `global.yaml`**. Un agente no puede overridearlos (semánticamente no tiene sentido: la memoria es global compartida). |
 | `memory.enabled` | **Solo per-agent en `agents/{id}.yaml`**. Default `true`. Filtra qué agentes participan en la consolidación nocturna global. |
 | `channels` | Solo en el agente. No existe en global. |
 | `channels.*.token` / `auth_key` | Solo en `*.secrets.yaml`. |
@@ -366,28 +364,44 @@ channels:
 
 ## Resolución de paths
 
-Los paths relativos en la config se resuelven desde el **directorio de trabajo** al momento
-de arrancar (`cwd`). Para entornos productivos (systemd), especificar paths absolutos o
-asegurarse de que `WorkingDirectory` en el unit file apunte al directorio del proyecto.
+Los campos de path de runtime (`*_filename`, `*_dirname`) se resuelven así:
 
-Ejemplo para Pi 5 en `config/global.yaml`:
+- **Paths relativos** (p. ej. `"data/inaki.db"`) se anclan bajo `~/.inaki/`.
+- **Paths absolutos** (p. ej. `"/srv/inaki/data/inaki.db"`) se usan tal cual.
+- **Tildes** (`~/...`) se expanden al home del usuario.
+- El valor SQLite especial `:memory:` pasa sin interpretarse como path.
+
+La raíz `~/.inaki/` está fija — es la misma que usan config/agents/secrets —
+siguiendo el principio de separación entre datos de usuario y árbol del proyecto.
+
+Layout por defecto:
+```
+~/.inaki/
+├── config/            # YAMLs de global + secrets
+├── agents/            # YAMLs por agente + secrets
+├── data/              # DBs SQLite (inaki.db, history.db, scheduler.db, embedding_cache.db)
+├── models/            # Modelos ONNX (e.g. e5-small/)
+├── mem/               # Digest markdown (last_memories.md)
+├── ext/               # Extensiones del usuario
+└── .env               # INAKI_SECRET_KEY
+```
+
+Si necesitás mover el storage a otra raíz (p. ej. disco dedicado en Pi 5), pasá
+paths absolutos en `~/.inaki/config/global.yaml`:
 ```yaml
-app:
-  data_dir: "/home/pi/inaki/data"
-  models_dir: "/home/pi/inaki/models"
-
 embedding:
-  model_path: "/home/pi/inaki/models/e5-small"
+  model_dirname: "/srv/inaki/models/e5-small"
+  cache_filename: "/srv/inaki/data/embedding_cache.db"
 
 memory:
-  db_path: "/home/pi/inaki/data/inaki.db"
-  digest_path: "/home/pi/.inaki/mem/last_memories.md"
+  db_filename: "/srv/inaki/data/inaki.db"
+  digest_filename: "/srv/inaki/mem/last_memories.md"
 
 chat_history:
-  db_path: "/home/pi/inaki/data/history.db"
+  db_filename: "/srv/inaki/data/history.db"
 
 scheduler:
-  db_path: "/home/pi/inaki/data/scheduler.db"
+  db_filename: "/srv/inaki/data/scheduler.db"
 ```
 
 ---

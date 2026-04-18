@@ -10,6 +10,7 @@ _*/
 # Datos y modelos
 data/
 models/
+openspec/
 
 # Python
 __pycache__/

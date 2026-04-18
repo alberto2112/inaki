@@ -58,9 +58,9 @@ def _make_agent_config(agent_id: str = "test-agent") -> AgentConfig:
         description=f"Agente {agent_id}",
         system_prompt="Prompt de prueba",
         llm=LLMConfig(provider="openrouter", model="test-model", api_key="test-key"),
-        embedding=EmbeddingConfig(provider="e5_onnx", model_path="models/test"),
-        memory=MemoryConfig(db_path=":memory:"),
-        chat_history=ChatHistoryConfig(db_path="/tmp/inaki_test/history.db"),
+        embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
+        memory=MemoryConfig(db_filename=":memory:"),
+        chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history.db"),
         delegation=AgentDelegationConfig(enabled=False, allowed_targets=[]),
     )
 
@@ -69,9 +69,9 @@ def _make_global_config() -> GlobalConfig:
     return GlobalConfig(
         app=AppConfig(ext_dirs=[]),
         llm=LLMConfig(provider="openrouter", model="test-model", api_key="test-key"),
-        embedding=EmbeddingConfig(provider="e5_onnx", model_path="models/test"),
-        memory=MemoryConfig(db_path=":memory:"),
-        chat_history=ChatHistoryConfig(db_path="/tmp/inaki_test/history.db"),
+        embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
+        memory=MemoryConfig(db_filename=":memory:"),
+        chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history.db"),
         skills=SkillsConfig(),
         tools=ToolsConfig(),
         scheduler=SchedulerConfig(),

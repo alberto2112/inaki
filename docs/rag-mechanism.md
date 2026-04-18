@@ -23,13 +23,17 @@ RunAgentUseCase.execute()
         ├── list_all_skills()     → ¿Hay más de rag_min_skills? → skills_rag_active
         ├── get_all_schemas()     → ¿Hay más de rag_min_tools?  → tools_rag_active
         │
-        ├── (si alguno está activo)
-        │       └── embed_query(user_input)  → query_vec
+        ├── ¿input corto (< rag.min_words_threshold) Y hay sticky previo?
+        │       ├── SÍ → short-input bypass:
+        │       │         heredar selección del sticky previo intacta
+        │       │         (no embed, no TTL decay, no persist)
+        │       └── NO → seguir flujo normal:
+        │                 └── embed_query(user_input) → query_vec
         │
-        ├── (si skills_rag_active)
+        ├── (si skills_rag_active y NO bypass)
         │       └── skills.retrieve(query_vec, top_k, min_score) → retrieved_skills
         │
-        ├── (si tools_rag_active)
+        ├── (si tools_rag_active y NO bypass)
         │       └── tools.get_schemas_relevant(query_vec, top_k, min_score) → tool_schemas
         │
         ▼
@@ -206,6 +210,50 @@ put(hash, provider, dim, embedding)
 | `tool_call_max_iterations` | `5` | Iteraciones máximas del tool loop |
 | `circuit_breaker_threshold` | `2` | Fallos consecutivos antes de cortar |
 
+### `RagConfig`
+
+| Campo | Default | Descripción |
+|-------|---------|-------------|
+| `min_words_threshold` | `0` | Mínimo de palabras del user_input para re-correr RAG. Por debajo de este umbral (y si hay sticky previo) se saltea embedding y se hereda la selección del turno anterior intacta. `0` = feature deshabilitada (comportamiento histórico) |
+
+---
+
+## Gate por cantidad de palabras (short-input bypass)
+
+Parámetro: `rag.min_words_threshold` (ver `RagConfig`).
+
+**Motivación.** En follow-ups cortos — "sí", "dale", "y eso?" — el embedding tiene poca señal semántica y normalmente el contexto sigue siendo el del turno anterior. Recalcular el RAG en cada turno corto (a) gasta una llamada al embedder y (b) puede "resetear" skills/tools relevantes que ya estaban seleccionadas.
+
+**Semántica.** Al arrancar `execute()` se evalúa:
+
+```
+is_short = (
+    rag.min_words_threshold > 0
+    and len(user_input.split()) < rag.min_words_threshold
+    and (prev_state.sticky_skills or prev_state.sticky_tools)
+)
+```
+
+Si `is_short` es `True`:
+
+- NO se llama a `embed_query` → ahorra latencia y cuota del embedder
+- NO se corre `apply_sticky` → el TTL del sticky queda **congelado** (no decrementa)
+- `retrieved_skills` / `tool_schemas` se reconstruyen desde `prev_state.sticky_*` (filtrando ids que ya no existan en el catálogo actual)
+- `state_dirty = False` → NO se persiste estado
+
+Si `is_short` es `False`, el pipeline original corre sin cambios.
+
+**Casos de borde.**
+
+- Primer turno (sticky vacío) con input corto → el RAG **corre normalmente**. Sin sticky previo no hay contexto del cual heredar.
+- RAG desactivado por umbrales de pool (`rag_min_skills` / `rag_min_tools` no superados) → irrelevante, ya se mandaban todas las skills/tools.
+- `tools_override` activo (p. ej. scheduler `agent_send`) → el override siempre manda; el gate solo afecta skills.
+- Umbral estricto: un input con exactamente `min_words_threshold` palabras **no** es corto (comparación `<`, no `<=`).
+
+**Intención.** Política del caller del RAG, no del embedder. `EmbeddingConfig` describe "cómo se calcula un embedding"; `RagConfig` describe "cuándo activar el pipeline RAG". Por eso no vive dentro de `EmbeddingConfig`.
+
+**Visibilidad.** `inspect()` aplica el mismo gate que `execute()` — si el input es corto y hay sticky previo, muestra la selección heredada (no la que saldría de re-correr el RAG). Así el debug refleja lo que realmente vería el LLM.
+
 ---
 
 ## Inyección de skills en el system prompt
@@ -253,6 +301,6 @@ Solo las skills recuperadas por RAG (o todas si RAG inactivo) aparecen en el pro
 | **Adapter** | `adapters/outbound/skills/yaml_skill_repo.py` | Carga de skills + RAG |
 | **Adapter** | `adapters/outbound/tools/tool_registry.py` | Registro de tools + RAG |
 | **Infraestructura** | `infrastructure/container.py` | Wiring: instancia y conecta todo |
-| **Config** | `infrastructure/config.py` | `EmbeddingConfig`, `SkillsConfig`, `ToolsConfig` |
+| **Config** | `infrastructure/config.py` | `EmbeddingConfig`, `SkillsConfig`, `ToolsConfig`, `RagConfig` |
 
 La regla hexagonal se respeta: el core no conoce SQLite ni YAML. Solo depende de las interfaces (`IEmbeddingCache`, `IEmbeddingProvider`, `ISkillRepository`).

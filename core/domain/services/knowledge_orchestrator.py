@@ -27,12 +27,18 @@ class KnowledgeOrchestrator:
         sources: list[IKnowledgeSource],
         max_total_chunks: int = 10,
         token_budget_threshold: int = 4000,
+        pre_fetch_enabled: bool = True,
+        default_top_k_per_source: int = 3,
+        default_min_score: float = 0.5,
     ) -> None:
         self._fuentes = sources
         self._cap = max_total_chunks
-        # Umbral de advertencia de presupuesto de tokens (0 = deshabilitado).
-        # Almacenado aquí para que RunAgentUseCase lo lea sin necesitar GlobalConfig.
+        # Parámetros almacenados aquí para que RunAgentUseCase los lea sin necesitar
+        # GlobalConfig (mantiene core/ desacoplado de infrastructure/).
         self._token_budget_threshold = token_budget_threshold
+        self._pre_fetch_enabled = pre_fetch_enabled
+        self._default_top_k_per_source = default_top_k_per_source
+        self._default_min_score = default_min_score
 
     @property
     def source_ids(self) -> list[str]:
@@ -43,6 +49,21 @@ class KnowledgeOrchestrator:
     def token_budget_threshold(self) -> int:
         """Umbral de advertencia de tokens (0 = deshabilitado)."""
         return self._token_budget_threshold
+
+    @property
+    def pre_fetch_enabled(self) -> bool:
+        """Si False, el pre-fetch automático por turno se saltea."""
+        return self._pre_fetch_enabled
+
+    @property
+    def default_top_k_per_source(self) -> int:
+        """top_k por fuente usado en el pre-fetch por turno."""
+        return self._default_top_k_per_source
+
+    @property
+    def default_min_score(self) -> float:
+        """min_score usado en el pre-fetch por turno."""
+        return self._default_min_score
 
     async def retrieve_all(
         self,

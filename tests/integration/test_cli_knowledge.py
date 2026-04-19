@@ -210,6 +210,8 @@ class TestKnowledgeStats:
                 "db_path": "/tmp/fake.db",
                 "archivos_indexados": 3,
                 "chunks_totales": 15,
+                "last_indexed_mtime": 1_700_000_000.0,
+                "embedding_dimension": 384,
             }
         )
 
@@ -229,6 +231,8 @@ class TestKnowledgeStats:
         assert "test-docs" in result.output
         assert "3" in result.output  # archivos_indexados
         assert "15" in result.output  # chunks_totales
+        assert "384" in result.output  # embedding_dimension
+        assert "2023" in result.output  # last_indexed renderizado como fecha UTC
 
     def test_stats_source_unknown_exits_1(self, runner, docs_dir: Path) -> None:
         """stats con source-id desconocido debe salir con código 1."""

@@ -321,17 +321,24 @@ class DocumentKnowledgeSource(IKnowledgeSource):
 
         return fragmentos
 
-    async def get_stats(self) -> dict[str, int | str]:
-        """Devuelve estadísticas del índice: archivos, chunks totales."""
+    async def get_stats(self) -> dict[str, int | str | float | None]:
+        """Devuelve estadísticas del índice: archivos, chunks, última indexación y dimensión."""
         async with self._conn() as conn:
             await self._ensure_schema(conn)
 
             row_files = list(await conn.execute_fetchall("SELECT COUNT(*) as n FROM files_indexed"))
             row_chunks = list(await conn.execute_fetchall("SELECT COUNT(*) as n FROM chunks"))
+            row_mtime = list(
+                await conn.execute_fetchall("SELECT MAX(mtime) as m FROM files_indexed")
+            )
+
+        last_mtime = row_mtime[0]["m"] if row_mtime else None
 
         return {
             "source_id": self._source_id,
             "archivos_indexados": row_files[0]["n"] if row_files else 0,
             "chunks_totales": row_chunks[0]["n"] if row_chunks else 0,
             "db_path": self._db_path,
+            "last_indexed_mtime": last_mtime,
+            "embedding_dimension": self._dimension,
         }

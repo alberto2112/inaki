@@ -167,3 +167,15 @@ def knowledge_stats(
     typer.echo(f"DB path:         {stats['db_path']}")
     typer.echo(f"Files indexed:   {stats['archivos_indexados']}")
     typer.echo(f"Total chunks:    {stats['chunks_totales']}")
+    typer.echo(f"Embedding dim:   {stats['embedding_dimension']}")
+
+    last_mtime = stats.get("last_indexed_mtime")
+    if last_mtime is None:
+        typer.echo("Last indexed:    (never)")
+    else:
+        from datetime import datetime, timezone
+
+        ts = datetime.fromtimestamp(float(last_mtime), tz=timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S UTC"
+        )
+        typer.echo(f"Last indexed:    {ts}")

@@ -266,14 +266,18 @@ class RunAgentUseCase:
         from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
 
         knowledge_chunks: list[KnowledgeChunk] = []
-        if not routing_bypass and self._knowledge_orchestrator is not None:
+        if (
+            not routing_bypass
+            and self._knowledge_orchestrator is not None
+            and self._knowledge_orchestrator.pre_fetch_enabled
+        ):
             if query_vec is None:
                 # Routing no corrió pero hay orquestrador → calcular embedding ahora
                 query_vec = await self._embedder.embed_query(user_input)
             knowledge_chunks = await self._knowledge_orchestrator.retrieve_all(
                 query_vec=query_vec,
-                top_k=5,
-                min_score=0.0,
+                top_k=self._knowledge_orchestrator.default_top_k_per_source,
+                min_score=self._knowledge_orchestrator.default_min_score,
             )
             logger.debug(
                 "[knowledge] pre-fetch completado (agent=%s chunks=%d)",
@@ -386,6 +390,8 @@ class RunAgentUseCase:
             prev_state=prev_state,
         )
 
+        query_vec: list[float] | None = None
+
         if routing_bypass:
             # Refleja la realidad de execute(): selección heredada del sticky previo.
             if skills_routing_active and prev_state.sticky_skills:
@@ -417,6 +423,23 @@ class RunAgentUseCase:
                 selected_schemas = [sch for sch, _ in scored_tools]
                 tool_scores = [(sch["function"]["name"], sc) for sch, sc in scored_tools]
 
+        # Pre-fetch de knowledge — espeja execute(): skip en bypass o si pre-fetch está deshabilitado.
+        from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
+
+        knowledge_chunks: list[KnowledgeChunk] = []
+        if (
+            not routing_bypass
+            and self._knowledge_orchestrator is not None
+            and self._knowledge_orchestrator.pre_fetch_enabled
+        ):
+            if query_vec is None:
+                query_vec = await self._embedder.embed_query(user_input)
+            knowledge_chunks = await self._knowledge_orchestrator.retrieve_all(
+                query_vec=query_vec,
+                top_k=self._knowledge_orchestrator.default_top_k_per_source,
+                min_score=self._knowledge_orchestrator.default_min_score,
+            )
+
         user_context = self._read_user_context()
         context = AgentContext(
             agent_id=self._cfg.id,
@@ -425,6 +448,7 @@ class RunAgentUseCase:
             skills=retrieved_skills,
             timezone=self._user_timezone,
             workspace_root=_workspace_absolute_path(self._cfg),
+            knowledge_chunks=knowledge_chunks,
         )
         system_prompt = context.build_system_prompt(self._cfg.system_prompt)
 

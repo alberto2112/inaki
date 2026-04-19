@@ -128,11 +128,15 @@ class AgentContainer:
             memory_config=cfg.memory,
         )
 
-    def _collect_knowledge_sources(self) -> "tuple[list[IKnowledgeSource], int, int]":
+    def _collect_knowledge_sources(
+        self,
+    ) -> "tuple[list[IKnowledgeSource], dict]":
         """
         Recolecta las fuentes de conocimiento de nivel 1 y 2 (memoria + config).
 
-        Retorna una tupla (fuentes, max_total_chunks, token_budget_threshold).
+        Retorna (fuentes, params) donde params es un dict con los parámetros
+        del orquestrador: max_total_chunks, token_budget_threshold,
+        pre_fetch_enabled, default_top_k_per_source, default_min_score.
         Las fuentes de nivel 3 (extensiones) se añaden en _register_extensions().
         Orden garantizado: (1) memoria, (2) fuentes configuradas.
         """
@@ -144,13 +148,23 @@ class AgentContainer:
 
         # Leer flags desde la config o usar defaults
         include_memory = True
-        max_total_chunks = 10
-        token_budget_threshold = 4000
+        params = {
+            "max_total_chunks": 10,
+            "token_budget_threshold": 4000,
+            "pre_fetch_enabled": True,
+            "default_top_k_per_source": 3,
+            "default_min_score": 0.5,
+        }
 
         if knowledge_cfg is not None:
             include_memory = getattr(knowledge_cfg, "include_memory", True)
-            max_total_chunks = getattr(knowledge_cfg, "max_total_chunks", 10)
-            token_budget_threshold = getattr(knowledge_cfg, "token_budget_warn_threshold", 4000)
+            params["max_total_chunks"] = getattr(knowledge_cfg, "max_total_chunks", 10)
+            params["token_budget_threshold"] = getattr(
+                knowledge_cfg, "token_budget_warn_threshold", 4000
+            )
+            params["pre_fetch_enabled"] = getattr(knowledge_cfg, "enabled", True)
+            params["default_top_k_per_source"] = getattr(knowledge_cfg, "top_k_per_source", 3)
+            params["default_min_score"] = getattr(knowledge_cfg, "min_score", 0.5)
 
         fuentes: list[IKnowledgeSource] = []
 
@@ -184,28 +198,30 @@ class AgentContainer:
                         getattr(fuente_cfg, "id", "<sin-id>"),
                     )
 
-        return fuentes, max_total_chunks, token_budget_threshold
+        return fuentes, params
 
     def _build_knowledge_orchestrator(
         self,
         fuentes: "list[IKnowledgeSource]",
-        max_total_chunks: int,
-        token_budget_threshold: int,
+        params: dict,
     ) -> "KnowledgeOrchestrator":
         """
         Construye el KnowledgeOrchestrator con la lista de fuentes ya resuelta.
 
         Recibe las fuentes ordenadas (memoria → config → ext) y los parámetros
-        de cap y presupuesto de tokens. Separado de _collect_knowledge_sources()
-        para que _register_extensions() pueda añadir fuentes de nivel 3 antes
-        de que se construya el orquestrador definitivo.
+        del orquestrador (ver _collect_knowledge_sources). Separado de
+        _collect_knowledge_sources() para que _register_extensions() pueda añadir
+        fuentes de nivel 3 antes de que se construya el orquestrador definitivo.
         """
         from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
 
         return KnowledgeOrchestrator(
             sources=fuentes,
-            max_total_chunks=max_total_chunks,
-            token_budget_threshold=token_budget_threshold,
+            max_total_chunks=params["max_total_chunks"],
+            token_budget_threshold=params["token_budget_threshold"],
+            pre_fetch_enabled=params["pre_fetch_enabled"],
+            default_top_k_per_source=params["default_top_k_per_source"],
+            default_min_score=params["default_min_score"],
         )
 
     def _build_document_source(self, fuente_cfg: object) -> "IKnowledgeSource":
@@ -300,13 +316,11 @@ class AgentContainer:
         # quedan incorporadas automáticamente sin reconstruir el objeto orquestrador.
         (
             self._pending_knowledge_sources,
-            self._knowledge_max_chunks,
-            self._knowledge_token_budget,
+            self._knowledge_params,
         ) = self._collect_knowledge_sources()
         self._knowledge_orchestrator = self._build_knowledge_orchestrator(
             self._pending_knowledge_sources,
-            self._knowledge_max_chunks,
-            self._knowledge_token_budget,
+            self._knowledge_params,
         )
         self._tools.register(
             KnowledgeSearchTool(

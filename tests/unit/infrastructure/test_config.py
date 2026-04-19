@@ -145,6 +145,7 @@ def test_app_ext_dirs_expand_tilde_per_element() -> None:
 # keep_last_messages — sentinel 0 → fallback 84
 # ---------------------------------------------------------------------------
 
+
 def test_keep_last_messages_default_is_zero_sentinel() -> None:
     cfg = MemoryConfig()
     assert cfg.keep_last_messages == 0
@@ -199,6 +200,7 @@ def test_delegation_config_yaml_override_timeout_seconds() -> None:
 # AgentDelegationConfig — per-agent defaults
 # ---------------------------------------------------------------------------
 
+
 def test_agent_delegation_config_default_enabled() -> None:
     cfg = AgentDelegationConfig()
     assert cfg.enabled is False
@@ -223,6 +225,7 @@ def test_agent_delegation_config_override_allowed_targets() -> None:
 # GlobalConfig — delegation section wired
 # ---------------------------------------------------------------------------
 
+
 def _make_global_config(**delegation_kwargs) -> GlobalConfig:
     """Construye un GlobalConfig mínimo para tests, con delegation override opcional."""
     return GlobalConfig(
@@ -231,7 +234,9 @@ def _make_global_config(**delegation_kwargs) -> GlobalConfig:
         embedding=EmbeddingConfig(),
         memory=MemoryConfig(),
         chat_history=ChatHistoryConfig(),
-        delegation=DelegationConfig(**delegation_kwargs) if delegation_kwargs else DelegationConfig(),
+        delegation=DelegationConfig(**delegation_kwargs)
+        if delegation_kwargs
+        else DelegationConfig(),
     )
 
 
@@ -262,6 +267,7 @@ def test_global_config_existing_fields_unaffected_by_delegation() -> None:
 # AgentConfig — delegation section wired
 # ---------------------------------------------------------------------------
 
+
 def _make_agent_config(**delegation_kwargs) -> AgentConfig:
     """Construye un AgentConfig mínimo para tests."""
     return AgentConfig(
@@ -273,7 +279,9 @@ def _make_agent_config(**delegation_kwargs) -> AgentConfig:
         embedding=EmbeddingConfig(),
         memory=MemoryConfig(),
         chat_history=ChatHistoryConfig(),
-        delegation=AgentDelegationConfig(**delegation_kwargs) if delegation_kwargs else AgentDelegationConfig(),
+        delegation=AgentDelegationConfig(**delegation_kwargs)
+        if delegation_kwargs
+        else AgentDelegationConfig(),
     )
 
 
@@ -300,12 +308,13 @@ def test_agent_config_delegation_override_allowed_targets() -> None:
 def test_agent_config_existing_fields_unaffected_by_delegation() -> None:
     cfg = _make_agent_config()
     assert cfg.tools.tool_call_max_iterations == 5
-    assert cfg.skills.rag_top_k == 3
+    assert cfg.skills.semantic_routing_top_k == 3
 
 
 # ---------------------------------------------------------------------------
 # _render_default_global_yaml — delegation section present
 # ---------------------------------------------------------------------------
+
 
 def test_render_default_global_yaml_contains_delegation_section() -> None:
     """La sección comentada de delegation debe estar en el YAML generado."""
@@ -320,12 +329,13 @@ def test_render_default_global_yaml_delegation_values_match_defaults() -> None:
     rendered = _render_default_global_yaml()
     cfg = DelegationConfig()
     assert str(cfg.max_iterations_per_sub) in rendered  # "10"
-    assert str(cfg.timeout_seconds) in rendered          # "60"
+    assert str(cfg.timeout_seconds) in rendered  # "60"
 
 
 def test_render_default_global_yaml_delegation_is_commented_out() -> None:
     """La sección delegation en el render NO debe ser YAML activo — va comentada."""
     import yaml as _yaml
+
     rendered = _render_default_global_yaml()
     parsed = _yaml.safe_load(rendered)
     # El parser YAML no debe ver la clave "delegation" — está comentada

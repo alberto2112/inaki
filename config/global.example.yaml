@@ -172,58 +172,58 @@ chat_history:
 
 
 # -----------------------------------------------------------------------------
-# [tools] — Configuración de selección de tools vía RAG
+# [tools] — Configuración de selección de tools vía semantic routing
 # -----------------------------------------------------------------------------
 tools:
-  rag_min_tools: 10             # Nº mínimo de tools registradas para activar RAG
-                                # Si hay ≤ este valor, se envían TODAS al LLM
-  rag_top_k: 5                  # Nº máximo de tools seleccionadas por RAG
-  rag_min_score: 0.0            # Score mínimo de cosine similarity (0.0-1.0)
-                                # para incluir una tool. 0.0 = sin filtro.
-                                # Recomendado: 0.3-0.5 para filtrar ruido.
-  sticky_ttl: 3                 # Turnos que una tool seleccionada por RAG sigue
-                                # disponible aunque el RAG no la re-seleccione.
-                                # 0 = feature deshabilitada.
-                                # N > 0 = la tool sobrevive N turnos; si el RAG la
-                                # vuelve a elegir, el TTL se refresca al máximo.
-                                # Útil para follow-ups cortos ("y del siguiente?",
-                                # "sí") donde el embedding del último user_input
-                                # no tiene señal suficiente. Recomendado: 3-5.
-  tool_call_max_iterations: 5   # Máx. iteraciones del tool-loop por turno
-  circuit_breaker_threshold: 2  # Fallos consecutivos antes de cortar el loop
+  semantic_routing_min_tools: 10  # Nº mínimo de tools registradas para activar routing
+                                  # Si hay ≤ este valor, se envían TODAS al LLM
+  semantic_routing_top_k: 5       # Nº máximo de tools seleccionadas por routing
+  semantic_routing_min_score: 0.0 # Score mínimo de cosine similarity (0.0-1.0)
+                                  # para incluir una tool. 0.0 = sin filtro.
+                                  # Recomendado: 0.3-0.5 para filtrar ruido.
+  sticky_ttl: 3                   # Turnos que una tool seleccionada por routing sigue
+                                  # disponible aunque el routing no la re-seleccione.
+                                  # 0 = feature deshabilitada.
+                                  # N > 0 = la tool sobrevive N turnos; si el routing
+                                  # la vuelve a elegir, el TTL se refresca al máximo.
+                                  # Útil para follow-ups cortos ("y del siguiente?",
+                                  # "sí") donde el embedding del último user_input
+                                  # no tiene señal suficiente. Recomendado: 3-5.
+  tool_call_max_iterations: 5     # Máx. iteraciones del tool-loop por turno
+  circuit_breaker_threshold: 2    # Fallos consecutivos antes de cortar el loop
 
 
 # -----------------------------------------------------------------------------
-# [skills] — Configuración de selección de skills vía RAG
+# [skills] — Configuración de selección de skills vía semantic routing
 # -----------------------------------------------------------------------------
 skills:
-  rag_min_skills: 10            # Nº mínimo de skills cargadas para activar RAG
-                                # Si hay ≤ este valor, se inyectan TODAS al prompt
-  rag_top_k: 3                  # Nº máximo de skills seleccionadas por RAG
-  rag_min_score: 0.0            # Score mínimo de cosine similarity (0.0-1.0)
-                                # para incluir una skill. 0.0 = sin filtro.
-                                # Recomendado: 0.3-0.5 para filtrar ruido.
-  sticky_ttl: 3                 # Turnos que una skill seleccionada por RAG sigue
-                                # inyectada en el system prompt aunque el RAG no
-                                # la re-seleccione. 0 = feature deshabilitada.
-                                # N > 0 = la skill sobrevive N turnos; si el RAG
-                                # la vuelve a elegir, el TTL se refresca al máximo.
-                                # Útil para follow-ups cortos ("y del siguiente?",
-                                # "sí") donde el embedding del último user_input
-                                # no tiene señal suficiente. Recomendado: 3-5.
+  semantic_routing_min_skills: 10  # Nº mínimo de skills cargadas para activar routing
+                                   # Si hay ≤ este valor, se inyectan TODAS al prompt
+  semantic_routing_top_k: 3        # Nº máximo de skills seleccionadas por routing
+  semantic_routing_min_score: 0.0  # Score mínimo de cosine similarity (0.0-1.0)
+                                   # para incluir una skill. 0.0 = sin filtro.
+                                   # Recomendado: 0.3-0.5 para filtrar ruido.
+  sticky_ttl: 3                    # Turnos que una skill seleccionada por routing sigue
+                                   # inyectada en el system prompt aunque el routing no
+                                   # la re-seleccione. 0 = feature deshabilitada.
+                                   # N > 0 = la skill sobrevive N turnos; si el routing
+                                   # la vuelve a elegir, el TTL se refresca al máximo.
+                                   # Útil para follow-ups cortos ("y del siguiente?",
+                                   # "sí") donde el embedding del último user_input
+                                   # no tiene señal suficiente. Recomendado: 3-5.
 
 
 # -----------------------------------------------------------------------------
-# [rag] — Políticas transversales al pipeline RAG (skills + tools)
+# [semantic_routing] — Políticas transversales al pipeline de semantic routing
 # -----------------------------------------------------------------------------
-rag:
+semantic_routing:
   min_words_threshold: 0        # Mínimo de palabras del user_input para activar
-                                # el cálculo de embedding y la re-selección RAG.
+                                # el cálculo de embedding y la re-selección de routing.
                                 # Por debajo de ese umbral (y si existe una
                                 # selección sticky del turno previo), se saltea
                                 # el embedding y se hereda la selección anterior
                                 # intacta — sin decrementar TTL ni persistir
-                                # estado. 0 = feature deshabilitada (el RAG corre
+                                # estado. 0 = feature deshabilitada (el routing corre
                                 # siempre, comportamiento histórico).
                                 #
                                 # Motivación: en follow-ups cortos ("sí", "dale",
@@ -234,7 +234,7 @@ rag:
                                 #
                                 # Palabra = len(user_input.split()).
                                 #
-                                # Primer turno con sticky vacío → el RAG corre
+                                # Primer turno con sticky vacío → el routing corre
                                 # normalmente aunque el input sea corto (no hay
                                 # contexto del cual heredar).
                                 #

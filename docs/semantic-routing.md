@@ -1,12 +1,14 @@
-# Mecanismo RAG de Iñaki
+# Mecanismo de semantic routing de Iñaki
 
-Documentación del pipeline RAG (Retrieval-Augmented Generation) para selección dinámica de skills y tools.
+Documentación del pipeline de **semantic routing** para selección dinámica de skills y tools.
+
+> **Nota**: este mecanismo NO es RAG. Selecciona capacidades (skills/tools) disponibles por similitud semántica con la query. El RAG real — recuperación de conocimiento externo (documentos, bases de datos) para inyectar en el prompt — vive en `knowledge:` y se documenta aparte.
 
 ---
 
 ## ¿Qué es y para qué sirve?
 
-Cuando el agente tiene muchas skills o tools disponibles, enviárselas todas al LLM en cada turno es costoso e ineficiente. El pipeline RAG resuelve este problema: en lugar de mandar la lista completa, genera un embedding de la consulta del usuario y selecciona solo las skills/tools más similares semánticamente.
+Cuando el agente tiene muchas skills o tools disponibles, enviárselas todas al LLM en cada turno es costoso e ineficiente. El semantic routing resuelve este problema: en lugar de mandar la lista completa, genera un embedding de la consulta del usuario y selecciona solo las skills/tools más similares semánticamente.
 
 El resultado: el LLM recibe un contexto más chico y preciso, lo que mejora la calidad de respuesta y reduce tokens.
 
@@ -20,20 +22,20 @@ Usuario escribe consulta
         ▼
 RunAgentUseCase.execute()
         │
-        ├── list_all_skills()     → ¿Hay más de rag_min_skills? → skills_rag_active
-        ├── get_all_schemas()     → ¿Hay más de rag_min_tools?  → tools_rag_active
+        ├── list_all_skills()     → ¿Hay más de semantic_routing_min_skills? → skills_routing_active
+        ├── get_all_schemas()     → ¿Hay más de semantic_routing_min_tools?  → tools_routing_active
         │
-        ├── ¿input corto (< rag.min_words_threshold) Y hay sticky previo?
+        ├── ¿input corto (< semantic_routing.min_words_threshold) Y hay sticky previo?
         │       ├── SÍ → short-input bypass:
         │       │         heredar selección del sticky previo intacta
         │       │         (no embed, no TTL decay, no persist)
         │       └── NO → seguir flujo normal:
         │                 └── embed_query(user_input) → query_vec
         │
-        ├── (si skills_rag_active y NO bypass)
+        ├── (si skills_routing_active y NO bypass)
         │       └── skills.retrieve(query_vec, top_k, min_score) → retrieved_skills
         │
-        ├── (si tools_rag_active y NO bypass)
+        ├── (si tools_routing_active y NO bypass)
         │       └── tools.get_schemas_relevant(query_vec, top_k, min_score) → tool_schemas
         │
         ▼
@@ -42,7 +44,7 @@ AgentContext(skills=retrieved_skills)
         └── build_system_prompt() → sistema con solo las skills relevantes
 ```
 
-El embedding de la consulta se genera **una sola vez** aunque ambos RAGs estén activos.
+El embedding de la consulta se genera **una sola vez** aunque ambos routings estén activos.
 
 ---
 
@@ -124,7 +126,7 @@ cos_sim(a, b) = dot(a, b) / (||a|| * ||b||)
 - Usa `numpy` internamente (float32)
 - Retorna 0.0 si alguno de los vectores tiene norma cero (vector nulo)
 - Escala: −1.0 (opuesto) → 0.0 (ortogonal) → 1.0 (idéntico)
-- Umbral configurable: `rag_min_score` filtra resultados por debajo del threshold antes de aplicar top_k (default 0.0 = sin filtro)
+- Umbral configurable: `semantic_routing_min_score` filtra resultados por debajo del threshold antes de aplicar top_k (default 0.0 = sin filtro)
 
 ---
 
@@ -196,40 +198,40 @@ put(hash, provider, dim, embedding)
 
 | Campo | Default | Descripción |
 |-------|---------|-------------|
-| `rag_min_skills` | `10` | Mínimo de skills para activar RAG. Con ≤10 skills, se mandan todas |
-| `rag_top_k` | `3` | Cuántas skills devuelve el retrieve |
-| `rag_min_score` | `0.0` | Score mínimo de cosine similarity (0.0-1.0). Skills por debajo se descartan ANTES de aplicar top_k. 0.0 = sin filtro |
+| `semantic_routing_min_skills` | `10` | Mínimo de skills para activar routing. Con ≤10 skills, se mandan todas |
+| `semantic_routing_top_k` | `3` | Cuántas skills devuelve el retrieve |
+| `semantic_routing_min_score` | `0.0` | Score mínimo de cosine similarity (0.0-1.0). Skills por debajo se descartan ANTES de aplicar top_k. 0.0 = sin filtro |
 
 ### `ToolsConfig`
 
 | Campo | Default | Descripción |
 |-------|---------|-------------|
-| `rag_min_tools` | `10` | Mínimo de tools para activar RAG |
-| `rag_top_k` | `5` | Cuántas tools devuelve el retrieve |
-| `rag_min_score` | `0.0` | Score mínimo de cosine similarity (0.0-1.0). Tools por debajo se descartan ANTES de aplicar top_k. 0.0 = sin filtro |
+| `semantic_routing_min_tools` | `10` | Mínimo de tools para activar routing |
+| `semantic_routing_top_k` | `5` | Cuántas tools devuelve el retrieve |
+| `semantic_routing_min_score` | `0.0` | Score mínimo de cosine similarity (0.0-1.0). Tools por debajo se descartan ANTES de aplicar top_k. 0.0 = sin filtro |
 | `tool_call_max_iterations` | `5` | Iteraciones máximas del tool loop |
 | `circuit_breaker_threshold` | `2` | Fallos consecutivos antes de cortar |
 
-### `RagConfig`
+### `SemanticRoutingConfig`
 
 | Campo | Default | Descripción |
 |-------|---------|-------------|
-| `min_words_threshold` | `0` | Mínimo de palabras del user_input para re-correr RAG. Por debajo de este umbral (y si hay sticky previo) se saltea embedding y se hereda la selección del turno anterior intacta. `0` = feature deshabilitada (comportamiento histórico) |
+| `min_words_threshold` | `0` | Mínimo de palabras del user_input para re-correr el routing. Por debajo de este umbral (y si hay sticky previo) se saltea embedding y se hereda la selección del turno anterior intacta. `0` = feature deshabilitada (comportamiento histórico) |
 
 ---
 
 ## Gate por cantidad de palabras (short-input bypass)
 
-Parámetro: `rag.min_words_threshold` (ver `RagConfig`).
+Parámetro: `semantic_routing.min_words_threshold` (ver `SemanticRoutingConfig`).
 
-**Motivación.** En follow-ups cortos — "sí", "dale", "y eso?" — el embedding tiene poca señal semántica y normalmente el contexto sigue siendo el del turno anterior. Recalcular el RAG en cada turno corto (a) gasta una llamada al embedder y (b) puede "resetear" skills/tools relevantes que ya estaban seleccionadas.
+**Motivación.** En follow-ups cortos — "sí", "dale", "y eso?" — el embedding tiene poca señal semántica y normalmente el contexto sigue siendo el del turno anterior. Recalcular el routing en cada turno corto (a) gasta una llamada al embedder y (b) puede "resetear" skills/tools relevantes que ya estaban seleccionadas.
 
 **Semántica.** Al arrancar `execute()` se evalúa:
 
 ```
 is_short = (
-    rag.min_words_threshold > 0
-    and len(user_input.split()) < rag.min_words_threshold
+    semantic_routing.min_words_threshold > 0
+    and len(user_input.split()) < semantic_routing.min_words_threshold
     and (prev_state.sticky_skills or prev_state.sticky_tools)
 )
 ```
@@ -245,14 +247,14 @@ Si `is_short` es `False`, el pipeline original corre sin cambios.
 
 **Casos de borde.**
 
-- Primer turno (sticky vacío) con input corto → el RAG **corre normalmente**. Sin sticky previo no hay contexto del cual heredar.
-- RAG desactivado por umbrales de pool (`rag_min_skills` / `rag_min_tools` no superados) → irrelevante, ya se mandaban todas las skills/tools.
+- Primer turno (sticky vacío) con input corto → el routing **corre normalmente**. Sin sticky previo no hay contexto del cual heredar.
+- Routing desactivado por umbrales de pool (`semantic_routing_min_skills` / `semantic_routing_min_tools` no superados) → irrelevante, ya se mandaban todas las skills/tools.
 - `tools_override` activo (p. ej. scheduler `agent_send`) → el override siempre manda; el gate solo afecta skills.
 - Umbral estricto: un input con exactamente `min_words_threshold` palabras **no** es corto (comparación `<`, no `<=`).
 
-**Intención.** Política del caller del RAG, no del embedder. `EmbeddingConfig` describe "cómo se calcula un embedding"; `RagConfig` describe "cuándo activar el pipeline RAG". Por eso no vive dentro de `EmbeddingConfig`.
+**Intención.** Política del caller del routing, no del embedder. `EmbeddingConfig` describe "cómo se calcula un embedding"; `SemanticRoutingConfig` describe "cuándo activar el pipeline de routing". Por eso no vive dentro de `EmbeddingConfig`.
 
-**Visibilidad.** `inspect()` aplica el mismo gate que `execute()` — si el input es corto y hay sticky previo, muestra la selección heredada (no la que saldría de re-correr el RAG). Así el debug refleja lo que realmente vería el LLM.
+**Visibilidad.** `inspect()` aplica el mismo gate que `execute()` — si el input es corto y hay sticky previo, muestra la selección heredada (no la que saldría de re-correr el routing). Así el debug refleja lo que realmente vería el LLM.
 
 ---
 
@@ -283,7 +285,7 @@ Realiza cálculos matemáticos
 Usa esta skill cuando el usuario pide operaciones numéricas...
 ```
 
-Solo las skills recuperadas por RAG (o todas si RAG inactivo) aparecen en el prompt.
+Solo las skills recuperadas por routing (o todas si el routing está inactivo) aparecen en el prompt.
 
 ---
 
@@ -296,11 +298,11 @@ Solo las skills recuperadas por RAG (o todas si RAG inactivo) aparecen en el pro
 | **Core — Puerto** | `core/ports/outbound/skill_port.py` | Interfaz `ISkillRepository` |
 | **Core — Servicio** | `core/domain/services/similarity.py` | Función `cosine_similarity` |
 | **Core — Value Object** | `core/domain/value_objects/agent_context.py` | Construcción del system prompt |
-| **Core — Use Case** | `core/use_cases/run_agent.py` | Orquestación del pipeline RAG |
+| **Core — Use Case** | `core/use_cases/run_agent.py` | Orquestación del pipeline de routing |
 | **Adapter** | `adapters/outbound/embedding/sqlite_embedding_cache.py` | Implementación SQLite del cache |
-| **Adapter** | `adapters/outbound/skills/yaml_skill_repo.py` | Carga de skills + RAG |
-| **Adapter** | `adapters/outbound/tools/tool_registry.py` | Registro de tools + RAG |
+| **Adapter** | `adapters/outbound/skills/yaml_skill_repo.py` | Carga de skills + routing |
+| **Adapter** | `adapters/outbound/tools/tool_registry.py` | Registro de tools + routing |
 | **Infraestructura** | `infrastructure/container.py` | Wiring: instancia y conecta todo |
-| **Config** | `infrastructure/config.py` | `EmbeddingConfig`, `SkillsConfig`, `ToolsConfig`, `RagConfig` |
+| **Config** | `infrastructure/config.py` | `EmbeddingConfig`, `SkillsConfig`, `ToolsConfig`, `SemanticRoutingConfig` |
 
 La regla hexagonal se respeta: el core no conoce SQLite ni YAML. Solo depende de las interfaces (`IEmbeddingCache`, `IEmbeddingProvider`, `ISkillRepository`).

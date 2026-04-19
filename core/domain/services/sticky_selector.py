@@ -1,14 +1,14 @@
 """
-sticky_selector — lógica pura del Sticky Union con TTL para selección RAG.
+sticky_selector — lógica pura del Sticky Union con TTL para semantic routing.
 
-Dado el conjunto de ids seleccionados por el RAG en el turno actual y los
+Dado el conjunto de ids seleccionados por el routing en el turno actual y los
 contadores TTL vigentes del turno anterior, produce:
 
-  - El conjunto activo (RAG ∪ sticky supervivientes).
+  - El conjunto activo (routing ∪ sticky supervivientes).
   - El nuevo mapa de contadores persistible para el próximo turno.
 
 Regla de TTL:
-  - Un id seleccionado por el RAG entra o se refresca a ``ttl``.
+  - Un id seleccionado por el routing entra o se refresca a ``ttl``.
   - Un id sticky NO re-seleccionado decrementa su contador; si llega a 0
     se elimina.
 
@@ -20,14 +20,14 @@ from __future__ import annotations
 
 
 def apply_sticky(
-    rag_ids: set[str],
+    routing_ids: set[str],
     current_ttls: dict[str, int],
     ttl: int,
 ) -> tuple[set[str], dict[str, int]]:
     """Aplica la política Sticky Union con TTL.
 
     Args:
-        rag_ids: ids seleccionados por el RAG en el turno actual.
+        routing_ids: ids seleccionados por el semantic routing en el turno actual.
         current_ttls: mapa ``{id: turnos_restantes}`` del turno previo.
         ttl: número de turnos que una selección permanece sticky.
 
@@ -37,17 +37,17 @@ def apply_sticky(
     """
     if ttl <= 0:
         # Feature deshabilitada: sin stickiness, sin estado que guardar.
-        return set(rag_ids), {}
+        return set(routing_ids), {}
 
     new_ttls: dict[str, int] = {}
 
-    # 1. Los seleccionados por el RAG entran o se refrescan a TTL completo.
-    for id_ in rag_ids:
+    # 1. Los seleccionados por el routing entran o se refrescan a TTL completo.
+    for id_ in routing_ids:
         new_ttls[id_] = ttl
 
     # 2. Los sticky NO re-seleccionados decrementan; si llegan a 0 se dropean.
     for id_, remaining in current_ttls.items():
-        if id_ in rag_ids:
+        if id_ in routing_ids:
             continue  # ya refrescado en paso 1
         if remaining - 1 > 0:
             new_ttls[id_] = remaining - 1

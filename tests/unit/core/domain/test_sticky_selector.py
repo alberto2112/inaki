@@ -48,15 +48,15 @@ def test_first_turn_empty_rag():
 # ---------------------------------------------------------------------------
 
 
-def test_rag_reselect_refreshes_ttl_to_full():
-    """Si el RAG vuelve a elegir un sticky, su TTL se resetea a ttl."""
+def test_routing_reselect_refreshes_ttl_to_full():
+    """Si el routing vuelve a elegir un sticky, su TTL se resetea a ttl."""
     active, new_state = apply_sticky({"a"}, {"a": 1}, ttl=3)
     assert active == {"a"}
     assert new_state == {"a": 3}
 
 
-def test_rag_reselect_refresh_after_decrement():
-    """Un sticky con TTL bajo se refresca al máximo si el RAG lo vuelve a elegir."""
+def test_routing_reselect_refresh_after_decrement():
+    """Un sticky con TTL bajo se refresca al máximo si el routing lo vuelve a elegir."""
     active, new_state = apply_sticky({"a", "b"}, {"a": 1, "b": 2}, ttl=5)
     assert active == {"a", "b"}
     assert new_state == {"a": 5, "b": 5}
@@ -68,7 +68,7 @@ def test_rag_reselect_refresh_after_decrement():
 
 
 def test_sticky_not_reselected_decrements():
-    """Un sticky que el RAG no re-selecciona pierde 1 turno de TTL."""
+    """Un sticky que el routing no re-selecciona pierde 1 turno de TTL."""
     active, new_state = apply_sticky(set(), {"a": 3}, ttl=5)
     assert active == {"a"}
     assert new_state == {"a": 2}
@@ -91,18 +91,18 @@ def test_multiple_stickies_partial_expiry():
 
 
 # ---------------------------------------------------------------------------
-# Unión: RAG + stickies supervivientes
+# Unión: routing + stickies supervivientes
 # ---------------------------------------------------------------------------
 
 
-def test_union_rag_and_surviving_stickies():
-    """El conjunto activo es la UNIÓN de RAG actual y stickies supervivientes."""
+def test_union_routing_and_surviving_stickies():
+    """El conjunto activo es la UNIÓN del routing actual y stickies supervivientes."""
     active, new_state = apply_sticky({"new_x"}, {"old_y": 2}, ttl=3)
     assert active == {"new_x", "old_y"}
     assert new_state == {"new_x": 3, "old_y": 1}
 
 
-def test_union_rag_and_expiring_sticky():
+def test_union_routing_and_expiring_sticky():
     """Si un sticky expira en este turno, NO aparece en active ni en new_state."""
     active, new_state = apply_sticky({"new_x"}, {"old_y": 1}, ttl=3)
     assert active == {"new_x"}
@@ -121,17 +121,17 @@ def test_topic_shift_accumulates_then_drops():
     """
     ttl = 2
 
-    # Turno 1: RAG elige "agenda"
+    # Turno 1: routing elige "agenda"
     active1, state1 = apply_sticky({"agenda"}, {}, ttl)
     assert active1 == {"agenda"}
     assert state1 == {"agenda": 2}
 
-    # Turno 2: RAG no selecciona nada (input ambiguo "sí, hacelo")
+    # Turno 2: routing no selecciona nada (input ambiguo "sí, hacelo")
     active2, state2 = apply_sticky(set(), state1, ttl)
     assert active2 == {"agenda"}  # sobrevive
     assert state2 == {"agenda": 1}
 
-    # Turno 3: RAG elige "poema" (cambio de topic)
+    # Turno 3: routing elige "poema" (cambio de topic)
     active3, state3 = apply_sticky({"poema"}, state2, ttl)
     # agenda expira (1 → 0), poema entra fresco
     assert active3 == {"poema"}
@@ -161,8 +161,8 @@ def test_does_not_mutate_input_dict():
 
 
 def test_does_not_mutate_input_set():
-    """La función no debe mutar el set de rag_ids de entrada."""
-    rag_ids = {"a", "b"}
-    snapshot = set(rag_ids)
-    apply_sticky(rag_ids, {"c": 2}, ttl=3)
-    assert rag_ids == snapshot
+    """La función no debe mutar el set de routing_ids de entrada."""
+    routing_ids = {"a", "b"}
+    snapshot = set(routing_ids)
+    apply_sticky(routing_ids, {"c": 2}, ttl=3)
+    assert routing_ids == snapshot

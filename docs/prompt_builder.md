@@ -31,8 +31,8 @@ RunAgentUseCase.execute(user_input)
 │       → list[MemoryEntry]  ← memorias relevantes (cosine sim en SQLite)
 │
 ├── 4. _skills.list_all() → all_skills
-│   ├── Si len(all_skills) > cfg.skills.rag_min_skills:
-│   │       _skills.retrieve(query_vec, top_k=cfg.skills.rag_top_k)
+│   ├── Si len(all_skills) > cfg.skills.semantic_routing_min_skills:
+│   │       _skills.retrieve(query_vec, top_k=cfg.skills.semantic_routing_top_k)
 │   │       → list[Skill]  ← solo las skills relevantes
 │   └── Si no:
 │           retrieved_skills = all_skills  ← todas las skills
@@ -41,8 +41,8 @@ RunAgentUseCase.execute(user_input)
 │       → system_prompt: str  ← secciones unidas + sustitución de {{WORKSPACE}}, {{DATE}}, etc.
 │
 ├── 6. _tools.get_schemas() → all_schemas
-│   ├── Si len(all_schemas) > cfg.tools.rag_min_tools:
-│   │       _tools.get_schemas_relevant(query_vec, top_k=cfg.tools.rag_top_k)
+│   ├── Si len(all_schemas) > cfg.tools.semantic_routing_min_tools:
+│   │       _tools.get_schemas_relevant(query_vec, top_k=cfg.tools.semantic_routing_top_k)
 │   │       → tool_schemas: list[dict]  ← solo las tools relevantes
 │   └── Si no:
 │           tool_schemas = all_schemas  ← todas las tools
@@ -148,12 +148,14 @@ La llamada final a `llm.complete()` recibe tres piezas:
 
 ---
 
-## Selección de skills por RAG
+## Selección de skills por semantic routing
+
+> Esto NO es RAG — es selección dinámica de capacidades (skills/tools disponibles). El RAG real (recuperación de conocimiento externo) se configura en `knowledge:`.
 
 ```
-len(todas las skills) > skills.rag_min_skills (default: 5)
+len(todas las skills) > skills.semantic_routing_min_skills (default: 5)
 │
-├── SÍ → retrieve(query_vec, top_k=rag_top_k)
+├── SÍ → retrieve(query_vec, top_k=semantic_routing_top_k)
 │         Cosine similarity entre query_vec y embeddings pre-indexados de cada skill
 │         → Solo las top_k skills más relevantes para el mensaje actual
 │
@@ -162,18 +164,18 @@ len(todas las skills) > skills.rag_min_skills (default: 5)
 
 ```yaml
 skills:
-  rag_min_skills: 5
-  rag_top_k: 3
+  semantic_routing_min_skills: 5
+  semantic_routing_top_k: 3
 ```
 
 ---
 
-## Selección de tools por RAG
+## Selección de tools por semantic routing
 
 ```
-len(todas las tools) > tools.rag_min_tools (default: 10)
+len(todas las tools) > tools.semantic_routing_min_tools (default: 10)
 │
-├── SÍ → get_schemas_relevant(query_vec, top_k=rag_top_k)
+├── SÍ → get_schemas_relevant(query_vec, top_k=semantic_routing_top_k)
 │         Cosine similarity entre query_vec y embedding de cada tool.description
 │         → Solo las top_k tools más relevantes para el mensaje actual
 │
@@ -182,8 +184,8 @@ len(todas las tools) > tools.rag_min_tools (default: 10)
 
 ```yaml
 tools:
-  rag_min_tools: 10
-  rag_top_k: 5
+  semantic_routing_min_tools: 10
+  semantic_routing_top_k: 5
   tool_call_max_iterations: 5  # máximo de reintentos en el loop de tool calls
 ```
 

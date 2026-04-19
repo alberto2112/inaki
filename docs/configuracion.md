@@ -87,18 +87,18 @@ memory:
                                  # Cualquier valor > 0 se respeta tal cual.
 
 tools:
-  rag_min_tools: 10              # Mínimo de tools registradas para activar RAG
-  rag_top_k: 5                   # Nº máximo de tools seleccionadas por RAG
-  rag_min_score: 0.0             # Score mínimo de cosine similarity (0.0-1.0)
-                                 # para incluir una tool. 0.0 = sin filtro.
-  tool_call_max_iterations: 5    # Máx. iteraciones del tool-loop por turno
-  circuit_breaker_threshold: 2   # Fallos consecutivos antes de cortar el loop
+  semantic_routing_min_tools: 10  # Mínimo de tools registradas para activar semantic routing
+  semantic_routing_top_k: 5       # Nº máximo de tools seleccionadas por routing
+  semantic_routing_min_score: 0.0 # Score mínimo de cosine similarity (0.0-1.0)
+                                  # para incluir una tool. 0.0 = sin filtro.
+  tool_call_max_iterations: 5     # Máx. iteraciones del tool-loop por turno
+  circuit_breaker_threshold: 2    # Fallos consecutivos antes de cortar el loop
 
 skills:
-  rag_min_skills: 10             # Mínimo de skills cargadas para activar RAG
-  rag_top_k: 3                   # Nº máximo de skills seleccionadas por RAG
-  rag_min_score: 0.0             # Score mínimo de cosine similarity (0.0-1.0)
-                                 # para incluir una skill. 0.0 = sin filtro.
+  semantic_routing_min_skills: 10  # Mínimo de skills cargadas para activar routing
+  semantic_routing_top_k: 3        # Nº máximo de skills seleccionadas por routing
+  semantic_routing_min_score: 0.0  # Score mínimo de cosine similarity (0.0-1.0)
+                                   # para incluir una skill. 0.0 = sin filtro.
 
 chat_history:
   db_filename: "data/history.db"  # Fichero SQLite del historial (relativo a ~/.inaki/)

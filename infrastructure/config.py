@@ -191,29 +191,29 @@ class SchedulerConfig(BaseModel):
 
 
 class SkillsConfig(BaseModel):
-    rag_min_skills: int = 10
-    rag_top_k: int = 3
-    rag_min_score: float = 0.0
+    semantic_routing_min_skills: int = 10
+    semantic_routing_top_k: int = 3
+    semantic_routing_min_score: float = 0.0
     sticky_ttl: int = 3  # Turnos que una skill seleccionada sobrevive; 0 = disabled
 
 
 class ToolsConfig(BaseModel):
-    rag_min_tools: int = 10
-    rag_top_k: int = 5
-    rag_min_score: float = 0.0
+    semantic_routing_min_tools: int = 10
+    semantic_routing_top_k: int = 5
+    semantic_routing_min_score: float = 0.0
     tool_call_max_iterations: int = 5
     circuit_breaker_threshold: int = 2
     sticky_ttl: int = 3  # Turnos que una tool seleccionada sobrevive; 0 = disabled
 
 
-class RagConfig(BaseModel):
-    """Políticas transversales al pipeline RAG (skills + tools).
+class SemanticRoutingConfig(BaseModel):
+    """Políticas transversales al pipeline de semantic routing (skills + tools).
 
     ``min_words_threshold``: si el user_input tiene MENOS palabras que este
     umbral Y existe una selección sticky previa (skills o tools), el turno
     saltea el cálculo del embedding y hereda la selección del turno anterior
     intacta (no decrementa TTL, no persiste estado). ``0`` desactiva la
-    feature y mantiene el comportamiento histórico (RAG corre siempre).
+    feature y mantiene el comportamiento histórico (routing corre siempre).
     """
 
     min_words_threshold: int = 0
@@ -322,7 +322,7 @@ class AgentConfig(BaseModel):
     chat_history: ChatHistoryConfig
     skills: SkillsConfig = SkillsConfig()
     tools: ToolsConfig = ToolsConfig()
-    rag: RagConfig = RagConfig()
+    semantic_routing: SemanticRoutingConfig = SemanticRoutingConfig()
     workspace: WorkspaceConfig = WorkspaceConfig()
     delegation: AgentDelegationConfig = AgentDelegationConfig()
     transcription: TranscriptionConfig | None = None
@@ -342,7 +342,7 @@ class GlobalConfig(BaseModel):
     chat_history: ChatHistoryConfig
     skills: SkillsConfig = SkillsConfig()
     tools: ToolsConfig = ToolsConfig()
-    rag: RagConfig = RagConfig()
+    semantic_routing: SemanticRoutingConfig = SemanticRoutingConfig()
     scheduler: SchedulerConfig = SchedulerConfig()
     workspace: WorkspaceConfig = WorkspaceConfig()
     delegation: DelegationConfig = DelegationConfig()
@@ -522,6 +522,7 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
 
     skills = SkillsConfig(**merged.get("skills", {}))
     tools = ToolsConfig(**merged.get("tools", {}))
+    semantic_routing = SemanticRoutingConfig(**merged.get("semantic_routing", {}))
     scheduler = SchedulerConfig(**merged.get("scheduler", {}))
     workspace = WorkspaceConfig(**merged.get("workspace", {}))
     delegation = DelegationConfig(**merged.get("delegation", {}))
@@ -541,6 +542,7 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
         chat_history=chat_history,
         skills=skills,
         tools=tools,
+        semantic_routing=semantic_routing,
         scheduler=scheduler,
         workspace=workspace,
         delegation=delegation,
@@ -587,9 +589,7 @@ def load_agent_config(
     try:
         transcription_raw = merged.get("transcription")
         transcription = (
-            TranscriptionConfig(**transcription_raw)
-            if transcription_raw is not None
-            else None
+            TranscriptionConfig(**transcription_raw) if transcription_raw is not None else None
         )
         return AgentConfig(
             id=merged["id"],
@@ -602,6 +602,7 @@ def load_agent_config(
             chat_history=ChatHistoryConfig(**merged.get("chat_history", {})),
             skills=SkillsConfig(**merged.get("skills", {})),
             tools=ToolsConfig(**merged.get("tools", {})),
+            semantic_routing=SemanticRoutingConfig(**merged.get("semantic_routing", {})),
             workspace=WorkspaceConfig(**merged.get("workspace", {})),
             delegation=AgentDelegationConfig(**merged.get("delegation", {})),
             transcription=transcription,

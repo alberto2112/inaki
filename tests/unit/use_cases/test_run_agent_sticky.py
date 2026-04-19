@@ -61,7 +61,7 @@ def _tool_schema(name: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-async def test_sticky_disabled_does_not_save_state_with_rag_inactive(
+async def test_sticky_disabled_does_not_save_state_with_routing_inactive(
     mock_llm,
     mock_memory,
     mock_embedder,
@@ -69,15 +69,15 @@ async def test_sticky_disabled_does_not_save_state_with_rag_inactive(
     mock_history,
     mock_tools,
 ):
-    """Con RAG inactivo y sticky_ttl=0 (deshabilitado), save_state NO debe llamarse."""
+    """Con routing inactivo y sticky_ttl=0 (deshabilitado), save_state NO debe llamarse."""
     mock_skills.list_all.return_value = []
     mock_tools.get_schemas.return_value = []
     mock_llm.complete.return_value = LLMResponse.of_text("ok")
 
     uc = _make_use_case(
         {
-            "skills": SkillsConfig(rag_min_skills=10, sticky_ttl=0),
-            "tools": ToolsConfig(rag_min_tools=10, sticky_ttl=0),
+            "skills": SkillsConfig(semantic_routing_min_skills=10, sticky_ttl=0),
+            "tools": ToolsConfig(semantic_routing_min_tools=10, sticky_ttl=0),
         },
         mock_llm,
         mock_memory,
@@ -91,7 +91,7 @@ async def test_sticky_disabled_does_not_save_state_with_rag_inactive(
     mock_history.save_state.assert_not_called()
 
 
-async def test_sticky_disabled_skills_rag_active_saves_empty_state(
+async def test_sticky_disabled_skills_routing_active_saves_empty_state(
     mock_llm,
     mock_memory,
     mock_embedder,
@@ -100,7 +100,7 @@ async def test_sticky_disabled_skills_rag_active_saves_empty_state(
     mock_tools,
 ):
     """
-    Con sticky_ttl=0 pero RAG activo, save_state SÍ se llama (el pipeline pasó por
+    Con sticky_ttl=0 pero routing activo, save_state SÍ se llama (el pipeline pasó por
     la rama sticky) pero con estado vacío — el feature-flag desactivado se traduce
     en "no acumular estado".
     """
@@ -111,7 +111,7 @@ async def test_sticky_disabled_skills_rag_active_saves_empty_state(
     mock_llm.complete.return_value = LLMResponse.of_text("ok")
 
     uc = _make_use_case(
-        {"skills": SkillsConfig(rag_min_skills=0, sticky_ttl=0)},
+        {"skills": SkillsConfig(semantic_routing_min_skills=0, sticky_ttl=0)},
         mock_llm,
         mock_memory,
         mock_embedder,
@@ -131,7 +131,7 @@ async def test_sticky_disabled_skills_rag_active_saves_empty_state(
 # ---------------------------------------------------------------------------
 
 
-async def test_sticky_skills_persists_new_ttls_on_rag_selection(
+async def test_sticky_skills_persists_new_ttls_on_routing_selection(
     mock_llm,
     mock_memory,
     mock_embedder,
@@ -139,7 +139,7 @@ async def test_sticky_skills_persists_new_ttls_on_rag_selection(
     mock_history,
     mock_tools,
 ):
-    """Cuando el RAG selecciona una skill con sticky_ttl=3, se persiste con TTL=3."""
+    """Cuando el routing selecciona una skill con sticky_ttl=3, se persiste con TTL=3."""
     s_agenda = Skill(id="agenda", name="agenda", description="Consulta agenda")
     mock_skills.list_all.return_value = [s_agenda]
     mock_skills.retrieve.return_value = [s_agenda]
@@ -147,7 +147,7 @@ async def test_sticky_skills_persists_new_ttls_on_rag_selection(
     mock_llm.complete.return_value = LLMResponse.of_text("ok")
 
     uc = _make_use_case(
-        {"skills": SkillsConfig(rag_min_skills=0, sticky_ttl=3)},
+        {"skills": SkillsConfig(semantic_routing_min_skills=0, sticky_ttl=3)},
         mock_llm,
         mock_memory,
         mock_embedder,
@@ -161,7 +161,7 @@ async def test_sticky_skills_persists_new_ttls_on_rag_selection(
     assert saved_state.sticky_skills == {"agenda": 3}
 
 
-async def test_sticky_skill_survives_turn_when_rag_does_not_reselect(
+async def test_sticky_skill_survives_turn_when_routing_does_not_reselect(
     mock_llm,
     mock_memory,
     mock_embedder,
@@ -170,12 +170,12 @@ async def test_sticky_skill_survives_turn_when_rag_does_not_reselect(
     mock_tools,
 ):
     """
-    Turno N-1 seleccionó "agenda" con TTL=3. Turno N el RAG devuelve 0 skills
+    Turno N-1 seleccionó "agenda" con TTL=3. Turno N el routing devuelve 0 skills
     (follow-up ambiguo). El system prompt debe recibir "agenda" igual.
     """
     s_agenda = Skill(id="agenda", name="agenda", description="Consulta agenda")
     mock_skills.list_all.return_value = [s_agenda]
-    mock_skills.retrieve.return_value = []  # RAG no selecciona nada
+    mock_skills.retrieve.return_value = []  # routing no selecciona nada
     mock_tools.get_schemas.return_value = []
     mock_llm.complete.return_value = LLMResponse.of_text("ok")
 
@@ -183,7 +183,7 @@ async def test_sticky_skill_survives_turn_when_rag_does_not_reselect(
     mock_history.load_state.return_value = ConversationState(sticky_skills={"agenda": 3})
 
     uc = _make_use_case(
-        {"skills": SkillsConfig(rag_min_skills=0, sticky_ttl=3)},
+        {"skills": SkillsConfig(semantic_routing_min_skills=0, sticky_ttl=3)},
         mock_llm,
         mock_memory,
         mock_embedder,
@@ -198,7 +198,7 @@ async def test_sticky_skill_survives_turn_when_rag_does_not_reselect(
     assert saved_state.sticky_skills == {"agenda": 2}
 
 
-async def test_sticky_skill_refreshes_ttl_when_rag_reselects(
+async def test_sticky_skill_refreshes_ttl_when_routing_reselects(
     mock_llm,
     mock_memory,
     mock_embedder,
@@ -206,7 +206,7 @@ async def test_sticky_skill_refreshes_ttl_when_rag_reselects(
     mock_history,
     mock_tools,
 ):
-    """Si el RAG vuelve a seleccionar la skill sticky, su TTL se refresca."""
+    """Si el routing vuelve a seleccionar la skill sticky, su TTL se refresca."""
     s_agenda = Skill(id="agenda", name="agenda", description="Consulta agenda")
     mock_skills.list_all.return_value = [s_agenda]
     mock_skills.retrieve.return_value = [s_agenda]
@@ -218,7 +218,7 @@ async def test_sticky_skill_refreshes_ttl_when_rag_reselects(
     )
 
     uc = _make_use_case(
-        {"skills": SkillsConfig(rag_min_skills=0, sticky_ttl=5)},
+        {"skills": SkillsConfig(semantic_routing_min_skills=0, sticky_ttl=5)},
         mock_llm,
         mock_memory,
         mock_embedder,
@@ -250,7 +250,7 @@ async def test_sticky_skill_expires_after_ttl_turns(
     mock_history.load_state.return_value = ConversationState(sticky_skills={"agenda": 1})
 
     uc = _make_use_case(
-        {"skills": SkillsConfig(rag_min_skills=0, sticky_ttl=3)},
+        {"skills": SkillsConfig(semantic_routing_min_skills=0, sticky_ttl=3)},
         mock_llm,
         mock_memory,
         mock_embedder,
@@ -279,7 +279,7 @@ async def test_sticky_union_passes_sticky_skill_to_llm_context(
     s_agenda = Skill(id="agenda", name="agenda", description="Consulta agenda")
     s_poema = Skill(id="poema", name="poema", description="Escribe poemas")
     mock_skills.list_all.return_value = [s_agenda, s_poema]
-    mock_skills.retrieve.return_value = [s_poema]  # RAG elige poema ahora
+    mock_skills.retrieve.return_value = [s_poema]  # routing elige poema ahora
     mock_tools.get_schemas.return_value = []
     mock_llm.complete.return_value = LLMResponse.of_text("ok")
 
@@ -288,7 +288,7 @@ async def test_sticky_union_passes_sticky_skill_to_llm_context(
     )
 
     uc = _make_use_case(
-        {"skills": SkillsConfig(rag_min_skills=0, sticky_ttl=3)},
+        {"skills": SkillsConfig(semantic_routing_min_skills=0, sticky_ttl=3)},
         mock_llm,
         mock_memory,
         mock_embedder,
@@ -326,7 +326,7 @@ async def test_sticky_skill_filters_ghost_ids(
     )
 
     uc = _make_use_case(
-        {"skills": SkillsConfig(rag_min_skills=0, sticky_ttl=3)},
+        {"skills": SkillsConfig(semantic_routing_min_skills=0, sticky_ttl=3)},
         mock_llm,
         mock_memory,
         mock_embedder,
@@ -355,7 +355,7 @@ async def test_sticky_tools_persists_new_ttls(
     mock_history,
     mock_tools,
 ):
-    """RAG selecciona una tool → se marca sticky con TTL configurado."""
+    """routing selecciona una tool → se marca sticky con TTL configurado."""
     mock_skills.list_all.return_value = []
     all_schemas = [_tool_schema("list_events"), _tool_schema("read_file")]
     mock_tools.get_schemas.return_value = all_schemas
@@ -363,7 +363,7 @@ async def test_sticky_tools_persists_new_ttls(
     mock_llm.complete.return_value = LLMResponse.of_text("ok")
 
     uc = _make_use_case(
-        {"tools": ToolsConfig(rag_min_tools=0, sticky_ttl=4)},
+        {"tools": ToolsConfig(semantic_routing_min_tools=0, sticky_ttl=4)},
         mock_llm,
         mock_memory,
         mock_embedder,
@@ -386,17 +386,17 @@ async def test_sticky_tool_survives_ambiguous_followup(
     mock_history,
     mock_tools,
 ):
-    """Tool sticky sobrevive turno donde el RAG no la re-selecciona."""
+    """Tool sticky sobrevive turno donde el routing no la re-selecciona."""
     mock_skills.list_all.return_value = []
     all_schemas = [_tool_schema("list_events"), _tool_schema("read_file")]
     mock_tools.get_schemas.return_value = all_schemas
-    mock_tools.get_schemas_relevant.return_value = []  # RAG vacío en follow-up
+    mock_tools.get_schemas_relevant.return_value = []  # routing vacío en follow-up
     mock_llm.complete.return_value = LLMResponse.of_text("ok")
 
     mock_history.load_state.return_value = ConversationState(sticky_tools={"list_events": 2})
 
     uc = _make_use_case(
-        {"tools": ToolsConfig(rag_min_tools=0, sticky_ttl=4)},
+        {"tools": ToolsConfig(semantic_routing_min_tools=0, sticky_ttl=4)},
         mock_llm,
         mock_memory,
         mock_embedder,
@@ -439,7 +439,7 @@ async def test_sticky_tool_filters_ghost_names(
     )
 
     uc = _make_use_case(
-        {"tools": ToolsConfig(rag_min_tools=0, sticky_ttl=3)},
+        {"tools": ToolsConfig(semantic_routing_min_tools=0, sticky_ttl=3)},
         mock_llm,
         mock_memory,
         mock_embedder,
@@ -481,8 +481,8 @@ async def test_tools_override_bypasses_tools_sticky_but_skills_still_apply(
 
     uc = _make_use_case(
         {
-            "skills": SkillsConfig(rag_min_skills=0, sticky_ttl=3),
-            "tools": ToolsConfig(rag_min_tools=0, sticky_ttl=5),
+            "skills": SkillsConfig(semantic_routing_min_skills=0, sticky_ttl=3),
+            "tools": ToolsConfig(semantic_routing_min_tools=0, sticky_ttl=5),
         },
         mock_llm,
         mock_memory,
@@ -498,7 +498,7 @@ async def test_tools_override_bypasses_tools_sticky_but_skills_still_apply(
     ) as mock_loop:
         await uc.execute("hola", tools_override=override)
 
-    # RAG de tools nunca se llama
+    # routing de tools nunca se llama
     mock_tools.get_schemas_relevant.assert_not_called()
 
     # El override llega intacto al tool_loop
@@ -539,7 +539,7 @@ async def test_save_state_called_before_message_append(
     mock_history.append.side_effect = lambda *a, **k: call_order.append("append")
 
     uc = _make_use_case(
-        {"skills": SkillsConfig(rag_min_skills=0, sticky_ttl=3)},
+        {"skills": SkillsConfig(semantic_routing_min_skills=0, sticky_ttl=3)},
         mock_llm,
         mock_memory,
         mock_embedder,

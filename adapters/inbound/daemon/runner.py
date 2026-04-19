@@ -88,6 +88,7 @@ async def _run_telegram_bot(agent_cfg, container, app_container=None) -> None:
     # python-telegram-bot 21+ ofrece API async nativa via context manager
     async with bot._app:
         await bot._app.start()
+        await bot.setup_commands()
         await bot._app.updater.start_polling(drop_pending_updates=True)
         logger.info("Telegram bot '%s' en polling", agent_cfg.id)
         try:

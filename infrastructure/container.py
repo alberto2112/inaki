@@ -72,6 +72,9 @@ class AgentContainer:
         # Idempotency guard for wire_scheduler
         self._scheduler_wired: bool = False
 
+        # ScheduleTaskUseCase — wired en fase 3 por AppContainer. None hasta entonces.
+        self.schedule_task: ScheduleTaskUseCase | None = None
+
         # Contexto de canal activo — se setea en cada turno de conversación
         self._channel_context: ChannelContext | None = None
 
@@ -472,6 +475,7 @@ class AgentContainer:
                 get_channel_context=self.get_channel_context,
             )
         )
+        self.schedule_task = schedule_task_uc
         self._scheduler_wired = True
         logger.info("AgentContainer '%s': scheduler tool registrada", self.agent_config.id)
 

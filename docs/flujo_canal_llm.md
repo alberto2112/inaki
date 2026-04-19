@@ -68,7 +68,7 @@ RunAgentUseCase.execute(user_input)
 │       E5OnnxProvider: añade prefijo "query: " internamente
 │       Resultado: vector normalizado L2
 │
-├── 3. RAG — MEMORIAS
+├── 3. BÚSQUEDA EN MEMORIA
 │   └── memory.search(query_vec, top_k=5) → list[MemoryEntry]
 │       SQLiteMemoryRepository:
 │         query_vec → bytes (struct.pack)
@@ -76,7 +76,7 @@ RunAgentUseCase.execute(user_input)
 │         JOIN memories ON id
 │         ORDER BY distance (cosine KNN)
 │
-├── 4. RAG — SKILLS
+├── 4. SEMANTIC ROUTING — SKILLS
 │   └── skills.retrieve(query_vec, top_k=3) → list[Skill]
 │       YamlSkillRepository:
 │         cosine_similarity(query_vec, skill_embedding) para cada skill

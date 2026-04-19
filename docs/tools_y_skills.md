@@ -12,7 +12,7 @@ Este documento cubre los dos mecanismos de extensión del agente: **tools** (fun
 | Interfaz base | `ITool` + `IToolExecutor` | `ISkillRepository` |
 | Registro | Manual en `AgentContainer._register_tools()` | Automático por glob `*.yaml` |
 | Invocables por el LLM | Sí (function calling) | No (solo texto en el prompt) |
-| RAG | Sí (cosine similarity) | Sí (cosine similarity) |
+| Semantic routing | Sí (cosine similarity) | Sí (cosine similarity) |
 | Configuración | Hardcodeada en la clase | `config/global.yaml` |
 
 ---
@@ -171,7 +171,7 @@ User input
 embed_query() ───────────────────────────────────────────┐
     │                                                    │
     ▼                                                    ▼
-Skills RAG                                          Tools RAG
+Skills routing                                      Tools routing
 skills.retrieve(embedding)                     tools.get_schemas_relevant(embedding)
     │                                                    │
     ▼                                                    ▼

@@ -5,9 +5,9 @@
 El prompt que recibe el LLM en cada turno **no es estático**. Se construye dinámicamente en tiempo de ejecución combinando:
 
 1. El system prompt base del agente (definido en su YAML)
-2. Memorias relevantes recuperadas por RAG
-3. Skills relevantes recuperadas por RAG
-4. Los schemas de las tools seleccionadas (filtradas o no por RAG)
+2. Memorias relevantes recuperadas por búsqueda vectorial
+3. Skills relevantes seleccionadas por semantic routing
+4. Los schemas de las tools seleccionadas (filtradas o no por semantic routing)
 
 El historial de conversación se envía como lista de mensajes separada del system prompt, **truncado al máximo configurado** antes de enviarse al LLM.
 
@@ -197,7 +197,7 @@ tools:
 |-----------|-------------------|------------------|----------|
 | `embed_query(user_input)` | Cada turno | `RunAgentUseCase` | Buscar memorias, skills y tools relevantes |
 | `embed_passage(skill description)` | Al arrancar (lazy) | `YamlSkillRepository` | Índice de skills |
-| `embed_passage(tool.description)` | Antes del primer RAG de tools (lazy) | `ToolRegistry` | Índice de tools |
+| `embed_passage(tool.description)` | Antes del primer semantic routing de tools (lazy) | `ToolRegistry` | Índice de tools |
 | `embed_passage(fact.content)` | Durante consolidación | `ConsolidateMemoryUseCase` | Guardar memoria a largo plazo |
 
 Los embeddings de skills y tools se calculan **una sola vez** al primer uso y se cachean en memoria. No se persisten a disco.
@@ -232,9 +232,9 @@ python main.py inspect "ejecuta los tests" --agent dev
 /inspect busca el precio del dolar
 ```
 
-El comando `inspect` corre el pipeline completo (embedding → RAG → truncado → construcción del prompt → selección de tools) **sin llamar al LLM ni persistir nada**, e imprime:
+El comando `inspect` corre el pipeline completo (embedding → búsqueda en memoria → semantic routing → truncado → construcción del prompt → selección de tools) **sin llamar al LLM ni persistir nada**, e imprime:
 
 - Memorias recuperadas
-- Skills seleccionadas (con indicación de si el RAG de skills está activo)
-- Tools enviadas al LLM (con indicación de si el RAG de tools está activo)
+- Skills seleccionadas (con indicación de si el semantic routing de skills está activo)
+- Tools enviadas al LLM (con indicación de si el semantic routing de tools está activo)
 - System prompt final completo

@@ -168,7 +168,7 @@ Estado de contexto ensamblado por turno. No se persiste — se construye en cada
 ```python
 class AgentContext(BaseModel):
     agent_id: str
-    memories: list[MemoryEntry] = []   # Recuperados via RAG
+    memories: list[MemoryEntry] = []   # Recuperados via búsqueda vectorial
     skills: list[Skill] = []           # Recuperados via cosine similarity
 
     def build_system_prompt(self, base_prompt: str) -> str:

@@ -66,7 +66,7 @@ embedding:
 memory:
   db_filename: "data/inaki.db"  # Fichero SQLite con sqlite-vec (relativo a ~/.inaki/)
                                  # Memoria GLOBAL — compartida entre todos los agentes
-  default_top_k: 5               # Número de recuerdos recuperados por RAG
+  default_top_k: 5               # Número de recuerdos recuperados por búsqueda vectorial
   digest_size: 14                # Nº de recuerdos volcados al digest markdown
   digest_filename: "mem/last_memories.md"
                                  # Digest leído por el prompt builder (relativo a ~/.inaki/)
@@ -139,7 +139,7 @@ El admin server expone los siguientes endpoints bajo `http://{admin.host}:{admin
 | Método | Ruta | Descripción |
 |--------|------|-------------|
 | GET | `/health` | Ping de salud (sin auth) |
-| POST | `/inspect` | Inspect RAG para un agente (requiere X-Admin-Key) |
+| POST | `/inspect` | Inspect del pipeline de prompt para un agente (requiere X-Admin-Key) |
 | POST | `/consolidate` | Consolidar memoria de agente(s) (requiere X-Admin-Key) |
 | POST | `/scheduler/reload` | Recargar scheduler (requiere X-Admin-Key) |
 | POST | `/admin/chat/turn` | Enviar un turno de chat al agente (requiere X-Admin-Key) |
@@ -189,7 +189,7 @@ Retorna `204 No Content`. Borra el historial activo del agente (afecta a todos l
 ## `knowledge:` — Fuentes de conocimiento externas
 
 La sección `knowledge:` vive **solo en `global.yaml`** — no se puede configurar por agente.
-Controla el pipeline de RAG sobre documentos externos que se ejecuta antes de cada turno.
+Controla el pipeline de recuperación de conocimiento externo (RAG) que se ejecuta antes de cada turno.
 
 ```yaml
 knowledge:

@@ -238,7 +238,7 @@ Wipe total para el agente.
 | `python main.py daemon` | Modo servicio (todos los canales + scheduler) |
 | `python main.py consolidate` | Consolida todos los agentes habilitados con delay y sale |
 | `python main.py consolidate --agent dev` | Consolida solo el agente indicado y sale |
-| `python main.py inspect "msg"` | Inspecciona el pipeline RAG sin llamar al LLM |
+| `python main.py inspect "msg"` | Inspecciona el pipeline de prompt (routing + memoria) sin llamar al LLM |
 | `/consolidate` (en chat) | Extrae recuerdos y archiva historial del agente actual |
 | `/history` (en chat) | Muestra el historial actual |
 | `/clear` (en chat) | Limpia historial sin archivar |

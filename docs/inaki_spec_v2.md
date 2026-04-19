@@ -352,8 +352,8 @@ Orquesta un turno completo de conversación:
 
 1. Cargar historial del agente
 2. Generar embedding del input del usuario
-3. Recuperar memorias relevantes (RAG sobre `IMemoryRepository`)
-4. Recuperar skills relevantes (RAG sobre `ISkillRepository`)
+3. Recuperar memorias relevantes (búsqueda vectorial sobre `IMemoryRepository`)
+4. Recuperar skills relevantes (semantic routing sobre `ISkillRepository`)
 5. Construir `AgentContext` y system prompt dinámico
 6. Llamar al LLM con historial + tools disponibles
 7. Si el LLM devuelve tool calls → ejecutar tools, añadir resultados, rellamar al LLM
@@ -648,7 +648,7 @@ Conversación:
 
 ---
 
-## 10. RAG Pipeline
+## 10. Embeddings, memoria y semantic routing
 
 ### Embeddings con `multilingual-e5-small` (ONNX)
 
@@ -1081,10 +1081,10 @@ Implementar en este orden para tener algo funcional lo antes posible:
 4. Adaptador `OpenRouterProvider` (LLM ya funciona)
 5. Adaptador `E5OnnxProvider` (embeddings)
 6. Adaptador `FileHistoryStore` (historial en fichero)
-7. `RunAgentUseCase` básico (sin RAG aún)
+7. `RunAgentUseCase` básico (sin búsqueda vectorial aún)
 8. Adaptador CLI (`cli_runner.py`) → **primer flujo funcional end-to-end**
 9. `IMemoryRepository` + `SQLiteMemoryRepository` + `sqlite-vec`
-10. RAG completo en `RunAgentUseCase`
+10. Búsqueda vectorial y semantic routing completos en `RunAgentUseCase`
 11. `ConsolidateMemoryUseCase` + comando `/consolidate` en CLI
 12. `AgentRegistry` + `agents.yaml`
 13. Soporte multi-agente en CLI y `RunAgentUseCase`

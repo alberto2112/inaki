@@ -1061,15 +1061,15 @@ async def test_update_echo_reflects_runtime_reset() -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_echo_preserves_disabled_status() -> None:
+async def test_update_echo_preserves_disabled_intent() -> None:
     """
-    Si la task estaba disabled, el use case la mantiene disabled aun tras
-    edit invalidante. El echo debe mostrarlo: es la señal de que el LLM NO
-    debe reintentar un enable implícito.
+    Si la task estaba enabled=False, el use case mantiene esa intención aun tras
+    un edit invalidante (no la 'despierta' a PENDING). El echo debe exponer
+    `enabled=False` para que el LLM NO reintente un enable implícito.
     """
     tool, uc = _make_tool()
-    post_update = _make_task(task_id=201, name="Sigue Disabled")
-    post_update = post_update.model_copy(update={"status": TaskStatus.DISABLED})
+    post_update = _make_task(task_id=201, name="Sigue Deshabilitada")
+    post_update = post_update.model_copy(update={"enabled": False})
     uc.update_task.return_value = post_update
 
     result = await tool.execute(
@@ -1081,4 +1081,4 @@ async def test_update_echo_preserves_disabled_status() -> None:
     assert result.success is True
     data = json.loads(result.output)
     assert data["updated"] is True
-    assert data["task_status"] == "disabled"
+    assert data["enabled"] is False

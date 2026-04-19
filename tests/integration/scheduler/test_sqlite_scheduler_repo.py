@@ -220,8 +220,8 @@ async def test_list_due_pending_excludes_disabled(repo: SQLiteSchedulerRepo) -> 
     past = datetime(2025, 6, 1, 10, 0, 0, tzinfo=timezone.utc)
 
     task = await repo.save_task(_make_task("past", next_run=past))
-    # Disable it
-    await repo.update_status(task.id, TaskStatus.DISABLED)
+    # Disable it (intent flag, not status)
+    await repo.update_enabled(task.id, False)
 
     due = await repo.list_due_pending(now)
     assert len(due) == 0

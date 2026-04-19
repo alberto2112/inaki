@@ -506,13 +506,18 @@ class ScheduledTask(BaseModel):
 
 ```python
 class TaskStatus(str, Enum):
-    PENDING   = "pending"    # Esperando, habilitada
+    """Estado runtime de ejecución. Ortogonal al flag `enabled` (intención del
+    usuario). El loop filtra por `enabled=1 AND status='pending'`: ambos hacen falta."""
+    PENDING   = "pending"    # Esperando su próxima ejecución
     RUNNING   = "running"    # Ejecutando en este momento
     COMPLETED = "completed"  # Terminó (oneshot completada o countdown=0)
     FAILED    = "failed"     # Agotó reintentos, último intento falló
     MISSED    = "missed"     # Oneshot que no se ejecutó (daemon estaba detenido)
-    DISABLED  = "disabled"   # Deshabilitada manualmente, loop la saltea
 ```
+
+> **Nota**: el valor `disabled` fue eliminado porque mezclaba dos dimensiones
+> ortogonales (intención del usuario + estado runtime). La intención de
+> "no quiero que corra" se modela únicamente via `ScheduledTask.enabled=False`.
 
 ---
 

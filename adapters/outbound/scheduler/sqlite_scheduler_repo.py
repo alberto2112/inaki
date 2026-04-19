@@ -213,7 +213,7 @@ class SQLiteSchedulerRepo:
             rows = await conn.execute_fetchall(
                 """
                 SELECT COUNT(*) AS cnt FROM scheduled_tasks
-                WHERE created_by = ? AND status NOT IN ('completed', 'failed', 'disabled')
+                WHERE created_by = ? AND enabled = 1 AND status NOT IN ('completed', 'failed')
                 """,
                 (agent_id,),
             )
@@ -263,6 +263,20 @@ class SQLiteSchedulerRepo:
                     "UPDATE scheduled_tasks SET status = ? WHERE id = ?",
                     (status.value, task_id),
                 )
+            await conn.commit()
+
+    async def update_enabled(self, task_id: int, enabled: bool) -> None:
+        """Actualiza SOLO el flag `enabled`. No toca `status` ni runtime state.
+
+        Es la intención declarada del usuario ("quiero/no quiero que corra"),
+        ortogonal al estado runtime que maneja el scheduler.
+        """
+        async with self._conn() as conn:
+            await self._ensure_schema_conn(conn)
+            await conn.execute(
+                "UPDATE scheduled_tasks SET enabled = ? WHERE id = ?",
+                (int(enabled), task_id),
+            )
             await conn.commit()
 
     async def update_after_execution(
@@ -397,6 +411,15 @@ class SQLiteSchedulerRepo:
         await conn.execute(_CREATE_TASKS_TABLE)
         await conn.execute(_CREATE_TASKS_INDEX)
         await conn.execute(_CREATE_LOGS_TABLE)
+        # Migración idempotente: el valor 'disabled' del enum TaskStatus fue
+        # eliminado. Las filas viejas con ese status se mapean a
+        # enabled=0, status='pending' (respeta la intención del usuario y
+        # deja el runtime en un estado válido que el loop no va a levantar
+        # porque enabled=0 lo excluye).
+        await conn.execute(
+            "UPDATE scheduled_tasks SET enabled = 0, status = 'pending' "
+            "WHERE status = 'disabled'"
+        )
         await conn.commit()
 
     def _row_to_task(self, row: aiosqlite.Row) -> ScheduledTask:

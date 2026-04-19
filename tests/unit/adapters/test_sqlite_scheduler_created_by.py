@@ -99,23 +99,23 @@ async def test_count_active_by_agent_counts_only_matching_agent(
     assert count_b == 1
 
 
-async def test_count_active_by_agent_excludes_terminal_statuses(
+async def test_count_active_by_agent_excludes_terminal_and_disabled(
     repo: SQLiteSchedulerRepo,
 ) -> None:
-    """completed, failed, disabled tasks must NOT be counted."""
+    """completed, failed tasks AND tasks with enabled=False must NOT be counted."""
     await repo.save_task(_make_task("pending-task", created_by="agent-a", status=TaskStatus.PENDING))
     t_completed = await repo.save_task(_make_task("done", created_by="agent-a"))
     t_failed = await repo.save_task(_make_task("fail", created_by="agent-a"))
     t_disabled = await repo.save_task(_make_task("disabled", created_by="agent-a"))
 
-    # Force terminal statuses via update_status
+    # Terminal statuses via update_status; disabled via update_enabled (intent flag)
     await repo.update_status(t_completed.id, TaskStatus.COMPLETED)
     await repo.update_status(t_failed.id, TaskStatus.FAILED)
-    await repo.update_status(t_disabled.id, TaskStatus.DISABLED)
+    await repo.update_enabled(t_disabled.id, False)
 
     count = await repo.count_active_by_agent("agent-a")
 
-    # Only the pending task should count
+    # Only the pending+enabled task should count
     assert count == 1
 
 

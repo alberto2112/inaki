@@ -52,13 +52,31 @@ class ScheduleTaskUseCase(ISchedulerUseCase):
         self._on_mutation()
 
     async def enable_task(self, task_id: int) -> None:
-        await self.get_task(task_id)
-        await self._repo.update_status(task_id, TaskStatus.PENDING)
+        """Marca la intención "quiero que corra".
+
+        Si la task estaba en estado runtime terminal no-completado (FAILED/MISSED),
+        también la reseteamos a PENDING y limpiamos retry_count/next_run para que
+        el scheduler la vuelva a tomar. Una task COMPLETED (oneshot ya ejecutada)
+        NO se auto-reinicia: sería re-ejecución implícita y el usuario debería
+        editarla explícitamente via update_task si quiere re-armarla.
+        """
+        task = await self.get_task(task_id)
+        if task.status in {TaskStatus.FAILED, TaskStatus.MISSED}:
+            updated = task.model_copy(update={
+                "enabled": True,
+                "status": TaskStatus.PENDING,
+                "retry_count": 0,
+                "next_run": None,  # el repo lo recomputa en save_task
+            })
+            await self._repo.save_task(updated)
+        else:
+            await self._repo.update_enabled(task_id, True)
         self._on_mutation()
 
     async def disable_task(self, task_id: int) -> None:
+        """Marca la intención "no quiero que corra". No toca el status runtime."""
         await self.get_task(task_id)
-        await self._repo.update_status(task_id, TaskStatus.DISABLED)
+        await self._repo.update_enabled(task_id, False)
         self._on_mutation()
 
     async def get_task(self, task_id: int) -> ScheduledTask:
@@ -79,15 +97,15 @@ class ScheduleTaskUseCase(ISchedulerUseCase):
 
         # Si la edición toca un campo invalidante, el estado runtime queda
         # stale respecto de la definición nueva. Reseteamos:
-        #   - status  → pending (excepto si la task estaba disabled: respetamos
-        #                        la intención explícita del usuario)
+        #   - status  → pending (solo si la task está enabled; si el usuario
+        #                        la tiene deshabilitada, respetamos su
+        #                        intención y no "despertamos" la task)
         #   - retry_count → 0 (borrón y cuenta nueva)
         #   - next_run → None (el repo lo recomputa vía _resolve_next_run con
         #                      el schedule nuevo)
-        # setdefault preserva overrides explícitos del caller (ej: el LLM
-        # podría forzar status=disabled aun cuando edita schedule).
+        # setdefault preserva overrides explícitos del caller.
         if _INVALIDATING_FIELDS.intersection(kwargs):
-            if task.status != TaskStatus.DISABLED:
+            if task.enabled:
                 kwargs.setdefault("status", TaskStatus.PENDING)
             kwargs.setdefault("retry_count", 0)
             kwargs.setdefault("next_run", None)

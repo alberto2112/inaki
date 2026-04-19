@@ -21,12 +21,17 @@ class TriggerType(str, Enum):
 
 
 class TaskStatus(str, Enum):
+    """
+    Runtime execution state of a task. Orthogonal to `ScheduledTask.enabled`,
+    which expresses user intent (quiero que corra / no quiero). The scheduler
+    loop filters by `enabled=1 AND status='pending'` — ambos se necesitan
+    para que una tarea sea candidata a correr.
+    """
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
     MISSED = "missed"
-    DISABLED = "disabled"
 
 
 # ---------------------------------------------------------------------------

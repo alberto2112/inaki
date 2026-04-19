@@ -82,19 +82,47 @@ async def test_create_task_calls_on_mutation(
     on_mutation.assert_called_once()
 
 
-async def test_enable_task_calls_on_mutation(
+async def test_enable_task_pending_only_flips_flag(
     uc: ScheduleTaskUseCase, mock_repo: AsyncMock, on_mutation: MagicMock
 ) -> None:
+    """Una task en PENDING que se habilita solo necesita actualizar el flag."""
+    # _make_task por default viene con status=PENDING
     await uc.enable_task(150)
-    mock_repo.update_status.assert_awaited_once_with(150, TaskStatus.PENDING)
+    mock_repo.update_enabled.assert_awaited_once_with(150, True)
+    mock_repo.save_task.assert_not_awaited()
     on_mutation.assert_called_once()
 
 
-async def test_disable_task_calls_on_mutation(
+async def test_enable_task_from_failed_resets_runtime(
     uc: ScheduleTaskUseCase, mock_repo: AsyncMock, on_mutation: MagicMock
 ) -> None:
+    """Una task en FAILED/MISSED que se habilita se resetea a PENDING
+    con retry_count=0 y next_run=None para que el scheduler la vuelva a tomar."""
+    failed = _make_task(task_id=150).model_copy(update={
+        "status": TaskStatus.FAILED,
+        "retry_count": 3,
+    })
+    mock_repo.get_task.return_value = failed
+    mock_repo.save_task.side_effect = lambda t: t
+
+    await uc.enable_task(150)
+
+    saved = mock_repo.save_task.await_args[0][0]
+    assert saved.enabled is True
+    assert saved.status == TaskStatus.PENDING
+    assert saved.retry_count == 0
+    assert saved.next_run is None
+    mock_repo.update_enabled.assert_not_awaited()
+    on_mutation.assert_called_once()
+
+
+async def test_disable_task_flips_enabled_only(
+    uc: ScheduleTaskUseCase, mock_repo: AsyncMock, on_mutation: MagicMock
+) -> None:
+    """disable_task NO debe tocar status runtime — solo el flag de intención."""
     await uc.disable_task(150)
-    mock_repo.update_status.assert_awaited_once_with(150, TaskStatus.DISABLED)
+    mock_repo.update_enabled.assert_awaited_once_with(150, False)
+    mock_repo.update_status.assert_not_awaited()
     on_mutation.assert_called_once()
 
 
@@ -151,13 +179,15 @@ async def test_update_invalidating_field_wakes_failed_task(
     assert saved.next_run is None  # repo lo recomputa en save_task
 
 
-async def test_update_invalidating_field_preserves_disabled(
+async def test_update_invalidating_field_preserves_disabled_intent(
     uc: ScheduleTaskUseCase, mock_repo: AsyncMock
 ) -> None:
-    """Una task 'disabled' NO debe despertarse solo porque se edita el schedule.
-    Respetamos la intención explícita del usuario. retry_count/next_run sí se limpian."""
+    """Una task con enabled=False NO debe despertarse (reset a PENDING) solo
+    porque se edita el schedule. Respetamos la intención del usuario.
+    retry_count/next_run sí se limpian — son runtime stale respecto al schedule nuevo."""
     existing = _make_task(task_id=150).model_copy(update={
-        "status": TaskStatus.DISABLED,
+        "enabled": False,
+        "status": TaskStatus.FAILED,  # estado runtime cualquiera, no importa
         "retry_count": 2,
     })
     mock_repo.get_task.return_value = existing
@@ -166,7 +196,8 @@ async def test_update_invalidating_field_preserves_disabled(
     await uc.update_task(150, schedule="2099-01-01T00:00:00+00:00")
 
     saved = mock_repo.save_task.await_args[0][0]
-    assert saved.status == TaskStatus.DISABLED  # sigue disabled
+    assert saved.enabled is False  # sigue deshabilitada
+    assert saved.status == TaskStatus.FAILED  # status runtime NO se resetea
     assert saved.retry_count == 0
     assert saved.next_run is None
 
@@ -201,7 +232,7 @@ async def test_update_explicit_status_override_respected(
     """Si el caller pasa status explícito junto con un campo invalidante,
     el override gana sobre el reset automático a pending (setdefault)."""
     existing = _make_task(task_id=150).model_copy(update={
-        "status": TaskStatus.FAILED,
+        "status": TaskStatus.PENDING,
     })
     mock_repo.get_task.return_value = existing
     mock_repo.save_task.side_effect = lambda t: t
@@ -209,11 +240,11 @@ async def test_update_explicit_status_override_respected(
     await uc.update_task(
         150,
         trigger_payload=ConsolidateMemoryPayload(),
-        status=TaskStatus.DISABLED,  # override explícito
+        status=TaskStatus.FAILED,  # override explícito
     )
 
     saved = mock_repo.save_task.await_args[0][0]
-    assert saved.status == TaskStatus.DISABLED  # no pisado por el reset
+    assert saved.status == TaskStatus.FAILED  # no pisado por el reset a PENDING
 
 
 async def test_update_invalidating_recomputes_for_pending_task(

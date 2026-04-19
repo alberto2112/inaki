@@ -154,7 +154,7 @@ class SchedulerTool(ITool):
             },
             "status": {
                 "type": "string",
-                "enum": ["pending", "running", "completed", "failed", "missed", "disabled"],
+                "enum": ["pending", "running", "completed", "failed", "missed"],
                 "description": "Task status (update only).",
             },
             # --- get / update / delete ---
@@ -548,9 +548,11 @@ class SchedulerTool(ITool):
 
         El LLM necesita estos campos para saber sin ambigüedad que la operación
         tomó y con qué valores finales — en particular `next_run_at` (recomputado
-        por el repo vía `_resolve_next_run`) y `task_status` (que puede haber sido
-        reseteado a pending en edits invalidantes; ver
-        `ScheduleTaskUseCase.update_task`).
+        por el repo vía `_resolve_next_run`), `task_status` (estado runtime, que
+        puede haber sido reseteado a pending en edits invalidantes; ver
+        `ScheduleTaskUseCase.update_task`) y `enabled` (la intención declarada
+        del usuario; `enabled=False` significa que NO va a correr aunque el
+        status diga pending).
         """
         return {
             f"{op}": True,
@@ -561,6 +563,7 @@ class SchedulerTool(ITool):
             "schedule": task.schedule,
             "next_run_at": task.next_run.isoformat() if task.next_run else None,
             "task_status": task.status.value,
+            "enabled": task.enabled,
         }
 
     def _error(self, message: str) -> ToolResult:

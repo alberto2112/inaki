@@ -66,7 +66,7 @@ embedding:
 memory:
   db_filename: "data/inaki.db"  # Fichero SQLite con sqlite-vec (relativo a ~/.inaki/)
                                  # Memoria GLOBAL — compartida entre todos los agentes
-  default_top_k: 5               # Número de recuerdos recuperados por RAG
+  default_top_k: 5               # Número de recuerdos recuperados por búsqueda vectorial
   digest_size: 14                # Nº de recuerdos volcados al digest markdown
   digest_filename: "mem/last_memories.md"
                                  # Digest leído por el prompt builder (relativo a ~/.inaki/)
@@ -87,18 +87,18 @@ memory:
                                  # Cualquier valor > 0 se respeta tal cual.
 
 tools:
-  rag_min_tools: 10              # Mínimo de tools registradas para activar RAG
-  rag_top_k: 5                   # Nº máximo de tools seleccionadas por RAG
-  rag_min_score: 0.0             # Score mínimo de cosine similarity (0.0-1.0)
-                                 # para incluir una tool. 0.0 = sin filtro.
-  tool_call_max_iterations: 5    # Máx. iteraciones del tool-loop por turno
-  circuit_breaker_threshold: 2   # Fallos consecutivos antes de cortar el loop
+  semantic_routing_min_tools: 10  # Mínimo de tools registradas para activar semantic routing
+  semantic_routing_top_k: 5       # Nº máximo de tools seleccionadas por routing
+  semantic_routing_min_score: 0.0 # Score mínimo de cosine similarity (0.0-1.0)
+                                  # para incluir una tool. 0.0 = sin filtro.
+  tool_call_max_iterations: 5     # Máx. iteraciones del tool-loop por turno
+  circuit_breaker_threshold: 2    # Fallos consecutivos antes de cortar el loop
 
 skills:
-  rag_min_skills: 10             # Mínimo de skills cargadas para activar RAG
-  rag_top_k: 3                   # Nº máximo de skills seleccionadas por RAG
-  rag_min_score: 0.0             # Score mínimo de cosine similarity (0.0-1.0)
-                                 # para incluir una skill. 0.0 = sin filtro.
+  semantic_routing_min_skills: 10  # Mínimo de skills cargadas para activar routing
+  semantic_routing_top_k: 3        # Nº máximo de skills seleccionadas por routing
+  semantic_routing_min_score: 0.0  # Score mínimo de cosine similarity (0.0-1.0)
+                                   # para incluir una skill. 0.0 = sin filtro.
 
 chat_history:
   db_filename: "data/history.db"  # Fichero SQLite del historial (relativo a ~/.inaki/)
@@ -139,7 +139,7 @@ El admin server expone los siguientes endpoints bajo `http://{admin.host}:{admin
 | Método | Ruta | Descripción |
 |--------|------|-------------|
 | GET | `/health` | Ping de salud (sin auth) |
-| POST | `/inspect` | Inspect RAG para un agente (requiere X-Admin-Key) |
+| POST | `/inspect` | Inspect del pipeline de prompt para un agente (requiere X-Admin-Key) |
 | POST | `/consolidate` | Consolidar memoria de agente(s) (requiere X-Admin-Key) |
 | POST | `/scheduler/reload` | Recargar scheduler (requiere X-Admin-Key) |
 | POST | `/admin/chat/turn` | Enviar un turno de chat al agente (requiere X-Admin-Key) |
@@ -183,6 +183,160 @@ Errores posibles: `401` (sin X-Admin-Key), `404` (agent_id no registrado), `422`
 #### DELETE `/admin/chat/history?agent_id=dev`
 
 Retorna `204 No Content`. Borra el historial activo del agente (afecta a todos los canales — CLI, Telegram, etc.).
+
+---
+
+## `knowledge:` — Fuentes de conocimiento externas
+
+La sección `knowledge:` vive **solo en `global.yaml`** — no se puede configurar por agente.
+Controla el pipeline de recuperación de conocimiento externo (RAG) que se ejecuta antes de cada turno.
+
+```yaml
+knowledge:
+  enabled: true                    # Si false, el pre-fetch se saltea completamente.
+                                   # Default: true.
+
+  include_memory: true             # Si true, la memoria SQLite del agente se registra
+                                   # automáticamente como fuente "memory".
+                                   # Default: true.
+
+  top_k_per_source: 3              # Resultados máximos por fuente (default global).
+
+  min_score: 0.5                   # Score mínimo de coseno para incluir un fragmento.
+                                   # Rango: 0.0-1.0. Default: 0.5.
+
+  max_total_chunks: 10             # Cap total de fragmentos tras el fan-out a todas
+                                   # las fuentes (ordenados por score desc, se trunca).
+
+  token_budget_warn_threshold: 4000
+                                   # Si el estimado de tokens totales
+                                   # (chunks + digest + skills) supera este valor,
+                                   # se emite un WARNING con el desglose.
+                                   # Heurística: len(texto) / 4.
+                                   # 0 = warning deshabilitado.
+
+  sources:
+    - id: docs-proyecto            # ID único de la fuente (usado en CLI y rutas de DB)
+      type: document               # "document" = carpeta de archivos
+      enabled: true                # Si false, la fuente se ignora al arrancar.
+      description: "Project docs"  # Descripción inyectada en el system prompt
+      path: ~/proyecto/docs/       # Carpeta a indexar (soporta ~). Requerido.
+      glob: "**/*.md"              # Glob pattern para seleccionar archivos.
+                                   # Ejemplos: "**/*.md", "**/*.{md,txt,pdf}"
+      chunk_size: 500              # Tamaño de cada chunk en palabras.
+      chunk_overlap: 80            # Solapamiento entre chunks consecutivos (en palabras).
+      top_k: 3                     # Resultados máximos de esta fuente.
+      min_score: 0.5               # Score mínimo de esta fuente (override del global).
+
+    - id: mi-base                  # ID único de la fuente
+      type: sqlite                 # "sqlite" = DB pre-construida por el usuario
+      enabled: true
+      description: "My knowledge base"
+      path: ~/data/knowledge.db    # Path a la DB SQLite del usuario. Requerido.
+      top_k: 3
+      min_score: 0.5
+```
+
+#### Fuente `type: sqlite` — Base de datos pre-construida por el usuario
+
+Permite conectar una base de datos SQLite que el usuario construyó y gestiona por su cuenta.
+Iñaki **no indexa ni escribe** esta DB — solo la consulta para búsquedas vectoriales.
+
+**Schema requerido:**
+
+```sql
+-- Tabla de texto y metadatos (id debe ser la PRIMARY KEY entera)
+CREATE TABLE chunks (
+    id            INTEGER PRIMARY KEY,
+    source_path   TEXT NOT NULL,
+    content       TEXT NOT NULL,
+    metadata_json TEXT DEFAULT '{}'
+);
+
+-- Tabla virtual vec0 con embeddings de 384 dimensiones (e5-small)
+-- El rowid de chunk_embeddings debe coincidir con chunks.id
+CREATE VIRTUAL TABLE chunk_embeddings USING vec0(embedding FLOAT[384]);
+```
+
+**Notas importantes:**
+
+- La dimensión **debe ser exactamente 384** — es la dimensión del modelo e5-small que usa Iñaki internamente. Si la DB usa otra dimensión, la fuente se omite al arrancar con un error claro en los logs.
+- `chunk_embeddings.rowid` se usa para el JOIN con `chunks.id` — deben coincidir.
+- `metadata_json` es opcional pero debe ser JSON válido si está presente (o `NULL`/`'{}'`).
+- Iñaki valida el schema en la primera búsqueda. Si la validación falla, la fuente se deshabilita para esa sesión y se loguea `ERROR` con el nombre de la fuente y el motivo exacto.
+
+**Ejemplo mínimo de inserción:**
+
+```python
+import sqlite3, struct, numpy as np
+
+conn = sqlite3.connect("knowledge.db")
+conn.enable_load_extension(True)
+conn.load_extension("vec0")  # sqlite-vec
+
+conn.execute("""
+    CREATE TABLE IF NOT EXISTS chunks (
+        id INTEGER PRIMARY KEY, source_path TEXT NOT NULL,
+        content TEXT NOT NULL, metadata_json TEXT DEFAULT '{}'
+    )
+""")
+conn.execute("""
+    CREATE VIRTUAL TABLE IF NOT EXISTS chunk_embeddings USING vec0(embedding FLOAT[384])
+""")
+
+content = "Texto del chunk a indexar"
+embedding = np.random.randn(384).astype(np.float32)  # reemplazar por tu embedder real
+vec_bytes = struct.pack("384f", *embedding)
+
+conn.execute("INSERT INTO chunks (source_path, content) VALUES (?, ?)", ("/ruta/doc.md", content))
+row_id = conn.lastrowid
+conn.execute("INSERT INTO chunk_embeddings (rowid, embedding) VALUES (?, ?)", (row_id, vec_bytes))
+conn.commit()
+```
+
+### Indexación de documentos
+
+Los documentos se indexan offline con el comando CLI:
+
+```bash
+inaki knowledge index docs-proyecto   # Indexa o re-indexa la fuente
+inaki knowledge list                   # Lista fuentes configuradas
+inaki knowledge stats docs-proyecto    # Estadísticas del índice
+```
+
+La indexación es **incremental**: solo se re-procesan los archivos cuya `mtime` cambió
+desde la última indexación. Los embeddings se persisten en `~/.inaki/knowledge/{id}.db`.
+
+### Formatos soportados
+
+| Formato | Estrategia de chunking |
+|---------|------------------------|
+| `.md`   | Split por headers (`#`/`##`/`###`), ventana deslizante dentro de cada sección |
+| `.txt`  | Ventana deslizante pura |
+| `.pdf`  | Extracción página a página con `pypdf`, ventana deslizante sobre el texto total |
+| otros   | Ventana deslizante pura (texto plano) |
+
+### Schema de la DB de índice (`~/.inaki/knowledge/{id}.db`)
+
+```sql
+CREATE TABLE chunks (
+    id          TEXT PRIMARY KEY,
+    file_path   TEXT NOT NULL,
+    file_mtime  REAL NOT NULL,
+    chunk_idx   INTEGER NOT NULL,
+    content     TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+CREATE VIRTUAL TABLE chunk_embeddings USING vec0(
+    id        TEXT PRIMARY KEY,
+    embedding FLOAT[384]
+);
+CREATE TABLE files_indexed (
+    file_path   TEXT PRIMARY KEY,
+    mtime       REAL NOT NULL,
+    chunk_count INTEGER NOT NULL
+);
+```
 
 ---
 

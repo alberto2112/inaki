@@ -120,7 +120,7 @@ inaki/
 │   ├── conftest.py                        # Fixtures compartidas (mocks de puertos)
 │   ├── unit/
 │   │   ├── use_cases/
-│   │   │   ├── test_run_agent_basic.py    # RunAgentUseCase — flujo básico + RAG
+│   │   │   ├── test_run_agent_basic.py    # RunAgentUseCase — flujo básico + búsqueda vectorial y routing
 │   │   │   └── test_consolidate_memory.py # ConsolidateMemoryUseCase — transaccionalidad
 │   │   └── adapters/
 │   │       └── test_file_history_store.py # FileHistoryStore — CRUD de historial
@@ -163,6 +163,75 @@ instructions: |
 tags:
   - "tag1"
 ```
+
+## Convención para añadir una fuente de conocimiento desde una extensión
+
+Las extensiones pueden registrar fuentes de conocimiento propias declarando `KNOWLEDGE_SOURCES`
+en su `manifest.py`. Esta lista es **opcional** — manifests sin el atributo funcionan igual que
+antes (compatibilidad hacia atrás).
+
+### Firma de factory
+
+Cada entrada en `KNOWLEDGE_SOURCES` es un **callable factory** con la siguiente firma:
+
+```python
+def mi_factory(
+    agent_config: AgentConfig,       # config del agente que está construyendo el container
+    global_config: GlobalConfig,     # config global de la aplicación
+    embedder: IEmbeddingProvider,    # proveedor de embeddings del agente
+) -> IKnowledgeSource:
+    ...
+```
+
+La factory recibe el embedder del agente porque las fuentes custom suelen necesitar vectorizar
+consultas con el mismo modelo que el resto del sistema (e5-small, 384 dimensiones).
+
+### Cuándo se ejecuta la factory
+
+Las factories se invocan en **tiempo de construcción del container** (`AgentContainer.__init__`),
+específicamente durante `_register_extensions()`. El container ya tiene `_memory`, `_embedder` y
+`_tools` resueltos en ese momento.
+
+### Política de aislamiento de fallos
+
+Si una factory lanza una excepción, el container emite un WARNING nombrando la extensión y el
+error, y continúa con las factories restantes. Una extensión rota no aborta el arranque del
+agente ni afecta a las otras fuentes.
+
+### Orden de registro de fuentes
+
+El `KnowledgeOrchestrator` final tiene las fuentes en el siguiente orden:
+
+1. **Memoria** (`SqliteMemoryKnowledgeSource`) — registrada automáticamente si
+   `knowledge.include_memory: true` (default).
+2. **Fuentes configuradas** en `GlobalConfig.knowledge.sources` — en el orden del YAML.
+3. **Fuentes de extensiones** — en orden de descubrimiento de directorios (`ext_dirs`) y dentro
+   de cada directorio, en orden lexicográfico de nombre de extensión.
+
+Este orden es determinista y afecta el desempate cuando dos fragmentos tienen el mismo score.
+
+### Ejemplo de manifest con KNOWLEDGE_SOURCES
+
+```python
+# ext/mi-kb/manifest.py
+from mi_kb.source import MiKnowledgeSource
+
+KNOWLEDGE_SOURCES = [
+    # Factory callable: recibe (agent_config, global_config, embedder) -> IKnowledgeSource
+    lambda agent_cfg, global_cfg, embedder: MiKnowledgeSource(
+        source_id="mi-kb",
+        description="My custom knowledge base",
+        embedder=embedder,
+        data_path="/ruta/a/mis/datos",
+    ),
+]
+```
+
+La clase `MiKnowledgeSource` debe implementar el protocolo `IKnowledgeSource`
+(definido en `core/ports/outbound/knowledge_port.py`): propiedades `source_id` y `description`,
+y método `async search(query_vec, top_k, min_score) -> list[KnowledgeChunk]`.
+
+---
 
 ## Regla de desarrollo (spec §17)
 

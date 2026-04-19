@@ -27,6 +27,7 @@ dependencies = [
     "typer>=0.12",
     "rich>=13.0",
     "tzlocal>=5.0",
+    "pypdf>=4.0",
 ]
 
 [project.optional-dependencies]

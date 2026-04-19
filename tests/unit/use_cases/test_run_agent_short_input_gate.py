@@ -1,4 +1,4 @@
-"""Tests — gate por cantidad de palabras para bypass del RAG.
+"""Tests — gate por cantidad de palabras para bypass del routing.
 
 Cubre la política ``rag.min_words_threshold``: si el user_input es corto y
 existe selección sticky previa, el turno no calcula embedding, no toca TTL
@@ -19,7 +19,7 @@ from infrastructure.config import (
     EmbeddingConfig,
     LLMConfig,
     MemoryConfig,
-    RagConfig,
+    SemanticRoutingConfig,
     SkillsConfig,
     ToolsConfig,
 )
@@ -27,7 +27,7 @@ from infrastructure.config import (
 
 def _make_use_case(
     *,
-    rag: RagConfig,
+    semantic_routing: SemanticRoutingConfig,
     skills: SkillsConfig,
     tools: ToolsConfig,
     mock_llm,
@@ -48,7 +48,7 @@ def _make_use_case(
         chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history.db"),
         skills=skills,
         tools=tools,
-        rag=rag,
+        semantic_routing=semantic_routing,
     )
     return RunAgentUseCase(
         llm=mock_llm,
@@ -70,7 +70,7 @@ def _tool_schema(name: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-async def test_threshold_zero_runs_rag_even_on_short_input_with_sticky(
+async def test_threshold_zero_runs_routing_even_on_short_input_with_sticky(
     mock_llm,
     mock_memory,
     mock_embedder,
@@ -78,7 +78,7 @@ async def test_threshold_zero_runs_rag_even_on_short_input_with_sticky(
     mock_history,
     mock_tools,
 ):
-    """threshold=0 desactiva la feature: el RAG corre siempre aunque haya sticky previo."""
+    """threshold=0 desactiva la feature: el routing corre siempre aunque haya sticky previo."""
     s = Skill(id="agenda", name="agenda", description="d")
     mock_skills.list_all.return_value = [s]
     mock_skills.retrieve.return_value = [s]
@@ -87,9 +87,9 @@ async def test_threshold_zero_runs_rag_even_on_short_input_with_sticky(
     mock_history.load_state.return_value = ConversationState(sticky_skills={"agenda": 2})
 
     uc = _make_use_case(
-        rag=RagConfig(min_words_threshold=0),
-        skills=SkillsConfig(rag_min_skills=0, sticky_ttl=3),
-        tools=ToolsConfig(rag_min_tools=10),
+        semantic_routing=SemanticRoutingConfig(min_words_threshold=0),
+        skills=SkillsConfig(semantic_routing_min_skills=0, sticky_ttl=3),
+        tools=ToolsConfig(semantic_routing_min_tools=10),
         mock_llm=mock_llm,
         mock_memory=mock_memory,
         mock_embedder=mock_embedder,
@@ -123,9 +123,9 @@ async def test_short_input_with_sticky_skills_bypasses_embedder(
     mock_history.load_state.return_value = ConversationState(sticky_skills={"agenda": 2})
 
     uc = _make_use_case(
-        rag=RagConfig(min_words_threshold=5),
-        skills=SkillsConfig(rag_min_skills=0, sticky_ttl=3),
-        tools=ToolsConfig(rag_min_tools=10),
+        semantic_routing=SemanticRoutingConfig(min_words_threshold=5),
+        skills=SkillsConfig(semantic_routing_min_skills=0, sticky_ttl=3),
+        tools=ToolsConfig(semantic_routing_min_tools=10),
         mock_llm=mock_llm,
         mock_memory=mock_memory,
         mock_embedder=mock_embedder,
@@ -155,9 +155,9 @@ async def test_short_input_inherits_sticky_skills_into_system_prompt(
     mock_history.load_state.return_value = ConversationState(sticky_skills={"agenda": 2})
 
     uc = _make_use_case(
-        rag=RagConfig(min_words_threshold=5),
-        skills=SkillsConfig(rag_min_skills=0, sticky_ttl=3),
-        tools=ToolsConfig(rag_min_tools=10),
+        semantic_routing=SemanticRoutingConfig(min_words_threshold=5),
+        skills=SkillsConfig(semantic_routing_min_skills=0, sticky_ttl=3),
+        tools=ToolsConfig(semantic_routing_min_tools=10),
         mock_llm=mock_llm,
         mock_memory=mock_memory,
         mock_embedder=mock_embedder,
@@ -189,9 +189,9 @@ async def test_short_input_inherits_sticky_tools_into_tool_loop(
     mock_history.load_state.return_value = ConversationState(sticky_tools={"list_events": 2})
 
     uc = _make_use_case(
-        rag=RagConfig(min_words_threshold=5),
-        skills=SkillsConfig(rag_min_skills=10),
-        tools=ToolsConfig(rag_min_tools=0, sticky_ttl=4),
+        semantic_routing=SemanticRoutingConfig(min_words_threshold=5),
+        skills=SkillsConfig(semantic_routing_min_skills=10),
+        tools=ToolsConfig(semantic_routing_min_tools=0, sticky_ttl=4),
         mock_llm=mock_llm,
         mock_memory=mock_memory,
         mock_embedder=mock_embedder,
@@ -225,9 +225,9 @@ async def test_short_input_bypass_does_not_persist_state(
     mock_history.load_state.return_value = ConversationState(sticky_skills={"agenda": 2})
 
     uc = _make_use_case(
-        rag=RagConfig(min_words_threshold=5),
-        skills=SkillsConfig(rag_min_skills=0, sticky_ttl=3),
-        tools=ToolsConfig(rag_min_tools=10),
+        semantic_routing=SemanticRoutingConfig(min_words_threshold=5),
+        skills=SkillsConfig(semantic_routing_min_skills=0, sticky_ttl=3),
+        tools=ToolsConfig(semantic_routing_min_tools=10),
         mock_llm=mock_llm,
         mock_memory=mock_memory,
         mock_embedder=mock_embedder,
@@ -258,9 +258,9 @@ async def test_short_input_bypass_filters_ghost_sticky_ids(
     )
 
     uc = _make_use_case(
-        rag=RagConfig(min_words_threshold=5),
-        skills=SkillsConfig(rag_min_skills=0, sticky_ttl=3),
-        tools=ToolsConfig(rag_min_tools=10),
+        semantic_routing=SemanticRoutingConfig(min_words_threshold=5),
+        skills=SkillsConfig(semantic_routing_min_skills=0, sticky_ttl=3),
+        tools=ToolsConfig(semantic_routing_min_tools=10),
         mock_llm=mock_llm,
         mock_memory=mock_memory,
         mock_embedder=mock_embedder,
@@ -276,11 +276,11 @@ async def test_short_input_bypass_filters_ghost_sticky_ids(
 
 
 # ---------------------------------------------------------------------------
-# Feature activada — casos donde el RAG SÍ corre
+# Feature activada — casos donde el routing SÍ corre
 # ---------------------------------------------------------------------------
 
 
-async def test_short_input_without_sticky_runs_rag_normally(
+async def test_short_input_without_sticky_runs_routing_normally(
     mock_llm,
     mock_memory,
     mock_embedder,
@@ -288,7 +288,7 @@ async def test_short_input_without_sticky_runs_rag_normally(
     mock_history,
     mock_tools,
 ):
-    """Primer turno (sticky vacío) con input corto → el RAG corre igual.
+    """Primer turno (sticky vacío) con input corto → el routing corre igual.
 
     Sin sticky previo no hay contexto del cual heredar; el bypass no aplica.
     """
@@ -300,9 +300,9 @@ async def test_short_input_without_sticky_runs_rag_normally(
     mock_history.load_state.return_value = ConversationState()  # sticky vacío
 
     uc = _make_use_case(
-        rag=RagConfig(min_words_threshold=5),
-        skills=SkillsConfig(rag_min_skills=0, sticky_ttl=3),
-        tools=ToolsConfig(rag_min_tools=10),
+        semantic_routing=SemanticRoutingConfig(min_words_threshold=5),
+        skills=SkillsConfig(semantic_routing_min_skills=0, sticky_ttl=3),
+        tools=ToolsConfig(semantic_routing_min_tools=10),
         mock_llm=mock_llm,
         mock_memory=mock_memory,
         mock_embedder=mock_embedder,
@@ -315,7 +315,7 @@ async def test_short_input_without_sticky_runs_rag_normally(
     mock_embedder.embed_query.assert_called_once()
 
 
-async def test_long_input_runs_rag_even_with_sticky(
+async def test_long_input_runs_routing_even_with_sticky(
     mock_llm,
     mock_memory,
     mock_embedder,
@@ -323,7 +323,7 @@ async def test_long_input_runs_rag_even_with_sticky(
     mock_history,
     mock_tools,
 ):
-    """Input largo → el RAG corre siempre, sin importar el sticky previo."""
+    """Input largo → el routing corre siempre, sin importar el sticky previo."""
     s = Skill(id="agenda", name="agenda", description="d")
     mock_skills.list_all.return_value = [s]
     mock_skills.retrieve.return_value = [s]
@@ -332,9 +332,9 @@ async def test_long_input_runs_rag_even_with_sticky(
     mock_history.load_state.return_value = ConversationState(sticky_skills={"agenda": 2})
 
     uc = _make_use_case(
-        rag=RagConfig(min_words_threshold=5),
-        skills=SkillsConfig(rag_min_skills=0, sticky_ttl=3),
-        tools=ToolsConfig(rag_min_tools=10),
+        semantic_routing=SemanticRoutingConfig(min_words_threshold=5),
+        skills=SkillsConfig(semantic_routing_min_skills=0, sticky_ttl=3),
+        tools=ToolsConfig(semantic_routing_min_tools=10),
         mock_llm=mock_llm,
         mock_memory=mock_memory,
         mock_embedder=mock_embedder,
@@ -355,7 +355,7 @@ async def test_threshold_is_strict_less_than(
     mock_history,
     mock_tools,
 ):
-    """Con threshold=5, un input de EXACTAMENTE 5 palabras NO es corto → RAG corre."""
+    """Con threshold=5, un input de EXACTAMENTE 5 palabras NO es corto → routing corre."""
     s = Skill(id="agenda", name="agenda", description="d")
     mock_skills.list_all.return_value = [s]
     mock_skills.retrieve.return_value = [s]
@@ -364,9 +364,9 @@ async def test_threshold_is_strict_less_than(
     mock_history.load_state.return_value = ConversationState(sticky_skills={"agenda": 2})
 
     uc = _make_use_case(
-        rag=RagConfig(min_words_threshold=5),
-        skills=SkillsConfig(rag_min_skills=0, sticky_ttl=3),
-        tools=ToolsConfig(rag_min_tools=10),
+        semantic_routing=SemanticRoutingConfig(min_words_threshold=5),
+        skills=SkillsConfig(semantic_routing_min_skills=0, sticky_ttl=3),
+        tools=ToolsConfig(semantic_routing_min_tools=10),
         mock_llm=mock_llm,
         mock_memory=mock_memory,
         mock_embedder=mock_embedder,
@@ -400,9 +400,9 @@ async def test_inspect_short_input_with_sticky_bypasses_embedder(
     mock_history.load_state.return_value = ConversationState(sticky_skills={"agenda": 2})
 
     uc = _make_use_case(
-        rag=RagConfig(min_words_threshold=5),
-        skills=SkillsConfig(rag_min_skills=0, sticky_ttl=3),
-        tools=ToolsConfig(rag_min_tools=10),
+        semantic_routing=SemanticRoutingConfig(min_words_threshold=5),
+        skills=SkillsConfig(semantic_routing_min_skills=0, sticky_ttl=3),
+        tools=ToolsConfig(semantic_routing_min_tools=10),
         mock_llm=mock_llm,
         mock_memory=mock_memory,
         mock_embedder=mock_embedder,

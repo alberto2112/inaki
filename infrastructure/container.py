@@ -16,7 +16,9 @@ from typing import TYPE_CHECKING, Callable
 from croniter import croniter
 
 if TYPE_CHECKING:
+    from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
     from core.domain.value_objects.channel_context import ChannelContext
+    from core.ports.outbound.knowledge_port import IKnowledgeSource
 
 from adapters.outbound.history.sqlite_history_store import SQLiteHistoryStore
 from adapters.outbound.memory.sqlite_memory_repo import SQLiteMemoryRepository
@@ -104,6 +106,7 @@ class AgentContainer:
             history=self._history,
             tools=self._tools,
             agent_config=cfg,
+            knowledge_orchestrator=self._knowledge_orchestrator,
         )
 
         # Every agent gets a one-shot use case unconditionally so it can always
@@ -125,11 +128,164 @@ class AgentContainer:
             memory_config=cfg.memory,
         )
 
+    def _collect_knowledge_sources(
+        self,
+    ) -> "tuple[list[IKnowledgeSource], dict]":
+        """
+        Recolecta las fuentes de conocimiento de nivel 1 y 2 (memoria + config).
+
+        Retorna (fuentes, params) donde params es un dict con los parámetros
+        del orquestrador: max_total_chunks, token_budget_threshold,
+        pre_fetch_enabled, default_top_k_per_source, default_min_score.
+        Las fuentes de nivel 3 (extensiones) se añaden en _register_extensions().
+        Orden garantizado: (1) memoria, (2) fuentes configuradas.
+        """
+        from adapters.outbound.knowledge.sqlite_memory_knowledge_source import (
+            SqliteMemoryKnowledgeSource,
+        )
+
+        knowledge_cfg = getattr(self._global_config, "knowledge", None)
+
+        # Leer flags desde la config o usar defaults
+        include_memory = True
+        params = {
+            "max_total_chunks": 10,
+            "token_budget_threshold": 4000,
+            "pre_fetch_enabled": True,
+            "default_top_k_per_source": 3,
+            "default_min_score": 0.5,
+        }
+
+        if knowledge_cfg is not None:
+            include_memory = getattr(knowledge_cfg, "include_memory", True)
+            params["max_total_chunks"] = getattr(knowledge_cfg, "max_total_chunks", 10)
+            params["token_budget_threshold"] = getattr(
+                knowledge_cfg, "token_budget_warn_threshold", 4000
+            )
+            params["pre_fetch_enabled"] = getattr(knowledge_cfg, "enabled", True)
+            params["default_top_k_per_source"] = getattr(knowledge_cfg, "top_k_per_source", 3)
+            params["default_min_score"] = getattr(knowledge_cfg, "min_score", 0.5)
+
+        fuentes: list[IKnowledgeSource] = []
+
+        # Nivel 1 — memoria (auto-registrada por defecto)
+        if include_memory:
+            fuentes.append(SqliteMemoryKnowledgeSource(memory=self._memory))
+            logger.debug(
+                "AgentContainer '%s': SqliteMemoryKnowledgeSource registrada",
+                self.agent_config.id,
+            )
+
+        # Nivel 2 — fuentes configuradas en GlobalConfig.knowledge.sources
+        if knowledge_cfg is not None:
+            sources_cfg = getattr(knowledge_cfg, "sources", []) or []
+            for fuente_cfg in sources_cfg:
+                if not getattr(fuente_cfg, "enabled", True):
+                    continue
+
+                tipo = getattr(fuente_cfg, "type", "")
+                if tipo == "document":
+                    fuentes.append(self._build_document_source(fuente_cfg))
+                elif tipo == "sqlite":
+                    sqlite_source = self._build_sqlite_source(fuente_cfg)
+                    if sqlite_source is not None:
+                        fuentes.append(sqlite_source)
+                else:
+                    logger.warning(
+                        "AgentContainer '%s': tipo de fuente '%s' no reconocido para '%s' — skipping",
+                        self.agent_config.id,
+                        tipo,
+                        getattr(fuente_cfg, "id", "<sin-id>"),
+                    )
+
+        return fuentes, params
+
+    def _build_knowledge_orchestrator(
+        self,
+        fuentes: "list[IKnowledgeSource]",
+        params: dict,
+    ) -> "KnowledgeOrchestrator":
+        """
+        Construye el KnowledgeOrchestrator con la lista de fuentes ya resuelta.
+
+        Recibe las fuentes ordenadas (memoria → config → ext) y los parámetros
+        del orquestrador (ver _collect_knowledge_sources). Separado de
+        _collect_knowledge_sources() para que _register_extensions() pueda añadir
+        fuentes de nivel 3 antes de que se construya el orquestrador definitivo.
+        """
+        from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
+
+        return KnowledgeOrchestrator(
+            sources=fuentes,
+            max_total_chunks=params["max_total_chunks"],
+            token_budget_threshold=params["token_budget_threshold"],
+            pre_fetch_enabled=params["pre_fetch_enabled"],
+            default_top_k_per_source=params["default_top_k_per_source"],
+            default_min_score=params["default_min_score"],
+        )
+
+    def _build_document_source(self, fuente_cfg: object) -> "IKnowledgeSource":
+        """Instancia un DocumentKnowledgeSource a partir de la config de fuente."""
+        from adapters.outbound.knowledge.document_knowledge_source import (
+            DocumentKnowledgeSource,
+        )
+
+        return DocumentKnowledgeSource(
+            source_id=fuente_cfg.id,
+            description=getattr(fuente_cfg, "description", ""),
+            path=fuente_cfg.path,
+            embedder=self._embedder,
+            glob=getattr(fuente_cfg, "glob", "**/*.md"),
+            chunk_size=getattr(fuente_cfg, "chunk_size", 500),
+            chunk_overlap=getattr(fuente_cfg, "chunk_overlap", 80),
+            dimension=self.agent_config.embedding.dimension,
+        )
+
+    def _build_sqlite_source(self, fuente_cfg: object) -> "IKnowledgeSource | None":
+        """
+        Instancia un SqliteKnowledgeSource a partir de la config de fuente.
+
+        Captura KnowledgeConfigError al construir (validación diferida al primer search),
+        pero registra el error ahora si el path no está configurado.
+        Si hay un error de config irrecuperable, loguea y retorna None para que el
+        container omita esta fuente sin abortar el arranque del agente.
+        """
+        from adapters.outbound.knowledge.sqlite_knowledge_source import (
+            SqliteKnowledgeSource,
+        )
+        from core.domain.errors import KnowledgeConfigError
+
+        fuente_id = getattr(fuente_cfg, "id", "<sin-id>")
+        db_path = getattr(fuente_cfg, "path", None)
+
+        if not db_path:
+            logger.error(
+                "AgentContainer '%s': fuente sqlite '%s' no tiene 'path' configurado — skipping",
+                self.agent_config.id,
+                fuente_id,
+            )
+            return None
+
+        try:
+            return SqliteKnowledgeSource(
+                source_id=fuente_id,
+                description=getattr(fuente_cfg, "description", ""),
+                db_path=db_path,
+            )
+        except KnowledgeConfigError as exc:
+            logger.error(
+                "AgentContainer '%s': error de configuración en fuente sqlite '%s': %s — skipping",
+                self.agent_config.id,
+                fuente_id,
+                exc,
+            )
+            return None
+
     def _register_tools(self) -> None:
         """Registra tools built-in del núcleo. Las extensiones se cargan aparte."""
         from pathlib import Path
 
-        from adapters.outbound.tools.memory_search_tool import MemorySearchTool
+        from adapters.outbound.tools.knowledge_search_tool import KnowledgeSearchTool
         from adapters.outbound.tools.patch_file_tool import PatchFileTool
         from adapters.outbound.tools.read_file_tool import ReadFileTool
         from adapters.outbound.tools.web_search_tool import WebSearchTool
@@ -142,19 +298,44 @@ class AgentContainer:
         except OSError as exc:
             logger.error(
                 "No se pudo crear el workspace '%s' para el agente '%s': %s",
-                workspace_path, self.agent_config.id, exc,
+                workspace_path,
+                self.agent_config.id,
+                exc,
             )
             raise
         logger.info(
             "Agente '%s': workspace='%s' containment='%s'",
-            self.agent_config.id, workspace_path, ws_cfg.containment,
+            self.agent_config.id,
+            workspace_path,
+            ws_cfg.containment,
         )
 
-        self._tools.register(MemorySearchTool(memory=self._memory, embedder=self._embedder))
+        # Recolectar fuentes de nivel 1 (memoria) y nivel 2 (config).
+        # Las de nivel 3 (extensiones) se añaden en _register_extensions() sobre la misma lista.
+        # El orquestrador almacena la referencia a esa lista, por lo que las fuentes de extensiones
+        # quedan incorporadas automáticamente sin reconstruir el objeto orquestrador.
+        (
+            self._pending_knowledge_sources,
+            self._knowledge_params,
+        ) = self._collect_knowledge_sources()
+        self._knowledge_orchestrator = self._build_knowledge_orchestrator(
+            self._pending_knowledge_sources,
+            self._knowledge_params,
+        )
+        self._tools.register(
+            KnowledgeSearchTool(
+                orchestrator=self._knowledge_orchestrator,
+                embedder=self._embedder,
+            )
+        )
         self._tools.register(WebSearchTool())
         self._tools.register(ReadFileTool(workspace=workspace_path, containment=ws_cfg.containment))
-        self._tools.register(WriteFileTool(workspace=workspace_path, containment=ws_cfg.containment))
-        self._tools.register(PatchFileTool(workspace=workspace_path, containment=ws_cfg.containment))
+        self._tools.register(
+            WriteFileTool(workspace=workspace_path, containment=ws_cfg.containment)
+        )
+        self._tools.register(
+            PatchFileTool(workspace=workspace_path, containment=ws_cfg.containment)
+        )
 
     @staticmethod
     def _resolve_transcription(cfg: AgentConfig) -> ITranscriptionProvider | None:
@@ -360,8 +541,8 @@ class AgentContainer:
             "(see their description and tools below).\n"
             "- You lack a tool that the target agent has.\n"
             "- The task requires multiple tool calls to complete, especially multi-step "
-            "workflows like: \"search the web about X, summarize the highlights, and send "
-            "the result to Y\". Delegating keeps your context clean and lets a specialized "
+            'workflows like: "search the web about X, summarize the highlights, and send '
+            'the result to Y". Delegating keeps your context clean and lets a specialized '
             "agent orchestrate the steps.\n\n"
             "## When NOT to delegate\n\n"
             "- The task is trivial or you already have the tools to solve it in 1-2 steps.\n"
@@ -412,7 +593,8 @@ class AgentContainer:
                 except Exception as exc:
                     logger.warning(
                         "Extensión '%s': falló al cargar manifest (%s) — skipping",
-                        ext_name, exc,
+                        ext_name,
+                        exc,
                     )
                     continue
 
@@ -424,18 +606,22 @@ class AgentContainer:
                         if tool_instance.name in self._tools._tools:
                             logger.warning(
                                 "Extensión '%s': tool '%s' ya registrada — skipping (colisión)",
-                                ext_name, tool_instance.name,
+                                ext_name,
+                                tool_instance.name,
                             )
                             continue
                         self._tools.register(tool_instance)
                         logger.info(
                             "Extensión '%s': tool '%s' registrada",
-                            ext_name, tool_instance.name,
+                            ext_name,
+                            tool_instance.name,
                         )
                     except Exception as exc:
                         logger.warning(
                             "Extensión '%s': falló al instanciar %r (%s) — skipping tool",
-                            ext_name, tool_cls, exc,
+                            ext_name,
+                            tool_cls,
+                            exc,
                         )
 
                 # Registrar skills
@@ -444,14 +630,52 @@ class AgentContainer:
                     if not skill_path.exists():
                         logger.warning(
                             "Extensión '%s': skill file no encontrado: %s",
-                            ext_name, skill_path,
+                            ext_name,
+                            skill_path,
                         )
                         continue
                     self._skills.add_file(skill_path)
                     logger.info(
                         "Extensión '%s': skill '%s' añadida",
-                        ext_name, skill_path.name,
+                        ext_name,
+                        skill_path.name,
                     )
+
+                # Registrar knowledge sources — compatibilidad hacia atrás:
+                # manifests sin KNOWLEDGE_SOURCES simplemente no declaran el atributo.
+                for factory in getattr(module, "KNOWLEDGE_SOURCES", []) or []:
+                    try:
+                        fuente = factory(
+                            self.agent_config,
+                            self._global_config,
+                            self._embedder,
+                        )
+                        self._pending_knowledge_sources.append(fuente)
+                        logger.info(
+                            "Extensión '%s': knowledge source '%s' registrada",
+                            ext_name,
+                            fuente.source_id,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Extensión '%s': factory de knowledge source falló (%s) — skipping",
+                            ext_name,
+                            exc,
+                        )
+
+        # El KnowledgeOrchestrator ya fue construido con una referencia a la misma lista
+        # _pending_knowledge_sources. Al añadir fuentes de nivel 3 (extensiones) arriba,
+        # el orquestrador las ve automáticamente porque comparte el mismo objeto lista.
+        # Orden garantizado: (1) memoria, (2) config, (3) extensiones.
+        fuentes_total = getattr(self, "_pending_knowledge_sources", None)
+        if fuentes_total is not None:
+            agent_id = getattr(self, "agent_config", None)
+            agent_id = agent_id.id if agent_id is not None else "<desconocido>"
+            logger.debug(
+                "AgentContainer '%s': KnowledgeOrchestrator actualizado con %d fuente(s) total",
+                agent_id,
+                len(fuentes_total),
+            )
 
 
 class AppContainer:
@@ -471,9 +695,7 @@ class AppContainer:
                 self.agents[agent_cfg.id] = AgentContainer(agent_cfg, global_config)
                 logger.info("AgentContainer creado para '%s'", agent_cfg.id)
             except Exception as exc:
-                logger.error(
-                    "Error creando container para agente '%s': %s", agent_cfg.id, exc
-                )
+                logger.error("Error creando container para agente '%s': %s", agent_cfg.id, exc)
 
         # Phase 2: wire delegation AFTER all containers are built so that the
         # get_agent_container closure can resolve any sibling (two-phase init).
@@ -484,9 +706,7 @@ class AppContainer:
             try:
                 container.wire_delegation(_get_agent_container)
             except Exception as exc:
-                logger.error(
-                    "Error en wire_delegation para agente '%s': %s", agent_id, exc
-                )
+                logger.error("Error en wire_delegation para agente '%s': %s", agent_id, exc)
 
         # Global consolidation use case — itera agentes habilitados con delay
         enabled_consolidators: dict[str, ConsolidateMemoryUseCase] = {
@@ -531,9 +751,7 @@ class AppContainer:
             try:
                 container.wire_scheduler(self.schedule_task_uc, user_timezone)
             except Exception as exc:
-                logger.error(
-                    "Error en wire_scheduler para agente '%s': %s", agent_id, exc
-                )
+                logger.error("Error en wire_scheduler para agente '%s': %s", agent_id, exc)
 
     def register_telegram_bot(self, agent_id: str, bot: object) -> None:
         """Registra el bot de Telegram para un agente.
@@ -622,12 +840,14 @@ class AppContainer:
             needs_save = True
 
         if needs_save:
-            updated = existing.model_copy(update={
-                "schedule": new_schedule,
-                "next_run": new_next_run,
-                "status": new_status,
-                "retry_count": new_retry,
-            })
+            updated = existing.model_copy(
+                update={
+                    "schedule": new_schedule,
+                    "next_run": new_next_run,
+                    "status": new_status,
+                    "retry_count": new_retry,
+                }
+            )
             await self.scheduler_repo.save_task(updated)
 
     async def startup(self) -> None:

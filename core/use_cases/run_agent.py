@@ -5,7 +5,7 @@ Flujo completo:
   1. Cargar historial del agente
   2. Leer digest markdown de memoria
   3. Listar skills y tools disponibles
-  4. Si RAG activo: generar embedding y filtrar skills/tools relevantes
+  4. Si semantic routing activo: generar embedding y filtrar skills/tools relevantes
   5. Construir AgentContext y system prompt dinámico
   6. Llamar al LLM con historial + tools disponibles
   7. Si el LLM devuelve tool calls → ejecutar tools, añadir resultados, rellamar LLM
@@ -23,6 +23,7 @@ from pathlib import Path
 from core.domain.entities.message import Message, Role
 from core.domain.entities.skill import Skill
 from core.domain.errors import ToolLoopMaxIterationsError
+from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
 from core.domain.services.sticky_selector import apply_sticky
 from core.domain.value_objects.agent_context import AgentContext
 from core.domain.value_objects.agent_info import AgentInfoDTO
@@ -45,20 +46,20 @@ def _workspace_absolute_path(agent_config: AgentConfig) -> str:
     return str(Path(agent_config.workspace.path).expanduser().resolve())
 
 
-def _should_bypass_rag_for_short_input(
+def _should_bypass_routing_for_short_input(
     *,
     user_input: str,
     min_words_threshold: int,
     prev_state: ConversationState,
 ) -> bool:
-    """Decide si el turno debe saltear el embed + re-selección RAG.
+    """Decide si el turno debe saltear el embed + re-selección de semantic routing.
 
     Se skipea cuando todas estas condiciones se cumplen:
       - el threshold está activado (``> 0``),
       - el input tiene MENOS palabras que el threshold,
       - existe alguna selección sticky previa (skills o tools) de la cual heredar.
 
-    Si no hay sticky previo (primer turno o TTL ya expiró) el RAG corre normal,
+    Si no hay sticky previo (primer turno o TTL ya expiró) el routing corre normal,
     aunque el input sea corto — no hay contexto del cual heredar.
     """
     if min_words_threshold <= 0:
@@ -81,11 +82,11 @@ class InspectResult:
     memory_digest: str
     all_skills: list[Skill]
     selected_skills: list[Skill]
-    skills_rag_active: bool
+    skills_routing_active: bool
     selected_skill_scores: list[tuple[str, float]]
     all_tool_schemas: list[dict]
     selected_tool_schemas: list[dict]
-    tools_rag_active: bool
+    tools_routing_active: bool
     selected_tool_scores: list[tuple[str, float]]
     system_prompt: str
 
@@ -100,6 +101,7 @@ class RunAgentUseCase:
         history: IHistoryStore,
         tools: IToolExecutor,
         agent_config: AgentConfig,
+        knowledge_orchestrator: KnowledgeOrchestrator | None = None,
     ) -> None:
         self._llm = llm
         self._memory = memory
@@ -108,6 +110,8 @@ class RunAgentUseCase:
         self._history = history
         self._tools = tools
         self._cfg = agent_config
+        # KnowledgeOrchestrator — None si no hay fuentes configuradas
+        self._knowledge_orchestrator = knowledge_orchestrator
         # Extra sections injected by wire_delegation (task 6.1).
         # Empty by default — non-breaking when delegation is disabled.
         self._extra_system_sections: list[str] = []
@@ -185,9 +189,9 @@ class RunAgentUseCase:
         digest_text = self._read_digest()
         all_skills = await self._skills.list_all()
         all_schemas = self._tools.get_schemas()
-        skills_rag_active = len(all_skills) > self._cfg.skills.rag_min_skills
-        tools_rag_active = (
-            tools_override is None and len(all_schemas) > self._cfg.tools.rag_min_tools
+        skills_routing_active = len(all_skills) > self._cfg.skills.semantic_routing_min_skills
+        tools_routing_active = (
+            tools_override is None and len(all_schemas) > self._cfg.tools.semantic_routing_min_tools
         )
         retrieved_skills: list[Skill] = all_skills
         tool_schemas: list[dict] = tools_override if tools_override is not None else all_schemas
@@ -197,61 +201,114 @@ class RunAgentUseCase:
         new_sticky_tools = dict(prev_state.sticky_tools)
         state_dirty = False
 
-        short_input_bypass = _should_bypass_rag_for_short_input(
+        routing_bypass = _should_bypass_routing_for_short_input(
             user_input=user_input,
-            min_words_threshold=self._cfg.rag.min_words_threshold,
+            min_words_threshold=self._cfg.semantic_routing.min_words_threshold,
             prev_state=prev_state,
         )
 
-        if short_input_bypass:
+        # query_vec se calcula como máximo una vez por turno y se reutiliza
+        # tanto para semantic routing como para knowledge pre-fetch.
+        query_vec: list[float] | None = None
+
+        if routing_bypass:
             # Input corto con selección sticky previa → heredar intacta.
             # No se calcula embedding, no se toca el TTL, no se persiste estado.
-            if skills_rag_active and prev_state.sticky_skills:
+            if skills_routing_active and prev_state.sticky_skills:
                 skills_by_id = {s.id: s for s in all_skills}
                 retrieved_skills = [
                     skills_by_id[i] for i in prev_state.sticky_skills if i in skills_by_id
                 ]
-            if tools_rag_active and prev_state.sticky_tools:
+            if tools_routing_active and prev_state.sticky_tools:
                 schemas_by_name = {sch["function"]["name"]: sch for sch in all_schemas}
                 tool_schemas = [
                     schemas_by_name[n] for n in prev_state.sticky_tools if n in schemas_by_name
                 ]
             logger.info(
-                "[rag] short-input bypass (agent=%s words=%d threshold=%d sticky_skills=%d sticky_tools=%d)",
+                "[routing] short-input bypass (agent=%s words=%d threshold=%d sticky_skills=%d sticky_tools=%d)",
                 agent_id,
                 len(user_input.split()),
-                self._cfg.rag.min_words_threshold,
+                self._cfg.semantic_routing.min_words_threshold,
                 len(prev_state.sticky_skills),
                 len(prev_state.sticky_tools),
             )
-        elif skills_rag_active or tools_rag_active:
+        elif skills_routing_active or tools_routing_active:
             query_vec = await self._embedder.embed_query(user_input)
-            if skills_rag_active:
-                rag_skills = await self._skills.retrieve(
+            if skills_routing_active:
+                routing_skills = await self._skills.retrieve(
                     query_vec,
-                    top_k=self._cfg.skills.rag_top_k,
-                    min_score=self._cfg.skills.rag_min_score,
+                    top_k=self._cfg.skills.semantic_routing_top_k,
+                    min_score=self._cfg.skills.semantic_routing_min_score,
                 )
-                rag_ids = {s.id for s in rag_skills}
+                routing_ids = {s.id for s in routing_skills}
                 active_ids, new_sticky_skills = apply_sticky(
-                    rag_ids, prev_state.sticky_skills, self._cfg.skills.sticky_ttl
+                    routing_ids, prev_state.sticky_skills, self._cfg.skills.sticky_ttl
                 )
                 skills_by_id = {s.id: s for s in all_skills}
                 retrieved_skills = [skills_by_id[i] for i in active_ids if i in skills_by_id]
                 state_dirty = True
-            if tools_rag_active:
-                rag_schemas = await self._tools.get_schemas_relevant(
+            if tools_routing_active:
+                routing_schemas = await self._tools.get_schemas_relevant(
                     query_vec,
-                    top_k=self._cfg.tools.rag_top_k,
-                    min_score=self._cfg.tools.rag_min_score,
+                    top_k=self._cfg.tools.semantic_routing_top_k,
+                    min_score=self._cfg.tools.semantic_routing_min_score,
                 )
-                rag_names = {sch["function"]["name"] for sch in rag_schemas}
+                routing_names = {sch["function"]["name"] for sch in routing_schemas}
                 active_names, new_sticky_tools = apply_sticky(
-                    rag_names, prev_state.sticky_tools, self._cfg.tools.sticky_ttl
+                    routing_names, prev_state.sticky_tools, self._cfg.tools.sticky_ttl
                 )
                 schemas_by_name = {sch["function"]["name"]: sch for sch in all_schemas}
                 tool_schemas = [schemas_by_name[n] for n in active_names if n in schemas_by_name]
                 state_dirty = True
+
+        # Pre-fetch de knowledge: se ejecuta post-routing, reutilizando query_vec si ya fue
+        # calculado. Se saltea si el bypass está activo (misma condición que routing bypass).
+        from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
+
+        knowledge_chunks: list[KnowledgeChunk] = []
+        if (
+            not routing_bypass
+            and self._knowledge_orchestrator is not None
+            and self._knowledge_orchestrator.pre_fetch_enabled
+        ):
+            if query_vec is None:
+                # Routing no corrió pero hay orquestrador → calcular embedding ahora
+                query_vec = await self._embedder.embed_query(user_input)
+            knowledge_chunks = await self._knowledge_orchestrator.retrieve_all(
+                query_vec=query_vec,
+                top_k=self._knowledge_orchestrator.default_top_k_per_source,
+                min_score=self._knowledge_orchestrator.default_min_score,
+            )
+            logger.debug(
+                "[knowledge] pre-fetch completado (agent=%s chunks=%d)",
+                agent_id,
+                len(knowledge_chunks),
+            )
+
+        # Verificación de presupuesto de tokens (heurística: len(texto) / 4).
+        # El threshold se almacena en el orquestrador para evitar pasar GlobalConfig aquí.
+        if self._knowledge_orchestrator is not None:
+            threshold = self._knowledge_orchestrator.token_budget_threshold
+            if threshold > 0:
+                chunks_tokens = sum(len(c.content) // 4 for c in knowledge_chunks)
+                digest_tokens = len(digest_text) // 4
+                skills_tokens = sum(
+                    len(getattr(s, "instructions", "") or "") // 4 for s in retrieved_skills
+                )
+                total_estimado = chunks_tokens + digest_tokens + skills_tokens
+
+                if total_estimado > threshold:
+                    logger.warning(
+                        "[knowledge] presupuesto de tokens superado "
+                        "(agent=%s total_estimado=%d threshold=%d "
+                        "chunks_tokens=%d digest_tokens=%d skills_tokens=%d)",
+                        agent_id,
+                        total_estimado,
+                        threshold,
+                        chunks_tokens,
+                        digest_tokens,
+                        skills_tokens,
+                    )
 
         user_context = self._read_user_context()
         context = AgentContext(
@@ -261,6 +318,7 @@ class RunAgentUseCase:
             skills=retrieved_skills,
             timezone=self._user_timezone,
             workspace_root=_workspace_absolute_path(self._cfg),
+            knowledge_chunks=knowledge_chunks,
         )
         system_prompt = context.build_system_prompt(
             self._cfg.system_prompt,
@@ -318,50 +376,69 @@ class RunAgentUseCase:
         digest_text = self._read_digest()
         all_skills = await self._skills.list_all()
         all_schemas = self._tools.get_schemas()
-        skills_rag_active = len(all_skills) > self._cfg.skills.rag_min_skills
-        tools_rag_active = len(all_schemas) > self._cfg.tools.rag_min_tools
+        skills_routing_active = len(all_skills) > self._cfg.skills.semantic_routing_min_skills
+        tools_routing_active = len(all_schemas) > self._cfg.tools.semantic_routing_min_tools
         retrieved_skills: list[Skill] = all_skills
         selected_schemas: list[dict] = all_schemas
         skill_scores: list[tuple[str, float]] = []
         tool_scores: list[tuple[str, float]] = []
 
         prev_state = await self._history.load_state(self._cfg.id)
-        short_input_bypass = _should_bypass_rag_for_short_input(
+        routing_bypass = _should_bypass_routing_for_short_input(
             user_input=user_input,
-            min_words_threshold=self._cfg.rag.min_words_threshold,
+            min_words_threshold=self._cfg.semantic_routing.min_words_threshold,
             prev_state=prev_state,
         )
 
-        if short_input_bypass:
+        query_vec: list[float] | None = None
+
+        if routing_bypass:
             # Refleja la realidad de execute(): selección heredada del sticky previo.
-            if skills_rag_active and prev_state.sticky_skills:
+            if skills_routing_active and prev_state.sticky_skills:
                 skills_by_id = {s.id: s for s in all_skills}
                 retrieved_skills = [
                     skills_by_id[i] for i in prev_state.sticky_skills if i in skills_by_id
                 ]
-            if tools_rag_active and prev_state.sticky_tools:
+            if tools_routing_active and prev_state.sticky_tools:
                 schemas_by_name = {sch["function"]["name"]: sch for sch in all_schemas}
                 selected_schemas = [
                     schemas_by_name[n] for n in prev_state.sticky_tools if n in schemas_by_name
                 ]
-        elif skills_rag_active or tools_rag_active:
+        elif skills_routing_active or tools_routing_active:
             query_vec = await self._embedder.embed_query(user_input)
-            if skills_rag_active:
+            if skills_routing_active:
                 scored_skills = await self._skills.retrieve_with_scores(
                     query_vec,
-                    top_k=self._cfg.skills.rag_top_k,
-                    min_score=self._cfg.skills.rag_min_score,
+                    top_k=self._cfg.skills.semantic_routing_top_k,
+                    min_score=self._cfg.skills.semantic_routing_min_score,
                 )
                 retrieved_skills = [s for s, _ in scored_skills]
                 skill_scores = [(s.id, sc) for s, sc in scored_skills]
-            if tools_rag_active:
+            if tools_routing_active:
                 scored_tools = await self._tools.get_schemas_relevant_with_scores(
                     query_vec,
-                    top_k=self._cfg.tools.rag_top_k,
-                    min_score=self._cfg.tools.rag_min_score,
+                    top_k=self._cfg.tools.semantic_routing_top_k,
+                    min_score=self._cfg.tools.semantic_routing_min_score,
                 )
                 selected_schemas = [sch for sch, _ in scored_tools]
                 tool_scores = [(sch["function"]["name"], sc) for sch, sc in scored_tools]
+
+        # Pre-fetch de knowledge — espeja execute(): skip en bypass o si pre-fetch está deshabilitado.
+        from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
+
+        knowledge_chunks: list[KnowledgeChunk] = []
+        if (
+            not routing_bypass
+            and self._knowledge_orchestrator is not None
+            and self._knowledge_orchestrator.pre_fetch_enabled
+        ):
+            if query_vec is None:
+                query_vec = await self._embedder.embed_query(user_input)
+            knowledge_chunks = await self._knowledge_orchestrator.retrieve_all(
+                query_vec=query_vec,
+                top_k=self._knowledge_orchestrator.default_top_k_per_source,
+                min_score=self._knowledge_orchestrator.default_min_score,
+            )
 
         user_context = self._read_user_context()
         context = AgentContext(
@@ -371,6 +448,7 @@ class RunAgentUseCase:
             skills=retrieved_skills,
             timezone=self._user_timezone,
             workspace_root=_workspace_absolute_path(self._cfg),
+            knowledge_chunks=knowledge_chunks,
         )
         system_prompt = context.build_system_prompt(self._cfg.system_prompt)
 
@@ -379,11 +457,11 @@ class RunAgentUseCase:
             memory_digest=digest_text,
             all_skills=all_skills,
             selected_skills=retrieved_skills,
-            skills_rag_active=skills_rag_active,
+            skills_routing_active=skills_routing_active,
             selected_skill_scores=skill_scores,
             all_tool_schemas=all_schemas,
             selected_tool_schemas=selected_schemas,
-            tools_rag_active=tools_rag_active,
+            tools_routing_active=tools_routing_active,
             selected_tool_scores=tool_scores,
             system_prompt=system_prompt,
         )

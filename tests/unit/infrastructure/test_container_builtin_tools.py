@@ -22,6 +22,7 @@ class FakeEmbedder:
 class FakeMemory:
     async def store(self, entry) -> None: ...
     async def search(self, query_embedding, top_k=5): return []
+    async def search_with_scores(self, query_vec, top_k=5): return []
     async def get_recent(self, limit=10): return []
 
 
@@ -39,17 +40,19 @@ def _make_container(tmp_path: Path) -> AgentContainer:
             containment="strict",
         ),
     )
+    # _global_config necesario para _build_knowledge_orchestrator
+    container._global_config = SimpleNamespace(knowledge=None)
     return container
 
 
 def test_builtin_tools_present(tmp_path: Path) -> None:
-    """web_search, read_file, write_file, patch_file presentes con ext_dirs=[]."""
+    """knowledge_search, web_search, read_file, write_file, patch_file presentes con ext_dirs=[]."""
     container = _make_container(tmp_path)
     container._register_tools()
     container._register_extensions([])
 
     registered = set(container._tools._tools.keys())
-    for expected in ("mem_search", "web_search", "read_file", "write_file", "patch_file"):
+    for expected in ("knowledge_search", "web_search", "read_file", "write_file", "patch_file"):
         assert expected in registered, f"Built-in '{expected}' no registrada"
 
 

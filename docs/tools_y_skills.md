@@ -12,7 +12,7 @@ Este documento cubre los dos mecanismos de extensión del agente: **tools** (fun
 | Interfaz base | `ITool` + `IToolExecutor` | `ISkillRepository` |
 | Registro | Manual en `AgentContainer._register_tools()` | Automático por glob `*.yaml` |
 | Invocables por el LLM | Sí (function calling) | No (solo texto en el prompt) |
-| RAG | Sí (cosine similarity) | Sí (cosine similarity) |
+| Semantic routing | Sí (cosine similarity) | Sí (cosine similarity) |
 | Configuración | Hardcodeada en la clase | `config/global.yaml` |
 
 ---
@@ -93,15 +93,15 @@ def _register_tools(self) -> None:
 
 No hay descubrimiento automático. Si no se registra, no existe.
 
-### RAG de tools
+### Semantic routing de tools
 
-Cuando el número de tools supera `tools.rag_min_tools` (config), el registry embede la descripción de cada tool y usa cosine similarity para seleccionar las más relevantes para la query actual. Por debajo del umbral, se envían todas.
+Cuando el número de tools supera `tools.semantic_routing_min_tools` (config), el registry embede la descripción de cada tool y usa cosine similarity para seleccionar las más relevantes para la query actual. Por debajo del umbral, se envían todas. Esto NO es RAG — es selección dinámica de capacidades; el RAG real (recuperación de conocimiento externo) vive en `knowledge:`.
 
 ```yaml
 # config/global.yaml
 tools:
-  rag_min_tools: 10       # Activa RAG si hay más de N tools
-  rag_top_k: 5            # Cuántas tools enviar al LLM cuando RAG está activo
+  semantic_routing_min_tools: 10   # Activa routing si hay más de N tools
+  semantic_routing_top_k: 5        # Cuántas tools enviar al LLM
   tool_call_max_iterations: 5
 ```
 
@@ -139,15 +139,15 @@ Todos los campos son obligatorios. `instructions` admite Markdown.
 
 `YamlSkillRepository` se carga vía `add_file()` desde los `manifest.py` de las extensiones del usuario (`ext/` local o `~/.inaki/ext/` en producción). El core no define skills built-in: todo saber de dominio vive en extensiones.
 
-### RAG de skills
+### Semantic routing de skills
 
-Mismo mecanismo que tools: cuando hay más skills que `skills.rag_min_skills`, se seleccionan las más similares a la query.
+Mismo mecanismo que tools: cuando hay más skills que `skills.semantic_routing_min_skills`, se seleccionan las más similares a la query.
 
 ```yaml
 # config/global.yaml
 skills:
-  rag_min_skills: 5
-  rag_top_k: 3
+  semantic_routing_min_skills: 5
+  semantic_routing_top_k: 3
 ```
 
 ### Cómo llegan al LLM
@@ -171,7 +171,7 @@ User input
 embed_query() ───────────────────────────────────────────┐
     │                                                    │
     ▼                                                    ▼
-Skills RAG                                          Tools RAG
+Skills routing                                      Tools routing
 skills.retrieve(embedding)                     tools.get_schemas_relevant(embedding)
     │                                                    │
     ▼                                                    ▼

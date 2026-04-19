@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import BaseModel
 
 from core.domain.entities.skill import Skill
+from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
 
 _VAR_RE = re.compile(
     r"\{\{(WORKSPACE|TIMEZONE|DATETIME|DATE|TIME|WEEKDAY_NUMBER|WEEKDAY)(?:\[([A-Z]{2})\])?\}\}",
@@ -68,6 +69,8 @@ class AgentContext(BaseModel):
     timezone: str | None = None
     # Raíz absoluta del workspace (misma resolución que las tools de FS). None → {{WORKSPACE}} intacto.
     workspace_root: str | None = None
+    # Fragmentos de conocimiento recuperados por KnowledgeOrchestrator para este turno.
+    knowledge_chunks: list[KnowledgeChunk] = []
 
     def build_system_prompt(
         self,
@@ -91,6 +94,19 @@ class AgentContext(BaseModel):
                     block += f"\n\n{s.instructions}"
                 skill_blocks.append(block)
             sections.append("\n## Skills disponibles:\n\n" + "\n\n".join(skill_blocks))
+
+        if self.knowledge_chunks:
+            # Agrupar por source_id manteniendo el orden de aparición
+            grupos: dict[str, list[KnowledgeChunk]] = {}
+            for chunk in self.knowledge_chunks:
+                grupos.setdefault(chunk.source_id, []).append(chunk)
+
+            bloque = "\n## Relevant Knowledge\n"
+            for source_id, fragmentos in grupos.items():
+                bloque += f"\n### {source_id}\n"
+                for fragmento in fragmentos:
+                    bloque += f"- [{fragmento.score:.2f}] {fragmento.content}\n"
+            sections.append(bloque)
 
         if extra_sections:
             for section in extra_sections:

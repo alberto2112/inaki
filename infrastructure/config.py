@@ -191,29 +191,29 @@ class SchedulerConfig(BaseModel):
 
 
 class SkillsConfig(BaseModel):
-    rag_min_skills: int = 10
-    rag_top_k: int = 3
-    rag_min_score: float = 0.0
+    semantic_routing_min_skills: int = 10
+    semantic_routing_top_k: int = 3
+    semantic_routing_min_score: float = 0.0
     sticky_ttl: int = 3  # Turnos que una skill seleccionada sobrevive; 0 = disabled
 
 
 class ToolsConfig(BaseModel):
-    rag_min_tools: int = 10
-    rag_top_k: int = 5
-    rag_min_score: float = 0.0
+    semantic_routing_min_tools: int = 10
+    semantic_routing_top_k: int = 5
+    semantic_routing_min_score: float = 0.0
     tool_call_max_iterations: int = 5
     circuit_breaker_threshold: int = 2
     sticky_ttl: int = 3  # Turnos que una tool seleccionada sobrevive; 0 = disabled
 
 
-class RagConfig(BaseModel):
-    """Políticas transversales al pipeline RAG (skills + tools).
+class SemanticRoutingConfig(BaseModel):
+    """Políticas transversales al pipeline de semantic routing (skills + tools).
 
     ``min_words_threshold``: si el user_input tiene MENOS palabras que este
     umbral Y existe una selección sticky previa (skills o tools), el turno
     saltea el cálculo del embedding y hereda la selección del turno anterior
     intacta (no decrementa TTL, no persiste estado). ``0`` desactiva la
-    feature y mantiene el comportamiento histórico (RAG corre siempre).
+    feature y mantiene el comportamiento histórico (routing corre siempre).
     """
 
     min_words_threshold: int = 0
@@ -239,6 +239,68 @@ class WorkspaceConfig(BaseModel):
     def model_post_init(self, __context: object) -> None:
         # Expand ~ in the default value (BeforeValidator no corre en defaults de clase).
         object.__setattr__(self, "path", str(Path(self.path).expanduser()))
+
+
+class KnowledgeSourceConfig(BaseModel):
+    """Configuración de una fuente de conocimiento externa."""
+
+    id: str
+    """Identificador único de la fuente (usado para rutas de DB y CLI)."""
+
+    type: str
+    """Tipo de fuente: 'document' | 'sqlite'."""
+
+    enabled: bool = True
+    """Si False, la fuente se ignora al construir el KnowledgeOrchestrator."""
+
+    description: str = ""
+    """Descripción de la fuente (inyectada en el system prompt)."""
+
+    path: ExpandedPath | None = None
+    """Ruta al directorio de documentos (solo para type='document')."""
+
+    glob: str = "**/*.md"
+    """Glob pattern para seleccionar archivos (solo para type='document')."""
+
+    chunk_size: int = 500
+    """Tamaño de cada chunk en palabras (solo para type='document')."""
+
+    chunk_overlap: int = 80
+    """Solapamiento entre chunks en palabras (solo para type='document')."""
+
+    top_k: int = 3
+    """Resultados máximos a recuperar de esta fuente por turno."""
+
+    min_score: float = 0.5
+    """Score mínimo de coseno para incluir un chunk."""
+
+
+class KnowledgeConfig(BaseModel):
+    """Configuración global del pipeline de knowledge pre-fetch."""
+
+    model_config = ConfigDict(validate_default=True)
+
+    enabled: bool = True
+    """Si False, el pre-fetch se saltea completamente en cada turno."""
+
+    include_memory: bool = True
+    """Si True, la memoria SQLite del agente se registra como fuente automáticamente."""
+
+    top_k_per_source: int = 3
+    """top_k global por fuente cuando no se override por fuente individual."""
+
+    min_score: float = 0.5
+    """min_score global cuando no se override por fuente individual."""
+
+    max_total_chunks: int = 10
+    """Límite duro de chunks totales tras el fan-out (ordenados por score desc)."""
+
+    token_budget_warn_threshold: int = 4000
+    """Umbral estimado de tokens totales (chunks + digest + skills). Si se supera,
+    se emite un WARNING con el desglose. 0 = deshabilita la advertencia."""
+
+    sources: list[KnowledgeSourceConfig] = []
+    """Lista de fuentes de conocimiento externas configuradas."""
 
 
 class DelegationConfig(BaseModel):
@@ -322,7 +384,7 @@ class AgentConfig(BaseModel):
     chat_history: ChatHistoryConfig
     skills: SkillsConfig = SkillsConfig()
     tools: ToolsConfig = ToolsConfig()
-    rag: RagConfig = RagConfig()
+    semantic_routing: SemanticRoutingConfig = SemanticRoutingConfig()
     workspace: WorkspaceConfig = WorkspaceConfig()
     delegation: AgentDelegationConfig = AgentDelegationConfig()
     transcription: TranscriptionConfig | None = None
@@ -342,13 +404,14 @@ class GlobalConfig(BaseModel):
     chat_history: ChatHistoryConfig
     skills: SkillsConfig = SkillsConfig()
     tools: ToolsConfig = ToolsConfig()
-    rag: RagConfig = RagConfig()
+    semantic_routing: SemanticRoutingConfig = SemanticRoutingConfig()
     scheduler: SchedulerConfig = SchedulerConfig()
     workspace: WorkspaceConfig = WorkspaceConfig()
     delegation: DelegationConfig = DelegationConfig()
     admin: AdminConfig = AdminConfig()
     user: UserConfig = UserConfig()
     transcription: TranscriptionConfig | None = None
+    knowledge: KnowledgeConfig = KnowledgeConfig()
 
 
 # ---------------------------------------------------------------------------
@@ -522,6 +585,7 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
 
     skills = SkillsConfig(**merged.get("skills", {}))
     tools = ToolsConfig(**merged.get("tools", {}))
+    semantic_routing = SemanticRoutingConfig(**merged.get("semantic_routing", {}))
     scheduler = SchedulerConfig(**merged.get("scheduler", {}))
     workspace = WorkspaceConfig(**merged.get("workspace", {}))
     delegation = DelegationConfig(**merged.get("delegation", {}))
@@ -533,6 +597,14 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
         else None
     )
 
+    knowledge_raw = merged.get("knowledge")
+    if knowledge_raw is not None:
+        sources_raw = knowledge_raw.pop("sources", []) or []
+        sources = [KnowledgeSourceConfig(**s) for s in sources_raw]
+        knowledge = KnowledgeConfig(**knowledge_raw, sources=sources)
+    else:
+        knowledge = KnowledgeConfig()
+
     global_cfg = GlobalConfig(
         app=app,
         llm=llm,
@@ -541,12 +613,14 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
         chat_history=chat_history,
         skills=skills,
         tools=tools,
+        semantic_routing=semantic_routing,
         scheduler=scheduler,
         workspace=workspace,
         delegation=delegation,
         admin=admin,
         user=user,
         transcription=transcription,
+        knowledge=knowledge,
     )
     return global_cfg, merged
 
@@ -587,9 +661,7 @@ def load_agent_config(
     try:
         transcription_raw = merged.get("transcription")
         transcription = (
-            TranscriptionConfig(**transcription_raw)
-            if transcription_raw is not None
-            else None
+            TranscriptionConfig(**transcription_raw) if transcription_raw is not None else None
         )
         return AgentConfig(
             id=merged["id"],
@@ -602,6 +674,7 @@ def load_agent_config(
             chat_history=ChatHistoryConfig(**merged.get("chat_history", {})),
             skills=SkillsConfig(**merged.get("skills", {})),
             tools=ToolsConfig(**merged.get("tools", {})),
+            semantic_routing=SemanticRoutingConfig(**merged.get("semantic_routing", {})),
             workspace=WorkspaceConfig(**merged.get("workspace", {})),
             delegation=AgentDelegationConfig(**merged.get("delegation", {})),
             transcription=transcription,

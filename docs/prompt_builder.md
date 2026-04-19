@@ -5,9 +5,9 @@
 El prompt que recibe el LLM en cada turno **no es estático**. Se construye dinámicamente en tiempo de ejecución combinando:
 
 1. El system prompt base del agente (definido en su YAML)
-2. Memorias relevantes recuperadas por RAG
-3. Skills relevantes recuperadas por RAG
-4. Los schemas de las tools seleccionadas (filtradas o no por RAG)
+2. Memorias relevantes recuperadas por búsqueda vectorial
+3. Skills relevantes seleccionadas por semantic routing
+4. Los schemas de las tools seleccionadas (filtradas o no por semantic routing)
 
 El historial de conversación se envía como lista de mensajes separada del system prompt, **truncado al máximo configurado** antes de enviarse al LLM.
 
@@ -31,8 +31,8 @@ RunAgentUseCase.execute(user_input)
 │       → list[MemoryEntry]  ← memorias relevantes (cosine sim en SQLite)
 │
 ├── 4. _skills.list_all() → all_skills
-│   ├── Si len(all_skills) > cfg.skills.rag_min_skills:
-│   │       _skills.retrieve(query_vec, top_k=cfg.skills.rag_top_k)
+│   ├── Si len(all_skills) > cfg.skills.semantic_routing_min_skills:
+│   │       _skills.retrieve(query_vec, top_k=cfg.skills.semantic_routing_top_k)
 │   │       → list[Skill]  ← solo las skills relevantes
 │   └── Si no:
 │           retrieved_skills = all_skills  ← todas las skills
@@ -41,8 +41,8 @@ RunAgentUseCase.execute(user_input)
 │       → system_prompt: str  ← secciones unidas + sustitución de {{WORKSPACE}}, {{DATE}}, etc.
 │
 ├── 6. _tools.get_schemas() → all_schemas
-│   ├── Si len(all_schemas) > cfg.tools.rag_min_tools:
-│   │       _tools.get_schemas_relevant(query_vec, top_k=cfg.tools.rag_top_k)
+│   ├── Si len(all_schemas) > cfg.tools.semantic_routing_min_tools:
+│   │       _tools.get_schemas_relevant(query_vec, top_k=cfg.tools.semantic_routing_top_k)
 │   │       → tool_schemas: list[dict]  ← solo las tools relevantes
 │   └── Si no:
 │           tool_schemas = all_schemas  ← todas las tools
@@ -148,12 +148,14 @@ La llamada final a `llm.complete()` recibe tres piezas:
 
 ---
 
-## Selección de skills por RAG
+## Selección de skills por semantic routing
+
+> Esto NO es RAG — es selección dinámica de capacidades (skills/tools disponibles). El RAG real (recuperación de conocimiento externo) se configura en `knowledge:`.
 
 ```
-len(todas las skills) > skills.rag_min_skills (default: 5)
+len(todas las skills) > skills.semantic_routing_min_skills (default: 5)
 │
-├── SÍ → retrieve(query_vec, top_k=rag_top_k)
+├── SÍ → retrieve(query_vec, top_k=semantic_routing_top_k)
 │         Cosine similarity entre query_vec y embeddings pre-indexados de cada skill
 │         → Solo las top_k skills más relevantes para el mensaje actual
 │
@@ -162,18 +164,18 @@ len(todas las skills) > skills.rag_min_skills (default: 5)
 
 ```yaml
 skills:
-  rag_min_skills: 5
-  rag_top_k: 3
+  semantic_routing_min_skills: 5
+  semantic_routing_top_k: 3
 ```
 
 ---
 
-## Selección de tools por RAG
+## Selección de tools por semantic routing
 
 ```
-len(todas las tools) > tools.rag_min_tools (default: 10)
+len(todas las tools) > tools.semantic_routing_min_tools (default: 10)
 │
-├── SÍ → get_schemas_relevant(query_vec, top_k=rag_top_k)
+├── SÍ → get_schemas_relevant(query_vec, top_k=semantic_routing_top_k)
 │         Cosine similarity entre query_vec y embedding de cada tool.description
 │         → Solo las top_k tools más relevantes para el mensaje actual
 │
@@ -182,8 +184,8 @@ len(todas las tools) > tools.rag_min_tools (default: 10)
 
 ```yaml
 tools:
-  rag_min_tools: 10
-  rag_top_k: 5
+  semantic_routing_min_tools: 10
+  semantic_routing_top_k: 5
   tool_call_max_iterations: 5  # máximo de reintentos en el loop de tool calls
 ```
 
@@ -195,7 +197,7 @@ tools:
 |-----------|-------------------|------------------|----------|
 | `embed_query(user_input)` | Cada turno | `RunAgentUseCase` | Buscar memorias, skills y tools relevantes |
 | `embed_passage(skill description)` | Al arrancar (lazy) | `YamlSkillRepository` | Índice de skills |
-| `embed_passage(tool.description)` | Antes del primer RAG de tools (lazy) | `ToolRegistry` | Índice de tools |
+| `embed_passage(tool.description)` | Antes del primer semantic routing de tools (lazy) | `ToolRegistry` | Índice de tools |
 | `embed_passage(fact.content)` | Durante consolidación | `ConsolidateMemoryUseCase` | Guardar memoria a largo plazo |
 
 Los embeddings de skills y tools se calculan **una sola vez** al primer uso y se cachean en memoria. No se persisten a disco.
@@ -230,9 +232,9 @@ python main.py inspect "ejecuta los tests" --agent dev
 /inspect busca el precio del dolar
 ```
 
-El comando `inspect` corre el pipeline completo (embedding → RAG → truncado → construcción del prompt → selección de tools) **sin llamar al LLM ni persistir nada**, e imprime:
+El comando `inspect` corre el pipeline completo (embedding → búsqueda en memoria → semantic routing → truncado → construcción del prompt → selección de tools) **sin llamar al LLM ni persistir nada**, e imprime:
 
 - Memorias recuperadas
-- Skills seleccionadas (con indicación de si el RAG de skills está activo)
-- Tools enviadas al LLM (con indicación de si el RAG de tools está activo)
+- Skills seleccionadas (con indicación de si el semantic routing de skills está activo)
+- Tools enviadas al LLM (con indicación de si el semantic routing de tools está activo)
 - System prompt final completo

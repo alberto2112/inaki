@@ -26,15 +26,21 @@ class TranscriptionFileTooLargeError(TranscriptionError):
     """El audio supera el límite del provider de transcripción."""
 
     def __init__(self, size_bytes: int, limit_bytes: int) -> None:
-        super().__init__(
-            f"Audio demasiado grande: {size_bytes} bytes > límite {limit_bytes} bytes"
-        )
+        super().__init__(f"Audio demasiado grande: {size_bytes} bytes > límite {limit_bytes} bytes")
         self.size_bytes = size_bytes
         self.limit_bytes = limit_bytes
 
 
 class UnknownTranscriptionProviderError(TranscriptionError):
     """El provider de transcripción solicitado no está registrado en la factory."""
+
+
+class KnowledgeConfigError(IñakiError):
+    """Error de configuración de una fuente de conocimiento.
+
+    Se lanza al validar la DB de usuario: dimensión de embeddings incorrecta,
+    tablas requeridas ausentes, o path inaccesible.
+    """
 
 
 class ToolError(IñakiError):

@@ -20,7 +20,9 @@ from infrastructure.config import (
 
 
 @pytest.fixture
-def use_case(agent_config, mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools):
+def use_case(
+    agent_config, mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools
+):
     return RunAgentUseCase(
         llm=mock_llm,
         memory=mock_memory,
@@ -65,8 +67,10 @@ async def test_execute_loads_history_before_calling_llm(use_case, mock_history, 
     assert any(m.content == "nuevo mensaje" for m in messages_passed)
 
 
-async def test_execute_does_not_call_embed_query_when_rag_inactive(use_case, mock_embedder, mock_skills):
-    # Con rag_min_skills=10 y lista vacía de skills, el flag RAG es falso → embed_query no se llama
+async def test_execute_does_not_call_embed_query_when_routing_inactive(
+    use_case, mock_embedder, mock_skills
+):
+    # Con semantic_routing_min_skills=10 y lista vacía de skills, el flag routing es falso → embed_query no se llama
     mock_skills.list_all.return_value = []
     await use_case.execute("test input")
     mock_embedder.embed_query.assert_not_called()
@@ -82,7 +86,10 @@ async def test_execute_does_not_call_memory_search(use_case, mock_memory):
 # Nuevos tests — Phase 4 (memory-digest-markdown)
 # ---------------------------------------------------------------------------
 
-def _make_use_case(overrides: dict, mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools) -> RunAgentUseCase:
+
+def _make_use_case(
+    overrides: dict, mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools
+) -> RunAgentUseCase:
     """Construye un RunAgentUseCase con AgentConfig parcialmente sobreescrita."""
     cfg = AgentConfig(
         id="test",
@@ -107,34 +114,50 @@ def _make_use_case(overrides: dict, mock_llm, mock_memory, mock_embedder, mock_s
     )
 
 
-async def test_embed_query_zero_calls_when_both_rag_flags_false(
+async def test_embed_query_zero_calls_when_both_routing_flags_false(
     mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools
 ):
-    """SC-01, FR-01, AC-01 — embed_query no se llama cuando ambos flags RAG están inactivos."""
-    # rag_min_skills=10, lista vacía → skills_rag_active=False
-    # rag_min_tools=10,  schemas vacíos → tools_rag_active=False
+    """SC-01, FR-01, AC-01 — embed_query no se llama cuando ambos flags routing están inactivos."""
+    # semantic_routing_min_skills=10, lista vacía → skills_routing_active=False
+    # semantic_routing_min_tools=10,  schemas vacíos → tools_routing_active=False
     mock_skills.list_all.return_value = []
     mock_tools.get_schemas.return_value = []
     uc = _make_use_case(
-        {"skills": SkillsConfig(rag_min_skills=10), "tools": ToolsConfig(rag_min_tools=10)},
-        mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools,
+        {
+            "skills": SkillsConfig(semantic_routing_min_skills=10),
+            "tools": ToolsConfig(semantic_routing_min_tools=10),
+        },
+        mock_llm,
+        mock_memory,
+        mock_embedder,
+        mock_skills,
+        mock_history,
+        mock_tools,
     )
     await uc.execute("hola")
     assert mock_embedder.embed_query.call_count == 0
 
 
-async def test_embed_query_called_when_skills_rag_active(
+async def test_embed_query_called_when_skills_routing_active(
     mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools
 ):
-    """SC-02, AC-01 — embed_query se llama cuando skills RAG está activo."""
-    # rag_min_skills=0 → con 1 skill la lista supera el umbral
+    """SC-02, AC-01 — embed_query se llama cuando skills routing está activo."""
+    # semantic_routing_min_skills=0 → con 1 skill la lista supera el umbral
     skill = Skill(id="s1", name="skill1", description="desc1")
     mock_skills.list_all.return_value = [skill]
     mock_skills.retrieve.return_value = [skill]
     mock_tools.get_schemas.return_value = []
     uc = _make_use_case(
-        {"skills": SkillsConfig(rag_min_skills=0), "tools": ToolsConfig(rag_min_tools=10)},
-        mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools,
+        {
+            "skills": SkillsConfig(semantic_routing_min_skills=0),
+            "tools": ToolsConfig(semantic_routing_min_tools=10),
+        },
+        mock_llm,
+        mock_memory,
+        mock_embedder,
+        mock_skills,
+        mock_history,
+        mock_tools,
     )
     await uc.execute("hola")
     assert mock_embedder.embed_query.call_count == 1
@@ -146,8 +169,12 @@ async def test_memory_search_not_called_in_execute(
     """SC-07, FR-04, AC-02 — memory.search no se llama en execute."""
     mock_skills.list_all.return_value = []
     uc = RunAgentUseCase(
-        llm=mock_llm, memory=mock_memory, embedder=mock_embedder,
-        skills=mock_skills, history=mock_history, tools=mock_tools,
+        llm=mock_llm,
+        memory=mock_memory,
+        embedder=mock_embedder,
+        skills=mock_skills,
+        history=mock_history,
+        tools=mock_tools,
         agent_config=agent_config,
     )
     await uc.execute("hola")
@@ -160,8 +187,12 @@ async def test_memory_search_not_called_in_inspect(
     """SC-08, FR-04, AC-02 — memory.search no se llama en inspect."""
     mock_skills.list_all.return_value = []
     uc = RunAgentUseCase(
-        llm=mock_llm, memory=mock_memory, embedder=mock_embedder,
-        skills=mock_skills, history=mock_history, tools=mock_tools,
+        llm=mock_llm,
+        memory=mock_memory,
+        embedder=mock_embedder,
+        skills=mock_skills,
+        history=mock_history,
+        tools=mock_tools,
         agent_config=agent_config,
     )
     await uc.inspect("hola")
@@ -176,10 +207,17 @@ async def test_digest_present_injected_into_system_prompt(
     digest_file.write_text("# Test digest\n- [2026-04-09] Hello", encoding="utf-8")
 
     mock_skills.list_all.return_value = []
-    mem_cfg = MemoryConfig(db_filename=":memory:", default_top_k=3, digest_filename=str(digest_file))
+    mem_cfg = MemoryConfig(
+        db_filename=":memory:", default_top_k=3, digest_filename=str(digest_file)
+    )
     uc = _make_use_case(
         {"memory": mem_cfg},
-        mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools,
+        mock_llm,
+        mock_memory,
+        mock_embedder,
+        mock_skills,
+        mock_history,
+        mock_tools,
     )
     await uc.execute("hola")
 
@@ -196,10 +234,17 @@ async def test_digest_absent_no_exception(
     nonexistent = tmp_path / "does_not_exist.md"
 
     mock_skills.list_all.return_value = []
-    mem_cfg = MemoryConfig(db_filename=":memory:", default_top_k=3, digest_filename=str(nonexistent))
+    mem_cfg = MemoryConfig(
+        db_filename=":memory:", default_top_k=3, digest_filename=str(nonexistent)
+    )
     uc = _make_use_case(
         {"memory": mem_cfg},
-        mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools,
+        mock_llm,
+        mock_memory,
+        mock_embedder,
+        mock_skills,
+        mock_history,
+        mock_tools,
     )
     # No debe lanzar excepción
     await uc.execute("hola")
@@ -216,8 +261,12 @@ async def test_read_digest_swallows_oserror(
     """NFR-03, FR-03 — _read_digest retorna '' y no propaga PermissionError."""
     mock_skills.list_all.return_value = []
     uc = RunAgentUseCase(
-        llm=mock_llm, memory=mock_memory, embedder=mock_embedder,
-        skills=mock_skills, history=mock_history, tools=mock_tools,
+        llm=mock_llm,
+        memory=mock_memory,
+        embedder=mock_embedder,
+        skills=mock_skills,
+        history=mock_history,
+        tools=mock_tools,
         agent_config=agent_config,
     )
     with patch.object(Path, "read_text", side_effect=PermissionError("denied")):
@@ -231,12 +280,17 @@ async def test_read_digest_returns_empty_on_unicode_decode_error(
     """NFR-03 (archive fix, Warning 4) — _read_digest retorna '' y no propaga UnicodeDecodeError."""
     mock_skills.list_all.return_value = []
     uc = RunAgentUseCase(
-        llm=mock_llm, memory=mock_memory, embedder=mock_embedder,
-        skills=mock_skills, history=mock_history, tools=mock_tools,
+        llm=mock_llm,
+        memory=mock_memory,
+        embedder=mock_embedder,
+        skills=mock_skills,
+        history=mock_history,
+        tools=mock_tools,
         agent_config=agent_config,
     )
     with patch.object(
-        Path, "read_text",
+        Path,
+        "read_text",
         side_effect=UnicodeDecodeError("utf-8", b"\xff\xfe", 0, 1, "invalid start byte"),
     ):
         result = uc._read_digest()
@@ -249,8 +303,12 @@ async def test_inspect_result_has_memory_digest_not_memories(
     """SC-17, AC-07 — InspectResult tiene memory_digest (str), no tiene memories."""
     mock_skills.list_all.return_value = []
     uc = RunAgentUseCase(
-        llm=mock_llm, memory=mock_memory, embedder=mock_embedder,
-        skills=mock_skills, history=mock_history, tools=mock_tools,
+        llm=mock_llm,
+        memory=mock_memory,
+        embedder=mock_embedder,
+        skills=mock_skills,
+        history=mock_history,
+        tools=mock_tools,
         agent_config=agent_config,
     )
     result = await uc.inspect("hola")
@@ -261,6 +319,7 @@ async def test_inspect_result_has_memory_digest_not_memories(
 # ---------------------------------------------------------------------------
 # Task 6.1 — extra_sections thread-through
 # ---------------------------------------------------------------------------
+
 
 async def test_extra_system_sections_threaded_to_llm(
     mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools, agent_config
@@ -276,8 +335,12 @@ async def test_extra_system_sections_threaded_to_llm(
     mock_llm.complete.return_value = LLMResponse.of_text("ok")
 
     uc = RunAgentUseCase(
-        llm=mock_llm, memory=mock_memory, embedder=mock_embedder,
-        skills=mock_skills, history=mock_history, tools=mock_tools,
+        llm=mock_llm,
+        memory=mock_memory,
+        embedder=mock_embedder,
+        skills=mock_skills,
+        history=mock_history,
+        tools=mock_tools,
         agent_config=agent_config,
     )
 
@@ -306,8 +369,12 @@ async def test_extra_system_sections_empty_by_default(
     mock_llm.complete.return_value = LLMResponse.of_text("ok")
 
     uc = RunAgentUseCase(
-        llm=mock_llm, memory=mock_memory, embedder=mock_embedder,
-        skills=mock_skills, history=mock_history, tools=mock_tools,
+        llm=mock_llm,
+        memory=mock_memory,
+        embedder=mock_embedder,
+        skills=mock_skills,
+        history=mock_history,
+        tools=mock_tools,
         agent_config=agent_config,
     )
 
@@ -331,8 +398,12 @@ async def test_set_extra_system_sections_replaces_existing(
     mock_llm.complete.return_value = LLMResponse.of_text("ok")
 
     uc = RunAgentUseCase(
-        llm=mock_llm, memory=mock_memory, embedder=mock_embedder,
-        skills=mock_skills, history=mock_history, tools=mock_tools,
+        llm=mock_llm,
+        memory=mock_memory,
+        embedder=mock_embedder,
+        skills=mock_skills,
+        history=mock_history,
+        tools=mock_tools,
         agent_config=agent_config,
     )
 
@@ -352,40 +423,48 @@ async def test_set_extra_system_sections_replaces_existing(
 # tools_override — usado por triggers agent_send del scheduler
 # ---------------------------------------------------------------------------
 
+
 async def test_execute_tools_override_forces_schemas_and_bypasses_rag(
     mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools
 ):
     """
     Cuando se provee ``tools_override``, ``run_tool_loop`` recibe esas schemas
-    exactas y la selección RAG de tools se bypasea (get_schemas_relevant NO se
-    llama aunque el umbral RAG esté activo).
+    exactas y la selección routing de tools se bypasea (get_schemas_relevant NO se
+    llama aunque el umbral routing esté activo).
     """
     mock_skills.list_all.return_value = []
-    # Muchas tool schemas "reales" — normalmente activaría RAG
+    # Muchas tool schemas "reales" — normalmente activaría routing
     mock_tools.get_schemas.return_value = [{"name": f"tool_{i}"} for i in range(20)]
     mock_llm.complete.return_value = LLMResponse.of_text("ok")
 
     uc = _make_use_case(
-        {"tools": ToolsConfig(rag_min_tools=5)},
-        mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools,
+        {"tools": ToolsConfig(semantic_routing_min_tools=5)},
+        mock_llm,
+        mock_memory,
+        mock_embedder,
+        mock_skills,
+        mock_history,
+        mock_tools,
     )
 
     override = [{"name": "solo_esta_tool"}]
-    with patch("core.use_cases.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")) as mock_loop:
+    with patch(
+        "core.use_cases.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")
+    ) as mock_loop:
         await uc.execute("hola", tools_override=override)
 
-    # RAG de tools NO debe haberse disparado
+    # routing de tools NO debe haberse disparado
     mock_tools.get_schemas_relevant.assert_not_called()
     # run_tool_loop recibe exactamente el override
     passed_schemas = mock_loop.call_args.kwargs["tool_schemas"]
     assert passed_schemas == override
 
 
-async def test_execute_no_override_uses_full_schemas_when_rag_inactive(
+async def test_execute_no_override_uses_full_schemas_when_routing_inactive(
     mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools
 ):
     """
-    Sin ``tools_override``, el comportamiento previo se preserva: cuando RAG
+    Sin ``tools_override``, el comportamiento previo se preserva: cuando routing
     de tools está inactivo, se usa ``get_schemas()`` completo.
     """
     mock_skills.list_all.return_value = []
@@ -394,11 +473,18 @@ async def test_execute_no_override_uses_full_schemas_when_rag_inactive(
     mock_llm.complete.return_value = LLMResponse.of_text("ok")
 
     uc = _make_use_case(
-        {"tools": ToolsConfig(rag_min_tools=10)},  # umbral alto → RAG inactivo
-        mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools,
+        {"tools": ToolsConfig(semantic_routing_min_tools=10)},  # umbral alto → routing inactivo
+        mock_llm,
+        mock_memory,
+        mock_embedder,
+        mock_skills,
+        mock_history,
+        mock_tools,
     )
 
-    with patch("core.use_cases.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")) as mock_loop:
+    with patch(
+        "core.use_cases.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")
+    ) as mock_loop:
         await uc.execute("hola")
 
     mock_tools.get_schemas_relevant.assert_not_called()
@@ -417,11 +503,20 @@ async def test_execute_tools_override_empty_list_disables_all_tools(
     mock_llm.complete.return_value = LLMResponse.of_text("ok")
 
     uc = _make_use_case(
-        {"tools": ToolsConfig(rag_min_tools=0)},  # RAG activo si override fuera None
-        mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools,
+        {
+            "tools": ToolsConfig(semantic_routing_min_tools=0)
+        },  # routing activo si override fuera None
+        mock_llm,
+        mock_memory,
+        mock_embedder,
+        mock_skills,
+        mock_history,
+        mock_tools,
     )
 
-    with patch("core.use_cases.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")) as mock_loop:
+    with patch(
+        "core.use_cases.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")
+    ) as mock_loop:
         await uc.execute("hola", tools_override=[])
 
     mock_tools.get_schemas_relevant.assert_not_called()

@@ -129,6 +129,7 @@ class AgentContainer:
         """Registra tools built-in del núcleo. Las extensiones se cargan aparte."""
         from pathlib import Path
 
+        from adapters.outbound.tools.memory_search_tool import MemorySearchTool
         from adapters.outbound.tools.patch_file_tool import PatchFileTool
         from adapters.outbound.tools.read_file_tool import ReadFileTool
         from adapters.outbound.tools.web_search_tool import WebSearchTool
@@ -149,6 +150,7 @@ class AgentContainer:
             self.agent_config.id, workspace_path, ws_cfg.containment,
         )
 
+        self._tools.register(MemorySearchTool(memory=self._memory, embedder=self._embedder))
         self._tools.register(WebSearchTool())
         self._tools.register(ReadFileTool(workspace=workspace_path, containment=ws_cfg.containment))
         self._tools.register(WriteFileTool(workspace=workspace_path, containment=ws_cfg.containment))

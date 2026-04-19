@@ -19,10 +19,19 @@ class FakeEmbedder:
         return [1.0, 0.0, 0.0]
 
 
+class FakeMemory:
+    async def store(self, entry) -> None: ...
+    async def search(self, query_embedding, top_k=5): return []
+    async def get_recent(self, limit=10): return []
+
+
 def _make_container(tmp_path: Path) -> AgentContainer:
+    embedder = FakeEmbedder()
     container = AgentContainer.__new__(AgentContainer)
-    container._tools = ToolRegistry(embedder=FakeEmbedder())
-    container._skills = YamlSkillRepository(FakeEmbedder())
+    container._tools = ToolRegistry(embedder=embedder)
+    container._skills = YamlSkillRepository(embedder)
+    container._embedder = embedder
+    container._memory = FakeMemory()
     container.agent_config = SimpleNamespace(
         id="test-agent",
         workspace=SimpleNamespace(
@@ -40,7 +49,7 @@ def test_builtin_tools_present(tmp_path: Path) -> None:
     container._register_extensions([])
 
     registered = set(container._tools._tools.keys())
-    for expected in ("web_search", "read_file", "write_file", "patch_file"):
+    for expected in ("mem_search", "web_search", "read_file", "write_file", "patch_file"):
         assert expected in registered, f"Built-in '{expected}' no registrada"
 
 

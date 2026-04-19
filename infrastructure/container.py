@@ -128,18 +128,17 @@ class AgentContainer:
             memory_config=cfg.memory,
         )
 
-    def _build_knowledge_orchestrator(self) -> "KnowledgeOrchestrator":
+    def _collect_knowledge_sources(self) -> "tuple[list[IKnowledgeSource], int, int]":
         """
-        Construye el KnowledgeOrchestrator con las fuentes configuradas.
+        Recolecta las fuentes de conocimiento de nivel 1 y 2 (memoria + config).
 
-        Orden de fuentes: memoria primero (si include_memory=True), luego fuentes
-        configuradas en GlobalConfig.knowledge.sources (solo las habilitadas y de
-        tipo reconocido). El threshold de token budget se pasa al orquestrador.
+        Retorna una tupla (fuentes, max_total_chunks, token_budget_threshold).
+        Las fuentes de nivel 3 (extensiones) se añaden en _register_extensions().
+        Orden garantizado: (1) memoria, (2) fuentes configuradas.
         """
         from adapters.outbound.knowledge.sqlite_memory_knowledge_source import (
             SqliteMemoryKnowledgeSource,
         )
-        from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
 
         knowledge_cfg = getattr(self._global_config, "knowledge", None)
 
@@ -153,8 +152,9 @@ class AgentContainer:
             max_total_chunks = getattr(knowledge_cfg, "max_total_chunks", 10)
             token_budget_threshold = getattr(knowledge_cfg, "token_budget_warn_threshold", 4000)
 
-        fuentes = []
+        fuentes: list[IKnowledgeSource] = []
 
+        # Nivel 1 — memoria (auto-registrada por defecto)
         if include_memory:
             fuentes.append(SqliteMemoryKnowledgeSource(memory=self._memory))
             logger.debug(
@@ -162,7 +162,7 @@ class AgentContainer:
                 self.agent_config.id,
             )
 
-        # Registrar fuentes externas configuradas en GlobalConfig.knowledge.sources
+        # Nivel 2 — fuentes configuradas en GlobalConfig.knowledge.sources
         if knowledge_cfg is not None:
             sources_cfg = getattr(knowledge_cfg, "sources", []) or []
             for fuente_cfg in sources_cfg:
@@ -181,8 +181,26 @@ class AgentContainer:
                         "AgentContainer '%s': tipo de fuente '%s' no reconocido para '%s' — skipping",
                         self.agent_config.id,
                         tipo,
-                        fuente_cfg.id,
+                        getattr(fuente_cfg, "id", "<sin-id>"),
                     )
+
+        return fuentes, max_total_chunks, token_budget_threshold
+
+    def _build_knowledge_orchestrator(
+        self,
+        fuentes: "list[IKnowledgeSource]",
+        max_total_chunks: int,
+        token_budget_threshold: int,
+    ) -> "KnowledgeOrchestrator":
+        """
+        Construye el KnowledgeOrchestrator con la lista de fuentes ya resuelta.
+
+        Recibe las fuentes ordenadas (memoria → config → ext) y los parámetros
+        de cap y presupuesto de tokens. Separado de _collect_knowledge_sources()
+        para que _register_extensions() pueda añadir fuentes de nivel 3 antes
+        de que se construya el orquestrador definitivo.
+        """
+        from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
 
         return KnowledgeOrchestrator(
             sources=fuentes,
@@ -276,7 +294,20 @@ class AgentContainer:
             ws_cfg.containment,
         )
 
-        self._knowledge_orchestrator = self._build_knowledge_orchestrator()
+        # Recolectar fuentes de nivel 1 (memoria) y nivel 2 (config).
+        # Las de nivel 3 (extensiones) se añaden en _register_extensions() sobre la misma lista.
+        # El orquestrador almacena la referencia a esa lista, por lo que las fuentes de extensiones
+        # quedan incorporadas automáticamente sin reconstruir el objeto orquestrador.
+        (
+            self._pending_knowledge_sources,
+            self._knowledge_max_chunks,
+            self._knowledge_token_budget,
+        ) = self._collect_knowledge_sources()
+        self._knowledge_orchestrator = self._build_knowledge_orchestrator(
+            self._pending_knowledge_sources,
+            self._knowledge_max_chunks,
+            self._knowledge_token_budget,
+        )
         self._tools.register(
             KnowledgeSearchTool(
                 orchestrator=self._knowledge_orchestrator,
@@ -595,6 +626,42 @@ class AgentContainer:
                         ext_name,
                         skill_path.name,
                     )
+
+                # Registrar knowledge sources — compatibilidad hacia atrás:
+                # manifests sin KNOWLEDGE_SOURCES simplemente no declaran el atributo.
+                for factory in getattr(module, "KNOWLEDGE_SOURCES", []) or []:
+                    try:
+                        fuente = factory(
+                            self.agent_config,
+                            self._global_config,
+                            self._embedder,
+                        )
+                        self._pending_knowledge_sources.append(fuente)
+                        logger.info(
+                            "Extensión '%s': knowledge source '%s' registrada",
+                            ext_name,
+                            fuente.source_id,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Extensión '%s': factory de knowledge source falló (%s) — skipping",
+                            ext_name,
+                            exc,
+                        )
+
+        # El KnowledgeOrchestrator ya fue construido con una referencia a la misma lista
+        # _pending_knowledge_sources. Al añadir fuentes de nivel 3 (extensiones) arriba,
+        # el orquestrador las ve automáticamente porque comparte el mismo objeto lista.
+        # Orden garantizado: (1) memoria, (2) config, (3) extensiones.
+        fuentes_total = getattr(self, "_pending_knowledge_sources", None)
+        if fuentes_total is not None:
+            agent_id = getattr(self, "agent_config", None)
+            agent_id = agent_id.id if agent_id is not None else "<desconocido>"
+            logger.debug(
+                "AgentContainer '%s': KnowledgeOrchestrator actualizado con %d fuente(s) total",
+                agent_id,
+                len(fuentes_total),
+            )
 
 
 class AppContainer:

@@ -281,6 +281,31 @@ class RunAgentUseCase:
                 len(knowledge_chunks),
             )
 
+        # Verificación de presupuesto de tokens (heurística: len(texto) / 4).
+        # El threshold se almacena en el orquestrador para evitar pasar GlobalConfig aquí.
+        if self._knowledge_orchestrator is not None:
+            threshold = self._knowledge_orchestrator.token_budget_threshold
+            if threshold > 0:
+                chunks_tokens = sum(len(c.content) // 4 for c in knowledge_chunks)
+                digest_tokens = len(digest_text) // 4
+                skills_tokens = sum(
+                    len(getattr(s, "instructions", "") or "") // 4 for s in retrieved_skills
+                )
+                total_estimado = chunks_tokens + digest_tokens + skills_tokens
+
+                if total_estimado > threshold:
+                    logger.warning(
+                        "[knowledge] presupuesto de tokens superado "
+                        "(agent=%s total_estimado=%d threshold=%d "
+                        "chunks_tokens=%d digest_tokens=%d skills_tokens=%d)",
+                        agent_id,
+                        total_estimado,
+                        threshold,
+                        chunks_tokens,
+                        digest_tokens,
+                        skills_tokens,
+                    )
+
         user_context = self._read_user_context()
         context = AgentContext(
             agent_id=agent_id,

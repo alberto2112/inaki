@@ -18,6 +18,7 @@ from croniter import croniter
 if TYPE_CHECKING:
     from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
     from core.domain.value_objects.channel_context import ChannelContext
+    from core.ports.outbound.knowledge_port import IKnowledgeSource
 
 from adapters.outbound.history.sqlite_history_store import SQLiteHistoryStore
 from adapters.outbound.memory.sqlite_memory_repo import SQLiteMemoryRepository
@@ -131,22 +132,28 @@ class AgentContainer:
         """
         Construye el KnowledgeOrchestrator con las fuentes configuradas.
 
-        Por defecto (cuando no hay config knowledge explícita), registra
-        SqliteMemoryKnowledgeSource si include_memory es True (default).
-        El bloque knowledge: completo llega en Phase 3.
+        Orden de fuentes: memoria primero (si include_memory=True), luego fuentes
+        configuradas en GlobalConfig.knowledge.sources (solo las habilitadas y de
+        tipo reconocido). El threshold de token budget se pasa al orquestrador.
         """
         from adapters.outbound.knowledge.sqlite_memory_knowledge_source import (
             SqliteMemoryKnowledgeSource,
         )
         from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
 
-        fuentes = []
-
-        # include_memory: true por defecto — se puede desactivar vía knowledge.include_memory
         knowledge_cfg = getattr(self._global_config, "knowledge", None)
+
+        # Leer flags desde la config o usar defaults
         include_memory = True
+        max_total_chunks = 10
+        token_budget_threshold = 4000
+
         if knowledge_cfg is not None:
             include_memory = getattr(knowledge_cfg, "include_memory", True)
+            max_total_chunks = getattr(knowledge_cfg, "max_total_chunks", 10)
+            token_budget_threshold = getattr(knowledge_cfg, "token_budget_warn_threshold", 4000)
+
+        fuentes = []
 
         if include_memory:
             fuentes.append(SqliteMemoryKnowledgeSource(memory=self._memory))
@@ -155,7 +162,46 @@ class AgentContainer:
                 self.agent_config.id,
             )
 
-        return KnowledgeOrchestrator(sources=fuentes)
+        # Registrar fuentes externas configuradas en GlobalConfig.knowledge.sources
+        if knowledge_cfg is not None:
+            sources_cfg = getattr(knowledge_cfg, "sources", []) or []
+            for fuente_cfg in sources_cfg:
+                if not getattr(fuente_cfg, "enabled", True):
+                    continue
+
+                tipo = getattr(fuente_cfg, "type", "")
+                if tipo == "document":
+                    fuentes.append(self._build_document_source(fuente_cfg))
+                else:
+                    logger.warning(
+                        "AgentContainer '%s': tipo de fuente '%s' no reconocido para '%s' — skipping",
+                        self.agent_config.id,
+                        tipo,
+                        fuente_cfg.id,
+                    )
+
+        return KnowledgeOrchestrator(
+            sources=fuentes,
+            max_total_chunks=max_total_chunks,
+            token_budget_threshold=token_budget_threshold,
+        )
+
+    def _build_document_source(self, fuente_cfg: object) -> "IKnowledgeSource":
+        """Instancia un DocumentKnowledgeSource a partir de la config de fuente."""
+        from adapters.outbound.knowledge.document_knowledge_source import (
+            DocumentKnowledgeSource,
+        )
+
+        return DocumentKnowledgeSource(
+            source_id=fuente_cfg.id,
+            description=getattr(fuente_cfg, "description", ""),
+            path=fuente_cfg.path,
+            embedder=self._embedder,
+            glob=getattr(fuente_cfg, "glob", "**/*.md"),
+            chunk_size=getattr(fuente_cfg, "chunk_size", 500),
+            chunk_overlap=getattr(fuente_cfg, "chunk_overlap", 80),
+            dimension=self.agent_config.embedding.dimension,
+        )
 
     def _register_tools(self) -> None:
         """Registra tools built-in del núcleo. Las extensiones se cargan aparte."""

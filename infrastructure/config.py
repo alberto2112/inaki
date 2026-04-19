@@ -241,6 +241,68 @@ class WorkspaceConfig(BaseModel):
         object.__setattr__(self, "path", str(Path(self.path).expanduser()))
 
 
+class KnowledgeSourceConfig(BaseModel):
+    """Configuración de una fuente de conocimiento externa."""
+
+    id: str
+    """Identificador único de la fuente (usado para rutas de DB y CLI)."""
+
+    type: str
+    """Tipo de fuente: 'document' | 'sqlite'."""
+
+    enabled: bool = True
+    """Si False, la fuente se ignora al construir el KnowledgeOrchestrator."""
+
+    description: str = ""
+    """Descripción de la fuente (inyectada en el system prompt)."""
+
+    path: ExpandedPath | None = None
+    """Ruta al directorio de documentos (solo para type='document')."""
+
+    glob: str = "**/*.md"
+    """Glob pattern para seleccionar archivos (solo para type='document')."""
+
+    chunk_size: int = 500
+    """Tamaño de cada chunk en palabras (solo para type='document')."""
+
+    chunk_overlap: int = 80
+    """Solapamiento entre chunks en palabras (solo para type='document')."""
+
+    top_k: int = 3
+    """Resultados máximos a recuperar de esta fuente por turno."""
+
+    min_score: float = 0.5
+    """Score mínimo de coseno para incluir un chunk."""
+
+
+class KnowledgeConfig(BaseModel):
+    """Configuración global del pipeline de knowledge pre-fetch."""
+
+    model_config = ConfigDict(validate_default=True)
+
+    enabled: bool = True
+    """Si False, el pre-fetch se saltea completamente en cada turno."""
+
+    include_memory: bool = True
+    """Si True, la memoria SQLite del agente se registra como fuente automáticamente."""
+
+    top_k_per_source: int = 3
+    """top_k global por fuente cuando no se override por fuente individual."""
+
+    min_score: float = 0.5
+    """min_score global cuando no se override por fuente individual."""
+
+    max_total_chunks: int = 10
+    """Límite duro de chunks totales tras el fan-out (ordenados por score desc)."""
+
+    token_budget_warn_threshold: int = 4000
+    """Umbral estimado de tokens totales (chunks + digest + skills). Si se supera,
+    se emite un WARNING con el desglose. 0 = deshabilita la advertencia."""
+
+    sources: list[KnowledgeSourceConfig] = []
+    """Lista de fuentes de conocimiento externas configuradas."""
+
+
 class DelegationConfig(BaseModel):
     """Config global de delegación (aplica a todos los agentes como valores por defecto)."""
 
@@ -349,6 +411,7 @@ class GlobalConfig(BaseModel):
     admin: AdminConfig = AdminConfig()
     user: UserConfig = UserConfig()
     transcription: TranscriptionConfig | None = None
+    knowledge: KnowledgeConfig = KnowledgeConfig()
 
 
 # ---------------------------------------------------------------------------
@@ -534,6 +597,14 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
         else None
     )
 
+    knowledge_raw = merged.get("knowledge")
+    if knowledge_raw is not None:
+        sources_raw = knowledge_raw.pop("sources", []) or []
+        sources = [KnowledgeSourceConfig(**s) for s in sources_raw]
+        knowledge = KnowledgeConfig(**knowledge_raw, sources=sources)
+    else:
+        knowledge = KnowledgeConfig()
+
     global_cfg = GlobalConfig(
         app=app,
         llm=llm,
@@ -549,6 +620,7 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
         admin=admin,
         user=user,
         transcription=transcription,
+        knowledge=knowledge,
     )
     return global_cfg, merged
 

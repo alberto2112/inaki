@@ -24,6 +24,7 @@ from typing import Optional
 
 import typer
 
+from adapters.inbound.cli.knowledge_cli import knowledge_app
 from adapters.inbound.cli.scheduler_cli import scheduler_app
 
 app = typer.Typer(
@@ -33,6 +34,7 @@ app = typer.Typer(
     no_args_is_help=False,
 )
 app.add_typer(scheduler_app, name="scheduler", help="Manage scheduled tasks")
+app.add_typer(knowledge_app, name="knowledge", help="Manage document knowledge sources")
 
 
 def _get_config_dir() -> Path:

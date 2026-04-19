@@ -26,14 +26,23 @@ class KnowledgeOrchestrator:
         self,
         sources: list[IKnowledgeSource],
         max_total_chunks: int = 10,
+        token_budget_threshold: int = 4000,
     ) -> None:
         self._fuentes = sources
         self._cap = max_total_chunks
+        # Umbral de advertencia de presupuesto de tokens (0 = deshabilitado).
+        # Almacenado aquí para que RunAgentUseCase lo lea sin necesitar GlobalConfig.
+        self._token_budget_threshold = token_budget_threshold
 
     @property
     def source_ids(self) -> list[str]:
         """IDs de las fuentes registradas, en orden de registro."""
         return [fuente.source_id for fuente in self._fuentes]
+
+    @property
+    def token_budget_threshold(self) -> int:
+        """Umbral de advertencia de tokens (0 = deshabilitado)."""
+        return self._token_budget_threshold
 
     async def retrieve_all(
         self,

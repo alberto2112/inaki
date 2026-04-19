@@ -378,6 +378,49 @@ user:
                                 # "Asia/Tokyo", "UTC".
 
 
+# -----------------------------------------------------------------------------
+# [knowledge] — Fuentes de conocimiento externas (RAG sobre documentos)
+# -----------------------------------------------------------------------------
+#
+# Configura el pipeline de knowledge pre-fetch: antes de cada turno, Iñaki
+# consulta las fuentes configuradas en paralelo e inyecta los fragmentos más
+# relevantes en el system prompt (sección "## Relevant Knowledge").
+#
+# Este bloque vive SOLO en global.yaml — no se puede configurar por agente.
+# Todos los agentes comparten las mismas fuentes configuradas.
+#
+# knowledge:
+#   enabled: true              # Si false, el pre-fetch se saltea completamente
+#
+#   include_memory: true       # Si true, la memoria SQLite del agente se
+#                              # registra automáticamente como fuente "memory"
+#
+#   top_k_per_source: 3        # Resultados máximos por fuente (global default)
+#
+#   min_score: 0.5             # Score mínimo de coseno para incluir un fragmento
+#
+#   max_total_chunks: 10       # Límite total de fragmentos tras el fan-out
+#                              # (ordenados por score desc, se trunca al cap)
+#
+#   token_budget_warn_threshold: 4000
+#                              # Si el estimado de tokens (chunks + digest + skills)
+#                              # supera este umbral, se emite un WARNING con el
+#                              # desglose. Heurística: len(texto) / 4.
+#                              # 0 = deshabilitado.
+#
+#   sources:
+#     - id: docs-proyecto
+#       type: document         # Tipo de fuente: "document" = carpeta de archivos
+#       enabled: true          # Si false, la fuente se ignora al arrancar
+#       description: "Project documentation (markdown and PDF)"
+#       path: ~/proyecto/docs/ # Carpeta a indexar (soporta ~)
+#       glob: "**/*.md"        # Glob para seleccionar archivos
+#       chunk_size: 500        # Tamaño de cada chunk en palabras
+#       chunk_overlap: 80      # Solapamiento entre chunks en palabras
+#       top_k: 3               # Resultados máximos de esta fuente
+#       min_score: 0.5         # Score mínimo de esta fuente
+
+
 # =============================================================================
 # CONFIGURACIÓN POR AGENTE — config/agents/{id}.yaml
 # =============================================================================

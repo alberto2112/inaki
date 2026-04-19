@@ -186,6 +186,95 @@ Retorna `204 No Content`. Borra el historial activo del agente (afecta a todos l
 
 ---
 
+## `knowledge:` — Fuentes de conocimiento externas
+
+La sección `knowledge:` vive **solo en `global.yaml`** — no se puede configurar por agente.
+Controla el pipeline de RAG sobre documentos externos que se ejecuta antes de cada turno.
+
+```yaml
+knowledge:
+  enabled: true                    # Si false, el pre-fetch se saltea completamente.
+                                   # Default: true.
+
+  include_memory: true             # Si true, la memoria SQLite del agente se registra
+                                   # automáticamente como fuente "memory".
+                                   # Default: true.
+
+  top_k_per_source: 3              # Resultados máximos por fuente (default global).
+
+  min_score: 0.5                   # Score mínimo de coseno para incluir un fragmento.
+                                   # Rango: 0.0-1.0. Default: 0.5.
+
+  max_total_chunks: 10             # Cap total de fragmentos tras el fan-out a todas
+                                   # las fuentes (ordenados por score desc, se trunca).
+
+  token_budget_warn_threshold: 4000
+                                   # Si el estimado de tokens totales
+                                   # (chunks + digest + skills) supera este valor,
+                                   # se emite un WARNING con el desglose.
+                                   # Heurística: len(texto) / 4.
+                                   # 0 = warning deshabilitado.
+
+  sources:
+    - id: docs-proyecto            # ID único de la fuente (usado en CLI y rutas de DB)
+      type: document               # "document" = carpeta de archivos
+      enabled: true                # Si false, la fuente se ignora al arrancar.
+      description: "Project docs"  # Descripción inyectada en el system prompt
+      path: ~/proyecto/docs/       # Carpeta a indexar (soporta ~). Requerido.
+      glob: "**/*.md"              # Glob pattern para seleccionar archivos.
+                                   # Ejemplos: "**/*.md", "**/*.{md,txt,pdf}"
+      chunk_size: 500              # Tamaño de cada chunk en palabras.
+      chunk_overlap: 80            # Solapamiento entre chunks consecutivos (en palabras).
+      top_k: 3                     # Resultados máximos de esta fuente.
+      min_score: 0.5               # Score mínimo de esta fuente (override del global).
+```
+
+### Indexación de documentos
+
+Los documentos se indexan offline con el comando CLI:
+
+```bash
+inaki knowledge index docs-proyecto   # Indexa o re-indexa la fuente
+inaki knowledge list                   # Lista fuentes configuradas
+inaki knowledge stats docs-proyecto    # Estadísticas del índice
+```
+
+La indexación es **incremental**: solo se re-procesan los archivos cuya `mtime` cambió
+desde la última indexación. Los embeddings se persisten en `~/.inaki/knowledge/{id}.db`.
+
+### Formatos soportados
+
+| Formato | Estrategia de chunking |
+|---------|------------------------|
+| `.md`   | Split por headers (`#`/`##`/`###`), ventana deslizante dentro de cada sección |
+| `.txt`  | Ventana deslizante pura |
+| `.pdf`  | Extracción página a página con `pypdf`, ventana deslizante sobre el texto total |
+| otros   | Ventana deslizante pura (texto plano) |
+
+### Schema de la DB de índice (`~/.inaki/knowledge/{id}.db`)
+
+```sql
+CREATE TABLE chunks (
+    id          TEXT PRIMARY KEY,
+    file_path   TEXT NOT NULL,
+    file_mtime  REAL NOT NULL,
+    chunk_idx   INTEGER NOT NULL,
+    content     TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+CREATE VIRTUAL TABLE chunk_embeddings USING vec0(
+    id        TEXT PRIMARY KEY,
+    embedding FLOAT[384]
+);
+CREATE TABLE files_indexed (
+    file_path   TEXT PRIMARY KEY,
+    mtime       REAL NOT NULL,
+    chunk_count INTEGER NOT NULL
+);
+```
+
+---
+
 ## `config/global.secrets.yaml`
 
 ```yaml

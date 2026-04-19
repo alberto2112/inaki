@@ -223,6 +223,7 @@ class TestPreFetchBypassOnShortInput:
         orchestrator_mock = MagicMock()
         orchestrator_mock.retrieve_all = AsyncMock(return_value=[])
         orchestrator_mock.source_ids = []
+        orchestrator_mock.token_budget_threshold = 0  # deshabilitar warning en tests
 
         use_case_bypass = RunAgentUseCase(
             llm=mock_llm,

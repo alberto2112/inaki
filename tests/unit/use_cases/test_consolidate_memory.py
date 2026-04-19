@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, call, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -159,7 +159,7 @@ async def test_consolidation_returns_message_when_no_pending_messages(use_case, 
 async def test_consolidation_handles_empty_facts_list(use_case, mock_llm, mock_history, messages_in_history):
     """LLM dice no hay recuerdos relevantes → truncamos igual."""
     mock_llm.complete.return_value = LLMResponse.of_text("[]")
-    result = await use_case.execute()
+    await use_case.execute()
     mock_history.trim.assert_called_once_with("test", keep_last=20)
 
 

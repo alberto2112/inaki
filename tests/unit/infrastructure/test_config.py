@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 
 from infrastructure.config import (
     AppConfig,
@@ -170,10 +169,8 @@ from infrastructure.config import (  # noqa: E402
     AgentConfig,
     AgentDelegationConfig,
     DelegationConfig,
-    EmbeddingConfig,
     GlobalConfig,
     LLMConfig,
-    MemoryConfig,
     _render_default_global_yaml,
 )
 

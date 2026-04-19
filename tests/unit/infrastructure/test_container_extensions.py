@@ -94,12 +94,10 @@ def _write_skill_yaml(ext_dir: Path, ext_name: str, filename: str, skill_id: str
 
 @pytest.fixture(autouse=True)
 def clean_inaki_ext_modules():
-    before = set(sys.modules.keys())
     yield
     to_remove = [k for k in sys.modules if k.startswith("_inaki_ext_")]
     for k in to_remove:
         del sys.modules[k]
-    # Remove only modules added during the test that start with _inaki_ext_
 
 
 # ---------------------------------------------------------------------------

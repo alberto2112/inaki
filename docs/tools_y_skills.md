@@ -25,7 +25,7 @@ Este documento cubre los dos mecanismos de extensión del agente: **tools** (fun
 # core/ports/outbound/tool_port.py
 
 class ITool(ABC):
-    name: str              # snake_case, ej: "run_shell"
+    name: str              # snake_case, ej: "shell_exec"
     description: str       # Qué hace — lo lee el LLM
     parameters_schema: dict  # JSON Schema (OpenAI function calling format)
 
@@ -45,7 +45,7 @@ class ToolResult(BaseModel):
 |----------|-----------|---------|
 | Archivo | `<nombre>_tool.py` | `shell_tool.py` |
 | Clase | `<Nombre>Tool` | `ShellTool` |
-| `ITool.name` | snake_case | `"run_shell"` |
+| `ITool.name` | snake_case | `"shell_exec"` |
 
 ### Ejemplo mínimo
 

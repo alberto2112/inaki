@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from core.domain.errors import IñakiError, ToolLoopMaxIterationsError
+from core.domain.errors import (
+    DaemonClientError,
+    DaemonError,
+    DaemonNotRunningError,
+    DaemonTimeoutError,
+    IñakiError,
+    ToolLoopMaxIterationsError,
+)
 
 
 def test_tool_loop_max_iterations_error_instantiation() -> None:
@@ -41,13 +48,6 @@ def test_tool_loop_max_iterations_error_empty_response() -> None:
 # ---------------------------------------------------------------------------
 # DaemonError — excepciones del daemon client
 # ---------------------------------------------------------------------------
-
-from core.domain.errors import (
-    DaemonClientError,
-    DaemonError,
-    DaemonNotRunningError,
-    DaemonTimeoutError,
-)
 
 
 def test_daemon_error_is_inaki_error() -> None:

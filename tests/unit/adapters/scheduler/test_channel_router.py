@@ -7,8 +7,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 from adapters.outbound.scheduler.dispatch_adapters import ChannelRouter
-from adapters.outbound.sinks.file_sink import FileSink
-from adapters.outbound.sinks.null_sink import NullSink
 from adapters.outbound.sinks.sink_factory import SinkFactory
 from adapters.outbound.sinks.telegram_sink import TelegramSink
 from core.domain.value_objects.dispatch_result import DispatchResult

@@ -12,9 +12,8 @@ Spec cli-chat-client/spec.md:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
-import pytest
 from typer.testing import CliRunner
 
 
@@ -46,9 +45,9 @@ def test_chat_command_no_instancia_app_container() -> None:
     mock_client = _make_mock_client(health_ok=True)
 
     with patch("inaki.cli._build_daemon_client", return_value=(mock_client, MagicMock(app=MagicMock(default_agent="dev")))):
-        with patch("adapters.inbound.cli.cli_runner.run_cli") as mock_run_cli:
+        with patch("adapters.inbound.cli.cli_runner.run_cli"):
             with patch("infrastructure.container.AppContainer") as mock_app_container:
-                result = runner.invoke(app, ["chat", "--agent", "dev"])
+                runner.invoke(app, ["chat", "--agent", "dev"])
                 mock_app_container.assert_not_called(), "AppContainer fue instanciado en el path chat — violación del diseño"
 
 
@@ -63,7 +62,7 @@ def test_chat_command_pasa_agent_id_al_runner() -> None:
 
     with patch("inaki.cli._build_daemon_client", return_value=(mock_client, mock_global_config)):
         with patch("adapters.inbound.cli.cli_runner.run_cli") as mock_run_cli:
-            result = runner.invoke(app, ["chat", "--agent", "dev"])
+            runner.invoke(app, ["chat", "--agent", "dev"])
 
     mock_run_cli.assert_called_once()
     args = mock_run_cli.call_args[0]
@@ -82,7 +81,7 @@ def test_chat_command_usa_default_agent_si_no_se_pasa_flag() -> None:
 
     with patch("inaki.cli._build_daemon_client", return_value=(mock_client, mock_global_config)):
         with patch("adapters.inbound.cli.cli_runner.run_cli") as mock_run_cli:
-            result = runner.invoke(app, ["chat"])
+            runner.invoke(app, ["chat"])
 
     mock_run_cli.assert_called_once()
     args = mock_run_cli.call_args[0]
@@ -100,7 +99,7 @@ def test_chat_command_pasa_client_al_runner() -> None:
 
     with patch("inaki.cli._build_daemon_client", return_value=(mock_client, mock_global_config)):
         with patch("adapters.inbound.cli.cli_runner.run_cli") as mock_run_cli:
-            result = runner.invoke(app, ["chat", "--agent", "dev"])
+            runner.invoke(app, ["chat", "--agent", "dev"])
 
     args = mock_run_cli.call_args[0]
     assert args[0] is mock_client

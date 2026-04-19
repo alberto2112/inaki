@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
-import pytest
 import yaml
 
 
@@ -23,13 +22,8 @@ def _write_minimal_config(config_dir: Path) -> None:
 
 def test_lightweight_bootstrap_does_not_import_app_container(tmp_path: Path) -> None:
     """Verificar que el bootstrap liviano NO importa AppContainer."""
-    import sys
-
     config_dir = tmp_path / "config"
     _write_minimal_config(config_dir)
-
-    # Remover infrastructure.container del cache si existe
-    modules_before = set(sys.modules.keys())
 
     from adapters.inbound.cli.scheduler_cli import _bootstrap_uc
 

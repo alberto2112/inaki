@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import uuid
 from io import StringIO
-from unittest.mock import call, create_autospec, patch
+from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
 

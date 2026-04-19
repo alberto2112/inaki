@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
 from adapters.outbound.tools.scheduler_tool import SchedulerTool
 from adapters.outbound.tools.tool_registry import ToolRegistry

@@ -22,7 +22,7 @@ import asyncio
 import json
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from adapters.outbound.tools.delegate_tool import DelegateTool, _RESULT_FORMAT_FOOTER
 from core.domain.errors import ToolLoopMaxIterationsError

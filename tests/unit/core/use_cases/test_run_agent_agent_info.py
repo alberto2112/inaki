@@ -8,7 +8,6 @@ Cubre Fix 1 — Judgment Day:
 from __future__ import annotations
 
 import pytest
-from unittest.mock import MagicMock
 
 from core.use_cases.run_agent import RunAgentUseCase
 

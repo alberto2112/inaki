@@ -10,11 +10,10 @@ Tras el cambio cli-chat-via-rest, run_cli ya no gestiona ChannelContext directam
 from __future__ import annotations
 
 import uuid
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.domain.errors import DaemonNotRunningError
 from core.domain.value_objects.chat_turn_result import ChatTurnResult
 
 

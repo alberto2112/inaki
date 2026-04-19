@@ -90,7 +90,7 @@ def run_setup() -> None:
         if current:
             ans = input(f"  ¿Regenerar {var['key']}? [s/N] > ").strip().lower()
             if ans not in ("s", "si", "sí", "y", "yes"):
-                print(f"  → Mantenida.\n")
+                print("  → Mantenida.\n")
                 continue
 
         if var.get("auto_generated"):
@@ -98,14 +98,14 @@ def run_setup() -> None:
                 f"  ¿Generar {var['key']} automáticamente? [S/n] > "
             ).strip().lower()
             if ans in ("n", "no"):
-                value = input(f"  Ingresá el valor manualmente: ").strip()
+                value = input("  Ingresá el valor manualmente: ").strip()
                 if not value:
                     print("  → Omitida (valor vacío).\n")
                     continue
             else:
                 value = _generate_fernet_key()
                 print(f"  → Clave generada: {value}")
-                print(f"     ⚠  Guardá esta clave. Sin ella no podrás descifrar tus datos.\n")
+                print("     ⚠  Guardá esta clave. Sin ella no podrás descifrar tus datos.\n")
         else:
             value = input(f"  Ingresá el valor para {var['key']}: ").strip()
             if not value:

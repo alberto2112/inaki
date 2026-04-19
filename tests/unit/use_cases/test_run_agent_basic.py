@@ -2,9 +2,9 @@
 
 import pytest
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, patch
 
-from core.use_cases.run_agent import RunAgentUseCase, InspectResult
+from core.use_cases.run_agent import RunAgentUseCase
 from core.domain.entities.message import Message, Role
 from core.domain.entities.skill import Skill
 from core.domain.value_objects.llm_response import LLMResponse

@@ -144,7 +144,7 @@ donde la respuesta contiene `tool_calls` en lugar de texto.
 │         {
 │           "type": "function",
 │           "function": {
-│             "name": "run_shell",
+│             "name": "shell_exec",
 │             "description": "Ejecuta un comando shell...",
 │             ...
 │           }

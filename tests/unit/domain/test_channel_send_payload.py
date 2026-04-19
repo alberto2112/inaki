@@ -10,7 +10,6 @@ Cubre:
 
 from __future__ import annotations
 
-import pytest
 
 from core.domain.entities.task import ChannelSendPayload
 

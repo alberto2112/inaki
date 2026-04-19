@@ -121,7 +121,7 @@ workspace:
                                  # warn   → permite pero loguea WARNING
                                  # off    → sin restricciones
                                  # Afecta a read_file, write_file, patch_file.
-                                 # run_shell NO está sujeto a esta config.
+                                 # shell_exec NO está sujeto a esta config.
                                  # Overrideable por agente en agents/{id}.yaml.
 
 admin:
@@ -223,7 +223,7 @@ memory:
                        # este flag y consolida el agente indicado de todas formas.
 
 # Workspace — contención de paths para file tools (read_file, write_file, patch_file)
-# run_shell NO está afectado por esta config.
+# shell_exec NO está afectado por esta config.
 workspace:
   path: "/Users/alberto/tmp/mi_workspace"  # Directorio raíz permitido (default: cwd del proceso)
   containment: "strict"                    # strict | warn | off (default: strict)
@@ -270,11 +270,11 @@ workspace:
 | `read_file` | ✅ sí |
 | `write_file` | ✅ sí |
 | `patch_file` | ✅ sí |
-| `run_shell` | ❌ no — ejecuta comandos sin restricción de paths |
+| `shell_exec` | ❌ no — ejecuta comandos sin restricción de paths |
 | `delegate`, `scheduler`, resto de builtins | ❌ no aplica |
 
-> **Nota:** `run_shell` es una extensión en `ext/` y no tiene contención de ningún tipo.
-> Si el LLM puede llamar `run_shell`, puede operar en cualquier path del sistema.
+> **Nota:** `shell_exec` es una extensión en `ext/` y no tiene contención de ningún tipo.
+> Si el LLM puede llamar `shell_exec`, puede operar en cualquier path del sistema.
 
 Si `workspace.path` no se define en la config del agente, se usa el directorio de trabajo
 del proceso al momento de arrancar. Para evitar ambigüedades en producción (systemd),

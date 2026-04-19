@@ -5,17 +5,28 @@ Operations:
   - configure    : guarda api_key y defaults en ~/.inaki/config/web_search_config.yaml
   - show_config  : devuelve la configuración actual con api_key enmascarada
 
-La api_key se cifra en disco con CryptoService (Fernet).
+La api_key se cifra en disco con CryptoService (Fernet). El resto de campos
+se almacenan en plano para que el YAML siga siendo legible por humanos.
+
+YAML layout example::
+
+    # Iñaki — Web Search configuration
+    # El campo api_key está cifrado. No lo edites manualmente.
+
+    api_key: "enc:gAAAAABh..."
+    search_depth: basic
+    max_results: 5
 """
 
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 import httpx
+import yaml
 
-from adapters.outbound.tools.web_search_config_store import WebSearchConfigStore
 from core.ports.outbound.tool_port import ITool, ToolResult
 from core.services.crypto_service import CryptoService
 
@@ -25,6 +36,75 @@ _TAVILY_ENDPOINT = "https://api.tavily.com/search"
 _DEFAULT_SEARCH_DEPTH = "basic"
 _DEFAULT_MAX_RESULTS = 5
 _HTTP_TIMEOUT = 20.0
+
+_SENSITIVE_FIELDS: frozenset[str] = frozenset({"api_key"})
+_CONFIG_FILENAME = "web_search_config.yaml"
+_CONFIG_HEADER = (
+    "# Iñaki — Web Search configuration\n"
+    "# El campo api_key está cifrado. No lo edites manualmente.\n\n"
+)
+
+
+def _config_dir() -> Path:
+    config = Path.home() / ".inaki" / "config"
+    config.mkdir(parents=True, exist_ok=True)
+    return config
+
+
+class _WebSearchConfigStore:
+    """Reads and writes ``web_search_config.yaml`` with selective field encryption."""
+
+    def __init__(self, crypto: CryptoService) -> None:
+        self._crypto = crypto
+        self._path = _config_dir() / _CONFIG_FILENAME
+
+    def load(self) -> dict[str, Any]:
+        """Return config dict with sensitive fields decrypted. Empty dict if no file."""
+        if not self._path.exists():
+            return {}
+        with self._path.open("r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        return self._decrypt_fields(data)
+
+    def save(self, data: dict[str, Any]) -> None:
+        """Encrypt sensitive fields and write YAML. Merges with existing config."""
+        current = self.load()
+        merged = {**current, **{k: v for k, v in data.items() if v not in (None, "")}}
+        to_write = self._encrypt_fields(merged)
+        with self._path.open("w", encoding="utf-8") as f:
+            f.write(_CONFIG_HEADER)
+            yaml.dump(to_write, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+    def exists(self) -> bool:
+        return self._path.exists()
+
+    def masked(self) -> dict[str, Any]:
+        """Return config with sensitive fields masked. Reads raw file (no decryption)."""
+        if not self._path.exists():
+            return {}
+        with self._path.open("r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        result = dict(data)
+        for field in _SENSITIVE_FIELDS:
+            if result.get(field):
+                result[field] = "***"
+        return result
+
+    def _encrypt_fields(self, data: dict[str, Any]) -> dict[str, Any]:
+        result = dict(data)
+        for field in _SENSITIVE_FIELDS:
+            val = result.get(field)
+            if val and isinstance(val, str) and not self._crypto.is_encrypted(val):
+                result[field] = self._crypto.encrypt(val)
+        return result
+
+    def _decrypt_fields(self, data: dict[str, Any]) -> dict[str, Any]:
+        result = dict(data)
+        for field in _SENSITIVE_FIELDS:
+            val = result.get(field)
+            if val and isinstance(val, str):
+                result[field] = self._crypto.decrypt(val)
+        return result
 
 
 class WebSearchTool(ITool):
@@ -69,7 +149,7 @@ class WebSearchTool(ITool):
     }
 
     def __init__(self) -> None:
-        self._store = WebSearchConfigStore(CryptoService())
+        self._store = _WebSearchConfigStore(CryptoService())
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         operation = str(kwargs.get("operation") or "search").strip().lower()

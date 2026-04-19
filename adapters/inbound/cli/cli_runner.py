@@ -149,7 +149,7 @@ def run_cli(client: IDaemonClient, agent_id: str) -> None:
             print(f"\n{exc}\nSaliendo.")
             return
         except DaemonTimeoutError as exc:
-            print(f"\nTimeout esperando respuesta del daemon. Intentá de nuevo.")
+            print("\nTimeout esperando respuesta del daemon. Intentá de nuevo.")
             logger.warning("Timeout en chat_turn: %s", exc)
             continue
         except DaemonClientError as exc:

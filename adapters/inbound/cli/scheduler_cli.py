@@ -218,7 +218,7 @@ def _edit_yaml_loop(
                 validated = ScheduledTask.model_validate(merged)
             except ValidationError as exc:
                 flat_errors = "; ".join(
-                    f"{'.'.join(str(l) for l in e['loc'])}: {e['msg']}" for e in exc.errors()
+                    f"{'.'.join(str(loc) for loc in e['loc'])}: {e['msg']}" for e in exc.errors()
                 )
                 typer.echo(
                     f"Validation error (attempt {attempt}/{max_attempts}): {flat_errors}",

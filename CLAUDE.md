@@ -61,7 +61,7 @@ Secrets are YAML-only (no env vars). `*.secrets.yaml` files are gitignored.
 - **All use cases** are classes with an async `execute()` method, injected via constructor in `container.py`.
 - **Tool results** must be `ToolResult` objects, never raw strings.
 - **Message roles** use `Role` enum (`Role.USER`, `Role.ASSISTANT`, etc.), not string literals.
-- **Workspace containment** — `read_file`, `write_file` y `patch_file` usan `workspace.containment` (strict/warn/off). `run_shell` NO tiene contención — opera en cualquier path. Ver `docs/configuracion.md`.
+- **Workspace containment** — `read_file`, `write_file` y `patch_file` usan `workspace.containment` (strict/warn/off). `shell_exec` NO tiene contención — opera en cualquier path. Ver `docs/configuracion.md`.
 - **Tool loop** — LLM can call tools iteratively up to `tools.tool_call_max_iterations` (default 5) with a circuit breaker for repeated failures.
 - **Codebase language** — Variables, docstrings, comments, and error messages are in Spanish.
 - **Target platform** — Raspberry Pi 5 (ARM64, 4GB RAM) via systemd. See `systemd/inaki.service`.

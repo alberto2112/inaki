@@ -78,7 +78,8 @@ def _make_tool(
         uc.delete_task = AsyncMock()
     # Por defecto usa el contexto de canal estándar de prueba
     if get_channel_context is None:
-        get_channel_context = lambda: _DEFAULT_CHANNEL_CTX
+        def get_channel_context() -> ChannelContext:
+            return _DEFAULT_CHANNEL_CTX
     tool = SchedulerTool(
         schedule_task_uc=uc,
         agent_id=agent_id,

@@ -12,11 +12,9 @@ Coverage:
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Callable
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
 from adapters.outbound.tools.delegate_tool import DelegateTool
 from adapters.outbound.tools.tool_registry import ToolRegistry
@@ -279,8 +277,6 @@ def test_app_container_two_phase_init(tmp_path) -> None:
     - get_agent_container("B") returns B's container
     - get_agent_container("nonexistent") returns None
     """
-    from infrastructure.config import AgentRegistry
-    from infrastructure.container import AppContainer
 
     agent_a_cfg = _make_agent_config(
         agent_id="agent-a",
@@ -673,7 +669,6 @@ def test_one_shot_has_no_extra_system_sections_attribute(tmp_path) -> None:
     """
     from unittest.mock import AsyncMock as _AsyncMock
     from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
-    from infrastructure.config import AgentConfig, AgentDelegationConfig
 
     agent_cfg = _make_agent_config("child", delegation_enabled=True)
     uc = RunAgentOneShotUseCase(

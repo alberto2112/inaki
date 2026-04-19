@@ -30,14 +30,13 @@ Escenarios cubiertos (spec admin-chat/spec.md):
 
 from __future__ import annotations
 
-from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from adapters.inbound.rest.admin.app import create_admin_app
 from core.domain.entities.message import Message, Role
-from core.domain.errors import UnknownAgentError
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +170,6 @@ async def test_post_turn_set_channel_context_llamado(
     chat_app, mock_agent_container, mock_run_agent
 ) -> None:
     """POST /turn llama set_channel_context("cli", session_id) y lo resetea a None (try/finally)."""
-    from core.domain.value_objects.channel_context import ChannelContext
 
     session_id = TURN_BODY["session_id"]
     async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as ac:

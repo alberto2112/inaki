@@ -50,7 +50,7 @@ def test_chat_turn_serializa_body_correcto(client: DaemonClient) -> None:
             "session_id": "sess-1",
         }
         mock_post.return_value = mock_resp
-        result = client.chat_turn("dev", "sess-1", "hola")
+        client.chat_turn("dev", "sess-1", "hola")
 
     _, kwargs = mock_post.call_args
     assert kwargs["json"]["agent_id"] == "dev"

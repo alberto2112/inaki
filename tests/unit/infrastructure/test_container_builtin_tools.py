@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
 
 from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
 from adapters.outbound.tools.tool_registry import ToolRegistry
@@ -46,12 +45,12 @@ def test_builtin_tools_present(tmp_path: Path) -> None:
 
 
 def test_shell_and_exchange_not_in_builtins(tmp_path: Path) -> None:
-    """run_shell y exchange_calendar NO en built-ins cuando ext_dirs=[]."""
+    """shell_exec y exchange_calendar NO en built-ins cuando ext_dirs=[]."""
     container = _make_container(tmp_path)
     container._register_tools()
     container._register_extensions([])
 
     registered = set(container._tools._tools.keys())
-    assert "run_shell" not in registered
+    assert "shell_exec" not in registered
     assert "shell" not in registered
     assert "exchange_calendar" not in registered

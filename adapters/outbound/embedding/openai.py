@@ -12,7 +12,6 @@ embed_query() y embed_passage() envían el texto tal cual.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 import httpx

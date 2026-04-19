@@ -249,7 +249,7 @@ class SchedulerService:
                 }
             return result, None
         elif isinstance(payload, ShellExecPayload):
-            return await self._run_shell(payload), None
+            return await self._shell_exec(payload), None
         elif isinstance(payload, ConsolidateMemoryPayload):
             return await self._dispatch.consolidator.consolidate_all(), None
         elif isinstance(payload, WebhookPayload):
@@ -257,7 +257,7 @@ class SchedulerService:
         else:
             raise InvalidTriggerTypeError(f"Unknown payload type: {type(payload)}")
 
-    async def _run_shell(self, payload: ShellExecPayload) -> str:
+    async def _shell_exec(self, payload: ShellExecPayload) -> str:
         import os
 
         proc = await asyncio.create_subprocess_shell(

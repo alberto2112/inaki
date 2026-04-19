@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Protocol
 
 from core.domain.entities.task import ScheduledTask, TaskStatus
 from core.domain.entities.task_log import TaskLog

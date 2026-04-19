@@ -374,7 +374,7 @@ async def _run_delegation_and_extract_result(
     The parent LLM is scripted to make ONE delegate call (first response)
     and then return a final answer (second response).
     """
-    result_text = await parent_container.run_agent.execute(task)
+    await parent_container.run_agent.execute(task)
     # The second call to parent LLM carries the tool result
     parent_llm = parent_container._llm
     second_call_messages = parent_llm.complete.call_args_list[1].args[0]
@@ -522,8 +522,6 @@ async def test_failure_timeout():
 
     Uses a very short timeout (0.05s) and a child LLM that sleeps longer.
     """
-    global_cfg = _make_global_config(timeout_seconds=1)  # very short timeout
-
     parent_cfg = _make_agent_config(
         agent_id="parent", delegation_enabled=True, allowed_targets=["child"]
     )

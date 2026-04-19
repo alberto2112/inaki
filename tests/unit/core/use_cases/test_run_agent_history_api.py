@@ -8,7 +8,7 @@ Cubre Design §D1:
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 from core.domain.entities.message import Message, Role
 from core.use_cases.run_agent import RunAgentUseCase

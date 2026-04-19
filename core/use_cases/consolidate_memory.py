@@ -42,27 +42,49 @@ from infrastructure.config import MemoryConfig
 logger = logging.getLogger(__name__)
 
 _EXTRACTOR_PROMPT_TEMPLATE = """\
-Eres un extractor de memoria de un asistente personal.
-Analiza la siguiente conversación e identifica hechos, preferencias,
-información relevante y contexto importante sobre el usuario.
+## Instructions
 
-Devuelve ÚNICAMENTE un JSON válido con el siguiente schema, sin texto adicional:
+You are a long-term memory extractor for a personal AI assistant.
+Your role is CONSERVATIVE: only save what has real and lasting value about the user.
+When in doubt, do NOT save. It is better to miss a minor detail than to pollute long-term memory with noise.
+
+**SAVE** only when the conversation reveals:
+- Personal preferences of the user (food, health, work, family, technology, habits)
+- Health information: about the user or their loved ones (diagnoses, reactions to medications or food, allergies, recurring symptoms)
+- Significant events: accidents, unusual episodes, emergencies
+- Important decisions made when facing a problem that worried the user
+- Relevant facts about their personal life, family, work, or surroundings
+
+**NEVER save**:
+- Command outputs or technical query results
+- Calendar, agenda, or reminder lookups
+- Note-taking or dictation
+- Trivial questions ("what time is it?", "how much is X?")
+- Superficial conversation with no informational value about the user
+- Ephemeral information with no value beyond the current conversation
+
+**Memory content format**: include rich context. Not just "<User or User's name> prefers X" but "<User or User's name> prefers X because Y happened in such situation". Context is what makes a memory useful in the future.
+
+**The `relevance` field encodes your confidence that this memory is worth keeping**:
+- Close to 1.0 → you are certain this is important and should be preserved
+- Close to 0.0 → you are unsure, it might be noise
+- Only include memories you feel confident about. If you are genuinely unsure, omit the entry entirely rather than assigning a low relevance score.
+
+Return ONLY valid JSON with the following schema, no additional text:
 [
   {{
-    "content": "descripción clara del hecho o preferencia",
+    "content": "contextually rich description of the fact, preference, or event",
     "relevance": 0.0-1.0,
     "tags": ["tag1", "tag2"],
     "timestamp": "2026-04-09T15:30:00Z"
   }}
 ]
 
-El campo "timestamp" es opcional. Si lo incluyes, usa el timestamp del mensaje
-de la conversación más relevante para ese hecho (formato ISO8601 UTC).
-Si no aplica, omítelo.
+The "timestamp" field is optional. If included, use the timestamp of the most relevant message (ISO8601 UTC).
+If there is NOTHING worth remembering long-term, return an empty array: []
 
-Si no hay nada relevante para recordar, devuelve un array vacío: []
+## Conversation:
 
-Conversación:
 {history}
 """
 

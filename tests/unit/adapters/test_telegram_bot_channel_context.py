@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
-import pytest
 
 from adapters.inbound.telegram.bot import TelegramBot
 from core.domain.value_objects.channel_context import ChannelContext

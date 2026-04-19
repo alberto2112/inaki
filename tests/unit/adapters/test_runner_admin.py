@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
 
 def _run(coro):
@@ -26,7 +25,7 @@ def test_run_admin_server_creates_uvicorn_server() -> None:
 
     with (
         patch("uvicorn.Config") as mock_config_cls,
-        patch("uvicorn.Server", return_value=mock_server) as mock_server_cls,
+        patch("uvicorn.Server", return_value=mock_server),
         patch("adapters.inbound.rest.admin.app.create_admin_app", return_value=MagicMock()),
     ):
         _run(_run_admin_server(app_container, admin_cfg, servers))

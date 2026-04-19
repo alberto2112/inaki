@@ -227,6 +227,71 @@ knowledge:
       chunk_overlap: 80            # Solapamiento entre chunks consecutivos (en palabras).
       top_k: 3                     # Resultados máximos de esta fuente.
       min_score: 0.5               # Score mínimo de esta fuente (override del global).
+
+    - id: mi-base                  # ID único de la fuente
+      type: sqlite                 # "sqlite" = DB pre-construida por el usuario
+      enabled: true
+      description: "My knowledge base"
+      path: ~/data/knowledge.db    # Path a la DB SQLite del usuario. Requerido.
+      top_k: 3
+      min_score: 0.5
+```
+
+#### Fuente `type: sqlite` — Base de datos pre-construida por el usuario
+
+Permite conectar una base de datos SQLite que el usuario construyó y gestiona por su cuenta.
+Iñaki **no indexa ni escribe** esta DB — solo la consulta para búsquedas vectoriales.
+
+**Schema requerido:**
+
+```sql
+-- Tabla de texto y metadatos (id debe ser la PRIMARY KEY entera)
+CREATE TABLE chunks (
+    id            INTEGER PRIMARY KEY,
+    source_path   TEXT NOT NULL,
+    content       TEXT NOT NULL,
+    metadata_json TEXT DEFAULT '{}'
+);
+
+-- Tabla virtual vec0 con embeddings de 384 dimensiones (e5-small)
+-- El rowid de chunk_embeddings debe coincidir con chunks.id
+CREATE VIRTUAL TABLE chunk_embeddings USING vec0(embedding FLOAT[384]);
+```
+
+**Notas importantes:**
+
+- La dimensión **debe ser exactamente 384** — es la dimensión del modelo e5-small que usa Iñaki internamente. Si la DB usa otra dimensión, la fuente se omite al arrancar con un error claro en los logs.
+- `chunk_embeddings.rowid` se usa para el JOIN con `chunks.id` — deben coincidir.
+- `metadata_json` es opcional pero debe ser JSON válido si está presente (o `NULL`/`'{}'`).
+- Iñaki valida el schema en la primera búsqueda. Si la validación falla, la fuente se deshabilita para esa sesión y se loguea `ERROR` con el nombre de la fuente y el motivo exacto.
+
+**Ejemplo mínimo de inserción:**
+
+```python
+import sqlite3, struct, numpy as np
+
+conn = sqlite3.connect("knowledge.db")
+conn.enable_load_extension(True)
+conn.load_extension("vec0")  # sqlite-vec
+
+conn.execute("""
+    CREATE TABLE IF NOT EXISTS chunks (
+        id INTEGER PRIMARY KEY, source_path TEXT NOT NULL,
+        content TEXT NOT NULL, metadata_json TEXT DEFAULT '{}'
+    )
+""")
+conn.execute("""
+    CREATE VIRTUAL TABLE IF NOT EXISTS chunk_embeddings USING vec0(embedding FLOAT[384])
+""")
+
+content = "Texto del chunk a indexar"
+embedding = np.random.randn(384).astype(np.float32)  # reemplazar por tu embedder real
+vec_bytes = struct.pack("384f", *embedding)
+
+conn.execute("INSERT INTO chunks (source_path, content) VALUES (?, ?)", ("/ruta/doc.md", content))
+row_id = conn.lastrowid
+conn.execute("INSERT INTO chunk_embeddings (rowid, embedding) VALUES (?, ?)", (row_id, vec_bytes))
+conn.commit()
 ```
 
 ### Indexación de documentos

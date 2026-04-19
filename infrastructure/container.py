@@ -172,6 +172,10 @@ class AgentContainer:
                 tipo = getattr(fuente_cfg, "type", "")
                 if tipo == "document":
                     fuentes.append(self._build_document_source(fuente_cfg))
+                elif tipo == "sqlite":
+                    sqlite_source = self._build_sqlite_source(fuente_cfg)
+                    if sqlite_source is not None:
+                        fuentes.append(sqlite_source)
                 else:
                     logger.warning(
                         "AgentContainer '%s': tipo de fuente '%s' no reconocido para '%s' — skipping",
@@ -202,6 +206,46 @@ class AgentContainer:
             chunk_overlap=getattr(fuente_cfg, "chunk_overlap", 80),
             dimension=self.agent_config.embedding.dimension,
         )
+
+    def _build_sqlite_source(self, fuente_cfg: object) -> "IKnowledgeSource | None":
+        """
+        Instancia un SqliteKnowledgeSource a partir de la config de fuente.
+
+        Captura KnowledgeConfigError al construir (validación diferida al primer search),
+        pero registra el error ahora si el path no está configurado.
+        Si hay un error de config irrecuperable, loguea y retorna None para que el
+        container omita esta fuente sin abortar el arranque del agente.
+        """
+        from adapters.outbound.knowledge.sqlite_knowledge_source import (
+            SqliteKnowledgeSource,
+        )
+        from core.domain.errors import KnowledgeConfigError
+
+        fuente_id = getattr(fuente_cfg, "id", "<sin-id>")
+        db_path = getattr(fuente_cfg, "path", None)
+
+        if not db_path:
+            logger.error(
+                "AgentContainer '%s': fuente sqlite '%s' no tiene 'path' configurado — skipping",
+                self.agent_config.id,
+                fuente_id,
+            )
+            return None
+
+        try:
+            return SqliteKnowledgeSource(
+                source_id=fuente_id,
+                description=getattr(fuente_cfg, "description", ""),
+                db_path=db_path,
+            )
+        except KnowledgeConfigError as exc:
+            logger.error(
+                "AgentContainer '%s': error de configuración en fuente sqlite '%s': %s — skipping",
+                self.agent_config.id,
+                fuente_id,
+                exc,
+            )
+            return None
 
     def _register_tools(self) -> None:
         """Registra tools built-in del núcleo. Las extensiones se cargan aparte."""

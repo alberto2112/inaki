@@ -10,6 +10,8 @@ Modos de uso:
   inaki consolidate --agent dev            → consolida solo el agente indicado
   inaki daemon                             → servicio systemd (todos los canales de todos los agentes)
   inaki --config /etc/inaki/config daemon  → daemon con config custom
+  inaki --remote http://raspi.local:6497   → conectarse a un daemon remoto (env: INAKI_REMOTE)
+  inaki --remote URL --remote-key KEY chat → conectarse a daemon remoto con auth key explícita
   inaki setup                              → wizard de configuración del sistema
 """
 
@@ -100,16 +102,30 @@ def _resolve_dirs(config_dir_override: Optional[Path]):
     return config_dir, agents_dir
 
 
-def _build_daemon_client(config_dir: Path):
-    """Construye DaemonClient con bootstrap mínimo — solo parsea YAML, sin AppContainer."""
+def _build_daemon_client(
+    config_dir: Path,
+    remote_url: Optional[str] = None,
+    remote_key: Optional[str] = None,
+):
+    """Construye DaemonClient con bootstrap mínimo — solo parsea YAML, sin AppContainer.
+
+    Si `remote_url` está definido, apunta al daemon remoto en vez del local.
+    El auth key se resuelve: `remote_key` > `admin.auth_key` del config local.
+    """
     from infrastructure.config import load_global_config
     from adapters.outbound.daemon_client import DaemonClient
 
     global_config, _ = load_global_config(config_dir)
     admin = global_config.admin
+    if remote_url:
+        base_url = remote_url.rstrip("/")
+        auth_key = remote_key if remote_key is not None else admin.auth_key
+    else:
+        base_url = f"http://{admin.host}:{admin.port}"
+        auth_key = admin.auth_key
     client = DaemonClient(
-        admin_base_url=f"http://{admin.host}:{admin.port}",
-        auth_key=admin.auth_key,
+        admin_base_url=base_url,
+        auth_key=auth_key,
         chat_timeout=admin.chat_timeout,
     )
     return client, global_config
@@ -125,10 +141,14 @@ def _require_daemon(client) -> None:
         raise typer.Exit(code=1)
 
 
-def _invoke_default_chat(config_dir_override: Optional[Path]) -> None:
+def _invoke_default_chat(
+    config_dir_override: Optional[Path],
+    remote_url: Optional[str],
+    remote_key: Optional[str],
+) -> None:
     """Lanza el chat interactivo con el agente por defecto via daemon HTTP."""
     config_dir, _ = _resolve_dirs(config_dir_override)
-    client, global_config = _build_daemon_client(config_dir)
+    client, global_config = _build_daemon_client(config_dir, remote_url, remote_key)
     _require_daemon(client)
     agent_id = global_config.app.default_agent
     _run_cli(client, agent_id)
@@ -143,13 +163,30 @@ def _root(
         metavar="DIR",
         help="Directorio de configuración (default: ~/.inaki/config)",
     ),
+    remote: Optional[str] = typer.Option(
+        None,
+        "--remote",
+        metavar="URL",
+        envvar="INAKI_REMOTE",
+        help="URL del admin server de un daemon remoto (ej: http://raspi.local:6497). "
+        "Si se omite, usa el daemon local configurado en admin.host/port.",
+    ),
+    remote_key: Optional[str] = typer.Option(
+        None,
+        "--remote-key",
+        metavar="KEY",
+        envvar="INAKI_REMOTE_KEY",
+        help="Auth key del daemon remoto. Si se omite, usa admin.auth_key del config local.",
+    ),
 ) -> None:
     """Iñaki — asistente personal agentico."""
     ctx.ensure_object(dict)
     ctx.obj["config_dir"] = config
+    ctx.obj["remote_url"] = remote
+    ctx.obj["remote_key"] = remote_key
     if ctx.invoked_subcommand is None:
         # bare `inaki` → default chat
-        _invoke_default_chat(config)
+        _invoke_default_chat(config, remote, remote_key)
 
 
 @app.command()
@@ -164,9 +201,11 @@ def chat(
 ) -> None:
     """Chat interactivo con un agente via daemon HTTP."""
     config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
+    remote_url: Optional[str] = ctx.obj.get("remote_url") if ctx.obj else None
+    remote_key: Optional[str] = ctx.obj.get("remote_key") if ctx.obj else None
     config_dir, _ = _resolve_dirs(config_dir_override)
 
-    client, global_config = _build_daemon_client(config_dir)
+    client, global_config = _build_daemon_client(config_dir, remote_url, remote_key)
     _require_daemon(client)
     agent_id = agent or global_config.app.default_agent
     _run_cli(client, agent_id)
@@ -200,9 +239,11 @@ def inspect(
 ) -> None:
     """Inspecciona el pipeline RAG para un mensaje sin llamar al LLM."""
     config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
+    remote_url: Optional[str] = ctx.obj.get("remote_url") if ctx.obj else None
+    remote_key: Optional[str] = ctx.obj.get("remote_key") if ctx.obj else None
     config_dir, _ = _resolve_dirs(config_dir_override)
 
-    client, global_config = _build_daemon_client(config_dir)
+    client, global_config = _build_daemon_client(config_dir, remote_url, remote_key)
     _require_daemon(client)
     agent_id = agent or global_config.app.default_agent
     import json
@@ -223,9 +264,11 @@ def consolidate(
 ) -> None:
     """Consolida la memoria y sale."""
     config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
+    remote_url: Optional[str] = ctx.obj.get("remote_url") if ctx.obj else None
+    remote_key: Optional[str] = ctx.obj.get("remote_key") if ctx.obj else None
     config_dir, _ = _resolve_dirs(config_dir_override)
 
-    client, _ = _build_daemon_client(config_dir)
+    client, _ = _build_daemon_client(config_dir, remote_url, remote_key)
     _require_daemon(client)
     import json
 

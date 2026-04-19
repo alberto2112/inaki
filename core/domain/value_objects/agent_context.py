@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from core.domain.entities.skill import Skill
 
 _VAR_RE = re.compile(
-    r"\{\{(TIMEZONE|DATETIME|DATE|TIME|WEEKDAY_NUMBER|WEEKDAY)(?:\[([A-Z]{2})\])?\}\}",
+    r"\{\{(WORKSPACE|TIMEZONE|DATETIME|DATE|TIME|WEEKDAY_NUMBER|WEEKDAY)(?:\[([A-Z]{2})\])?\}\}",
     re.IGNORECASE,
 )
 
@@ -20,7 +20,7 @@ _WEEKDAY_NAMES: dict[str, list[str]] = {
 }
 
 
-def _resolve_vars(text: str, tz_name: str | None) -> str:
+def _resolve_vars(text: str, tz_name: str | None, workspace_root: str | None) -> str:
     """Reemplaza variables dinámicas en el prompt con valores reales en runtime."""
     if not _VAR_RE.search(text):
         return text
@@ -39,6 +39,8 @@ def _resolve_vars(text: str, tz_name: str | None) -> str:
     def _replace(m: re.Match) -> str:
         token = m.group(1).upper()
         flag = (m.group(2) or "").upper()
+        if token == "WORKSPACE":
+            return workspace_root if workspace_root else m.group(0)
         if token == "TIMEZONE":
             return tz_display
         if token == "DATETIME":
@@ -64,6 +66,8 @@ class AgentContext(BaseModel):
     memory_digest: str = ""
     skills: list[Skill] = []
     timezone: str | None = None
+    # Raíz absoluta del workspace (misma resolución que las tools de FS). None → {{WORKSPACE}} intacto.
+    workspace_root: str | None = None
 
     def build_system_prompt(
         self,
@@ -92,4 +96,4 @@ class AgentContext(BaseModel):
             for section in extra_sections:
                 sections.append(section)
 
-        return _resolve_vars("\n".join(sections), self.timezone)
+        return _resolve_vars("\n".join(sections), self.timezone, self.workspace_root)

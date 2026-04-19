@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from freezegun import freeze_time
 
@@ -189,6 +191,35 @@ def test_unknown_var_left_as_is() -> None:
     ctx = AgentContext(agent_id="test", timezone="UTC")
     result = ctx.build_system_prompt("{{USER_NAME}} no se toca.")
     assert "{{USER_NAME}}" in result
+
+
+def test_workspace_var_replaced(tmp_path: Path) -> None:
+    root = str(tmp_path.resolve())
+    ctx = AgentContext(agent_id="test", workspace_root=root)
+    result = ctx.build_system_prompt("Raíz: {{WORKSPACE}}")
+    assert "{{WORKSPACE}}" not in result
+    assert root in result
+
+
+def test_workspace_case_insensitive(tmp_path: Path) -> None:
+    root = str(tmp_path.resolve())
+    ctx = AgentContext(agent_id="test", workspace_root=root)
+    result = ctx.build_system_prompt("{{workspace}}")
+    assert "{{workspace}}" not in result
+    assert result == root
+
+
+def test_workspace_none_leaves_placeholder() -> None:
+    ctx = AgentContext(agent_id="test", workspace_root=None)
+    assert ctx.build_system_prompt("{{WORKSPACE}}") == "{{WORKSPACE}}"
+
+
+def test_workspace_resolved_in_extra_sections(tmp_path: Path) -> None:
+    root = str(tmp_path.resolve())
+    ctx = AgentContext(agent_id="test", workspace_root=root)
+    result = ctx.build_system_prompt(BASE_PROMPT, extra_sections=["\nWS: {{WORKSPACE}}"])
+    assert "{{WORKSPACE}}" not in result
+    assert root in result
 
 
 @freeze_time("2026-04-12 15:30:00", tz_offset=0)

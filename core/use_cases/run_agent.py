@@ -40,6 +40,11 @@ from infrastructure.config import AgentConfig
 logger = logging.getLogger(__name__)
 
 
+def _workspace_absolute_path(agent_config: AgentConfig) -> str:
+    """Raíz del workspace del agente, coherente con `AgentContainer` y las tools de FS."""
+    return str(Path(agent_config.workspace.path).expanduser().resolve())
+
+
 def _should_bypass_rag_for_short_input(
     *,
     user_input: str,
@@ -255,6 +260,7 @@ class RunAgentUseCase:
             memory_digest=digest_text,
             skills=retrieved_skills,
             timezone=self._user_timezone,
+            workspace_root=_workspace_absolute_path(self._cfg),
         )
         system_prompt = context.build_system_prompt(
             self._cfg.system_prompt,
@@ -364,6 +370,7 @@ class RunAgentUseCase:
             memory_digest=digest_text,
             skills=retrieved_skills,
             timezone=self._user_timezone,
+            workspace_root=_workspace_absolute_path(self._cfg),
         )
         system_prompt = context.build_system_prompt(self._cfg.system_prompt)
 

@@ -255,6 +255,8 @@ rag:
 # -----------------------------------------------------------------------------
 workspace:
   path: "~/inaki-workspace"   # Raíz del workspace. Se crea si no existe.
+                              # `{{WORKSPACE}}` en system_prompt se sustituye por
+                              # esta ruta en absoluto (expanduser + resolve).
                               # Soporta expansión de `~` (home del usuario).
                               # Ejemplos:
                               #   "~/inaki-workspace"           ← default

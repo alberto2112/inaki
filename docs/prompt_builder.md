@@ -38,7 +38,7 @@ RunAgentUseCase.execute(user_input)
 │           retrieved_skills = all_skills  ← todas las skills
 │
 ├── 5. AgentContext.build_system_prompt(base_prompt)
-│       → system_prompt: str  ← PROMPT FINAL (detalle abajo)
+│       → system_prompt: str  ← secciones unidas + sustitución de {{WORKSPACE}}, {{DATE}}, etc.
 │
 ├── 6. _tools.get_schemas() → all_schemas
 │   ├── Si len(all_schemas) > cfg.tools.rag_min_tools:
@@ -107,6 +107,31 @@ Respondés en español rioplatense. Usás las tools cuando hace falta.
 ## Skills disponibles:
 - **Búsqueda Web**: Busca información en internet usando DuckDuckGo
   Cuando el usuario pregunta sobre eventos actuales, usá esta skill...
+```
+
+### Variables sustituidas (`{{...}}`)
+
+Tras concatenar todas las secciones (prompt base, contexto de usuario, digest de memoria, bloques de skills y `extra_sections`), se ejecuta una pasada de sustitución sobre el **texto completo** (`_resolve_vars` en el mismo módulo). Las coincidencias usan la forma `{{NOMBRE}}` y son **insensibles a mayúsculas** (`{{date}}` equivale a `{{DATE}}`).
+
+| Placeholder | Resultado | Origen y notas |
+|-------------|-----------|----------------|
+| `{{WORKSPACE}}` | Ruta absoluta del directorio de trabajo del agente | Misma resolución que las tools de filesystem: `Path(workspace.path).expanduser().resolve()` desde la configuración. Si no se inyecta raíz (caso excepcional), el texto **no se modifica**. |
+| `{{TIMEZONE}}` | Etiqueta de zona horaria | Si `AgentContext.timezone` es una zona IANA válida (p. ej. `Europe/Madrid`), se muestra ese nombre. Si está vacía o es inválida, se usa la abreviatura local del sistema (`%Z`) al calcular la hora. |
+| `{{DATETIME}}` | Fecha y hora local | Formato fijo `YYYY-MM-DD HH:MM` en la zona ya resuelta (IANA del contexto o fallback al reloj local del host si la IANA falla). |
+| `{{DATE}}` | Fecha local | `YYYY-MM-DD`. |
+| `{{TIME}}` | Hora local | `HH:MM` (24 h). |
+| `{{WEEKDAY}}` | Nombre del día de la semana | Sin subíndice: `strftime("%A")` según **locale del sistema**. Con idioma de dos letras: `{{WEEKDAY[EN]}}`, `{{WEEKDAY[ES]}}`, `{{WEEKDAY[FR]}}` → nombres fijos en inglés, español o francés. Cualquier otro código (p. ej. `{{WEEKDAY[DE]}}`) se trata como sin bandera (mismo fallback que locale). La bandera es insensible a mayúsculas (`[en]`, `[FR]`). |
+| `{{WEEKDAY_NUMBER}}` | Día ISO 8601 | Cadena `1`–`7`: lunes = 1, …, domingo = 7. |
+
+**Zona horaria del contexto:** `RunAgentUseCase` rellena `AgentContext.timezone` con la preferencia de usuario (config global); si no hay valor útil, los placeholders de fecha/hora usan la zona local del proceso.
+
+**Cualquier otro `{{ALGO}}`** que no encaje en la tabla anterior **se deja tal cual** en el prompt (no hay motor de plantillas genérico).
+
+Ejemplos válidos en el YAML del agente:
+
+```text
+Hoy es {{WEEKDAY[ES]}} {{DATE}} ({{TIME}}). Tu workspace es {{WORKSPACE}}.
+Zona configurada: {{TIMEZONE}}
 ```
 
 ---

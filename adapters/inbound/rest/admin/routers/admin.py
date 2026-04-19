@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -67,7 +68,7 @@ async def inspect_endpoint(body: InspectRequest, request: Request) -> dict:
         )
     agent_container = agents[body.agent_id]
     resultado = await agent_container.run_agent.inspect(body.mensaje)
-    return resultado
+    return dataclasses.asdict(resultado)
 
 
 @router.post(

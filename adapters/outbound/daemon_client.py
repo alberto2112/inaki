@@ -80,6 +80,8 @@ class DaemonClient:
             "/inspect",
             json={"agent_id": agent_id, "mensaje": mensaje},
             timeout=_DEFAULT_TIMEOUT,
+            error_map=self._CHAT_ERROR_MAP,
+            agent_id=agent_id,
         )
 
     # ------------------------------------------------------------------

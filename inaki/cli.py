@@ -131,6 +131,31 @@ def _build_daemon_client(
     return client, global_config
 
 
+def _handle_daemon_errors(fn):
+    """Ejecuta `fn` y mapea errores del daemon a mensajes limpios + typer.Exit(1)."""
+    from core.domain.errors import (
+        DaemonAuthError,
+        DaemonClientError,
+        DaemonNotRunningError,
+        DaemonTimeoutError,
+        UnknownAgentError,
+    )
+
+    try:
+        return fn()
+    except DaemonNotRunningError as exc:
+        print(str(exc), file=sys.stderr)
+    except UnknownAgentError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+    except DaemonAuthError as exc:
+        print(f"Error de autenticación con el daemon: {exc}", file=sys.stderr)
+    except DaemonTimeoutError as exc:
+        print(f"Timeout al contactar al daemon: {exc}", file=sys.stderr)
+    except DaemonClientError as exc:
+        print(f"Error del daemon: {exc}", file=sys.stderr)
+    raise typer.Exit(code=1)
+
+
 def _require_daemon(client) -> None:
     """Verifica que el daemon esté corriendo. Sale con error si no."""
     if not client.health():
@@ -248,7 +273,7 @@ def inspect(
     agent_id = agent or global_config.app.default_agent
     import json
 
-    result = client.inspect(agent_id, message)
+    result = _handle_daemon_errors(lambda: client.inspect(agent_id, message))
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
@@ -272,7 +297,7 @@ def consolidate(
     _require_daemon(client)
     import json
 
-    result = client.consolidate(agent)
+    result = _handle_daemon_errors(lambda: client.consolidate(agent))
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
 

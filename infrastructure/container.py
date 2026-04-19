@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Callable
 from croniter import croniter
 
 if TYPE_CHECKING:
+    from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
     from core.domain.value_objects.channel_context import ChannelContext
 
 from adapters.outbound.history.sqlite_history_store import SQLiteHistoryStore
@@ -104,6 +105,7 @@ class AgentContainer:
             history=self._history,
             tools=self._tools,
             agent_config=cfg,
+            knowledge_orchestrator=self._knowledge_orchestrator,
         )
 
         # Every agent gets a one-shot use case unconditionally so it can always
@@ -125,11 +127,41 @@ class AgentContainer:
             memory_config=cfg.memory,
         )
 
+    def _build_knowledge_orchestrator(self) -> "KnowledgeOrchestrator":
+        """
+        Construye el KnowledgeOrchestrator con las fuentes configuradas.
+
+        Por defecto (cuando no hay config knowledge explícita), registra
+        SqliteMemoryKnowledgeSource si include_memory es True (default).
+        El bloque knowledge: completo llega en Phase 3.
+        """
+        from adapters.outbound.knowledge.sqlite_memory_knowledge_source import (
+            SqliteMemoryKnowledgeSource,
+        )
+        from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
+
+        fuentes = []
+
+        # include_memory: true por defecto — se puede desactivar vía knowledge.include_memory
+        knowledge_cfg = getattr(self._global_config, "knowledge", None)
+        include_memory = True
+        if knowledge_cfg is not None:
+            include_memory = getattr(knowledge_cfg, "include_memory", True)
+
+        if include_memory:
+            fuentes.append(SqliteMemoryKnowledgeSource(memory=self._memory))
+            logger.debug(
+                "AgentContainer '%s': SqliteMemoryKnowledgeSource registrada",
+                self.agent_config.id,
+            )
+
+        return KnowledgeOrchestrator(sources=fuentes)
+
     def _register_tools(self) -> None:
         """Registra tools built-in del núcleo. Las extensiones se cargan aparte."""
         from pathlib import Path
 
-        from adapters.outbound.tools.memory_search_tool import MemorySearchTool
+        from adapters.outbound.tools.knowledge_search_tool import KnowledgeSearchTool
         from adapters.outbound.tools.patch_file_tool import PatchFileTool
         from adapters.outbound.tools.read_file_tool import ReadFileTool
         from adapters.outbound.tools.web_search_tool import WebSearchTool
@@ -142,19 +174,33 @@ class AgentContainer:
         except OSError as exc:
             logger.error(
                 "No se pudo crear el workspace '%s' para el agente '%s': %s",
-                workspace_path, self.agent_config.id, exc,
+                workspace_path,
+                self.agent_config.id,
+                exc,
             )
             raise
         logger.info(
             "Agente '%s': workspace='%s' containment='%s'",
-            self.agent_config.id, workspace_path, ws_cfg.containment,
+            self.agent_config.id,
+            workspace_path,
+            ws_cfg.containment,
         )
 
-        self._tools.register(MemorySearchTool(memory=self._memory, embedder=self._embedder))
+        self._knowledge_orchestrator = self._build_knowledge_orchestrator()
+        self._tools.register(
+            KnowledgeSearchTool(
+                orchestrator=self._knowledge_orchestrator,
+                embedder=self._embedder,
+            )
+        )
         self._tools.register(WebSearchTool())
         self._tools.register(ReadFileTool(workspace=workspace_path, containment=ws_cfg.containment))
-        self._tools.register(WriteFileTool(workspace=workspace_path, containment=ws_cfg.containment))
-        self._tools.register(PatchFileTool(workspace=workspace_path, containment=ws_cfg.containment))
+        self._tools.register(
+            WriteFileTool(workspace=workspace_path, containment=ws_cfg.containment)
+        )
+        self._tools.register(
+            PatchFileTool(workspace=workspace_path, containment=ws_cfg.containment)
+        )
 
     @staticmethod
     def _resolve_transcription(cfg: AgentConfig) -> ITranscriptionProvider | None:
@@ -360,8 +406,8 @@ class AgentContainer:
             "(see their description and tools below).\n"
             "- You lack a tool that the target agent has.\n"
             "- The task requires multiple tool calls to complete, especially multi-step "
-            "workflows like: \"search the web about X, summarize the highlights, and send "
-            "the result to Y\". Delegating keeps your context clean and lets a specialized "
+            'workflows like: "search the web about X, summarize the highlights, and send '
+            'the result to Y". Delegating keeps your context clean and lets a specialized '
             "agent orchestrate the steps.\n\n"
             "## When NOT to delegate\n\n"
             "- The task is trivial or you already have the tools to solve it in 1-2 steps.\n"
@@ -412,7 +458,8 @@ class AgentContainer:
                 except Exception as exc:
                     logger.warning(
                         "Extensión '%s': falló al cargar manifest (%s) — skipping",
-                        ext_name, exc,
+                        ext_name,
+                        exc,
                     )
                     continue
 
@@ -424,18 +471,22 @@ class AgentContainer:
                         if tool_instance.name in self._tools._tools:
                             logger.warning(
                                 "Extensión '%s': tool '%s' ya registrada — skipping (colisión)",
-                                ext_name, tool_instance.name,
+                                ext_name,
+                                tool_instance.name,
                             )
                             continue
                         self._tools.register(tool_instance)
                         logger.info(
                             "Extensión '%s': tool '%s' registrada",
-                            ext_name, tool_instance.name,
+                            ext_name,
+                            tool_instance.name,
                         )
                     except Exception as exc:
                         logger.warning(
                             "Extensión '%s': falló al instanciar %r (%s) — skipping tool",
-                            ext_name, tool_cls, exc,
+                            ext_name,
+                            tool_cls,
+                            exc,
                         )
 
                 # Registrar skills
@@ -444,13 +495,15 @@ class AgentContainer:
                     if not skill_path.exists():
                         logger.warning(
                             "Extensión '%s': skill file no encontrado: %s",
-                            ext_name, skill_path,
+                            ext_name,
+                            skill_path,
                         )
                         continue
                     self._skills.add_file(skill_path)
                     logger.info(
                         "Extensión '%s': skill '%s' añadida",
-                        ext_name, skill_path.name,
+                        ext_name,
+                        skill_path.name,
                     )
 
 
@@ -471,9 +524,7 @@ class AppContainer:
                 self.agents[agent_cfg.id] = AgentContainer(agent_cfg, global_config)
                 logger.info("AgentContainer creado para '%s'", agent_cfg.id)
             except Exception as exc:
-                logger.error(
-                    "Error creando container para agente '%s': %s", agent_cfg.id, exc
-                )
+                logger.error("Error creando container para agente '%s': %s", agent_cfg.id, exc)
 
         # Phase 2: wire delegation AFTER all containers are built so that the
         # get_agent_container closure can resolve any sibling (two-phase init).
@@ -484,9 +535,7 @@ class AppContainer:
             try:
                 container.wire_delegation(_get_agent_container)
             except Exception as exc:
-                logger.error(
-                    "Error en wire_delegation para agente '%s': %s", agent_id, exc
-                )
+                logger.error("Error en wire_delegation para agente '%s': %s", agent_id, exc)
 
         # Global consolidation use case — itera agentes habilitados con delay
         enabled_consolidators: dict[str, ConsolidateMemoryUseCase] = {
@@ -531,9 +580,7 @@ class AppContainer:
             try:
                 container.wire_scheduler(self.schedule_task_uc, user_timezone)
             except Exception as exc:
-                logger.error(
-                    "Error en wire_scheduler para agente '%s': %s", agent_id, exc
-                )
+                logger.error("Error en wire_scheduler para agente '%s': %s", agent_id, exc)
 
     def register_telegram_bot(self, agent_id: str, bot: object) -> None:
         """Registra el bot de Telegram para un agente.
@@ -622,12 +669,14 @@ class AppContainer:
             needs_save = True
 
         if needs_save:
-            updated = existing.model_copy(update={
-                "schedule": new_schedule,
-                "next_run": new_next_run,
-                "status": new_status,
-                "retry_count": new_retry,
-            })
+            updated = existing.model_copy(
+                update={
+                    "schedule": new_schedule,
+                    "next_run": new_next_run,
+                    "status": new_status,
+                    "retry_count": new_retry,
+                }
+            )
             await self.scheduler_repo.save_task(updated)
 
     async def startup(self) -> None:

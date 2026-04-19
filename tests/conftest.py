@@ -39,6 +39,7 @@ def mock_llm() -> AsyncMock:
 def mock_memory() -> AsyncMock:
     memory = AsyncMock()
     memory.search.return_value = []
+    memory.search_with_scores.return_value = []
     memory.store.return_value = None
     return memory
 

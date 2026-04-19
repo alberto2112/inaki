@@ -45,7 +45,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memory_embeddings USING vec0(
 
 
 class SQLiteMemoryRepository(IMemoryRepository):
-
     def __init__(self, db_path: str, embedder: IEmbeddingProvider) -> None:
         self._db_path = db_path
         self._embedder = embedder
@@ -116,6 +115,57 @@ class SQLiteMemoryRepository(IMemoryRepository):
             )
 
         return [self._row_to_entry(row) for row in rows]
+
+    async def search_with_scores(
+        self,
+        query_vec: list[float],
+        top_k: int = 5,
+    ) -> list[tuple[MemoryEntry, float]]:
+        """
+        Busca las memorias más similares y devuelve pares (entrada, score coseno).
+
+        Fórmula: ``score = 1 - distance² / 2``
+        Válida para vectores L2-normalizados (e5-small los normaliza automáticamente).
+        El score resultante es el coseno ∈ [-1, 1].
+        """
+        if not query_vec:
+            return []
+
+        vec_bytes = struct.pack(f"{len(query_vec)}f", *query_vec)
+
+        async with self._conn() as conn:
+            await self._ensure_schema(conn)
+            rows = await conn.execute_fetchall(
+                """
+                SELECT m.id, m.content, m.relevance, m.tags, m.created_at, m.agent_id,
+                       e.distance
+                FROM memory_embeddings e
+                JOIN memories m ON e.id = m.id
+                WHERE e.embedding MATCH ?
+                  AND k = ?
+                ORDER BY e.distance
+                """,
+                (vec_bytes, top_k),
+            )
+
+        resultado: list[tuple[MemoryEntry, float]] = []
+        for row in rows:
+            distancia = row["distance"]
+            # score coseno a partir de distancia L2 (vectores unitarios: ‖a-b‖²=2(1-cosθ))
+            score = 1.0 - (distancia**2) / 2.0
+            if resultado:
+                # assert de runtime: el primer resultado (mayor similitud) debe estar en rango
+                pass
+            entrada = self._row_to_entry(row)
+            resultado.append((entrada, score))
+
+        if resultado:
+            primer_score = resultado[0][1]
+            assert -1.0 <= primer_score <= 1.0, (
+                f"search_with_scores: score del primer resultado fuera de rango [-1, 1]: {primer_score}"
+            )
+
+        return resultado
 
     async def get_recent(self, limit: int = 10) -> list[MemoryEntry]:
         async with self._conn() as conn:

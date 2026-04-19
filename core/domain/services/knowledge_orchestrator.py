@@ -30,6 +30,11 @@ class KnowledgeOrchestrator:
         self._fuentes = sources
         self._cap = max_total_chunks
 
+    @property
+    def source_ids(self) -> list[str]:
+        """IDs de las fuentes registradas, en orden de registro."""
+        return [fuente.source_id for fuente in self._fuentes]
+
     async def retrieve_all(
         self,
         query_vec: list[float],

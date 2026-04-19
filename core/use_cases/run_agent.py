@@ -23,6 +23,7 @@ from pathlib import Path
 from core.domain.entities.message import Message, Role
 from core.domain.entities.skill import Skill
 from core.domain.errors import ToolLoopMaxIterationsError
+from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
 from core.domain.services.sticky_selector import apply_sticky
 from core.domain.value_objects.agent_context import AgentContext
 from core.domain.value_objects.agent_info import AgentInfoDTO
@@ -100,6 +101,7 @@ class RunAgentUseCase:
         history: IHistoryStore,
         tools: IToolExecutor,
         agent_config: AgentConfig,
+        knowledge_orchestrator: KnowledgeOrchestrator | None = None,
     ) -> None:
         self._llm = llm
         self._memory = memory
@@ -108,6 +110,8 @@ class RunAgentUseCase:
         self._history = history
         self._tools = tools
         self._cfg = agent_config
+        # KnowledgeOrchestrator — None si no hay fuentes configuradas
+        self._knowledge_orchestrator = knowledge_orchestrator
         # Extra sections injected by wire_delegation (task 6.1).
         # Empty by default — non-breaking when delegation is disabled.
         self._extra_system_sections: list[str] = []
@@ -203,6 +207,10 @@ class RunAgentUseCase:
             prev_state=prev_state,
         )
 
+        # query_vec se calcula como máximo una vez por turno y se reutiliza
+        # tanto para semantic routing como para knowledge pre-fetch.
+        query_vec: list[float] | None = None
+
         if routing_bypass:
             # Input corto con selección sticky previa → heredar intacta.
             # No se calcula embedding, no se toca el TTL, no se persiste estado.
@@ -253,6 +261,26 @@ class RunAgentUseCase:
                 tool_schemas = [schemas_by_name[n] for n in active_names if n in schemas_by_name]
                 state_dirty = True
 
+        # Pre-fetch de knowledge: se ejecuta post-routing, reutilizando query_vec si ya fue
+        # calculado. Se saltea si el bypass está activo (misma condición que routing bypass).
+        from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
+
+        knowledge_chunks: list[KnowledgeChunk] = []
+        if not routing_bypass and self._knowledge_orchestrator is not None:
+            if query_vec is None:
+                # Routing no corrió pero hay orquestrador → calcular embedding ahora
+                query_vec = await self._embedder.embed_query(user_input)
+            knowledge_chunks = await self._knowledge_orchestrator.retrieve_all(
+                query_vec=query_vec,
+                top_k=5,
+                min_score=0.0,
+            )
+            logger.debug(
+                "[knowledge] pre-fetch completado (agent=%s chunks=%d)",
+                agent_id,
+                len(knowledge_chunks),
+            )
+
         user_context = self._read_user_context()
         context = AgentContext(
             agent_id=agent_id,
@@ -261,6 +289,7 @@ class RunAgentUseCase:
             skills=retrieved_skills,
             timezone=self._user_timezone,
             workspace_root=_workspace_absolute_path(self._cfg),
+            knowledge_chunks=knowledge_chunks,
         )
         system_prompt = context.build_system_prompt(
             self._cfg.system_prompt,

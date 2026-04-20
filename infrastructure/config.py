@@ -94,6 +94,7 @@ class LLMConfig(BaseModel):
     model: str = "anthropic/claude-3-5-haiku"
     temperature: float = 0.7
     max_tokens: int = 2048
+    reasoning_effort: str | None = None
     api_key: str | None = None
 
 

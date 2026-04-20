@@ -37,12 +37,15 @@ class GroqProvider(BaseLLMProvider):
         system_prompt: str,
         tools: list[dict] | None = None,
     ) -> LLMResponse:
+        token_key = "max_completion_tokens" if self._cfg.reasoning_effort else "max_tokens"
         payload: dict = {
             "model": self._cfg.model,
             "messages": self._build_messages(messages, system_prompt),
             "temperature": self._cfg.temperature,
-            "max_tokens": self._cfg.max_tokens,
+            token_key: self._cfg.max_tokens,
         }
+        if self._cfg.reasoning_effort:
+            payload["reasoning_effort"] = self._cfg.reasoning_effort
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
@@ -81,13 +84,16 @@ class GroqProvider(BaseLLMProvider):
         messages: list[Message],
         system_prompt: str,
     ) -> AsyncIterator[str]:
-        payload = {
+        token_key = "max_completion_tokens" if self._cfg.reasoning_effort else "max_tokens"
+        payload: dict = {
             "model": self._cfg.model,
             "messages": self._build_messages(messages, system_prompt),
             "temperature": self._cfg.temperature,
-            "max_tokens": self._cfg.max_tokens,
+            token_key: self._cfg.max_tokens,
             "stream": True,
         }
+        if self._cfg.reasoning_effort:
+            payload["reasoning_effort"] = self._cfg.reasoning_effort
         try:
             async with httpx.AsyncClient(timeout=60) as client:
                 async with client.stream(

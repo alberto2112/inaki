@@ -1,11 +1,13 @@
 """SchedulerTool — expone el scheduler al LLM como una tool multi-operación.
 
 Operations:
-  - create  : crea una nueva tarea programada
-  - list    : lista todas las tareas (sin filtro de agente)
-  - get     : obtiene una tarea por ID (detalle completo con trigger_payload)
-  - update  : modifica campos mutables de una tarea existente
-  - delete  : elimina una tarea (builtin tasks protegidas)
+  - create   : crea una nueva tarea programada
+  - list     : lista todas las tareas (sin filtro de agente)
+  - get      : obtiene una tarea por ID (detalle completo con trigger_payload)
+  - update   : modifica campos mutables de una tarea existente
+  - delete   : elimina una tarea (builtin tasks protegidas)
+  - logs     : lista logs de ejecución de una tarea (con paginación y truncación)
+  - log_get  : obtiene un log por ID con output/error completos (sin truncación)
 
 REQs satisfechos: REQ-ST-1, REQ-ST-2, REQ-ST-3, REQ-ST-4, REQ-ST-5, REQ-ST-6,
                   REQ-ST-8, REQ-ST-10
@@ -53,7 +55,17 @@ _TRIGGER_PAYLOAD_MODELS: dict[str, type[BaseModel]] = {
     "shell_exec": ShellExecPayload,
 }
 
-_VALID_OPERATIONS = ("create", "list", "get", "update", "delete")
+_VALID_OPERATIONS = ("create", "list", "get", "update", "delete", "logs", "log_get")
+
+# Truncación del output/error en la operación `logs` — protege el contexto
+# del LLM cuando el historial arrastra outputs grandes. `log_get` NO trunca:
+# es la puerta de "dame el detalle completo de este log".
+_LOG_OUTPUT_TRUNCATION = 1000
+
+# Cap duro sobre `limit` en `logs` — evita que el LLM pida 1000 entradas y
+# sature el contexto. Vive en el tool, no en el repo, porque es un límite
+# de presentación (LLM-context), no de persistencia.
+_MAX_LOGS_LIMIT = 50
 
 # Map domain TaskKind values to LLM-friendly names and back
 _TASK_KIND_TO_LLM = {
@@ -83,12 +95,14 @@ class SchedulerTool(ITool):
 
     name = "scheduler"
     description = (
-        "Manage scheduled tasks. Operations: create, list, get, update, delete. "
+        "Manage scheduled tasks. Operations: create, list, get, update, delete, logs, log_get. "
         "Use 'create' to schedule a future action (one_shot or recurring). "
         "Use 'list' to see all active tasks. "
         "Use 'get' to retrieve full detail (including trigger_payload) for a specific task. "
         "Use 'update' to modify mutable fields on a task. "
         "Use 'delete' to remove a non-builtin task permanently. "
+        "Use 'logs' to list execution logs of a task (newest first, paginated, outputs truncated to 1000 chars). "
+        "Use 'log_get' to fetch a single log by id with the FULL untruncated output/error. "
         "Builtin tasks (id < 100) cannot be modified or deleted."
     )
     parameters_schema = {
@@ -159,10 +173,33 @@ class SchedulerTool(ITool):
                 "enum": ["pending", "running", "completed", "failed", "missed"],
                 "description": "Task status (update only).",
             },
-            # --- get / update / delete ---
+            # --- get / update / delete / logs ---
             "task_id": {
                 "type": "integer",
-                "description": "Task ID (required for get, update, delete).",
+                "description": "Task ID (required for get, update, delete, logs).",
+            },
+            # --- log_get ---
+            "log_id": {
+                "type": "integer",
+                "description": "Log entry ID (required for log_get).",
+            },
+            # --- logs ---
+            "limit": {
+                "type": "integer",
+                "description": (
+                    f"Máximo de entradas a devolver en 'logs'. Default 10, cap duro {_MAX_LOGS_LIMIT}."
+                ),
+            },
+            "offset": {
+                "type": "integer",
+                "description": "Desplazamiento de paginación para 'logs'. Default 0.",
+            },
+            "status_filter": {
+                "type": "string",
+                "enum": ["success", "failed", "missed"],
+                "description": (
+                    "Filtra 'logs' por status. Omitir para ver todos."
+                ),
             },
         },
         "required": ["operation"],
@@ -194,6 +231,10 @@ class SchedulerTool(ITool):
                 return await self._update(kwargs)
             if operation == "delete":
                 return await self._delete(kwargs)
+            if operation == "logs":
+                return await self._logs(kwargs)
+            if operation == "log_get":
+                return await self._log_get(kwargs)
             return self._error(
                 f"Unknown operation '{operation}'. "
                 f"Valid operations: {', '.join(_VALID_OPERATIONS)}."
@@ -547,6 +588,112 @@ class SchedulerTool(ITool):
         return ToolResult(
             tool_name=self.name,
             output=json.dumps({"deleted": True, "task_id": task_id}),
+            success=True,
+        )
+
+    async def _logs(self, params: dict[str, Any]) -> ToolResult:
+        """
+        Lista logs de ejecución de una tarea, con truncación por entrada.
+
+        - Cap `limit` a `_MAX_LOGS_LIMIT` (50) — protege el contexto del LLM.
+        - Trunca `output`/`error` a `_LOG_OUTPUT_TRUNCATION` (1000) por entrada
+          y setea flags explícitas (`output_truncated` / `error_truncated`).
+          Cuando el LLM necesita el detalle completo, llama `log_get`.
+        """
+        task_id = params.get("task_id")
+        if task_id is None:
+            return self._error("Missing required parameter 'task_id'.")
+        try:
+            task_id = int(task_id)
+        except (TypeError, ValueError):
+            return self._error(f"Invalid 'task_id': '{task_id}'. Must be an integer.")
+
+        limit_raw = params.get("limit", 10)
+        try:
+            limit = int(limit_raw) if limit_raw is not None else 10
+        except (TypeError, ValueError):
+            return self._error(f"Invalid 'limit': '{limit_raw}'. Must be an integer.")
+        if limit > _MAX_LOGS_LIMIT:
+            limit = _MAX_LOGS_LIMIT
+        if limit < 1:
+            limit = 1
+
+        offset_raw = params.get("offset", 0)
+        try:
+            offset = int(offset_raw) if offset_raw is not None else 0
+        except (TypeError, ValueError):
+            return self._error(f"Invalid 'offset': '{offset_raw}'. Must be an integer.")
+        if offset < 0:
+            offset = 0
+
+        status_filter = params.get("status_filter")
+        if status_filter is not None:
+            status_filter = str(status_filter).strip().lower()
+            if status_filter == "":
+                status_filter = None
+
+        try:
+            logs = await self._uc.list_logs(task_id, limit, offset, status_filter)
+        except SchedulerError as exc:
+            return self._error(str(exc))
+
+        entries: list[dict[str, Any]] = []
+        for log in logs:
+            output_full = log.output or ""
+            error_full = log.error or ""
+            output_truncated = len(output_full) > _LOG_OUTPUT_TRUNCATION
+            error_truncated = len(error_full) > _LOG_OUTPUT_TRUNCATION
+            entries.append({
+                "log_id": log.id,
+                "started_at": log.started_at.isoformat(),
+                "finished_at": log.finished_at.isoformat() if log.finished_at else None,
+                "status": log.status,
+                "attempt_output": output_full[:_LOG_OUTPUT_TRUNCATION] if log.output is not None else None,
+                "attempt_error": error_full[:_LOG_OUTPUT_TRUNCATION] if log.error is not None else None,
+                "output_truncated": output_truncated,
+                "error_truncated": error_truncated,
+            })
+
+        return ToolResult(
+            tool_name=self.name,
+            output=json.dumps({
+                "task_id": task_id,
+                "total_returned": len(entries),
+                "logs": entries,
+            }),
+            success=True,
+        )
+
+    async def _log_get(self, params: dict[str, Any]) -> ToolResult:
+        """
+        Devuelve un log por id con output/error completos (sin truncación).
+
+        No lanza excepción si no existe — mapea a `{"found": false, "log_id": N}`
+        para que el LLM trate "no encontrado" como dato, no como error.
+        """
+        log_id_raw = params.get("log_id")
+        if log_id_raw is None:
+            return self._error("Missing required parameter 'log_id'.")
+        try:
+            log_id = int(log_id_raw)
+        except (TypeError, ValueError):
+            return self._error(f"Invalid 'log_id': '{log_id_raw}'. Must be an integer.")
+
+        try:
+            log = await self._uc.get_log(log_id)
+        except SchedulerError as exc:
+            return self._error(str(exc))
+
+        if log is None:
+            return ToolResult(
+                tool_name=self.name,
+                output=json.dumps({"found": False, "log_id": log_id}),
+                success=True,
+            )
+
+        return ToolResult(
+            tool_name=self.name,
+            output=json.dumps({"found": True, "log": log.model_dump(mode="json")}),
             success=True,
         )
 

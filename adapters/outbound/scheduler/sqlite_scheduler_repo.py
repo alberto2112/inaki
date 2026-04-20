@@ -330,6 +330,56 @@ class SQLiteSchedulerRepo:
             await conn.commit()
             return log.model_copy(update={"id": cursor.lastrowid})
 
+    async def list_logs(
+        self,
+        task_id: int,
+        limit: int = 10,
+        offset: int = 0,
+        status_filter: str | None = None,
+    ) -> list[TaskLog]:
+        """
+        Lista logs de `task_id` más-recientes-primero, con paginación.
+
+        Orden estable: `started_at DESC, id DESC` — el tiebreaker por id garantiza
+        que `offset` produce páginas reproducibles aun cuando dos logs caen en el
+        mismo timestamp. Devuelve TaskLog completo (sin truncación) — el tool es
+        el único responsable de decidir qué ve el LLM.
+        """
+        async with self._conn() as conn:
+            await self._ensure_schema_conn(conn)
+            if status_filter is not None:
+                rows = await conn.execute_fetchall(
+                    """
+                    SELECT * FROM task_logs
+                    WHERE task_id = ? AND status = ?
+                    ORDER BY started_at DESC, id DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (task_id, status_filter, limit, offset),
+                )
+            else:
+                rows = await conn.execute_fetchall(
+                    """
+                    SELECT * FROM task_logs
+                    WHERE task_id = ?
+                    ORDER BY started_at DESC, id DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (task_id, limit, offset),
+                )
+        return [self._row_to_tasklog(row) for row in rows]
+
+    async def get_log(self, log_id: int) -> TaskLog | None:
+        """Devuelve el TaskLog por id, o None si no existe (sin excepción)."""
+        async with self._conn() as conn:
+            await self._ensure_schema_conn(conn)
+            rows = await conn.execute_fetchall(
+                "SELECT * FROM task_logs WHERE id = ?", (log_id,)
+            )
+        if not rows:
+            return None
+        return self._row_to_tasklog(rows[0])
+
     async def seed_builtin(self, task: ScheduledTask) -> None:
         """
         Insert builtin task only if it doesn't already exist (INSERT OR IGNORE).
@@ -425,6 +475,23 @@ class SQLiteSchedulerRepo:
             "WHERE status = 'disabled'"
         )
         await conn.commit()
+
+    def _row_to_tasklog(self, row: aiosqlite.Row) -> TaskLog:
+        started_at = datetime.fromisoformat(row["started_at"])
+        finished_at: datetime | None = (
+            datetime.fromisoformat(row["finished_at"]) if row["finished_at"] else None
+        )
+        metadata = json.loads(row["metadata"]) if row["metadata"] else None
+        return TaskLog(
+            id=row["id"],
+            task_id=row["task_id"],
+            started_at=started_at,
+            finished_at=finished_at,
+            status=row["status"],
+            output=row["output"],
+            error=row["error"],
+            metadata=metadata,
+        )
 
     def _row_to_task(self, row: aiosqlite.Row) -> ScheduledTask:
         next_run: datetime | None = None

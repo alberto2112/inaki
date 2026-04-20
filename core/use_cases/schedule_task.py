@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Callable
 
 from core.domain.entities.task import ScheduledTask, TaskStatus
+from core.domain.entities.task_log import TaskLog
 from core.domain.errors import BuiltinTaskProtectedError, TaskNotFoundError, TooManyActiveTasksError
 from core.ports.inbound.scheduler_port import ISchedulerUseCase
 
@@ -112,3 +113,15 @@ class ScheduleTaskUseCase(ISchedulerUseCase):
 
         updated = task.model_copy(update=kwargs)
         return await self._repo.save_task(updated)
+
+    async def list_logs(
+        self,
+        task_id: int,
+        limit: int = 10,
+        offset: int = 0,
+        status_filter: str | None = None,
+    ) -> list[TaskLog]:
+        return await self._repo.list_logs(task_id, limit, offset, status_filter)
+
+    async def get_log(self, log_id: int) -> TaskLog | None:
+        return await self._repo.get_log(log_id)

@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from core.domain.entities.task import ScheduledTask
+from core.domain.entities.task_log import TaskLog
 
 
 class ISchedulerUseCase(ABC):
@@ -28,3 +29,15 @@ class ISchedulerUseCase(ABC):
 
     @abstractmethod
     async def disable_task(self, task_id: int) -> None: ...
+
+    @abstractmethod
+    async def list_logs(
+        self,
+        task_id: int,
+        limit: int = 10,
+        offset: int = 0,
+        status_filter: str | None = None,
+    ) -> list[TaskLog]: ...
+
+    @abstractmethod
+    async def get_log(self, log_id: int) -> TaskLog | None: ...

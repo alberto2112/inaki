@@ -43,6 +43,7 @@ from core.domain.entities.task import (
     TaskStatus,
     TriggerType,
 )
+from core.domain.entities.task_log import TaskLog
 from core.domain.errors import (
     BuiltinTaskProtectedError,
     SchedulerError,
@@ -76,6 +77,8 @@ def _make_tool(
         uc.get_task = AsyncMock()
         uc.update_task = AsyncMock()
         uc.delete_task = AsyncMock()
+        uc.list_logs = AsyncMock()
+        uc.get_log = AsyncMock()
     # Por defecto usa el contexto de canal estándar de prueba
     if get_channel_context is None:
         def get_channel_context() -> ChannelContext:
@@ -1082,3 +1085,240 @@ async def test_update_echo_preserves_disabled_intent() -> None:
     data = json.loads(result.output)
     assert data["updated"] is True
     assert data["enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# logs — listar logs de ejecución de una tarea
+# ---------------------------------------------------------------------------
+
+def _make_log(
+    log_id: int = 1,
+    task_id: int = 100,
+    status: str = "success",
+    output: str | None = "ok",
+    error: str | None = None,
+    started_minute: int = 0,
+) -> TaskLog:
+    return TaskLog(
+        id=log_id,
+        task_id=task_id,
+        started_at=datetime(2026, 4, 20, 6, started_minute, 0, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 4, 20, 6, started_minute, 1, tzinfo=timezone.utc),
+        status=status,
+        output=output,
+        error=error,
+    )
+
+
+@pytest.mark.asyncio
+async def test_logs_happy_path_returns_entries() -> None:
+    """logs devuelve {task_id, total_returned, logs:[...]} con campos esperados."""
+    tool, uc = _make_tool()
+    uc.list_logs.return_value = [
+        _make_log(log_id=5, task_id=100, status="success", output="fine", started_minute=2),
+        _make_log(log_id=4, task_id=100, status="failed", error="boom", started_minute=1),
+    ]
+
+    result = await tool.execute(operation="logs", task_id=100, limit=2)
+
+    assert result.success is True
+    data = json.loads(result.output)
+    assert data["task_id"] == 100
+    assert data["total_returned"] == 2
+    assert len(data["logs"]) == 2
+    # log_id preservado en cada entry (contrato de paginación)
+    assert data["logs"][0]["log_id"] == 5
+    assert data["logs"][1]["log_id"] == 4
+    assert data["logs"][0]["status"] == "success"
+    assert data["logs"][1]["status"] == "failed"
+    # UC fue llamado con limit=2 (no capeado)
+    uc.list_logs.assert_awaited_once()
+    _, kwargs = uc.list_logs.call_args
+    # Aceptamos args o kwargs — el contrato es "llamó con task_id=100, limit=2"
+    call_args = uc.list_logs.call_args
+    # Normaliza a posicionales
+    all_args = list(call_args.args) + list(call_args.kwargs.values())
+    assert 100 in all_args
+    assert 2 in all_args
+
+
+@pytest.mark.asyncio
+async def test_logs_truncates_large_output_and_sets_flag() -> None:
+    """output > 1000 chars → truncado a 1000; output_truncated=True."""
+    tool, uc = _make_tool()
+    big = "x" * 5000
+    uc.list_logs.return_value = [_make_log(log_id=1, output=big)]
+
+    result = await tool.execute(operation="logs", task_id=100)
+
+    assert result.success is True
+    data = json.loads(result.output)
+    entry = data["logs"][0]
+    assert len(entry["attempt_output"]) == 1000
+    assert entry["output_truncated"] is True
+    assert entry["error_truncated"] is False  # error era None
+
+
+@pytest.mark.asyncio
+async def test_logs_no_truncation_when_under_limit() -> None:
+    """output corto → no se trunca y la flag queda False (triangulación vs. test anterior)."""
+    tool, uc = _make_tool()
+    short = "ok"
+    uc.list_logs.return_value = [_make_log(log_id=2, output=short, error="e" * 100)]
+
+    result = await tool.execute(operation="logs", task_id=100)
+
+    assert result.success is True
+    data = json.loads(result.output)
+    entry = data["logs"][0]
+    assert entry["attempt_output"] == "ok"
+    assert entry["output_truncated"] is False
+    assert entry["attempt_error"] == "e" * 100
+    assert entry["error_truncated"] is False
+
+
+@pytest.mark.asyncio
+async def test_logs_truncates_large_error_and_sets_flag() -> None:
+    """error > 1000 chars → truncado a 1000; error_truncated=True."""
+    tool, uc = _make_tool()
+    big_err = "e" * 3000
+    uc.list_logs.return_value = [_make_log(log_id=3, output=None, status="failed", error=big_err)]
+
+    result = await tool.execute(operation="logs", task_id=100)
+
+    assert result.success is True
+    data = json.loads(result.output)
+    entry = data["logs"][0]
+    assert len(entry["attempt_error"]) == 1000
+    assert entry["error_truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_logs_limit_capped_at_50() -> None:
+    """limit=1000 debe capearse a 50 antes de llamar al use case."""
+    tool, uc = _make_tool()
+    uc.list_logs.return_value = []
+
+    result = await tool.execute(operation="logs", task_id=100, limit=1000)
+
+    assert result.success is True
+    call_args = uc.list_logs.call_args
+    all_args = list(call_args.args) + list(call_args.kwargs.values())
+    assert 50 in all_args
+    assert 1000 not in all_args
+
+
+@pytest.mark.asyncio
+async def test_logs_status_filter_passed_through() -> None:
+    """status_filter llega al use case sin modificar."""
+    tool, uc = _make_tool()
+    uc.list_logs.return_value = []
+
+    result = await tool.execute(
+        operation="logs", task_id=100, status_filter="failed"
+    )
+
+    assert result.success is True
+    call_args = uc.list_logs.call_args
+    all_args = list(call_args.args) + list(call_args.kwargs.values())
+    assert "failed" in all_args
+
+
+@pytest.mark.asyncio
+async def test_logs_missing_task_id_returns_error() -> None:
+    """logs sin task_id → error estructurado."""
+    tool, uc = _make_tool()
+
+    result = await tool.execute(operation="logs")
+
+    assert result.success is False
+    assert "task_id" in result.output
+    uc.list_logs.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_logs_invalid_task_id_returns_error() -> None:
+    """task_id no entero → error estructurado."""
+    tool, uc = _make_tool()
+
+    result = await tool.execute(operation="logs", task_id="abc")
+
+    assert result.success is False
+    assert "task_id" in result.output
+    uc.list_logs.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_logs_empty_result_returns_empty_list() -> None:
+    """Sin logs → {task_id, total_returned:0, logs:[]} sin error."""
+    tool, uc = _make_tool()
+    uc.list_logs.return_value = []
+
+    result = await tool.execute(operation="logs", task_id=100)
+
+    assert result.success is True
+    data = json.loads(result.output)
+    assert data["task_id"] == 100
+    assert data["total_returned"] == 0
+    assert data["logs"] == []
+
+
+# ---------------------------------------------------------------------------
+# log_get — obtener un log por id con output completo
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_log_get_existing_returns_full_untruncated() -> None:
+    """log_get devuelve {found:true, log: <full>} — output NO truncado."""
+    tool, uc = _make_tool()
+    big = "z" * 5000
+    uc.get_log.return_value = _make_log(log_id=42, task_id=100, output=big)
+
+    result = await tool.execute(operation="log_get", log_id=42)
+
+    assert result.success is True
+    data = json.loads(result.output)
+    assert data["found"] is True
+    # output completo sin truncación
+    assert data["log"]["output"] == big
+    assert len(data["log"]["output"]) == 5000
+    assert data["log"]["id"] == 42
+    uc.get_log.assert_awaited_once_with(42)
+
+
+@pytest.mark.asyncio
+async def test_log_get_missing_returns_not_found_structured() -> None:
+    """log_get con id inexistente → {found:false, log_id:N} sin excepción."""
+    tool, uc = _make_tool()
+    uc.get_log.return_value = None
+
+    result = await tool.execute(operation="log_get", log_id=9999)
+
+    assert result.success is True
+    data = json.loads(result.output)
+    assert data["found"] is False
+    assert data["log_id"] == 9999
+
+
+@pytest.mark.asyncio
+async def test_log_get_invalid_log_id_returns_error() -> None:
+    """log_get con log_id no entero → error estructurado."""
+    tool, uc = _make_tool()
+
+    result = await tool.execute(operation="log_get", log_id="not-an-int")
+
+    assert result.success is False
+    assert "log_id" in result.output
+    uc.get_log.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_log_get_missing_log_id_returns_error() -> None:
+    """log_get sin log_id → error estructurado."""
+    tool, uc = _make_tool()
+
+    result = await tool.execute(operation="log_get")
+
+    assert result.success is False
+    assert "log_id" in result.output
+    uc.get_log.assert_not_awaited()

@@ -256,10 +256,10 @@ class SchedulerTool(ITool):
                         f"Detail: {exc}"
                     )
             else:
-                # ISO 8601 — validate by attempting parse via parse_schedule
+                # ISO 8601 — parsear y normalizar a UTC (naive → user_timezone → UTC)
                 try:
-                    parse_schedule(schedule_raw, self._user_timezone)
-                    # Keep the raw string for the use case (as-is ISO 8601)
+                    dt = parse_schedule(schedule_raw, self._user_timezone)
+                    parsed_schedule = dt.isoformat()
                 except ValueError as exc:
                     return self._error(str(exc))
 
@@ -433,8 +433,8 @@ class SchedulerTool(ITool):
                     )
             else:
                 try:
-                    parse_schedule(schedule_raw, self._user_timezone)
-                    updates["schedule"] = schedule_raw
+                    dt = parse_schedule(schedule_raw, self._user_timezone)
+                    updates["schedule"] = dt.isoformat()
                 except ValueError as exc:
                     return self._error(str(exc))
 

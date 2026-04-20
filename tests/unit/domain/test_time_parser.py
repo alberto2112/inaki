@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 from freezegun import freeze_time
@@ -96,27 +97,59 @@ def test_bare_plus_raises_value_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ISO 8601 passthrough
+# ISO 8601 — strings con timezone explícita
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    "raw",
+    ("raw", "expected_utc"),
     [
-        "2026-04-12T14:00:00Z",
-        "2026-04-12T14:00:00+00:00",
-        "2026-04-12T14:00:00-03:00",
-        "2026-04-12T14:00:00",
+        ("2026-04-12T14:00:00Z", datetime(2026, 4, 12, 14, 0, 0, tzinfo=_UTC)),
+        ("2026-04-12T14:00:00+00:00", datetime(2026, 4, 12, 14, 0, 0, tzinfo=_UTC)),
+        ("2026-04-12T14:00:00-03:00", datetime(2026, 4, 12, 17, 0, 0, tzinfo=_UTC)),
+        ("2026-04-12T14:00:00+02:00", datetime(2026, 4, 12, 12, 0, 0, tzinfo=_UTC)),
     ],
 )
-def test_iso8601_passthrough_returns_datetime(raw: str) -> None:
+def test_iso8601_aware_returns_utc(raw: str, expected_utc: datetime) -> None:
     result = parse_schedule(raw, user_timezone="UTC")
     assert isinstance(result, datetime)
-    assert result == datetime.fromisoformat(raw)
+    assert result.tzinfo is not None
+    assert result == expected_utc
 
 
 # ---------------------------------------------------------------------------
-# user_timezone param is accepted without error (reserved for future use)
+# ISO 8601 naive — se interpreta en user_timezone y se convierte a UTC
+# ---------------------------------------------------------------------------
+
+
+def test_iso8601_naive_localized_to_user_timezone() -> None:
+    # Europe/Paris en abril es CEST = UTC+2
+    result = parse_schedule("2026-04-20T06:00:00", user_timezone="Europe/Paris")
+    expected = datetime(2026, 4, 20, 4, 0, 0, tzinfo=_UTC)  # 06:00 Paris = 04:00 UTC
+    assert result == expected
+    assert result.tzinfo is not None
+
+
+def test_iso8601_naive_utc_timezone_unchanged() -> None:
+    result = parse_schedule("2026-04-12T14:00:00", user_timezone="UTC")
+    expected = datetime(2026, 4, 12, 14, 0, 0, tzinfo=_UTC)
+    assert result == expected
+
+
+def test_iso8601_naive_argentina_timezone() -> None:
+    # America/Argentina/Buenos_Aires = UTC-3
+    result = parse_schedule("2026-04-12T14:00:00", user_timezone="America/Argentina/Buenos_Aires")
+    expected = datetime(2026, 4, 12, 17, 0, 0, tzinfo=_UTC)  # 14:00 BA = 17:00 UTC
+    assert result == expected
+
+
+def test_iso8601_naive_unknown_timezone_raises() -> None:
+    with pytest.raises(ValueError, match="Unknown timezone"):
+        parse_schedule("2026-04-12T14:00:00", user_timezone="Fake/Timezone")
+
+
+# ---------------------------------------------------------------------------
+# user_timezone param se usa en offsets relativos (no cambia el resultado, UTC base)
 # ---------------------------------------------------------------------------
 
 

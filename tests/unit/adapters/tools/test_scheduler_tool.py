@@ -158,8 +158,8 @@ async def test_create_one_shot_iso_schedule() -> None:
     assert result.success is True
     uc.create_task.assert_awaited_once()
     call_arg: ScheduledTask = uc.create_task.call_args[0][0]
-    # Schedule passed through as-is (ISO raw string for one_shot)
-    assert call_arg.schedule == "2026-06-01T10:00:00Z"
+    # Schedule normalizado a UTC: "Z" → "+00:00"
+    assert call_arg.schedule == "2026-06-01T10:00:00+00:00"
     assert call_arg.created_by == _AGENT_ID
 
 

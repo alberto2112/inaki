@@ -402,7 +402,11 @@ class SQLiteSchedulerRepo:
             )
         if task.task_kind == TaskKind.ONESHOT:
             try:
-                return datetime.fromisoformat(task.schedule)
+                dt = datetime.fromisoformat(task.schedule)
+                # Safety net: si llega un datetime naive, tratarlo como UTC
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt
             except ValueError:
                 return None
         return None

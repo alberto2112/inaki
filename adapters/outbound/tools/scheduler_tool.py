@@ -128,7 +128,9 @@ class SchedulerTool(ITool):
                     "For 'channel_send': {\"text\": \"...\", \"user_id\": \"...(opcional)\"}. "
                     "El canal de destino se inyecta automáticamente del contexto de conversación — "
                     "NO incluir 'channel_id' ni 'target'. "
-                    "For 'agent_send': {\"agent_id\": \"...\", \"prompt_override\": \"...\"}. "
+                    "For 'agent_send': {\"agent_id\": \"...\", \"task\": \"...\"}. "
+                    "agent_id acepta 'self' (o omitirlo) para referirse al agente actual; "
+                    "usá un id explícito solo si querés delegar a otro agente. "
                     "For 'shell_exec': {\"command\": \"...\", \"working_dir\": null, "
                     "\"env_vars\": {}, \"timeout\": null}."
                 ),
@@ -280,6 +282,15 @@ class SchedulerTool(ITool):
                 trigger_payload_raw["user_id"] = llm_user_id
             else:
                 trigger_payload_raw["target"] = context.routing_key
+
+        # --- Resolución de 'self' para agent_send ---
+        # Si el LLM no especifica agent_id o usa el alias 'self', apuntamos al
+        # agente que está creando la tarea. Delegar a otro agente requiere un
+        # id explícito distinto.
+        if trigger_type_raw == "agent_send":
+            raw_agent_id = trigger_payload_raw.get("agent_id")
+            if raw_agent_id is None or str(raw_agent_id).strip().lower() == "self":
+                trigger_payload_raw["agent_id"] = self._agent_id
 
         # --- Validate trigger payload ---
         payload_model_cls = _TRIGGER_PAYLOAD_MODELS[trigger_type_raw]
@@ -484,6 +495,12 @@ class SchedulerTool(ITool):
                     payload_raw["user_id"] = llm_user_id
                 else:
                     payload_raw["target"] = existing.trigger_payload.target
+
+            # Resolución de 'self' para agent_send (misma lógica que _create)
+            if trigger_type_str == "agent_send":
+                raw_agent_id = payload_raw.get("agent_id")
+                if raw_agent_id is None or str(raw_agent_id).strip().lower() == "self":
+                    payload_raw["agent_id"] = self._agent_id
 
             payload_model_cls = _TRIGGER_PAYLOAD_MODELS[trigger_type_str]
             try:

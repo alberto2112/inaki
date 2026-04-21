@@ -943,6 +943,8 @@ class AgentRegistry:
             "AgentRegistry: %d agente(s) cargado(s): %s", len(self._agents), list(self._agents)
         )
 
+        _validate_channel_uniqueness(self._agents)
+
     def get(self, agent_id: str) -> AgentConfig:
         if agent_id not in self._agents:
             from core.domain.errors import AgentNotFoundError
@@ -957,3 +959,62 @@ class AgentRegistry:
 
     def agents_with_channel(self, channel_type: str) -> list[AgentConfig]:
         return [a for a in self._agents.values() if channel_type in a.channels]
+
+
+def _validate_channel_uniqueness(agents: dict[str, AgentConfig]) -> None:
+    """
+    Rechaza configs donde varios agentes comparten la misma identidad de canal.
+
+    Motivo: un bot de Telegram solo admite UN ``getUpdates`` activo por token
+    (Telegram API), y un socket TCP solo acepta UN bind por ``host:port`` (SO).
+    Si dos agentes declaran el mismo token o el mismo host:port, el daemon
+    levanta pollings/sockets que se pisan → errores ``Conflict`` en loop o
+    ``address already in use``.
+
+    El modelo canónico: un solo agente expone el canal (entry point) y delega
+    a los subagentes vía la tool ``delegate``. Los subagentes NO deben
+    declarar ``channels.telegram`` ni ``channels.rest`` apuntando al mismo
+    token/puerto que el principal.
+    """
+    from core.domain.errors import ConfigError
+
+    telegram_tokens: dict[str, list[str]] = {}
+    rest_addrs: dict[tuple[str, int], list[str]] = {}
+
+    for agent_id, cfg in agents.items():
+        tg_cfg = cfg.channels.get("telegram") or {}
+        token = tg_cfg.get("token")
+        if token:
+            telegram_tokens.setdefault(token, []).append(agent_id)
+
+        rest_cfg = cfg.channels.get("rest") or {}
+        if rest_cfg:
+            host = rest_cfg.get("host", "0.0.0.0")
+            port = rest_cfg.get("port")
+            if port is not None:
+                rest_addrs.setdefault((host, int(port)), []).append(agent_id)
+
+    duplicated_tokens = {tok: ids for tok, ids in telegram_tokens.items() if len(ids) > 1}
+    duplicated_addrs = {addr: ids for addr, ids in rest_addrs.items() if len(ids) > 1}
+
+    if duplicated_tokens:
+        agent_lists = "; ".join(
+            f"agentes [{', '.join(ids)}]" for ids in duplicated_tokens.values()
+        )
+        raise ConfigError(
+            f"Token de Telegram duplicado entre {agent_lists}. "
+            "Un token solo admite un polling activo: dejá 'channels.telegram' únicamente "
+            "en el agente que actúa como entry point; los subagentes reciben mensajes "
+            "vía la tool 'delegate'."
+        )
+
+    if duplicated_addrs:
+        addr_lists = "; ".join(
+            f"{host}:{port} usada por [{', '.join(ids)}]"
+            for (host, port), ids in duplicated_addrs.items()
+        )
+        raise ConfigError(
+            f"Dirección REST duplicada entre agentes: {addr_lists}. "
+            "Asigná un 'channels.rest.port' distinto a cada agente o quitá el canal "
+            "REST de los subagentes."
+        )

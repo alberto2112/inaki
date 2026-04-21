@@ -5,6 +5,9 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
+import pytest
+
+from core.domain.errors import ConfigError
 from infrastructure.config import AgentRegistry
 
 
@@ -60,6 +63,83 @@ def test_registry_empty_when_agents_dir_missing(tmp_path: Path) -> None:
     registry = AgentRegistry(tmp_path / "nonexistent", _GLOBAL_RAW)
 
     assert registry.list_all() == []
+
+
+def _write_agent_with_channels(
+    agents_dir: Path, agent_id: str, channels_block: str
+) -> None:
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    header = (
+        f'id: {agent_id}\n'
+        f'name: "{agent_id}"\n'
+        'description: "agente de prueba"\n'
+        'system_prompt: "soy un test"\n'
+        'channels:\n'
+    )
+    (agents_dir / f"{agent_id}.yaml").write_text(
+        header + channels_block,
+        encoding="utf-8",
+    )
+
+
+def test_registry_rechaza_token_telegram_duplicado(tmp_path: Path) -> None:
+    """Dos agentes con el mismo token Telegram levantarían pollings en conflicto."""
+    agents_dir = tmp_path / "agents"
+    block = '  telegram:\n    token: "SAME-TOKEN"\n'
+    _write_agent_with_channels(agents_dir, "principal", block)
+    _write_agent_with_channels(agents_dir, "secundario", block)
+
+    with pytest.raises(ConfigError) as exc_info:
+        AgentRegistry(agents_dir, _GLOBAL_RAW)
+
+    msg = str(exc_info.value)
+    assert "Telegram" in msg
+    assert "principal" in msg and "secundario" in msg
+    assert "delegate" in msg  # guía al shape correcto
+
+
+def test_registry_rechaza_rest_host_port_duplicado(tmp_path: Path) -> None:
+    """Dos agentes con el mismo host:port REST chocarían al bindear."""
+    agents_dir = tmp_path / "agents"
+    block = '  rest:\n    host: "0.0.0.0"\n    port: 6498\n'
+    _write_agent_with_channels(agents_dir, "uno", block)
+    _write_agent_with_channels(agents_dir, "dos", block)
+
+    with pytest.raises(ConfigError) as exc_info:
+        AgentRegistry(agents_dir, _GLOBAL_RAW)
+
+    msg = str(exc_info.value)
+    assert "6498" in msg
+    assert "uno" in msg and "dos" in msg
+
+
+def test_registry_permite_rest_mismo_host_puertos_distintos(tmp_path: Path) -> None:
+    """Same host, different ports → no conflict."""
+    agents_dir = tmp_path / "agents"
+    _write_agent_with_channels(
+        agents_dir, "a", '  rest:\n    host: "0.0.0.0"\n    port: 6498\n'
+    )
+    _write_agent_with_channels(
+        agents_dir, "b", '  rest:\n    host: "0.0.0.0"\n    port: 6499\n'
+    )
+
+    registry = AgentRegistry(agents_dir, _GLOBAL_RAW)
+
+    assert {a.id for a in registry.list_all()} == {"a", "b"}
+
+
+def test_registry_permite_un_solo_agente_con_telegram(tmp_path: Path) -> None:
+    """Happy path: solo el agente principal declara channels.telegram."""
+    agents_dir = tmp_path / "agents"
+    _write_agent_with_channels(
+        agents_dir, "principal", '  telegram:\n    token: "UNIQUE-TOKEN"\n'
+    )
+    _write_agent(agents_dir, "subagente")  # sin channels
+
+    registry = AgentRegistry(agents_dir, _GLOBAL_RAW)
+
+    assert {a.id for a in registry.list_all()} == {"principal", "subagente"}
+    assert len(registry.agents_with_channel("telegram")) == 1
 
 
 def test_registry_skips_secrets_and_examples(tmp_path: Path) -> None:

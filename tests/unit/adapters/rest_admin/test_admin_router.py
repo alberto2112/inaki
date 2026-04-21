@@ -8,6 +8,23 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from adapters.inbound.rest.admin.app import create_admin_app
+from core.use_cases.run_agent import InspectResult
+
+
+def _dummy_inspect_result() -> InspectResult:
+    return InspectResult(
+        user_input="hola",
+        memory_digest="",
+        all_skills=[],
+        selected_skills=[],
+        skills_routing_active=False,
+        selected_skill_scores=[],
+        all_tool_schemas=[],
+        selected_tool_schemas=[],
+        tools_routing_active=False,
+        selected_tool_scores=[],
+        system_prompt="",
+    )
 
 
 @pytest.fixture
@@ -20,7 +37,7 @@ def mock_app_container() -> MagicMock:
     # agents dict con un agente mock
     agent_container = MagicMock()
     agent_container.run_agent = MagicMock()
-    agent_container.run_agent.inspect = AsyncMock(return_value={"pipeline": "ok"})
+    agent_container.run_agent.inspect = AsyncMock(return_value=_dummy_inspect_result())
     container.agents = {"general": agent_container}
     return container
 

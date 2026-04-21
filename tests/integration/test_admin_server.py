@@ -8,6 +8,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from adapters.inbound.rest.admin.app import create_admin_app
+from core.use_cases.run_agent import InspectResult
 
 
 @pytest.fixture
@@ -22,11 +23,19 @@ def app_container() -> MagicMock:
     agent = MagicMock()
     agent.run_agent = MagicMock()
     agent.run_agent.inspect = AsyncMock(
-        return_value={
-            "memories": ["m1"],
-            "skills": ["s1"],
-            "tools": ["t1"],
-        }
+        return_value=InspectResult(
+            user_input="test pipeline",
+            memory_digest="digest-stub",
+            all_skills=[],
+            selected_skills=[],
+            skills_routing_active=False,
+            selected_skill_scores=[],
+            all_tool_schemas=[],
+            selected_tool_schemas=[],
+            tools_routing_active=False,
+            selected_tool_scores=[],
+            system_prompt="sys-prompt-stub",
+        )
     )
     container.agents = {"general": agent, "dev": MagicMock()}
     return container
@@ -96,8 +105,12 @@ async def test_inspect_valid_agent(admin_app_with_auth) -> None:
         )
     assert resp.status_code == 200
     data = resp.json()
-    assert "memories" in data
-    assert "skills" in data
+    assert data["user_input"] == "test pipeline"
+    assert "memory_digest" in data
+    assert "all_skills" in data
+    assert "selected_skills" in data
+    assert "all_tool_schemas" in data
+    assert "system_prompt" in data
 
 
 async def test_inspect_invalid_agent(admin_app_with_auth) -> None:

@@ -125,6 +125,29 @@ class TranscriptionConfig(BaseModel):
 _KEEP_LAST_MESSAGES_FALLBACK = 84
 
 
+class MemoryLLMOverride(BaseModel):
+    """
+    Override parcial de ``LLMConfig`` para el LLM de consolidación de memoria.
+
+    Todos los campos son opcionales. Solo los campos EXPLÍCITAMENTE presentes
+    en el YAML pisan al ``llm.*`` del agente; los ausentes se heredan.
+
+    Semántica ``null`` vs ausente (relevante para distinguir override de herencia):
+      - Clave ausente en YAML → no está en ``model_fields_set`` → hereda del base.
+      - Clave presente con valor ``null`` → está en ``model_fields_set`` con valor
+        ``None`` → pisa al base con ``None`` (útil para, p. ej., apagar
+        ``reasoning_effort`` en consolidación sin tocar el LLM del agente).
+    """
+
+    provider: str | None = None
+    base_url: str | None = None
+    model: str | None = None
+    temperature: float | None = None
+    max_tokens: int | None = None
+    reasoning_effort: str | None = None
+    api_key: str | None = None
+
+
 class MemoryConfig(BaseModel):
     model_config = ConfigDict(validate_default=True)  # RuntimePath en los defaults
 
@@ -137,6 +160,11 @@ class MemoryConfig(BaseModel):
     delay_seconds: int = 2
     keep_last_messages: int = 0
     enabled: bool = True
+    llm: MemoryLLMOverride | None = None
+    """
+    Override opcional del LLM usado SOLO para la consolidación de memoria.
+    Si es ``None``, consolidación reusa el LLM del agente.
+    """
 
     def resolved_keep_last_messages(self) -> int:
         """
@@ -147,6 +175,36 @@ class MemoryConfig(BaseModel):
         if self.keep_last_messages <= 0:
             return _KEEP_LAST_MESSAGES_FALLBACK
         return self.keep_last_messages
+
+    def resolved_llm_config(self, base: LLMConfig) -> LLMConfig:
+        """
+        Resuelve la ``LLMConfig`` efectiva para la consolidación de memoria.
+
+        Merge field-by-field: los campos que el usuario seteó EXPLÍCITAMENTE
+        en ``memory.llm.*`` (incluso ``null``) pisan al ``base``; el resto hereda.
+
+        Validación cruzada: si el override cambia el ``provider`` y la config
+        efectiva resultante no tiene ``api_key`` resolvible, se lanza
+        ``ConfigError`` al arranque (fail-fast, no silencioso durante runtime).
+        """
+        from core.domain.errors import ConfigError
+
+        if self.llm is None:
+            return base
+
+        fields_set = self.llm.model_fields_set
+        overrides = {f: getattr(self.llm, f) for f in fields_set}
+        result = base.model_copy(update=overrides)
+
+        # Si el provider cambia, la api_key heredada del base es de otro
+        # provider y no sirve: se requiere api_key explícita en el override.
+        if result.provider != base.provider and "api_key" not in fields_set:
+            raise ConfigError(
+                f"memory.llm.provider='{result.provider}' difiere de "
+                f"llm.provider='{base.provider}' pero no hay api_key resolvible. "
+                "Definí memory.llm.api_key en el bloque secrets correspondiente."
+            )
+        return result
 
 
 class ChatHistoryConfig(BaseModel):

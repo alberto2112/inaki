@@ -10,6 +10,10 @@ class LLMError(IñakiError):
     """Error al llamar al proveedor LLM."""
 
 
+class ConfigError(IñakiError):
+    """Error de configuración detectado al cargar o resolver config."""
+
+
 class ConsolidationError(IñakiError):
     """Error durante la consolidación de memoria."""
 

@@ -661,6 +661,68 @@ filas preexistentes formaban parte de un estado estable).
 `/clear` (slash command) sigue haciendo wipe total — es el mecanismo manual
 para descartar el hilo. Separado de la consolidación.
 
+### LLM dedicado para consolidación — `memory.llm`
+
+Por defecto, el `ConsolidateMemoryUseCase` usa el mismo `ILLMProvider` que el
+agente (`llm.*`). Esto es conveniente, pero tiene un pitfall concreto: si el LLM
+del agente es un **reasoning model** con `reasoning_effort` alto (p. ej.
+`openai/gpt-oss-120b` en Groq), el modelo consume el presupuesto de
+`max_tokens` entero razonando internamente y devuelve `content: ""`. El parser
+de consolidación explota con `ConsolidationError: "El LLM no devolvió JSON
+válido. Respuesta: "` (vacía) y los recuerdos nunca se extraen.
+
+El sub-bloque `memory.llm` permite **override parcial** de `llm.*` SOLO para
+consolidación, sin tocar el LLM conversacional:
+
+```yaml
+llm:                          # Base (chat del agente)
+  provider: groq
+  model: openai/gpt-oss-120b
+  reasoning_effort: high
+  max_tokens: 2048
+  api_key: KEY_GROQ
+
+memory:
+  enabled: true
+  llm:                        # Override SOLO para consolidación
+    model: llama-3.3-70b-versatile
+    reasoning_effort: null    # apaga el reasoning (heredaba "high")
+    max_tokens: 8192          # presupuesto más amplio para el JSON
+    # provider, api_key, base_url, temperature → heredados de llm.*
+```
+
+**Semántica del merge (field-by-field):**
+
+| YAML de `memory.llm.*` | Comportamiento |
+|------------------------|----------------|
+| Clave AUSENTE | Hereda el valor de `llm.*`. |
+| Clave con valor concreto (ej. `max_tokens: 8192`) | Pisa al base. |
+| Clave con valor `null` explícito (ej. `reasoning_effort: null`) | Pisa al base con `None` (override, no herencia). |
+
+**Validación al arrancar:** si el override cambia `provider` y no hay `api_key`
+resolvible (ni en `memory.llm.api_key` ni heredada del base), el daemon falla
+al arranque con `ConfigError` — no silenciosamente durante la siguiente
+consolidación.
+
+**Wiring:** `AgentContainer` compara la config efectiva contra `llm.*`; si son
+idénticas, **reusa** la misma instancia de provider (sin duplicación de HTTP
+clients). Si difieren, instancia un provider dedicado vía
+`LLMProviderFactory.create_from_llm_config`.
+
+**Cuándo usarlo:**
+
+- Tu LLM de chat es un reasoning model y la consolidación se rompe → caso
+  canónico. Apuntá a un modelo no-reasoning (`llama-3.3-70b-versatile`,
+  `gpt-4o-mini`, etc.).
+- Querés un modelo más **barato** para consolidación — es extracción
+  estructurada, no necesita el modelo más potente.
+- El chat tira de un provider y la memoria de otro (p. ej. chat en Ollama
+  local, consolidación en Groq para rapidez nocturna).
+
+**Cuándo NO usarlo:** si tu LLM base ya funciona bien para consolidación,
+omití el bloque entero. El comportamiento por defecto (`memory.llm` ausente)
+reusa el provider del agente.
+
 ## Scheduler — `channel_fallback` (routing de canales)
 
 El scheduler puede agendar tareas desde cualquier canal inbound (CLI, REST,

@@ -159,6 +159,46 @@ memory:
                               # Controla si ese agente participa en la
                               # consolidación nocturna. Default: true.
 
+  # ---------------------------------------------------------------------------
+  # [memory.llm] — LLM dedicado para la consolidación (OPCIONAL)
+  # ---------------------------------------------------------------------------
+  # Permite usar un LLM DISTINTO al del agente (llm.*) SOLO para consolidar la
+  # memoria. Cada campo que definas acá pisa al de `llm.*`; los campos ausentes
+  # se heredan. Útil cuando el LLM del agente es un reasoning model con
+  # reasoning_effort alto — esos tokens se contabilizan contra max_tokens y
+  # pueden dejar la respuesta de consolidación vacía (consolidación necesita
+  # devolver JSON, no razonar).
+  #
+  # Semántica:
+  #   - clave AUSENTE → hereda el valor de `llm.*`.
+  #   - clave con valor `null` → override EXPLÍCITO (fuerza None aunque el
+  #     base tenga valor; útil p. ej. para apagar `reasoning_effort`).
+  #
+  # Validación: si cambiás `provider` y no hay `api_key` resolvible para ese
+  # provider (ni acá ni en el base), el arranque falla con ConfigError.
+  #
+  # Ejemplo típico — usar un modelo no-reasoning para consolidar:
+  #
+  # llm:                      # (base, para el chat)
+  #   provider: groq
+  #   model: openai/gpt-oss-120b
+  #   reasoning_effort: high
+  #   max_tokens: 2048
+  #
+  # llm:                      # (override, para consolidación)
+  #   model: llama-3.3-70b-versatile
+  #   reasoning_effort: null  # apaga reasoning (gpt-oss tenía high)
+  #   max_tokens: 8192        # más presupuesto para el JSON de recuerdos
+  #
+  # llm:
+  #   provider: ~             # ← descomenta para heredar o override
+  #   base_url: ~
+  #   model: ~
+  #   temperature: ~
+  #   max_tokens: ~
+  #   reasoning_effort: ~
+  #   api_key: ~              # en secrets si cambiás de provider
+
 
 # -----------------------------------------------------------------------------
 # [chat_history] — Historial de conversación a corto plazo (SQLite)

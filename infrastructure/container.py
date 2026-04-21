@@ -122,14 +122,50 @@ class AgentContainer:
             agent_config=cfg,
         )
 
+        # LLM de consolidación: reusa `self._llm` o instancia uno dedicado
+        # si `memory.llm` define algún override. La validación cruzada
+        # (provider cambiado sin api_key) ocurre en `_resolve_memory_llm`
+        # → fail-fast al arranque.
+        llm_consolidator = self._resolve_memory_llm(cfg, self._llm)
+
         self.consolidate_memory = ConsolidateMemoryUseCase(
-            llm=self._llm,
+            llm=llm_consolidator,
             memory=self._memory,
             embedder=self._embedder,
             history=self._history,
             agent_id=cfg.id,
             memory_config=cfg.memory,
         )
+
+    @staticmethod
+    def _resolve_memory_llm(cfg: AgentConfig, base_llm):
+        """
+        Devuelve el ``ILLMProvider`` que debe inyectarse en
+        ``ConsolidateMemoryUseCase``.
+
+        - Si ``cfg.memory.llm`` no existe o produce una config efectiva idéntica
+          al ``cfg.llm``, REUSA la instancia ``base_llm`` (evita duplicar
+          clientes HTTP).
+        - Si la config efectiva difiere, instancia un provider nuevo vía
+          ``LLMProviderFactory.create_from_llm_config``.
+
+        Puede lanzar ``ConfigError`` si la validación cruzada falla
+        (provider cambiado sin api_key resolvible).
+        """
+        resolved_cfg = cfg.memory.resolved_llm_config(cfg.llm)
+        if resolved_cfg == cfg.llm:
+            return base_llm
+
+        logger.info(
+            "Agente '%s': LLM de consolidación dedicado — provider=%s, model=%s, "
+            "reasoning_effort=%s, max_tokens=%d",
+            cfg.id,
+            resolved_cfg.provider,
+            resolved_cfg.model,
+            resolved_cfg.reasoning_effort,
+            resolved_cfg.max_tokens,
+        )
+        return LLMProviderFactory.create_from_llm_config(resolved_cfg)
 
     def _collect_knowledge_sources(
         self,

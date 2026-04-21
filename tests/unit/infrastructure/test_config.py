@@ -5,11 +5,16 @@ from __future__ import annotations
 from pathlib import Path
 
 
+import pytest
+
+from core.domain.errors import ConfigError
 from infrastructure.config import (
     AppConfig,
     ChatHistoryConfig,
     EmbeddingConfig,
+    LLMConfig,
     MemoryConfig,
+    MemoryLLMOverride,
     SchedulerConfig,
 )
 
@@ -163,6 +168,114 @@ def test_keep_last_messages_negative_treated_as_sentinel() -> None:
 
 
 # ---------------------------------------------------------------------------
+# MemoryLLMOverride — resolución de LLMConfig efectiva para consolidación
+# ---------------------------------------------------------------------------
+
+
+def _base_llm() -> LLMConfig:
+    return LLMConfig(
+        provider="groq",
+        model="openai/gpt-oss-120b",
+        temperature=0.7,
+        max_tokens=2048,
+        reasoning_effort="high",
+        api_key="KEY_BASE",
+    )
+
+
+def test_resolved_llm_config_sin_override_devuelve_base() -> None:
+    base = _base_llm()
+    cfg = MemoryConfig()
+
+    resultado = cfg.resolved_llm_config(base)
+
+    assert resultado == base
+
+
+def test_resolved_llm_config_merge_parcial_resuelve_caso_del_bug() -> None:
+    """
+    Caso del bug original: base con reasoning_effort='high' y max_tokens=2048
+    consumía todo el presupuesto en reasoning. Con el override a un modelo
+    no-reasoning y más max_tokens, la consolidación puede devolver JSON.
+    """
+    base = _base_llm()
+    override = MemoryLLMOverride(
+        model="llama-3.3-70b-versatile",
+        reasoning_effort=None,
+        max_tokens=8192,
+    )
+    cfg = MemoryConfig(llm=override)
+
+    resultado = cfg.resolved_llm_config(base)
+
+    assert resultado.provider == "groq"  # heredado
+    assert resultado.model == "llama-3.3-70b-versatile"  # override
+    assert resultado.reasoning_effort is None  # override explícito a None
+    assert resultado.max_tokens == 8192  # override
+    assert resultado.temperature == 0.7  # heredado
+    assert resultado.api_key == "KEY_BASE"  # heredado
+
+
+def test_resolved_llm_config_distingue_null_explicito_vs_clave_ausente() -> None:
+    """
+    null explícito en YAML → pisa el base con None.
+    clave ausente en YAML → hereda el valor del base.
+    """
+    base = _base_llm()
+
+    # Caso 1: null explícito → model_fields_set contiene 'reasoning_effort'.
+    override_null = MemoryLLMOverride.model_validate({"reasoning_effort": None})
+    assert "reasoning_effort" in override_null.model_fields_set
+    resultado_null = MemoryConfig(llm=override_null).resolved_llm_config(base)
+    assert resultado_null.reasoning_effort is None
+
+    # Caso 2: clave ausente → model_fields_set NO contiene 'reasoning_effort'.
+    override_ausente = MemoryLLMOverride.model_validate({"model": "X"})
+    assert "reasoning_effort" not in override_ausente.model_fields_set
+    resultado_ausente = MemoryConfig(llm=override_ausente).resolved_llm_config(base)
+    assert resultado_ausente.reasoning_effort == "high"  # heredado
+
+
+def test_resolved_llm_config_provider_distinto_sin_api_key_falla() -> None:
+    base = _base_llm()
+    override = MemoryLLMOverride(provider="openai", model="gpt-4o-mini")
+    cfg = MemoryConfig(llm=override)
+
+    with pytest.raises(ConfigError) as exc_info:
+        cfg.resolved_llm_config(base)
+
+    mensaje = str(exc_info.value)
+    assert "memory.llm.provider" in mensaje
+    assert "api_key" in mensaje
+
+
+def test_resolved_llm_config_mismo_provider_sin_api_key_override_es_ok() -> None:
+    """
+    Si el provider no cambia, la api_key se hereda del base: no hay validación
+    que falle aunque el override no declare api_key.
+    """
+    base = _base_llm()
+    override = MemoryLLMOverride(model="otro-modelo")
+    cfg = MemoryConfig(llm=override)
+
+    resultado = cfg.resolved_llm_config(base)
+
+    assert resultado.provider == "groq"
+    assert resultado.api_key == "KEY_BASE"
+
+
+def test_resolved_llm_config_provider_distinto_con_api_key_es_ok() -> None:
+    base = _base_llm()
+    override = MemoryLLMOverride(provider="openai", api_key="KEY_OVERRIDE")
+    cfg = MemoryConfig(llm=override)
+
+    resultado = cfg.resolved_llm_config(base)
+
+    assert resultado.provider == "openai"
+    assert resultado.api_key == "KEY_OVERRIDE"
+
+
+# ---------------------------------------------------------------------------
 # DelegationConfig — global defaults
 # ---------------------------------------------------------------------------
 
@@ -171,7 +284,6 @@ from infrastructure.config import (  # noqa: E402
     AgentDelegationConfig,
     DelegationConfig,
     GlobalConfig,
-    LLMConfig,
     _render_default_global_yaml,
 )
 

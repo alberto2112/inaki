@@ -14,12 +14,12 @@ import pkgutil
 from pathlib import Path
 
 from core.ports.outbound.llm_port import ILLMProvider
+from infrastructure.config import LLMConfig
 
 logger = logging.getLogger(__name__)
 
 
 class LLMProviderFactory:
-
     _registry: dict[str, type] = {}
 
     @classmethod
@@ -60,3 +60,21 @@ class LLMProviderFactory:
                 f"Proveedor LLM '{provider_name}' no encontrado. Disponibles: {available}"
             )
         return cls._registry[provider_name](cfg.llm)
+
+    @classmethod
+    def create_from_llm_config(cls, llm_cfg: LLMConfig) -> ILLMProvider:
+        """
+        Instancia un ``ILLMProvider`` a partir de una ``LLMConfig`` directa.
+
+        Pensado para casos donde la config viene resuelta de un merge (p. ej.,
+        ``MemoryConfig.resolved_llm_config(base)``) y no queremos construir un
+        ``AgentConfig`` falso solo para satisfacer la API de ``create(cfg)``.
+        """
+        cls._load()
+        provider_name = llm_cfg.provider
+        if provider_name not in cls._registry:
+            available = list(cls._registry.keys())
+            raise ValueError(
+                f"Proveedor LLM '{provider_name}' no encontrado. Disponibles: {available}"
+            )
+        return cls._registry[provider_name](llm_cfg)

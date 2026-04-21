@@ -61,9 +61,7 @@ def test_build_multipart_extension_derivada_del_mime() -> None:
         ("audio/x-desconocido", ""),  # mime desconocido → sin extensión
     ]
     for mime, ext_esperada in casos:
-        files, _ = BaseTranscriptionProvider._build_multipart(
-            audio=b"x", mime=mime, model="m"
-        )
+        files, _ = BaseTranscriptionProvider._build_multipart(audio=b"x", mime=mime, model="m")
         filename = files["file"][0]
         assert filename == f"audio{ext_esperada}", (
             f"mime={mime!r}: esperaba 'audio{ext_esperada}', got {filename!r}"

@@ -18,7 +18,7 @@ import httpx
 
 from adapters.outbound.embedding.base import BaseEmbeddingProvider
 from core.domain.errors import EmbeddingError
-from infrastructure.config import EmbeddingConfig
+from infrastructure.config import ResolvedEmbeddingConfig
 
 PROVIDER_NAME = "openai"
 
@@ -26,14 +26,13 @@ logger = logging.getLogger(__name__)
 
 
 class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
+    _DEFAULT_BASE_URL = "https://api.openai.com/v1"
 
-    def __init__(self, cfg: EmbeddingConfig) -> None:
+    def __init__(self, cfg: ResolvedEmbeddingConfig) -> None:
         if not cfg.api_key:
-            raise EmbeddingError(
-                "OpenAI embedding requiere api_key en embedding.api_key "
-                "(configurar en global.secrets.yaml o agents/{id}.secrets.yaml)"
-            )
+            raise EmbeddingError("OpenAI embedding requiere api_key en providers.openai.api_key")
         self._cfg = cfg
+        self._base_url = cfg.base_url or self._DEFAULT_BASE_URL
         self._headers = {
             "Authorization": f"Bearer {cfg.api_key}",
             "Content-Type": "application/json",
@@ -48,7 +47,7 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(
-                    f"{self._cfg.base_url}/embeddings",
+                    f"{self._base_url}/embeddings",
                     headers=self._headers,
                     json=payload,
                 )

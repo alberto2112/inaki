@@ -21,11 +21,13 @@ def app_container() -> MagicMock:
 
     agent = MagicMock()
     agent.run_agent = MagicMock()
-    agent.run_agent.inspect = AsyncMock(return_value={
-        "memories": ["m1"],
-        "skills": ["s1"],
-        "tools": ["t1"],
-    })
+    agent.run_agent.inspect = AsyncMock(
+        return_value={
+            "memories": ["m1"],
+            "skills": ["s1"],
+            "tools": ["t1"],
+        }
+    )
     container.agents = {"general": agent, "dev": MagicMock()}
     return container
 

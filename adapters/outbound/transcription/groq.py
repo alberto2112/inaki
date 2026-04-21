@@ -13,7 +13,7 @@ import httpx
 
 from adapters.outbound.transcription.base import BaseTranscriptionProvider
 from core.domain.errors import TranscriptionError, TranscriptionFileTooLargeError
-from infrastructure.config import TranscriptionConfig
+from infrastructure.config import ResolvedTranscriptionConfig
 
 PROVIDER_NAME = "groq"
 
@@ -21,10 +21,11 @@ logger = logging.getLogger(__name__)
 
 
 class GroqTranscriptionProvider(BaseTranscriptionProvider):
-
-    def __init__(self, cfg: TranscriptionConfig) -> None:
+    def __init__(self, cfg: ResolvedTranscriptionConfig) -> None:
         if not cfg.api_key:
-            raise TranscriptionError("Groq requiere api_key en transcription.api_key")
+            raise TranscriptionError(
+                "Groq transcription requiere api_key en providers.groq.api_key"
+            )
         self._cfg = cfg
         self._base_url = cfg.base_url or "https://api.groq.com/openai/v1"
         self._headers = {
@@ -39,9 +40,7 @@ class GroqTranscriptionProvider(BaseTranscriptionProvider):
     ) -> str:
         limit_bytes = self._cfg.max_audio_mb * 1024 * 1024
         if len(audio) > limit_bytes:
-            raise TranscriptionFileTooLargeError(
-                size_bytes=len(audio), limit_bytes=limit_bytes
-            )
+            raise TranscriptionFileTooLargeError(size_bytes=len(audio), limit_bytes=limit_bytes)
 
         lang = language or self._cfg.language
         files, data = self._build_multipart(
@@ -63,9 +62,7 @@ class GroqTranscriptionProvider(BaseTranscriptionProvider):
                 resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
             body = exc.response.text
-            raise TranscriptionError(
-                f"Groq {exc.response.status_code}: {body}"
-            ) from exc
+            raise TranscriptionError(f"Groq {exc.response.status_code}: {body}") from exc
         except httpx.HTTPError as exc:
             raise TranscriptionError(f"Groq HTTP error: {exc}") from exc
 

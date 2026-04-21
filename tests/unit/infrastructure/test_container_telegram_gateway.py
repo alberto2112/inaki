@@ -51,9 +51,7 @@ def test_channel_sender_adapter_almacena_callable() -> None:
     assert adapter._get_telegram_bot is get_bot, (
         "_get_telegram_bot debe referenciar exactamente el callable pasado al constructor"
     )
-    assert callable(adapter._get_telegram_bot), (
-        "_get_telegram_bot debe ser callable"
-    )
+    assert callable(adapter._get_telegram_bot), "_get_telegram_bot debe ser callable"
 
 
 # ---------------------------------------------------------------------------
@@ -67,15 +65,9 @@ def test_app_container_telegram_bots_inicializa_vacio() -> None:
     """
     app = _build_minimal_app_container()
 
-    assert hasattr(app, "_telegram_bots"), (
-        "AppContainer debe tener atributo _telegram_bots"
-    )
-    assert isinstance(app._telegram_bots, dict), (
-        "_telegram_bots debe ser un diccionario"
-    )
-    assert len(app._telegram_bots) == 0, (
-        "_telegram_bots debe inicializar vacío"
-    )
+    assert hasattr(app, "_telegram_bots"), "AppContainer debe tener atributo _telegram_bots"
+    assert isinstance(app._telegram_bots, dict), "_telegram_bots debe ser un diccionario"
+    assert len(app._telegram_bots) == 0, "_telegram_bots debe inicializar vacío"
 
 
 # ---------------------------------------------------------------------------
@@ -115,9 +107,7 @@ def test_app_container_get_telegram_bot_devuelve_bot_registrado() -> None:
 
     resultado = app._get_telegram_bot()
 
-    assert resultado is bot_mock, (
-        "_get_telegram_bot() debe devolver el bot registrado"
-    )
+    assert resultado is bot_mock, "_get_telegram_bot() debe devolver el bot registrado"
 
 
 # ---------------------------------------------------------------------------

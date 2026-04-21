@@ -51,6 +51,7 @@ async def repo(tmp_path: Path) -> SQLiteSchedulerRepo:
 # Schema
 # ---------------------------------------------------------------------------
 
+
 async def test_ensure_schema_idempotent(tmp_path: Path) -> None:
     r = SQLiteSchedulerRepo(str(tmp_path / "test.db"))
     await r.ensure_schema()
@@ -60,6 +61,7 @@ async def test_ensure_schema_idempotent(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # User task ID allocation
 # ---------------------------------------------------------------------------
+
 
 async def test_first_user_task_gets_id_100(repo: SQLiteSchedulerRepo) -> None:
     saved = await repo.save_task(_make_task("first"))
@@ -76,6 +78,7 @@ async def test_second_user_task_gets_id_101(repo: SQLiteSchedulerRepo) -> None:
 # ---------------------------------------------------------------------------
 # seed_builtin idempotent
 # ---------------------------------------------------------------------------
+
 
 async def test_seed_builtin_idempotent(repo: SQLiteSchedulerRepo) -> None:
     builtin = _make_builtin()
@@ -107,6 +110,7 @@ async def test_seed_builtin_computes_next_run_for_recurrent(repo: SQLiteSchedule
 # ---------------------------------------------------------------------------
 # save_task — resuelve next_run cuando llega None
 # ---------------------------------------------------------------------------
+
 
 async def test_save_task_computes_next_run_for_recurrent(repo: SQLiteSchedulerRepo) -> None:
     """
@@ -184,6 +188,7 @@ async def test_save_task_preserves_explicit_next_run(repo: SQLiteSchedulerRepo) 
 # get_next_due
 # ---------------------------------------------------------------------------
 
+
 async def test_get_next_due_returns_soonest(repo: SQLiteSchedulerRepo) -> None:
     now = datetime(2025, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
     earlier = datetime(2025, 6, 1, 11, 0, 0, tzinfo=timezone.utc)
@@ -201,6 +206,7 @@ async def test_get_next_due_returns_soonest(repo: SQLiteSchedulerRepo) -> None:
 # ---------------------------------------------------------------------------
 # list_due_pending
 # ---------------------------------------------------------------------------
+
 
 async def test_list_due_pending_returns_only_past_due(repo: SQLiteSchedulerRepo) -> None:
     now = datetime(2025, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -230,6 +236,7 @@ async def test_list_due_pending_excludes_disabled(repo: SQLiteSchedulerRepo) -> 
 # ---------------------------------------------------------------------------
 # list_logs / get_log — lectura de task_logs
 # ---------------------------------------------------------------------------
+
 
 async def _seed_logs(
     repo: SQLiteSchedulerRepo,
@@ -287,13 +294,15 @@ async def test_list_logs_status_filter(repo: SQLiteSchedulerRepo) -> None:
     base = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
     # 2 success, 2 failed, intercalados por minuto
     for i, st in enumerate(["success", "failed", "success", "failed"]):
-        await repo.save_log(TaskLog(
-            task_id=task.id,
-            started_at=base.replace(minute=i),
-            finished_at=base.replace(minute=i),
-            status=st,
-            output="x",
-        ))
+        await repo.save_log(
+            TaskLog(
+                task_id=task.id,
+                started_at=base.replace(minute=i),
+                finished_at=base.replace(minute=i),
+                status=st,
+                output="x",
+            )
+        )
 
     result = await repo.list_logs(task.id, limit=10, offset=0, status_filter="failed")
 
@@ -324,14 +333,24 @@ async def test_list_logs_stable_order_by_id_desc_on_tie(repo: SQLiteSchedulerRep
     """
     task = await repo.save_task(_make_task("t"))
     same_ts = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-    first = await repo.save_log(TaskLog(
-        task_id=task.id, started_at=same_ts, finished_at=same_ts,
-        status="success", output="first",
-    ))
-    second = await repo.save_log(TaskLog(
-        task_id=task.id, started_at=same_ts, finished_at=same_ts,
-        status="success", output="second",
-    ))
+    first = await repo.save_log(
+        TaskLog(
+            task_id=task.id,
+            started_at=same_ts,
+            finished_at=same_ts,
+            status="success",
+            output="first",
+        )
+    )
+    second = await repo.save_log(
+        TaskLog(
+            task_id=task.id,
+            started_at=same_ts,
+            finished_at=same_ts,
+            status="success",
+            output="second",
+        )
+    )
 
     result = await repo.list_logs(task.id, limit=10, offset=0)
 
@@ -347,13 +366,15 @@ async def test_list_logs_returns_full_output_untruncated(repo: SQLiteSchedulerRe
     """
     task = await repo.save_task(_make_task("t"))
     big_output = "x" * 5000
-    await repo.save_log(TaskLog(
-        task_id=task.id,
-        started_at=datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-        finished_at=datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-        status="success",
-        output=big_output,
-    ))
+    await repo.save_log(
+        TaskLog(
+            task_id=task.id,
+            started_at=datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            finished_at=datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            status="success",
+            output=big_output,
+        )
+    )
 
     result = await repo.list_logs(task.id, limit=10, offset=0)
 
@@ -366,13 +387,15 @@ async def test_get_log_existing_returns_full_log(repo: SQLiteSchedulerRepo) -> N
     """Scenario 'Fetch existing log': devuelve TaskLog con output completo."""
     task = await repo.save_task(_make_task("t"))
     big_output = "y" * 5000
-    saved = await repo.save_log(TaskLog(
-        task_id=task.id,
-        started_at=datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-        finished_at=datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-        status="success",
-        output=big_output,
-    ))
+    saved = await repo.save_log(
+        TaskLog(
+            task_id=task.id,
+            started_at=datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            finished_at=datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            status="success",
+            output=big_output,
+        )
+    )
 
     result = await repo.get_log(saved.id)
 
@@ -394,15 +417,17 @@ async def test_get_log_preserves_metadata_and_error(repo: SQLiteSchedulerRepo) -
     Triangulación: distinto al caso 'solo output' para forzar lógica real en _row_to_tasklog.
     """
     task = await repo.save_task(_make_task("t"))
-    saved = await repo.save_log(TaskLog(
-        task_id=task.id,
-        started_at=datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-        finished_at=datetime(2026, 1, 1, 12, 0, 1, tzinfo=timezone.utc),
-        status="failed",
-        output=None,
-        error="Agent 'self' not found",
-        metadata={"original_target": "telegram:1", "resolved_target": "telegram:1"},
-    ))
+    saved = await repo.save_log(
+        TaskLog(
+            task_id=task.id,
+            started_at=datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            finished_at=datetime(2026, 1, 1, 12, 0, 1, tzinfo=timezone.utc),
+            status="failed",
+            output=None,
+            error="Agent 'self' not found",
+            metadata={"original_target": "telegram:1", "resolved_target": "telegram:1"},
+        )
+    )
 
     result = await repo.get_log(saved.id)
 

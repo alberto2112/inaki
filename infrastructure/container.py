@@ -79,10 +79,11 @@ class AgentContainer:
         self._channel_context: ChannelContext | None = None
 
         # Factories resuelven el proveedor correcto leyendo cfg.embedding.provider y cfg.llm.provider
-        self._embedder = EmbeddingProviderFactory.create(cfg)
+        # y componen ResolvedXConfig contra el registry top-level de providers.
+        self._embedder = EmbeddingProviderFactory.create(cfg.embedding, cfg.providers)
         self._embedding_cache = SqliteEmbeddingCache(cfg.embedding.cache_filename)
         self._memory = SQLiteMemoryRepository(cfg.memory.db_filename, self._embedder)
-        self._llm = LLMProviderFactory.create(cfg)
+        self._llm = LLMProviderFactory.create(cfg.llm, cfg.providers)
         self._skills = YamlSkillRepository(
             embedder=self._embedder,
             cache=self._embedding_cache,
@@ -147,25 +148,27 @@ class AgentContainer:
           al ``cfg.llm``, REUSA la instancia ``base_llm`` (evita duplicar
           clientes HTTP).
         - Si la config efectiva difiere, instancia un provider nuevo vía
-          ``LLMProviderFactory.create_from_llm_config``.
+          ``LLMProviderFactory.create_from_resolved``, que toma el
+          ``ResolvedLLMConfig`` (feature + creds del registry) ya compuesto.
 
-        Puede lanzar ``ConfigError`` si la validación cruzada falla
-        (provider cambiado sin api_key resolvible).
+        Puede lanzar ``ConfigError`` si el provider del override requiere creds
+        y no existe entrada en el registry.
         """
-        resolved_cfg = cfg.memory.resolved_llm_config(cfg.llm)
-        if resolved_cfg == cfg.llm:
+        merged = cfg.memory.merged_llm_config(cfg.llm)
+        if merged == cfg.llm:
             return base_llm
 
+        resolved = cfg.memory.resolved_llm_config(cfg.llm, cfg.providers)
         logger.info(
             "Agente '%s': LLM de consolidación dedicado — provider=%s, model=%s, "
             "reasoning_effort=%s, max_tokens=%d",
             cfg.id,
-            resolved_cfg.provider,
-            resolved_cfg.model,
-            resolved_cfg.reasoning_effort,
-            resolved_cfg.max_tokens,
+            resolved.provider,
+            resolved.model,
+            resolved.reasoning_effort,
+            resolved.max_tokens,
         )
-        return LLMProviderFactory.create_from_llm_config(resolved_cfg)
+        return LLMProviderFactory.create_from_resolved(resolved)
 
     def _collect_knowledge_sources(
         self,
@@ -404,7 +407,7 @@ class AgentContainer:
                 "channels.telegram.voice_enabled=false para deshabilitar voz."
             )
 
-        return TranscriptionProviderFactory.create(cfg.transcription)
+        return TranscriptionProviderFactory.create(cfg.transcription, cfg.providers)
 
     @property
     def transcription(self) -> ITranscriptionProvider | None:

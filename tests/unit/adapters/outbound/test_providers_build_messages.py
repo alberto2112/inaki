@@ -18,7 +18,7 @@ from adapters.outbound.providers.ollama import OllamaProvider
 from adapters.outbound.providers.openai import OpenAIProvider
 from adapters.outbound.providers.openrouter import OpenRouterProvider
 from core.domain.entities.message import Message, Role
-from infrastructure.config import LLMConfig
+from infrastructure.config import ResolvedLLMConfig
 
 
 SYSTEM_PROMPT = "Eres un asistente de test."
@@ -42,8 +42,14 @@ CONVERSATION = [
 ]
 
 
-def _make_cfg() -> LLMConfig:
-    return LLMConfig(provider="x", model="m", api_key="k")
+def _make_cfg() -> ResolvedLLMConfig:
+    return ResolvedLLMConfig(
+        provider="x",
+        model="m",
+        temperature=0.7,
+        max_tokens=1024,
+        api_key="k",
+    )
 
 
 PROVIDERS_OPENAI_COMPAT = [
@@ -103,7 +109,9 @@ def test_ollama_desnormaliza_arguments_a_dict() -> None:
     assert isinstance(TOOL_CALLS[0]["function"]["arguments"], str)
 
 
-@pytest.mark.parametrize("name,provider_cls", PROVIDERS_OPENAI_COMPAT + [("ollama", OllamaProvider)])
+@pytest.mark.parametrize(
+    "name,provider_cls", PROVIDERS_OPENAI_COMPAT + [("ollama", OllamaProvider)]
+)
 def test_todos_preservan_mensajes_solo_texto(name: str, provider_cls: type) -> None:
     """Sanidad: una conversación sin tools nunca debe perder mensajes en ningún provider."""
     provider = provider_cls(_make_cfg())

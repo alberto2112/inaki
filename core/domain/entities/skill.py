@@ -5,7 +5,7 @@ class Skill(BaseModel):
     id: str
     name: str
     description: str
-    instructions: str = ""            # Instrucciones detalladas para el LLM
+    instructions: str = ""  # Instrucciones detalladas para el LLM
     tags: list[str] = []
 
 

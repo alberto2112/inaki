@@ -13,6 +13,7 @@ from core.use_cases._result_parser import parse_delegation_result
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _json_block(data: dict) -> str:
     """Envuelve un dict en un bloque ```json ... ```."""
     return f"```json\n{json.dumps(data)}\n```"
@@ -127,7 +128,7 @@ def test_python_block_not_json_block():
 
 def test_unmarked_code_block_not_json_block():
     """Un bloque ``` sin lenguaje no cuenta."""
-    text = "```\n{\"status\": \"success\", \"summary\": \"ok\"}\n```"
+    text = '```\n{"status": "success", "summary": "ok"}\n```'
 
     result = parse_delegation_result(text)
 
@@ -247,11 +248,7 @@ def test_three_blocks_last_one_parsed():
     data_2 = {"status": "failed", "summary": "dos"}
     data_3 = {"status": "success", "summary": "tres"}
 
-    text = (
-        f"{_json_block(data_1)}\n\n"
-        f"{_json_block(data_2)}\n\n"
-        f"{_json_block(data_3)}"
-    )
+    text = f"{_json_block(data_1)}\n\n{_json_block(data_2)}\n\n{_json_block(data_3)}"
 
     result = parse_delegation_result(text)
 
@@ -283,7 +280,7 @@ def test_never_raises_on_arbitrary_text():
         "texto plano sin bloques",
         "```json\n```",  # bloque vacío
         "```json\nnull\n```",  # null en vez de dict
-        "```json\n\"string\"\n```",  # string en vez de dict
+        '```json\n"string"\n```',  # string en vez de dict
         "```json\n{ sin cierre",  # JSON sin cerrar
     ]
     for text in inputs:

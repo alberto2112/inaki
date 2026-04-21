@@ -157,7 +157,8 @@ class DelegateTool(ITool):
         if self._allowed_targets and agent_id not in self._allowed_targets:
             logger.warning(
                 "DelegateTool: agente '%s' no está en la allow-list %s",
-                agent_id, self._allowed_targets,
+                agent_id,
+                self._allowed_targets,
             )
             result = DelegationResult(
                 status="failed",
@@ -230,7 +231,8 @@ class DelegateTool(ITool):
         except asyncio.TimeoutError:
             logger.warning(
                 "DelegateTool: agente '%s' excedió timeout_seconds=%d",
-                agent_id, self._timeout_seconds,
+                agent_id,
+                self._timeout_seconds,
             )
             result = DelegationResult(
                 status="failed",
@@ -241,7 +243,8 @@ class DelegateTool(ITool):
         except ToolLoopMaxIterationsError:
             logger.warning(
                 "DelegateTool: agente '%s' alcanzó max_iterations=%d",
-                agent_id, self._max_iterations_per_sub,
+                agent_id,
+                self._max_iterations_per_sub,
             )
             result = DelegationResult(
                 status="failed",
@@ -269,9 +272,7 @@ class DelegateTool(ITool):
         #    reason="result_parse_error" si el texto no contiene un bloque ```json```.
         # -----------------------------------------------------------------------
         result = parse_delegation_result(raw)
-        logger.debug(
-            "DelegateTool: agente '%s' completó con status='%s'", agent_id, result.status
-        )
+        logger.debug("DelegateTool: agente '%s' completó con status='%s'", agent_id, result.status)
         return self._build_tool_result(result)
 
     # ---------------------------------------------------------------------------

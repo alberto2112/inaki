@@ -58,9 +58,7 @@ async def test_voice_default_mime_es_audio_ogg() -> None:
 
 
 async def test_voice_respeta_mime_type_si_viene() -> None:
-    voice = _mk_payload(
-        bytes_result=b"xx", mime_type="audio/ogg; codecs=opus", file_size=10
-    )
+    voice = _mk_payload(bytes_result=b"xx", mime_type="audio/ogg; codecs=opus", file_size=10)
     msg = _mk_message(voice=voice)
 
     _, mime, _ = await extract_audio_payload(msg)
@@ -119,5 +117,7 @@ async def test_file_size_none_se_normaliza_a_cero() -> None:
     voice = _mk_payload(bytes_result=b"x", mime_type=None, file_size=None)
     msg = _mk_message(voice=voice)
 
-    _, _, size = await extract_audio_payload(voice=voice) if False else await extract_audio_payload(msg)
+    _, _, size = (
+        await extract_audio_payload(voice=voice) if False else await extract_audio_payload(msg)
+    )
     assert size == 0

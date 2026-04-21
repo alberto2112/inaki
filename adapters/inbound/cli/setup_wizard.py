@@ -51,6 +51,7 @@ def _mask(value: str) -> str:
 
 def _generate_fernet_key() -> str:
     from cryptography.fernet import Fernet
+
     return Fernet.generate_key().decode()
 
 
@@ -73,7 +74,11 @@ def _print_status(var: dict) -> str:
     else:
         print(f"  [{key}]")
         print(f"    {var['description']}")
-        tag = "  se genera automáticamente al arrancar" if var.get("auto_generated") else "  ⚠ no configurada"
+        tag = (
+            "  se genera automáticamente al arrancar"
+            if var.get("auto_generated")
+            else "  ⚠ no configurada"
+        )
         print(f"    Estado: —{tag}")
     return value
 
@@ -94,9 +99,7 @@ def run_setup() -> None:
                 continue
 
         if var.get("auto_generated"):
-            ans = input(
-                f"  ¿Generar {var['key']} automáticamente? [S/n] > "
-            ).strip().lower()
+            ans = input(f"  ¿Generar {var['key']} automáticamente? [S/n] > ").strip().lower()
             if ans in ("n", "no"):
                 value = input("  Ingresá el valor manualmente: ").strip()
                 if not value:

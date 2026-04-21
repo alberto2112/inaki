@@ -100,10 +100,12 @@ def test_load_global_config_parses_admin_section(tmp_path: Path) -> None:
     config_dir.mkdir()
     global_yaml = config_dir / "global.yaml"
     global_yaml.write_text(
-        yaml.safe_dump({
-            "app": {"name": "Test"},
-            "admin": {"port": 7777, "host": "0.0.0.0"},
-        }),
+        yaml.safe_dump(
+            {
+                "app": {"name": "Test"},
+                "admin": {"port": 7777, "host": "0.0.0.0"},
+            }
+        ),
         encoding="utf-8",
     )
     cfg, _ = load_global_config(config_dir)

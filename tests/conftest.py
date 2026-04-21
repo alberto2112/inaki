@@ -7,11 +7,23 @@ from core.domain.value_objects.conversation_state import ConversationState
 from core.domain.value_objects.llm_response import LLMResponse
 from infrastructure.config import (
     AgentConfig,
-    LLMConfig,
-    EmbeddingConfig,
-    MemoryConfig,
     ChatHistoryConfig,
+    EmbeddingConfig,
+    LLMConfig,
+    MemoryConfig,
+    ProviderConfig,
 )
+
+
+def _build_providers() -> dict[str, ProviderConfig]:
+    """Registro mínimo de providers compartido por fixtures de test."""
+    return {
+        "openrouter": ProviderConfig(api_key="test-key"),
+        "openai": ProviderConfig(api_key="test-openai"),
+        "groq": ProviderConfig(api_key="test-groq"),
+        "e5_onnx": ProviderConfig(),
+        "ollama": ProviderConfig(),
+    }
 
 
 @pytest.fixture
@@ -21,10 +33,11 @@ def agent_config() -> AgentConfig:
         name="Test Agent",
         description="Agente de test",
         system_prompt="Eres un asistente de test.",
-        llm=LLMConfig(provider="openrouter", model="test-model", api_key="test-key"),
+        llm=LLMConfig(provider="openrouter", model="test-model"),
         embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
         memory=MemoryConfig(db_filename=":memory:", default_top_k=3),
         chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history.db"),
+        providers=_build_providers(),
     )
 
 

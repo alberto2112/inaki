@@ -8,7 +8,6 @@ from core.domain.entities.task_log import TaskLog
 
 
 class ISchedulerUseCase(ABC):
-
     @abstractmethod
     async def create_task(self, task: ScheduledTask) -> ScheduledTask: ...
 

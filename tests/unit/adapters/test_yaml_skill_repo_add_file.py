@@ -14,6 +14,7 @@ from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
 # Fake embedder
 # ---------------------------------------------------------------------------
 
+
 class FakeEmbedder:
     async def embed_passage(self, text: str) -> list[float]:
         return [1.0, 0.0, 0.0]
@@ -25,6 +26,7 @@ class FakeEmbedder:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _write_skill(path: Path, skill_id: str) -> Path:
     path.write_text(
@@ -44,6 +46,7 @@ def _write_skill(path: Path, skill_id: str) -> Path:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_empty_repo_returns_no_skills() -> None:

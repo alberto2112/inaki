@@ -65,6 +65,7 @@ def test_empty_digest_no_stray_newlines() -> None:
 # extra_sections parameter
 # ---------------------------------------------------------------------------
 
+
 def test_extra_sections_none_produces_same_output() -> None:
     ctx = AgentContext(agent_id="test", memory_digest="")
     result_without = ctx.build_system_prompt(BASE_PROMPT)
@@ -250,6 +251,7 @@ def test_all_vars_replaced_when_present(var: str) -> None:
 # {{WEEKDAY}} y {{WEEKDAY_NUMBER}} — 2026-04-12 es domingo (isoweekday=7)
 # ---------------------------------------------------------------------------
 
+
 @freeze_time("2026-04-12 15:30:00", tz_offset=0)
 def test_weekday_en_flag() -> None:
     ctx = AgentContext(agent_id="test", timezone="UTC")
@@ -302,7 +304,9 @@ def test_weekday_and_weekday_number_in_same_prompt() -> None:
     assert result == "domingo (día 7)"
 
 
-@pytest.mark.parametrize("var", ["{{WEEKDAY[EN]}}", "{{WEEKDAY[ES]}}", "{{WEEKDAY[FR]}}", "{{WEEKDAY_NUMBER}}"])
+@pytest.mark.parametrize(
+    "var", ["{{WEEKDAY[EN]}}", "{{WEEKDAY[ES]}}", "{{WEEKDAY[FR]}}", "{{WEEKDAY_NUMBER}}"]
+)
 @freeze_time("2026-04-12 15:30:00", tz_offset=0)
 def test_new_vars_all_replaced(var: str) -> None:
     ctx = AgentContext(agent_id="test", timezone="UTC")

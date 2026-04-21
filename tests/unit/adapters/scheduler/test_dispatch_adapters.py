@@ -249,9 +249,7 @@ class TestHttpCallerAdapterFailure:
         payload = _make_payload(timeout=5)
 
         mock_client = AsyncMock()
-        mock_client.request = AsyncMock(
-            side_effect=httpx.TimeoutException("Request timed out")
-        )
+        mock_client.request = AsyncMock(side_effect=httpx.TimeoutException("Request timed out"))
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
@@ -284,9 +282,7 @@ class TestHttpCallerAdapterFailure:
         payload = _make_payload()
 
         mock_client = AsyncMock()
-        mock_client.request = AsyncMock(
-            side_effect=httpx.ConnectError("Connection refused")
-        )
+        mock_client.request = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 

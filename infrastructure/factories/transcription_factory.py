@@ -13,15 +13,18 @@ import logging
 import pkgutil
 from pathlib import Path
 
-from core.domain.errors import UnknownTranscriptionProviderError
+from core.domain.errors import ConfigError, UnknownTranscriptionProviderError
 from core.ports.outbound.transcription_port import ITranscriptionProvider
-from infrastructure.config import TranscriptionConfig
+from infrastructure.config import (
+    ProviderConfig,
+    ResolvedTranscriptionConfig,
+    TranscriptionConfig,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class TranscriptionProviderFactory:
-
     _registry: dict[str, type] = {}
 
     @classmethod
@@ -36,9 +39,7 @@ class TranscriptionProviderFactory:
         for _, module_name, _ in pkgutil.iter_modules([str(pkg_path)]):
             if module_name == "base":
                 continue
-            module = importlib.import_module(
-                f"adapters.outbound.transcription.{module_name}"
-            )
+            module = importlib.import_module(f"adapters.outbound.transcription.{module_name}")
             provider_name = getattr(module, "PROVIDER_NAME", None)
             if provider_name is None:
                 continue
@@ -62,13 +63,44 @@ class TranscriptionProviderFactory:
         )
 
     @classmethod
-    def create(cls, cfg: TranscriptionConfig) -> ITranscriptionProvider:
+    def _resolve_adapter(cls, provider_key: str, type_override: str | None) -> type:
         cls._load()
-        provider_name = cfg.provider
-        if provider_name not in cls._registry:
+        type_key = type_override or provider_key
+        if type_key not in cls._registry:
             available = list(cls._registry.keys())
             raise UnknownTranscriptionProviderError(
-                f"Proveedor de transcripción '{provider_name}' no encontrado. "
-                f"Disponibles: {available}"
+                f"Proveedor de transcripción '{type_key}' no encontrado. Disponibles: {available}"
             )
-        return cls._registry[provider_name](cfg)
+        return cls._registry[type_key]
+
+    @classmethod
+    def create(
+        cls,
+        transcription_cfg: TranscriptionConfig,
+        providers: dict[str, ProviderConfig],
+    ) -> ITranscriptionProvider:
+        """Construye un ``ITranscriptionProvider`` resolviendo creds desde el registry."""
+        provider_key = transcription_cfg.provider
+        provider_cfg = providers.get(provider_key)
+        adapter_type = cls._resolve_adapter(
+            provider_key, provider_cfg.type if provider_cfg else None
+        )
+
+        if provider_cfg is None:
+            if adapter_type.REQUIRES_CREDENTIALS:
+                raise ConfigError(
+                    f"Provider de transcripción '{provider_key}' requiere credenciales "
+                    f"pero no existe la entrada 'providers.{provider_key}'."
+                )
+            provider_cfg = ProviderConfig()
+
+        resolved = ResolvedTranscriptionConfig(
+            provider=provider_key,
+            model=transcription_cfg.model,
+            language=transcription_cfg.language,
+            timeout_seconds=transcription_cfg.timeout_seconds,
+            max_audio_mb=transcription_cfg.max_audio_mb,
+            api_key=provider_cfg.api_key,
+            base_url=provider_cfg.base_url,
+        )
+        return adapter_type(resolved)

@@ -58,6 +58,7 @@ def service(repo: SQLiteSchedulerRepo, dispatch: MagicMock) -> SchedulerService:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _oneshot_past() -> ScheduledTask:
     return ScheduledTask(
         id=0,
@@ -87,6 +88,7 @@ def _recurrent_past(executions_remaining: int | None = None) -> ScheduledTask:
 # Oneshot completes after one execution
 # ---------------------------------------------------------------------------
 
+
 @freeze_time("2025-06-01 12:00:00")
 async def test_oneshot_completes_after_execution(
     service: SchedulerService,
@@ -107,6 +109,7 @@ async def test_oneshot_completes_after_execution(
 # ---------------------------------------------------------------------------
 # Recurrent recomputes next_run after execution
 # ---------------------------------------------------------------------------
+
 
 @freeze_time("2025-06-01 12:00:00")
 async def test_recurrent_recomputes_next_run(
@@ -129,6 +132,7 @@ async def test_recurrent_recomputes_next_run(
 # Countdown hits 0 → COMPLETED
 # ---------------------------------------------------------------------------
 
+
 @freeze_time("2025-06-01 12:00:00")
 async def test_recurrent_countdown_hits_zero_then_completed(
     service: SchedulerService,
@@ -148,6 +152,7 @@ async def test_recurrent_countdown_hits_zero_then_completed(
 # Missed oneshot on restart → MISSED
 # ---------------------------------------------------------------------------
 
+
 @freeze_time("2025-06-01 12:00:00")
 async def test_missed_oneshot_on_restart_marked_missed(
     service: SchedulerService,
@@ -165,6 +170,7 @@ async def test_missed_oneshot_on_restart_marked_missed(
 # ---------------------------------------------------------------------------
 # AgentSend with no output_channel → output stored in task_logs
 # ---------------------------------------------------------------------------
+
 
 @freeze_time("2025-06-01 12:00:00")
 async def test_agent_send_no_output_channel_stores_output(
@@ -192,6 +198,7 @@ async def test_agent_send_no_output_channel_stores_output(
 
     # Check that a task_log was written with the output
     import aiosqlite
+
     async with aiosqlite.connect(repo._db_path) as conn:
         conn.row_factory = aiosqlite.Row
         rows = await conn.execute_fetchall(

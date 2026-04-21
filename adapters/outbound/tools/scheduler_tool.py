@@ -139,14 +139,14 @@ class SchedulerTool(ITool):
                 "type": "object",
                 "description": (
                     "Action-specific payload. "
-                    "For 'channel_send': {\"text\": \"...\", \"user_id\": \"...(opcional)\"}. "
+                    'For \'channel_send\': {"text": "...", "user_id": "...(opcional)"}. '
                     "El canal de destino se inyecta automáticamente del contexto de conversación — "
                     "NO incluir 'channel_id' ni 'target'. "
-                    "For 'agent_send': {\"agent_id\": \"...\", \"task\": \"...\"}. "
+                    'For \'agent_send\': {"agent_id": "...", "task": "..."}. '
                     "agent_id acepta 'self' (o omitirlo) para referirse al agente actual; "
                     "usá un id explícito solo si querés delegar a otro agente. "
-                    "For 'shell_exec': {\"command\": \"...\", \"working_dir\": null, "
-                    "\"env_vars\": {}, \"timeout\": null}."
+                    'For \'shell_exec\': {"command": "...", "working_dir": null, '
+                    '"env_vars": {}, "timeout": null}.'
                 ),
             },
             "schedule": {
@@ -197,9 +197,7 @@ class SchedulerTool(ITool):
             "status_filter": {
                 "type": "string",
                 "enum": ["success", "failed", "missed"],
-                "description": (
-                    "Filtra 'logs' por status. Omitir para ver todos."
-                ),
+                "description": ("Filtra 'logs' por status. Omitir para ver todos."),
             },
         },
         "required": ["operation"],
@@ -256,8 +254,7 @@ class SchedulerTool(ITool):
         task_kind_raw = str(params.get("task_kind") or "").strip().lower()
         if task_kind_raw not in _LLM_TO_TASK_KIND:
             return self._error(
-                f"Invalid 'task_kind': '{task_kind_raw}'. "
-                "Must be 'one_shot' or 'recurring'."
+                f"Invalid 'task_kind': '{task_kind_raw}'. Must be 'one_shot' or 'recurring'."
             )
 
         trigger_type_raw = str(params.get("trigger_type") or "").strip().lower()
@@ -273,9 +270,7 @@ class SchedulerTool(ITool):
 
         trigger_payload_raw = params.get("trigger_payload")
         if not isinstance(trigger_payload_raw, dict):
-            return self._error(
-                "Missing or invalid 'trigger_payload'. Must be an object."
-            )
+            return self._error("Missing or invalid 'trigger_payload'. Must be an object.")
 
         # --- Validate recurring + relative guard ---
         if task_kind_raw == "recurring" and schedule_raw.startswith("+"):
@@ -337,11 +332,11 @@ class SchedulerTool(ITool):
         payload_model_cls = _TRIGGER_PAYLOAD_MODELS[trigger_type_raw]
         try:
             trigger_payload_raw["type"] = trigger_type_raw
-            trigger_payload_obj = cast(TriggerPayload, payload_model_cls.model_validate(trigger_payload_raw))
-        except Exception as exc:  # noqa: BLE001
-            return self._error(
-                f"Invalid trigger_payload for '{trigger_type_raw}': {exc}"
+            trigger_payload_obj = cast(
+                TriggerPayload, payload_model_cls.model_validate(trigger_payload_raw)
             )
+        except Exception as exc:  # noqa: BLE001
+            return self._error(f"Invalid trigger_payload for '{trigger_type_raw}': {exc}")
 
         # --- Map LLM-friendly name to domain enum ---
         task_kind = TaskKind(_LLM_TO_TASK_KIND[task_kind_raw])
@@ -546,11 +541,11 @@ class SchedulerTool(ITool):
             payload_model_cls = _TRIGGER_PAYLOAD_MODELS[trigger_type_str]
             try:
                 payload_raw["type"] = trigger_type_str
-                updates["trigger_payload"] = cast(TriggerPayload, payload_model_cls.model_validate(payload_raw))
-            except Exception as exc:  # noqa: BLE001
-                return self._error(
-                    f"Invalid trigger_payload for '{trigger_type_str}': {exc}"
+                updates["trigger_payload"] = cast(
+                    TriggerPayload, payload_model_cls.model_validate(payload_raw)
                 )
+            except Exception as exc:  # noqa: BLE001
+                return self._error(f"Invalid trigger_payload for '{trigger_type_str}': {exc}")
 
         try:
             updated = await self._uc.update_task(task_id, **updates)
@@ -643,24 +638,32 @@ class SchedulerTool(ITool):
             error_full = log.error or ""
             output_truncated = len(output_full) > _LOG_OUTPUT_TRUNCATION
             error_truncated = len(error_full) > _LOG_OUTPUT_TRUNCATION
-            entries.append({
-                "log_id": log.id,
-                "started_at": log.started_at.isoformat(),
-                "finished_at": log.finished_at.isoformat() if log.finished_at else None,
-                "status": log.status,
-                "attempt_output": output_full[:_LOG_OUTPUT_TRUNCATION] if log.output is not None else None,
-                "attempt_error": error_full[:_LOG_OUTPUT_TRUNCATION] if log.error is not None else None,
-                "output_truncated": output_truncated,
-                "error_truncated": error_truncated,
-            })
+            entries.append(
+                {
+                    "log_id": log.id,
+                    "started_at": log.started_at.isoformat(),
+                    "finished_at": log.finished_at.isoformat() if log.finished_at else None,
+                    "status": log.status,
+                    "attempt_output": output_full[:_LOG_OUTPUT_TRUNCATION]
+                    if log.output is not None
+                    else None,
+                    "attempt_error": error_full[:_LOG_OUTPUT_TRUNCATION]
+                    if log.error is not None
+                    else None,
+                    "output_truncated": output_truncated,
+                    "error_truncated": error_truncated,
+                }
+            )
 
         return ToolResult(
             tool_name=self.name,
-            output=json.dumps({
-                "task_id": task_id,
-                "total_returned": len(entries),
-                "logs": entries,
-            }),
+            output=json.dumps(
+                {
+                    "task_id": task_id,
+                    "total_returned": len(entries),
+                    "logs": entries,
+                }
+            ),
             success=True,
         )
 

@@ -31,7 +31,7 @@ El CLI siempre funciona.
 | Archivo | Commitable | Propósito |
 |---------|-----------|-----------|
 | `config/global.yaml` | ✅ sí | Config base del sistema (proveedor LLM, embeddings, memoria, paths) |
-| `config/global.secrets.yaml` | ❌ no | API keys globales (llm.api_key) |
+| `config/global.secrets.yaml` | ❌ no | Registro de credenciales (`providers.<name>.api_key`) |
 | `config/global.secrets.yaml.example` | ✅ sí | Referencia de qué secrets existen |
 | `config/agents/{id}.yaml` | ✅ sí | Config del agente: id, name, description, system_prompt, overrides, channels |
 | `config/agents/{id}.secrets.yaml` | ❌ no | Secrets del agente: tokens, auth_key |
@@ -50,16 +50,36 @@ app:
   log_level: "INFO"       # DEBUG | INFO | WARNING | ERROR
   default_agent: "general" # Agente usado por CLI sin --agent
 
+# Registro top-level de proveedores externos. Centraliza api_key + base_url
+# por vendor. Las features (llm, embedding, transcription, memory.llm) solo
+# referencian por nombre — NO llevan api_key/base_url propios.
+providers:
+  openrouter:
+    # type: openrouter      # opcional — default = la key ("openrouter")
+    api_key: "sk-or-..."    # → global.secrets.yaml
+    base_url: "https://openrouter.ai/api/v1"
+  openai:
+    api_key: "sk-..."
+  groq:
+    api_key: "gsk_..."
+    base_url: "https://api.groq.com/openai/v1"
+  ollama:
+    # type: ollama — provider LOCAL, no requiere api_key.
+    # La entrada entera es opcional; si no existe, se usa el default del adapter.
+    base_url: "http://localhost:11434"
+  # Multi-instancia: dos cuentas del mismo vendor (p. ej. billing mixto)
+  # groq-work:
+  #   type: groq            # apunta al adapter "groq"
+  #   api_key: "gsk_work_..."
+
 llm:
-  provider: "openrouter"  # openrouter | ollama | openai | groq
-  base_url: "https://openrouter.ai/api/v1"
+  provider: "openrouter"  # referencia a providers.openrouter
   model: "anthropic/claude-3-5-haiku"
   temperature: 0.7
   max_tokens: 2048
-  # api_key → en global.secrets.yaml
 
 embedding:
-  provider: "e5_onnx"     # e5_onnx (local ONNX) | openai
+  provider: "e5_onnx"     # e5_onnx (local ONNX, no requiere api_key) | openai
   model_dirname: "models/e5-small"  # Dir con model.onnx + tokenizer.json (relativo a ~/.inaki/)
   dimension: 384          # Dimensión del vector (384 para e5-small)
 
@@ -342,10 +362,21 @@ CREATE TABLE files_indexed (
 
 ## `config/global.secrets.yaml`
 
+El registro de credenciales vive bajo `providers:` y se mergea con el `providers:`
+de `global.yaml` (deep-merge campo a campo).
+
 ```yaml
-llm:
-  api_key: "sk-or-..."    # API key del proveedor LLM global
+providers:
+  openrouter:
+    api_key: "sk-or-..."
+  openai:
+    api_key: "sk-..."
+  groq:
+    api_key: "gsk_..."
 ```
+
+Una entrada declarada en `global.yaml` (p. ej. con `base_url`) se completa con
+la `api_key` de este archivo — no hace falta repetir campos.
 
 ---
 
@@ -444,14 +475,15 @@ Se define en `config/global.yaml` (o sobrescribible per-agent) y se activa con
 
 ```yaml
 transcription:
-  provider: "groq"                     # Auto-descubierto desde adapters/outbound/transcription/
+  provider: "groq"                     # referencia a providers.groq
   model: "whisper-large-v3-turbo"
-  base_url: "https://api.groq.com/openai/v1"
   language: "es"                        # ISO-639-1; null = autodetect
   timeout_seconds: 60
   max_audio_mb: 25                      # Límite de Groq; audios mayores se rechazan sin llamar al provider
-  # api_key: "gsk_..."                  # → global.secrets.yaml
 ```
+
+Las credenciales (`api_key`, `base_url`) NO van en este bloque — se resuelven
+desde `providers.groq` en el registro.
 
 **Feature flag en el agente:**
 
@@ -475,7 +507,9 @@ channels:
 - Agente con `voice_enabled: true` y sin bloque `transcription:` resuelto
   → falla en el bootstrap con un error claro pidiendo añadir `transcription:`
   o poner `voice_enabled: false`.
-- `transcription.api_key` ausente → `TranscriptionError` al instanciar el provider.
+- `providers.<provider>.api_key` ausente para el provider referenciado por
+  `transcription.provider` → `ConfigError` al arranque (fail-fast, antes
+  de instanciar adapters).
 
 > ⚠ **Privacidad:** el audio se envía al proveedor externo (hoy: Groq). Para
 > contenido sensible poné `voice_enabled: false` en ese agente o esperá a que
@@ -492,7 +526,12 @@ channels:
     token: "7xxxxxxx:AAF..."     # Bot token de BotFather
   rest:
     auth_key: "sxc-0123456"      # Clave para header X-API-Key
-# llm.api_key no definido aquí → hereda de global.secrets.yaml
+
+# providers no definido aquí → hereda de global + global.secrets.
+# Si el agente necesita una api_key distinta (p. ej. otra cuenta de Groq):
+# providers:
+#   groq:
+#     api_key: "gsk_agent_specific_..."
 ```
 
 ---
@@ -501,11 +540,11 @@ channels:
 
 | Campo | Comportamiento |
 |-------|----------------|
-| `llm` (bloque) | Merge campo a campo. Ausentes se heredan. |
-| `llm.api_key` | Solo en secrets. Si ausente en agente → hereda del global. |
-| `embedding` | Merge campo a campo si se define. |
-| `transcription` (bloque) | Merge campo a campo. Normalmente definido en `global.yaml`. |
-| `transcription.api_key` | Solo en secrets. Si ausente y `voice_enabled: true` → el provider falla al instanciar. |
+| `llm` (bloque) | Merge campo a campo. Ausentes se heredan. Sin `api_key`/`base_url` (viven en `providers`). |
+| `providers` (bloque) | Merge campo a campo por key. Una capa inferior puede completar una entrada declarada arriba. |
+| `providers.<name>.api_key` | Solo en `*.secrets.yaml`. Un agente puede redefinir un provider entero. |
+| `embedding` | Merge campo a campo si se define. Sin `api_key`/`base_url`. |
+| `transcription` (bloque) | Merge campo a campo. Sin `api_key`/`base_url` (viven en `providers`). |
 | `channels.telegram.voice_enabled` | Per-agent. Default `true`. Si `true` requiere bloque `transcription:`. |
 | `memory.db_filename` / `digest_filename` / `default_top_k` / `min_relevance_score` / `schedule` / `delay_seconds` / `keep_last_messages` | **Solo en `global.yaml`**. Un agente no puede overridearlos (semánticamente no tiene sentido: la memoria es global compartida). |
 | `memory.enabled` | **Solo per-agent en `agents/{id}.yaml`**. Default `true`. Filtra qué agentes participan en la consolidación nocturna global. |
@@ -675,20 +714,24 @@ El sub-bloque `memory.llm` permite **override parcial** de `llm.*` SOLO para
 consolidación, sin tocar el LLM conversacional:
 
 ```yaml
+providers:
+  groq:   { api_key: KEY_GROQ, base_url: https://api.groq.com/openai/v1 }
+  openai: { api_key: KEY_OPENAI }
+
 llm:                          # Base (chat del agente)
   provider: groq
   model: openai/gpt-oss-120b
   reasoning_effort: high
   max_tokens: 2048
-  api_key: KEY_GROQ
 
 memory:
   enabled: true
   llm:                        # Override SOLO para consolidación
-    model: llama-3.3-70b-versatile
-    reasoning_effort: null    # apaga el reasoning (heredaba "high")
-    max_tokens: 8192          # presupuesto más amplio para el JSON
-    # provider, api_key, base_url, temperature → heredados de llm.*
+    provider: openai          # distinto vendor — creds se resuelven desde providers.openai
+    model: gpt-4o-mini
+    reasoning_effort: null    # apaga el reasoning
+    max_tokens: 8192
+    # temperature → heredado de llm.*
 ```
 
 **Semántica del merge (field-by-field):**
@@ -699,15 +742,16 @@ memory:
 | Clave con valor concreto (ej. `max_tokens: 8192`) | Pisa al base. |
 | Clave con valor `null` explícito (ej. `reasoning_effort: null`) | Pisa al base con `None` (override, no herencia). |
 
-**Validación al arrancar:** si el override cambia `provider` y no hay `api_key`
-resolvible (ni en `memory.llm.api_key` ni heredada del base), el daemon falla
-al arranque con `ConfigError` — no silenciosamente durante la siguiente
-consolidación.
+**Validación al arrancar:** si el override apunta a un `provider` que no existe
+en el registro `providers:` y el adapter correspondiente requiere credenciales,
+el daemon falla al arranque con `ConfigError` — no silenciosamente durante la
+siguiente consolidación.
 
-**Wiring:** `AgentContainer` compara la config efectiva contra `llm.*`; si son
-idénticas, **reusa** la misma instancia de provider (sin duplicación de HTTP
-clients). Si difieren, instancia un provider dedicado vía
-`LLMProviderFactory.create_from_llm_config`.
+**Wiring:** `AgentContainer` compara la `LLMConfig` mergeada contra `llm.*`;
+si son idénticas, **reusa** la misma instancia de provider (sin duplicación de
+HTTP clients). Si difieren, instancia un provider dedicado vía
+`LLMProviderFactory.create_from_resolved(resolved)`, donde el `ResolvedLLMConfig`
+compone el override con las credenciales del registry.
 
 **Cuándo usarlo:**
 

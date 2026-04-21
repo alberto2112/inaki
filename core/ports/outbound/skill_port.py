@@ -3,7 +3,6 @@ from core.domain.entities.skill import Skill
 
 
 class ISkillRepository(ABC):
-
     @abstractmethod
     async def list_all(self) -> list[Skill]: ...
 

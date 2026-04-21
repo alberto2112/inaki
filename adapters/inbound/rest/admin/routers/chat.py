@@ -80,9 +80,7 @@ async def chat_turn(body: ChatTurnRequest, request: Request) -> ChatTurnResponse
 
     try:
         agent_container.set_channel_context(ctx)
-        reply = await agent_container.run_agent.execute(
-            body.message, intermediate_sink=sink
-        )
+        reply = await agent_container.run_agent.execute(body.message, intermediate_sink=sink)
     except Exception as exc:
         duration_ms = int((time.monotonic() - t0) * 1000)
         logger.error(

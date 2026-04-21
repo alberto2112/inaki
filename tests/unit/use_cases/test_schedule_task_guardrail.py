@@ -62,6 +62,7 @@ def uc(mock_repo: AsyncMock, on_mutation: MagicMock) -> ScheduleTaskUseCase:
 # Guardrail: count >= 21 raises TooManyActiveTasksError
 # ---------------------------------------------------------------------------
 
+
 async def test_guardrail_raises_when_count_at_limit(
     uc: ScheduleTaskUseCase, mock_repo: AsyncMock
 ) -> None:
@@ -92,6 +93,7 @@ async def test_guardrail_raises_when_count_above_limit(
 # ---------------------------------------------------------------------------
 # Guardrail: count < 21 allows task creation
 # ---------------------------------------------------------------------------
+
 
 async def test_guardrail_allows_when_count_below_limit(
     uc: ScheduleTaskUseCase, mock_repo: AsyncMock, on_mutation: MagicMock
@@ -124,6 +126,7 @@ async def test_guardrail_allows_when_count_zero(
 # ---------------------------------------------------------------------------
 # Guardrail: CLI tasks (created_by="") skip the guard entirely
 # ---------------------------------------------------------------------------
+
 
 async def test_cli_task_skips_guardrail(
     uc: ScheduleTaskUseCase, mock_repo: AsyncMock, on_mutation: MagicMock

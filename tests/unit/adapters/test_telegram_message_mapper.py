@@ -39,7 +39,7 @@ def test_inline_code_escapes_entities():
 
 def test_fenced_code_block_with_language():
     md = "```python\nprint('hi')\n```"
-    assert format_response(md) == '<pre><code class="language-python">print(\'hi\')</code></pre>'
+    assert format_response(md) == "<pre><code class=\"language-python\">print('hi')</code></pre>"
 
 
 def test_fenced_code_block_without_language():
@@ -57,7 +57,7 @@ def test_link_maps_to_a_tag():
 
 
 def test_link_escapes_href():
-    result = format_response('[x](https://ex.com?a=1&b=2)')
+    result = format_response("[x](https://ex.com?a=1&b=2)")
     assert '<a href="https://ex.com?a=1&amp;b=2">x</a>' == result
 
 

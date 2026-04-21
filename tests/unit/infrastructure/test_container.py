@@ -29,6 +29,7 @@ from infrastructure.config import (
     GlobalConfig,
     LLMConfig,
     MemoryConfig,
+    ProviderConfig,
 )
 from infrastructure.container import AgentContainer
 
@@ -36,6 +37,7 @@ from infrastructure.container import AgentContainer
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 class FakeEmbedder:
     async def embed_passage(self, text: str) -> list[float]:
@@ -55,7 +57,7 @@ def _make_agent_config(
         name=agent_id.capitalize(),
         description=f"Agent {agent_id}",
         system_prompt="Test prompt",
-        llm=LLMConfig(provider="openrouter", model="test-model", api_key="test-key"),
+        llm=LLMConfig(provider="openrouter", model="test-model"),
         embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
         memory=MemoryConfig(db_filename=":memory:"),
         chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history.db"),
@@ -63,6 +65,7 @@ def _make_agent_config(
             enabled=delegation_enabled,
             allowed_targets=allowed_targets or [],
         ),
+        providers={"openrouter": ProviderConfig(api_key="test-key")},
     )
 
 
@@ -77,9 +80,10 @@ def _make_global_config(
         ToolsConfig,
         WorkspaceConfig,
     )
+
     return GlobalConfig(
         app=AppConfig(ext_dirs=[]),
-        llm=LLMConfig(provider="openrouter", model="test-model", api_key="test-key"),
+        llm=LLMConfig(provider="openrouter", model="test-model"),
         embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
         memory=MemoryConfig(db_filename=":memory:"),
         chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history.db"),
@@ -91,6 +95,7 @@ def _make_global_config(
             max_iterations_per_sub=max_iterations_per_sub,
             timeout_seconds=timeout_seconds,
         ),
+        providers={"openrouter": ProviderConfig(api_key="test-key")},
     )
 
 
@@ -143,6 +148,7 @@ def _build_minimal_container(
 # Test 1 — REQ-DG-1 (delegation.enabled = False)
 # ---------------------------------------------------------------------------
 
+
 def test_wire_delegation_noop_when_disabled(tmp_path) -> None:
     """
     When delegation.enabled is False, wire_delegation MUST be a no-op
@@ -177,6 +183,7 @@ def test_wire_delegation_noop_when_disabled(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 # Test 2 — REQ-DG-1 (delegation.enabled = True)
 # ---------------------------------------------------------------------------
+
 
 def test_wire_delegation_registers_tool_when_enabled(tmp_path) -> None:
     """
@@ -228,6 +235,7 @@ def test_wire_delegation_registers_tool_when_enabled(tmp_path) -> None:
 # Test 3 — Idempotency
 # ---------------------------------------------------------------------------
 
+
 def test_wire_delegation_idempotent(tmp_path) -> None:
     """
     Calling wire_delegation twice MUST be a no-op the second time:
@@ -257,9 +265,7 @@ def test_wire_delegation_idempotent(tmp_path) -> None:
     )
 
     # delegate tool appears exactly once
-    delegate_names = [
-        name for name in container._tools._tools if name == "delegate"
-    ]
+    delegate_names = [name for name in container._tools._tools if name == "delegate"]
     assert len(delegate_names) == 1, (
         f"delegate tool must be registered exactly once, found {len(delegate_names)}"
     )
@@ -268,6 +274,7 @@ def test_wire_delegation_idempotent(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 # Test 4 — AppContainer two-phase init
 # ---------------------------------------------------------------------------
+
 
 def test_app_container_two_phase_init(tmp_path) -> None:
     """
@@ -339,6 +346,7 @@ def test_app_container_two_phase_init(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 # Test 5 — Late binding: closure is over the FINAL agents dict
 # ---------------------------------------------------------------------------
+
 
 def test_wire_delegation_closure_late_binding(tmp_path) -> None:
     """
@@ -432,6 +440,7 @@ def _build_target_container(
 # Test 6 — REQ-DG-9: section present when enabled (section present when enabled)
 # ---------------------------------------------------------------------------
 
+
 def test_discovery_section_present_when_enabled(tmp_path) -> None:
     """
     REQ-DG-7 / REQ-DG-9 scenario: section present when enabled.
@@ -479,6 +488,7 @@ def test_discovery_section_present_when_enabled(tmp_path) -> None:
 # Test 7 — REQ-DG-9: filtered by allow-list
 # ---------------------------------------------------------------------------
 
+
 def test_discovery_section_filtered_by_allowlist(tmp_path) -> None:
     """
     REQ-DG-9 scenario: section filtered by allow-list.
@@ -515,6 +525,7 @@ def test_discovery_section_filtered_by_allowlist(tmp_path) -> None:
 # Test 8 — REQ-DG-9: section absent when disabled
 # ---------------------------------------------------------------------------
 
+
 def test_discovery_section_absent_when_disabled(tmp_path) -> None:
     """
     REQ-DG-9 scenario: section absent when disabled.
@@ -541,6 +552,7 @@ def test_discovery_section_absent_when_disabled(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 # Test 9 — Empty allow-list: no section set
 # ---------------------------------------------------------------------------
+
 
 def test_discovery_section_empty_allowlist(tmp_path) -> None:
     """
@@ -569,6 +581,7 @@ def test_discovery_section_empty_allowlist(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 # Test 10 — Unknown targets skipped, known ones included
 # ---------------------------------------------------------------------------
+
 
 def test_discovery_section_unknown_targets_skipped(tmp_path) -> None:
     """
@@ -603,6 +616,7 @@ def test_discovery_section_unknown_targets_skipped(tmp_path) -> None:
 # Test 11 — All targets unknown: no section set
 # ---------------------------------------------------------------------------
 
+
 def test_discovery_section_all_targets_unknown(tmp_path) -> None:
     """
     Parent with allowed_targets=["ghost"]. "ghost" doesn't exist.
@@ -626,6 +640,7 @@ def test_discovery_section_all_targets_unknown(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 # Test 12 — Mixed: some resolve, some don't
 # ---------------------------------------------------------------------------
+
 
 def test_discovery_section_mixed_targets(tmp_path) -> None:
     """
@@ -660,6 +675,7 @@ def test_discovery_section_mixed_targets(tmp_path) -> None:
 # Test 13 — One-shot isolation: RunAgentOneShotUseCase has no _extra_system_sections
 # ---------------------------------------------------------------------------
 
+
 def test_one_shot_has_no_extra_system_sections_attribute(tmp_path) -> None:
     """
     REQ-DG-9 one-shot isolation.
@@ -686,6 +702,7 @@ def test_one_shot_has_no_extra_system_sections_attribute(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 # Test 14 — Idempotency: wire_delegation twice is safe (no double section)
 # ---------------------------------------------------------------------------
+
 
 def test_wire_delegation_idempotent_with_discovery(tmp_path) -> None:
     """

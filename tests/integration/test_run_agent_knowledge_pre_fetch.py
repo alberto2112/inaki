@@ -207,7 +207,7 @@ class TestPreFetchBypassOnShortInput:
             name="Test Bypass",
             description="Agente de test con bypass",
             system_prompt="Sistema",
-            llm=LLMConfig(provider="openrouter", model="test-model", api_key="test-key"),
+            llm=LLMConfig(provider="openrouter", model="test-model"),
             embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
             memory=MemoryConfig(db_filename=":memory:", default_top_k=3),
             chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history_bypass.db"),

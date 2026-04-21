@@ -112,27 +112,29 @@ async def run_tool_loop(
                 kwargs = {}
 
             if tool_name in tripped:
-                logger.warning(
-                    "Circuit breaker abierto para '%s' — llamada bloqueada", tool_name
+                logger.warning("Circuit breaker abierto para '%s' — llamada bloqueada", tool_name)
+                working_messages.append(
+                    Message(
+                        role=Role.TOOL,
+                        content=(
+                            f"CIRCUIT OPEN — esta tool ya falló "
+                            f"{circuit_breaker_threshold} vez/veces en este turno. "
+                            "NO la vuelvas a llamar. Respondé al usuario con lo que "
+                            "sabés, o pedile ayuda para resolver el bloqueo."
+                        ),
+                        tool_call_id=tc_id,
+                    )
                 )
-                working_messages.append(Message(
-                    role=Role.TOOL,
-                    content=(
-                        f"CIRCUIT OPEN — esta tool ya falló "
-                        f"{circuit_breaker_threshold} vez/veces en este turno. "
-                        "NO la vuelvas a llamar. Respondé al usuario con lo que "
-                        "sabés, o pedile ayuda para resolver el bloqueo."
-                    ),
-                    tool_call_id=tc_id,
-                ))
                 continue
 
             result = await tools.execute(tool_name, **kwargs)
-            working_messages.append(Message(
-                role=Role.TOOL,
-                content=result.output,
-                tool_call_id=tc_id,
-            ))
+            working_messages.append(
+                Message(
+                    role=Role.TOOL,
+                    content=result.output,
+                    tool_call_id=tc_id,
+                )
+            )
             logger.info(
                 "Tool '%s' ejecutada: success=%s, kwargs=%.200s, output=%.200s",
                 tool_name,

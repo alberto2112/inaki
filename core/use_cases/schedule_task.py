@@ -25,7 +25,6 @@ _INVALIDATING_FIELDS = frozenset(
 
 
 class ScheduleTaskUseCase(ISchedulerUseCase):
-
     def __init__(
         self,
         repo: ISchedulerRepository,
@@ -46,9 +45,7 @@ class ScheduleTaskUseCase(ISchedulerUseCase):
     async def delete_task(self, task_id: int) -> None:
         await self.get_task(task_id)
         if task_id < 100:
-            raise BuiltinTaskProtectedError(
-                f"Task {task_id} is a builtin and cannot be deleted."
-            )
+            raise BuiltinTaskProtectedError(f"Task {task_id} is a builtin and cannot be deleted.")
         await self._repo.delete_task(task_id)
         self._on_mutation()
 
@@ -63,12 +60,14 @@ class ScheduleTaskUseCase(ISchedulerUseCase):
         """
         task = await self.get_task(task_id)
         if task.status in {TaskStatus.FAILED, TaskStatus.MISSED}:
-            updated = task.model_copy(update={
-                "enabled": True,
-                "status": TaskStatus.PENDING,
-                "retry_count": 0,
-                "next_run": None,  # el repo lo recomputa en save_task
-            })
+            updated = task.model_copy(
+                update={
+                    "enabled": True,
+                    "status": TaskStatus.PENDING,
+                    "retry_count": 0,
+                    "next_run": None,  # el repo lo recomputa en save_task
+                }
+            )
             await self._repo.save_task(updated)
         else:
             await self._repo.update_enabled(task_id, True)

@@ -27,6 +27,7 @@ class TaskStatus(str, Enum):
     loop filters by `enabled=1 AND status='pending'` — ambos se necesitan
     para que una tarea sea candidata a correr.
     """
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -37,6 +38,7 @@ class TaskStatus(str, Enum):
 # ---------------------------------------------------------------------------
 # Trigger payloads — discriminated union
 # ---------------------------------------------------------------------------
+
 
 class ChannelSendPayload(BaseModel):
     type: Literal["channel_send"] = "channel_send"
@@ -69,6 +71,7 @@ class ConsolidateMemoryPayload(BaseModel):
     No fields — the consolidator reads the agent registry at runtime and
     iterates every agent whose `memory.enabled` flag is true.
     """
+
     type: Literal["consolidate_memory"] = "consolidate_memory"
 
 
@@ -83,7 +86,11 @@ class WebhookPayload(BaseModel):
 
 
 TriggerPayload = Annotated[
-    ChannelSendPayload | AgentSendPayload | ShellExecPayload | ConsolidateMemoryPayload | WebhookPayload,
+    ChannelSendPayload
+    | AgentSendPayload
+    | ShellExecPayload
+    | ConsolidateMemoryPayload
+    | WebhookPayload,
     Field(discriminator="type"),
 ]
 
@@ -92,6 +99,7 @@ TriggerPayload = Annotated[
 # ScheduledTask entity
 # ---------------------------------------------------------------------------
 
+
 class ScheduledTask(BaseModel):
     id: int = 0  # 0 = unassigned; repo assigns real id on save
     name: str
@@ -99,7 +107,7 @@ class ScheduledTask(BaseModel):
     task_kind: TaskKind
     trigger_type: TriggerType
     trigger_payload: TriggerPayload
-    schedule: str                        # cron expr if recurrent, ISO datetime if oneshot
+    schedule: str  # cron expr if recurrent, ISO datetime if oneshot
     enabled: bool = True
     executions_remaining: int | None = None  # recurrent only: None=infinite, N=countdown
     status: TaskStatus = TaskStatus.PENDING

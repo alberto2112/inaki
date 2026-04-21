@@ -46,9 +46,7 @@ def resolve_path(
         resolved.relative_to(workspace_root)
     except ValueError:
         if containment == "strict":
-            raise WorkspaceEscapeError(
-                f"Path '{resolved}' escapa del workspace '{workspace_root}'"
-            )
+            raise WorkspaceEscapeError(f"Path '{resolved}' escapa del workspace '{workspace_root}'")
         logger.warning(
             "Path '%s' fuera del workspace '%s' (containment=warn, permitido)",
             resolved,

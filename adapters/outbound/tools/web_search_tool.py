@@ -161,8 +161,7 @@ class WebSearchTool(ITool):
             if operation == "show_config":
                 return self._do_show_config()
             return self._error(
-                f"Operación desconocida: '{operation}'. "
-                "Usá 'search', 'configure' o 'show_config'."
+                f"Operación desconocida: '{operation}'. Usá 'search', 'configure' o 'show_config'."
             )
         except Exception as exc:
             logger.exception("WebSearchTool error")
@@ -175,9 +174,7 @@ class WebSearchTool(ITool):
     async def _do_search(self, params: dict[str, Any]) -> ToolResult:
         query = str(params.get("query") or "").strip()
         if not query:
-            return self._error(
-                "Falta el parámetro 'query'. No reintentes sin un query válido."
-            )
+            return self._error("Falta el parámetro 'query'. No reintentes sin un query válido.")
 
         config = self._store.load()
         api_key = config.get("api_key")

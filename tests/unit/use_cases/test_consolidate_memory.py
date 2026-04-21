@@ -46,8 +46,12 @@ def messages_in_history(mock_history):
     ]
 
 
-async def test_consolidation_trims_on_success(use_case, mock_llm, mock_memory, mock_history, messages_in_history):
-    mock_llm.complete.return_value = LLMResponse.of_text('[{"content": "Le gusta Python", "relevance": 0.9, "tags": ["tech"]}]')
+async def test_consolidation_trims_on_success(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        '[{"content": "Le gusta Python", "relevance": 0.9, "tags": ["tech"]}]'
+    )
 
     result = await use_case.execute()
 
@@ -80,7 +84,9 @@ async def test_consolidation_marks_messages_as_infused_after_persist(
     use_case, mock_llm, mock_memory, mock_history, messages_in_history
 ):
     """Tras persistir los recuerdos, se marcan los mensajes como infused."""
-    mock_llm.complete.return_value = LLMResponse.of_text('[{"content": "Le gusta Python", "relevance": 0.9, "tags": []}]')
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        '[{"content": "Le gusta Python", "relevance": 0.9, "tags": []}]'
+    )
 
     await use_case.execute()
 
@@ -105,7 +111,9 @@ async def test_consolidation_mark_infused_failure_aborts_and_skips_trim(
     use_case, mock_llm, mock_memory, mock_history, messages_in_history
 ):
     """Si mark_infused falla, propagamos y NO truncamos."""
-    mock_llm.complete.return_value = LLMResponse.of_text('[{"content": "fact", "relevance": 0.9, "tags": []}]')
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        '[{"content": "fact", "relevance": 0.9, "tags": []}]'
+    )
     mock_history.mark_infused.side_effect = Exception("UPDATE failed")
 
     with pytest.raises(ConsolidationError):
@@ -114,9 +122,7 @@ async def test_consolidation_mark_infused_failure_aborts_and_skips_trim(
     mock_history.trim.assert_not_called()
 
 
-async def test_consolidation_is_idempotent_when_no_uninfused_messages(
-    use_case, mock_history
-):
+async def test_consolidation_is_idempotent_when_no_uninfused_messages(use_case, mock_history):
     """Ejecutar /consolidate dos veces seguidas → la segunda es no-op total."""
     mock_history.load_uninfused.return_value = []
 
@@ -127,7 +133,9 @@ async def test_consolidation_is_idempotent_when_no_uninfused_messages(
     mock_history.trim.assert_not_called()
 
 
-async def test_consolidation_does_not_trim_on_llm_failure(use_case, mock_llm, mock_history, messages_in_history):
+async def test_consolidation_does_not_trim_on_llm_failure(
+    use_case, mock_llm, mock_history, messages_in_history
+):
     mock_llm.complete.side_effect = Exception("LLM timeout")
 
     with pytest.raises(ConsolidationError):
@@ -137,8 +145,12 @@ async def test_consolidation_does_not_trim_on_llm_failure(use_case, mock_llm, mo
     mock_history.clear.assert_not_called()
 
 
-async def test_consolidation_does_not_trim_on_store_failure(use_case, mock_llm, mock_memory, mock_history, messages_in_history):
-    mock_llm.complete.return_value = LLMResponse.of_text('[{"content": "Le gusta Python", "relevance": 0.9, "tags": []}]')
+async def test_consolidation_does_not_trim_on_store_failure(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        '[{"content": "Le gusta Python", "relevance": 0.9, "tags": []}]'
+    )
     mock_memory.store.side_effect = Exception("DB error")
 
     with pytest.raises(ConsolidationError):
@@ -156,21 +168,29 @@ async def test_consolidation_returns_message_when_no_pending_messages(use_case, 
     mock_history.mark_infused.assert_not_called()
 
 
-async def test_consolidation_handles_empty_facts_list(use_case, mock_llm, mock_history, messages_in_history):
+async def test_consolidation_handles_empty_facts_list(
+    use_case, mock_llm, mock_history, messages_in_history
+):
     """LLM dice no hay recuerdos relevantes → truncamos igual."""
     mock_llm.complete.return_value = LLMResponse.of_text("[]")
     await use_case.execute()
     mock_history.trim.assert_called_once_with("test", keep_last=20)
 
 
-async def test_consolidation_strips_markdown_json(use_case, mock_llm, mock_memory, mock_history, messages_in_history):
+async def test_consolidation_strips_markdown_json(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
     """El LLM a veces envuelve el JSON en ```json ... ```"""
-    mock_llm.complete.return_value = LLMResponse.of_text('```json\n[{"content": "test", "relevance": 0.8, "tags": []}]\n```')
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        '```json\n[{"content": "test", "relevance": 0.8, "tags": []}]\n```'
+    )
     await use_case.execute()
     mock_memory.store.assert_called_once()
 
 
-async def test_consolidation_raises_on_invalid_json(use_case, mock_llm, mock_history, messages_in_history):
+async def test_consolidation_raises_on_invalid_json(
+    use_case, mock_llm, mock_history, messages_in_history
+):
     mock_llm.complete.return_value = LLMResponse.of_text("esto no es json")
     with pytest.raises(ConsolidationError):
         await use_case.execute()
@@ -178,7 +198,9 @@ async def test_consolidation_raises_on_invalid_json(use_case, mock_llm, mock_his
 
 
 # SC-15
-async def test_consolidation_formats_message_with_timestamp(use_case, mock_llm, mock_memory, mock_history):
+async def test_consolidation_formats_message_with_timestamp(
+    use_case, mock_llm, mock_memory, mock_history
+):
     ts = datetime(2026, 4, 9, 15, 30, 0, tzinfo=timezone.utc)
     mock_history.load_uninfused.return_value = [
         Message(role=Role.USER, content="prefiero café sin azúcar", timestamp=ts),
@@ -188,12 +210,18 @@ async def test_consolidation_formats_message_with_timestamp(use_case, mock_llm, 
     await use_case.execute()
 
     call_args = mock_llm.complete.call_args
-    system_prompt = call_args.kwargs.get("system_prompt") or call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs["system_prompt"]
+    system_prompt = (
+        call_args.kwargs.get("system_prompt") or call_args.args[1]
+        if len(call_args.args) > 1
+        else call_args.kwargs["system_prompt"]
+    )
     assert "user [2026-04-09T15:30:00Z]: prefiero café sin azúcar" in system_prompt
 
 
 # SC-16
-async def test_consolidation_formats_message_without_timestamp(use_case, mock_llm, mock_memory, mock_history):
+async def test_consolidation_formats_message_without_timestamp(
+    use_case, mock_llm, mock_memory, mock_history
+):
     mock_history.load_uninfused.return_value = [
         Message(role=Role.USER, content="prefiero café sin azúcar", timestamp=None),
     ]
@@ -208,8 +236,12 @@ async def test_consolidation_formats_message_without_timestamp(use_case, mock_ll
 
 
 # SC-17
-async def test_consolidation_sets_created_at_from_llm_timestamp(use_case, mock_llm, mock_memory, mock_history, messages_in_history):
-    mock_llm.complete.return_value = LLMResponse.of_text('[{"content": "test", "relevance": 0.9, "tags": [], "timestamp": "2026-04-09T15:30:00Z"}]')
+async def test_consolidation_sets_created_at_from_llm_timestamp(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        '[{"content": "test", "relevance": 0.9, "tags": [], "timestamp": "2026-04-09T15:30:00Z"}]'
+    )
 
     await use_case.execute()
 
@@ -242,7 +274,9 @@ async def test_consolidation_filters_all_when_all_below_threshold(
     use_case, mock_llm, mock_memory, mock_history, messages_in_history
 ):
     """Si TODOS los hechos están por debajo del umbral, no persistimos pero truncamos."""
-    mock_llm.complete.return_value = LLMResponse.of_text('[{"content": "bajo", "relevance": 0.1, "tags": []}]')
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        '[{"content": "bajo", "relevance": 0.1, "tags": []}]'
+    )
 
     await use_case.execute()
 
@@ -282,8 +316,12 @@ async def test_consolidation_uses_sentinel_fallback_when_keep_last_is_zero(
 
 
 # SC-18
-async def test_consolidation_falls_back_to_now_when_no_timestamp(use_case, mock_llm, mock_memory, mock_history, messages_in_history):
-    mock_llm.complete.return_value = LLMResponse.of_text('[{"content": "test", "relevance": 0.9, "tags": []}]')
+async def test_consolidation_falls_back_to_now_when_no_timestamp(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        '[{"content": "test", "relevance": 0.9, "tags": []}]'
+    )
     before = datetime.now(timezone.utc)
 
     await use_case.execute()
@@ -296,6 +334,7 @@ async def test_consolidation_falls_back_to_now_when_no_timestamp(use_case, mock_
 # ---------------------------------------------------------------------------
 # Phase 3 — digest write tests
 # ---------------------------------------------------------------------------
+
 
 def _make_entry(content: str, tags: list[str], created_at: datetime) -> MemoryEntry:
     return MemoryEntry(
@@ -315,14 +354,14 @@ async def test_digest_file_written_with_correct_format(
         Message(role=Role.USER, content="me gusta Python"),
         Message(role=Role.ASSISTANT, content="Anotado."),
     ]
-    mock_llm.complete.return_value = LLMResponse.of_text('[{"content": "Le gusta Python", "relevance": 0.9, "tags": ["tech", "python"]}]')
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        '[{"content": "Le gusta Python", "relevance": 0.9, "tags": ["tech", "python"]}]'
+    )
 
     entry_with_tags = _make_entry(
         "Le gusta Python", ["tech", "python"], datetime(2026, 4, 9, tzinfo=timezone.utc)
     )
-    entry_no_tags = _make_entry(
-        "Usa LazyVim", [], datetime(2026, 4, 8, tzinfo=timezone.utc)
-    )
+    entry_no_tags = _make_entry("Usa LazyVim", [], datetime(2026, 4, 8, tzinfo=timezone.utc))
     mock_memory.get_recent.return_value = [entry_with_tags, entry_no_tags]
 
     uc = ConsolidateMemoryUseCase(
@@ -343,7 +382,9 @@ async def test_digest_file_written_with_correct_format(
     assert "- [2026-04-09] Le gusta Python (tech, python)" in content
     assert "- [2026-04-08] Usa LazyVim" in content
     # No parenthetical for entry without tags
-    assert "- [2026-04-08] Usa LazyVim\n" in content or content.endswith("- [2026-04-08] Usa LazyVim\n")
+    assert "- [2026-04-08] Usa LazyVim\n" in content or content.endswith(
+        "- [2026-04-08] Usa LazyVim\n"
+    )
 
 
 # SC-10, SC-11, AC-05 (b)

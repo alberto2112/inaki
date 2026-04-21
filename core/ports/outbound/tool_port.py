@@ -20,7 +20,6 @@ class ITool(ABC):
 
 
 class IToolExecutor(ABC):
-
     @abstractmethod
     def register(self, tool: ITool) -> None: ...
 

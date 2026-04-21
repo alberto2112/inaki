@@ -96,7 +96,6 @@ class ConsolidationResult:
 
 
 class ConsolidateMemoryUseCase:
-
     def __init__(
         self,
         llm: ILLMProvider,
@@ -131,9 +130,7 @@ class ConsolidateMemoryUseCase:
                 return f"{m.role.value} [{ts}]: {m.content}"
             return f"{m.role.value}: {m.content}"
 
-        history_text = "\n".join(
-            _fmt(m) for m in messages if m.role in (Role.USER, Role.ASSISTANT)
-        )
+        history_text = "\n".join(_fmt(m) for m in messages if m.role in (Role.USER, Role.ASSISTANT))
         prompt = _EXTRACTOR_PROMPT_TEMPLATE.format(history=history_text)
 
         # 3. Llamar al LLM extractor (consolidación no usa tools → esperamos
@@ -215,9 +212,7 @@ class ConsolidateMemoryUseCase:
         try:
             await self._history.mark_infused(self._agent_id)
         except Exception as exc:
-            raise ConsolidationError(
-                f"Error marcando mensajes como infused: {exc}"
-            ) from exc
+            raise ConsolidationError(f"Error marcando mensajes como infused: {exc}") from exc
 
         # 7. Regenerar digest markdown (best-effort, no rompe consolidación)
         await self._write_digest()
@@ -283,9 +278,7 @@ class ConsolidateMemoryUseCase:
             ) from exc
 
         if not isinstance(data, list):
-            raise ConsolidationError(
-                f"Se esperaba una lista JSON, recibido: {type(data).__name__}"
-            )
+            raise ConsolidationError(f"Se esperaba una lista JSON, recibido: {type(data).__name__}")
 
         validated = []
         for item in data:

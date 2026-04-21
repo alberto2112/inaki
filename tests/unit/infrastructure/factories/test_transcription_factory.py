@@ -11,21 +11,21 @@ from __future__ import annotations
 
 import pytest
 
-from core.domain.errors import UnknownTranscriptionProviderError
-from core.ports.outbound.transcription_port import ITranscriptionProvider
-from infrastructure.config import TranscriptionConfig
+from adapters.outbound.transcription.base import BaseTranscriptionProvider
+from core.domain.errors import ConfigError, UnknownTranscriptionProviderError
+from infrastructure.config import ProviderConfig, ResolvedTranscriptionConfig, TranscriptionConfig
 from infrastructure.factories.transcription_factory import TranscriptionProviderFactory
 
 
-class _FakeProvider(ITranscriptionProvider):
+class _FakeProvider(BaseTranscriptionProvider):
     """Provider fake para aislar la factory del estado real del registry."""
 
-    def __init__(self, cfg: TranscriptionConfig) -> None:
+    REQUIRES_CREDENTIALS = True
+
+    def __init__(self, cfg: ResolvedTranscriptionConfig) -> None:
         self.cfg = cfg
 
-    async def transcribe(
-        self, audio: bytes, mime: str, language: str | None = None
-    ) -> str:
+    async def transcribe(self, audio: bytes, mime: str, language: str | None = None) -> str:
         return "fake"
 
 
@@ -46,10 +46,12 @@ def test_create_retorna_instancia_registrada(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(TranscriptionProviderFactory, "_load", classmethod(lambda cls: None))
 
     cfg = TranscriptionConfig(provider="fake", model="m")
-    provider = TranscriptionProviderFactory.create(cfg)
+    providers = {"fake": ProviderConfig(api_key="K")}
+    provider = TranscriptionProviderFactory.create(cfg, providers)
 
     assert isinstance(provider, _FakeProvider)
     assert provider.cfg.provider == "fake"
+    assert provider.cfg.api_key == "K"
 
 
 def test_create_lanza_unknown_provider_si_no_registrado(
@@ -64,19 +66,26 @@ def test_create_lanza_unknown_provider_si_no_registrado(
 
     cfg = TranscriptionConfig(provider="inexistente", model="m")
     with pytest.raises(UnknownTranscriptionProviderError) as exc_info:
-        TranscriptionProviderFactory.create(cfg)
+        TranscriptionProviderFactory.create(cfg, providers={})
 
     assert "inexistente" in str(exc_info.value)
     # También debe mencionar los disponibles para debug.
     assert "groq" in str(exc_info.value)
 
 
-def test_create_no_op_si_transcription_config_es_none() -> None:
-    """Si el caller pasa cfg=None, la factory NO debe explotar — delegamos esa
-    decisión al container. La factory sólo se invoca cuando cfg es TranscriptionConfig."""
-    # Validamos que el tipo de la firma es explícito: create(cfg: TranscriptionConfig).
-    import inspect
+def test_create_sin_entry_y_adapter_exige_creds_falla(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REQUIRES_CREDENTIALS=True y sin entrada en providers → ConfigError."""
+    monkeypatch.setattr(
+        TranscriptionProviderFactory,
+        "_registry",
+        {"fake": _FakeProvider},
+    )
+    monkeypatch.setattr(TranscriptionProviderFactory, "_load", classmethod(lambda cls: None))
 
-    sig = inspect.signature(TranscriptionProviderFactory.create)
-    cfg_param = sig.parameters["cfg"]
-    assert cfg_param.annotation is TranscriptionConfig or cfg_param.annotation == "TranscriptionConfig"
+    cfg = TranscriptionConfig(provider="fake", model="m")
+    with pytest.raises(ConfigError) as exc_info:
+        TranscriptionProviderFactory.create(cfg, providers={})
+
+    assert "fake" in str(exc_info.value)

@@ -18,7 +18,9 @@ from core.use_cases.run_agent import RunAgentUseCase
 
 
 @pytest.fixture
-def caso_uso(agent_config, mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools) -> RunAgentUseCase:
+def caso_uso(
+    agent_config, mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools
+) -> RunAgentUseCase:
     """Instancia de RunAgentUseCase con todos los colaboradores mockeados."""
     return RunAgentUseCase(
         llm=mock_llm,

@@ -5,9 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 
-import pytest
-
-from core.domain.errors import ConfigError
 from infrastructure.config import (
     AppConfig,
     ChatHistoryConfig,
@@ -15,6 +12,7 @@ from infrastructure.config import (
     LLMConfig,
     MemoryConfig,
     MemoryLLMOverride,
+    ProviderConfig,
     SchedulerConfig,
 )
 
@@ -179,17 +177,34 @@ def _base_llm() -> LLMConfig:
         temperature=0.7,
         max_tokens=2048,
         reasoning_effort="high",
-        api_key="KEY_BASE",
     )
+
+
+def _providers_with_groq() -> dict[str, ProviderConfig]:
+    return {"groq": ProviderConfig(api_key="KEY_BASE")}
 
 
 def test_resolved_llm_config_sin_override_devuelve_base() -> None:
     base = _base_llm()
     cfg = MemoryConfig()
 
-    resultado = cfg.resolved_llm_config(base)
+    resultado = cfg.resolved_llm_config(base, _providers_with_groq())
 
-    assert resultado == base
+    # Sin override el merged == base; la resolved trae además las creds del registry.
+    assert resultado.provider == base.provider
+    assert resultado.model == base.model
+    assert resultado.temperature == base.temperature
+    assert resultado.max_tokens == base.max_tokens
+    assert resultado.reasoning_effort == base.reasoning_effort
+    assert resultado.api_key == "KEY_BASE"
+
+
+def test_merged_llm_config_sin_override_devuelve_base() -> None:
+    """El merge puro (sin creds) devuelve el base intacto cuando no hay override."""
+    base = _base_llm()
+    cfg = MemoryConfig()
+
+    assert cfg.merged_llm_config(base) == base
 
 
 def test_resolved_llm_config_merge_parcial_resuelve_caso_del_bug() -> None:
@@ -206,14 +221,14 @@ def test_resolved_llm_config_merge_parcial_resuelve_caso_del_bug() -> None:
     )
     cfg = MemoryConfig(llm=override)
 
-    resultado = cfg.resolved_llm_config(base)
+    resultado = cfg.resolved_llm_config(base, _providers_with_groq())
 
     assert resultado.provider == "groq"  # heredado
     assert resultado.model == "llama-3.3-70b-versatile"  # override
     assert resultado.reasoning_effort is None  # override explícito a None
     assert resultado.max_tokens == 8192  # override
     assert resultado.temperature == 0.7  # heredado
-    assert resultado.api_key == "KEY_BASE"  # heredado
+    assert resultado.api_key == "KEY_BASE"  # del registry (provider no cambió)
 
 
 def test_resolved_llm_config_distingue_null_explicito_vs_clave_ausente() -> None:
@@ -222,54 +237,67 @@ def test_resolved_llm_config_distingue_null_explicito_vs_clave_ausente() -> None
     clave ausente en YAML → hereda el valor del base.
     """
     base = _base_llm()
+    providers = _providers_with_groq()
 
     # Caso 1: null explícito → model_fields_set contiene 'reasoning_effort'.
     override_null = MemoryLLMOverride.model_validate({"reasoning_effort": None})
     assert "reasoning_effort" in override_null.model_fields_set
-    resultado_null = MemoryConfig(llm=override_null).resolved_llm_config(base)
+    resultado_null = MemoryConfig(llm=override_null).resolved_llm_config(base, providers)
     assert resultado_null.reasoning_effort is None
 
     # Caso 2: clave ausente → model_fields_set NO contiene 'reasoning_effort'.
     override_ausente = MemoryLLMOverride.model_validate({"model": "X"})
     assert "reasoning_effort" not in override_ausente.model_fields_set
-    resultado_ausente = MemoryConfig(llm=override_ausente).resolved_llm_config(base)
+    resultado_ausente = MemoryConfig(llm=override_ausente).resolved_llm_config(base, providers)
     assert resultado_ausente.reasoning_effort == "high"  # heredado
 
 
-def test_resolved_llm_config_provider_distinto_sin_api_key_falla() -> None:
+def test_resolved_llm_config_provider_distinto_sin_entry_en_registry_devuelve_api_key_none() -> (
+    None
+):
+    """
+    Tras el refactor a providers top-level, ``resolved_llm_config`` ya no valida
+    credenciales — delega en la factory (``LLMProviderFactory.create_from_resolved``).
+    Si el provider cambió y no hay entry en el registry, devuelve ``api_key=None``
+    y la factory es quien levanta ``ConfigError`` al instanciar el adapter.
+    """
     base = _base_llm()
     override = MemoryLLMOverride(provider="openai", model="gpt-4o-mini")
     cfg = MemoryConfig(llm=override)
 
-    with pytest.raises(ConfigError) as exc_info:
-        cfg.resolved_llm_config(base)
+    resultado = cfg.resolved_llm_config(base, _providers_with_groq())
 
-    mensaje = str(exc_info.value)
-    assert "memory.llm.provider" in mensaje
-    assert "api_key" in mensaje
+    assert resultado.provider == "openai"
+    assert resultado.api_key is None
+    assert resultado.base_url is None
 
 
-def test_resolved_llm_config_mismo_provider_sin_api_key_override_es_ok() -> None:
+def test_resolved_llm_config_mismo_provider_hereda_creds_del_registry() -> None:
     """
-    Si el provider no cambia, la api_key se hereda del base: no hay validación
-    que falle aunque el override no declare api_key.
+    Si el override no cambia el provider, la api_key se toma del registry
+    bajo la misma key del base.
     """
     base = _base_llm()
     override = MemoryLLMOverride(model="otro-modelo")
     cfg = MemoryConfig(llm=override)
 
-    resultado = cfg.resolved_llm_config(base)
+    resultado = cfg.resolved_llm_config(base, _providers_with_groq())
 
     assert resultado.provider == "groq"
     assert resultado.api_key == "KEY_BASE"
 
 
-def test_resolved_llm_config_provider_distinto_con_api_key_es_ok() -> None:
+def test_resolved_llm_config_provider_distinto_con_entry_en_registry_es_ok() -> None:
+    """Cuando el override cambia provider y el registry tiene la entry, se resuelve bien."""
     base = _base_llm()
-    override = MemoryLLMOverride(provider="openai", api_key="KEY_OVERRIDE")
+    override = MemoryLLMOverride(provider="openai", model="gpt-4o-mini")
     cfg = MemoryConfig(llm=override)
+    providers = {
+        "groq": ProviderConfig(api_key="KEY_BASE"),
+        "openai": ProviderConfig(api_key="KEY_OVERRIDE"),
+    }
 
-    resultado = cfg.resolved_llm_config(base)
+    resultado = cfg.resolved_llm_config(base, providers)
 
     assert resultado.provider == "openai"
     assert resultado.api_key == "KEY_OVERRIDE"

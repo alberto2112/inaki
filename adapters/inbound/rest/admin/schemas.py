@@ -55,7 +55,7 @@ class ChatTurnResponse(BaseModel):
         default_factory=list,
         description=(
             "Bloques de texto que el LLM emitió junto con tool_calls durante el "
-            "turno (narración tipo \"ok, voy a buscar esto...\"). En orden de "
+            'turno (narración tipo "ok, voy a buscar esto..."). En orden de '
             "emisión. El cliente los muestra ANTES de ``reply`` para que el "
             "usuario vea el progreso del turno."
         ),
@@ -67,7 +67,9 @@ class HistoryMessage(BaseModel):
 
     role: str = Field(..., description="Rol del mensaje: user, assistant, system, tool")
     content: str = Field(..., description="Contenido del mensaje")
-    timestamp: datetime | None = Field(None, description="Marca de tiempo del mensaje (ISO 8601 UTC)")
+    timestamp: datetime | None = Field(
+        None, description="Marca de tiempo del mensaje (ISO 8601 UTC)"
+    )
 
 
 class HistoryResponse(BaseModel):

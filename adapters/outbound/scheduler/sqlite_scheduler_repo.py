@@ -75,7 +75,6 @@ def _deserialize_payload(raw: str) -> TriggerPayload:  # type: ignore[type-arg]
 
 
 class SQLiteSchedulerRepo:
-
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -93,9 +92,7 @@ class SQLiteSchedulerRepo:
     async def save_task(self, task: ScheduledTask) -> ScheduledTask:
         payload_json = _serialize_payload(task.trigger_payload)
         resolved_next_run = self._resolve_next_run(task)
-        next_run_ts: float | None = (
-            resolved_next_run.timestamp() if resolved_next_run else None
-        )
+        next_run_ts: float | None = resolved_next_run.timestamp() if resolved_next_run else None
 
         async with self._conn() as conn:
             await self._ensure_schema_conn(conn)
@@ -196,9 +193,7 @@ class SQLiteSchedulerRepo:
     async def list_tasks(self) -> list[ScheduledTask]:
         async with self._conn() as conn:
             await self._ensure_schema_conn(conn)
-            rows = await conn.execute_fetchall(
-                "SELECT * FROM scheduled_tasks ORDER BY id ASC"
-            )
+            rows = await conn.execute_fetchall("SELECT * FROM scheduled_tasks ORDER BY id ASC")
         return [self._row_to_task(row) for row in rows]
 
     async def delete_task(self, task_id: int) -> None:
@@ -250,7 +245,9 @@ class SQLiteSchedulerRepo:
             )
         return [self._row_to_task(row) for row in rows]
 
-    async def update_status(self, task_id: int, status: TaskStatus, *, retry_count: int | None = None) -> None:
+    async def update_status(
+        self, task_id: int, status: TaskStatus, *, retry_count: int | None = None
+    ) -> None:
         async with self._conn() as conn:
             await self._ensure_schema_conn(conn)
             if retry_count is not None:
@@ -373,9 +370,7 @@ class SQLiteSchedulerRepo:
         """Devuelve el TaskLog por id, o None si no existe (sin excepción)."""
         async with self._conn() as conn:
             await self._ensure_schema_conn(conn)
-            rows = await conn.execute_fetchall(
-                "SELECT * FROM task_logs WHERE id = ?", (log_id,)
-            )
+            rows = await conn.execute_fetchall("SELECT * FROM task_logs WHERE id = ?", (log_id,))
         if not rows:
             return None
         return self._row_to_tasklog(rows[0])
@@ -390,9 +385,7 @@ class SQLiteSchedulerRepo:
         """
         payload_json = _serialize_payload(task.trigger_payload)
         resolved_next_run = self._resolve_next_run(task)
-        next_run_ts: float | None = (
-            resolved_next_run.timestamp() if resolved_next_run else None
-        )
+        next_run_ts: float | None = resolved_next_run.timestamp() if resolved_next_run else None
         async with self._conn() as conn:
             await self._ensure_schema_conn(conn)
             await conn.execute(
@@ -447,9 +440,7 @@ class SQLiteSchedulerRepo:
             return task.next_run
         if task.task_kind == TaskKind.RECURRENT:
             now = datetime.now(timezone.utc)
-            return datetime.fromtimestamp(
-                croniter(task.schedule, now).get_next(), tz=timezone.utc
-            )
+            return datetime.fromtimestamp(croniter(task.schedule, now).get_next(), tz=timezone.utc)
         if task.task_kind == TaskKind.ONESHOT:
             try:
                 dt = datetime.fromisoformat(task.schedule)
@@ -471,8 +462,7 @@ class SQLiteSchedulerRepo:
         # deja el runtime en un estado válido que el loop no va a levantar
         # porque enabled=0 lo excluye).
         await conn.execute(
-            "UPDATE scheduled_tasks SET enabled = 0, status = 'pending' "
-            "WHERE status = 'disabled'"
+            "UPDATE scheduled_tasks SET enabled = 0, status = 'pending' WHERE status = 'disabled'"
         )
         await conn.commit()
 

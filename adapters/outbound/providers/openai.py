@@ -12,7 +12,7 @@ from adapters.outbound.providers.base import BaseLLMProvider
 from core.domain.entities.message import Message
 from core.domain.errors import LLMError
 from core.domain.value_objects.llm_response import LLMResponse
-from infrastructure.config import LLMConfig
+from infrastructure.config import ResolvedLLMConfig
 
 PROVIDER_NAME = "openai"
 
@@ -20,10 +20,9 @@ logger = logging.getLogger(__name__)
 
 
 class OpenAIProvider(BaseLLMProvider):
-
-    def __init__(self, cfg: LLMConfig) -> None:
+    def __init__(self, cfg: ResolvedLLMConfig) -> None:
         if not cfg.api_key:
-            raise LLMError("OpenAI requiere api_key en llm.api_key")
+            raise LLMError("OpenAI requiere api_key en providers.openai.api_key")
         self._cfg = cfg
         self._base_url = cfg.base_url or "https://api.openai.com/v1"
         self._headers = {
@@ -58,9 +57,7 @@ class OpenAIProvider(BaseLLMProvider):
                 data = resp.json()
         except httpx.HTTPStatusError as exc:
             body = exc.response.text[:500]
-            raise LLMError(
-                f"OpenAI HTTP {exc.response.status_code}: {body}"
-            ) from exc
+            raise LLMError(f"OpenAI HTTP {exc.response.status_code}: {body}") from exc
         except httpx.HTTPError as exc:
             raise LLMError(f"OpenAI HTTP error: {exc}") from exc
 
@@ -113,8 +110,6 @@ class OpenAIProvider(BaseLLMProvider):
         except httpx.HTTPStatusError as exc:
             await exc.response.aread()
             body = exc.response.text[:500]
-            raise LLMError(
-                f"OpenAI HTTP {exc.response.status_code}: {body}"
-            ) from exc
+            raise LLMError(f"OpenAI HTTP {exc.response.status_code}: {body}") from exc
         except httpx.HTTPError as exc:
             raise LLMError(f"OpenAI stream error: {exc}") from exc

@@ -21,12 +21,14 @@ logger = logging.getLogger(__name__)
 
 def _auth_middleware(auth_key: str | None):
     """Middleware factory para autenticación via X-API-Key."""
+
     async def middleware(request: Request, call_next):
         if auth_key:
             provided = request.headers.get("X-API-Key")
             if provided != auth_key:
                 raise HTTPException(status_code=401, detail="X-API-Key inválida o ausente")
         return await call_next(request)
+
     return middleware
 
 
@@ -50,6 +52,7 @@ def create_agent_app(agent_cfg: AgentConfig, container: AgentContainer) -> FastA
 
     if auth_key:
         from starlette.middleware.base import BaseHTTPMiddleware
+
         app.add_middleware(BaseHTTPMiddleware, dispatch=_auth_middleware(auth_key))
 
     # Inyectar el container en el state de la app

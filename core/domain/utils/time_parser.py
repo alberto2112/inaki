@@ -48,9 +48,7 @@ def parse_schedule(raw: str, user_timezone: str) -> datetime:
 
         # La regex puede matchear "+", que no tiene ningún grupo — inválido.
         if days_str is None and hours_str is None and minutes_str is None:
-            raise ValueError(
-                f"Relative schedule '{raw}' must specify at least one of: d, h, m"
-            )
+            raise ValueError(f"Relative schedule '{raw}' must specify at least one of: d, h, m")
 
         days = int(days_str) if days_str is not None else 0
         hours = int(hours_str) if hours_str is not None else 0
@@ -58,9 +56,7 @@ def parse_schedule(raw: str, user_timezone: str) -> datetime:
 
         total_minutes = days * 24 * 60 + hours * 60 + minutes
         if total_minutes == 0:
-            raise ValueError(
-                f"Relative schedule '{raw}' must have a positive duration (got zero)"
-            )
+            raise ValueError(f"Relative schedule '{raw}' must have a positive duration (got zero)")
 
         return datetime.now(timezone.utc) + timedelta(days=days, hours=hours, minutes=minutes)
 

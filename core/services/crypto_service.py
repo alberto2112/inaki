@@ -67,7 +67,7 @@ class CryptoService:
         """Decrypt an ``enc:<token>`` value. Plain values are returned unchanged."""
         if not self.is_encrypted(value):
             return value
-        token = value[len(_ENC_PREFIX):]
+        token = value[len(_ENC_PREFIX) :]
         try:
             return self._fernet.decrypt(token.encode()).decode()
         except InvalidToken as exc:

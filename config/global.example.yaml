@@ -23,6 +23,46 @@
 
 
 # -----------------------------------------------------------------------------
+# [providers] — Registry top-level de proveedores (credenciales compartidas)
+# -----------------------------------------------------------------------------
+#
+# Single source of truth para `api_key` y `base_url` por vendor. Las features
+# (`llm`, `embedding`, `transcription`, `memory.llm`) NO declaran credenciales
+# — solo referencian una entrada de este registry por nombre vía `provider: <key>`.
+#
+# Cada entrada soporta:
+#   type:     nombre del adapter. Si es ausente, se resuelve a la KEY del dict.
+#             Solo se explicita para multi-instance (p. ej. dos creds de Groq).
+#   api_key:  credencial del vendor. Opcional para providers locales
+#             (ollama, e5_onnx) que no la requieren.
+#   base_url: override del default hardcoded del adapter. Opcional.
+#
+# El bloque es strict (`extra="forbid"`) para atrapar typos temprano.
+#
+# Ejemplo típico — 3 vendors remotos + ollama local:
+#
+#   providers:
+#     groq:       { api_key: "gsk_...",  base_url: "https://api.groq.com/openai/v1" }
+#     openai:     { api_key: "sk-..." }
+#     openrouter: { api_key: "sk-or-..." }
+#     # ollama: no requiere entrada, usa default http://localhost:11434
+#
+# Multi-instance (billing separado con el mismo adapter):
+#
+#   providers:
+#     groq:      { api_key: "gsk_personal..." }
+#     groq-work: { type: groq, api_key: "gsk_work..." }
+#
+# En este caso `llm.provider: groq-work` apunta al adapter groq con creds
+# corporativas. Las entradas coexisten sin pisarse.
+#
+# Las credenciales reales viven en `global.secrets.yaml` — este archivo es
+# solo referencia. Si definís `providers.groq.api_key: K` en `global.yaml`,
+# se mergea normalmente con los secrets (el secrets layer gana en conflicto).
+providers: {}
+
+
+# -----------------------------------------------------------------------------
 # [app] — Configuración general del sistema
 # -----------------------------------------------------------------------------
 app:
@@ -39,20 +79,12 @@ app:
 # [llm] — Proveedor de lenguaje (LLM)
 # -----------------------------------------------------------------------------
 llm:
-  provider: "openrouter"      # Proveedor activo. Opciones:
-                              #   "openrouter" — API compatible OpenAI via openrouter.ai
-                              #   "openai"     — OpenAI API directa
-                              #   "ollama"     — Ollama local (sin api_key)
-                              #   "groq"       — Groq API (muy rápido, modelos limitados)
-                              # Añadir nuevo proveedor: crear adapters/outbound/providers/{name}.py
-                              # con PROVIDER_NAME = "{name}" (descubrimiento automático)
-
-  base_url: "https://openrouter.ai/api/v1"
-                              # URL base de la API. Valores por proveedor:
-                              #   openrouter: "https://openrouter.ai/api/v1"
-                              #   openai:     "https://api.openai.com/v1"
-                              #   ollama:     "http://localhost:11434"
-                              #   groq:       "https://api.groq.com/openai/v1"
+  provider: "openrouter"      # KEY del `providers:` registry que provee las creds.
+                              # Opciones nativas: openrouter, openai, ollama, groq.
+                              # Añadir nuevo proveedor: crear
+                              # adapters/outbound/providers/{name}.py con
+                              # PROVIDER_NAME = "{name}" (descubrimiento automático)
+                              # y declarar `providers.{name}` con las creds.
 
   model: "anthropic/claude-3-5-haiku"
                               # Modelo a usar. Ejemplos:
@@ -71,19 +103,19 @@ llm:
                               # Aumentar para respuestas largas (código, análisis)
                               # Considerar coste en Pi 5 con modelos locales
 
-  # api_key: "sk-or-..."     # API key del proveedor — MOVER A global.secrets.yaml
-                              # Ollama no requiere api_key
+  # Las credenciales NO van acá — se resuelven desde `providers.{provider}`.
 
 
 # -----------------------------------------------------------------------------
 # [embedding] — Modelo de embeddings para RAG
 # -----------------------------------------------------------------------------
 embedding:
-  provider: "e5_onnx"         # Proveedor de embeddings. Opciones:
-                              #   "e5_onnx" — multilingual-e5-small via ONNX Runtime
-                              #               Recomendado para Pi 5 (local, ARM64, sin internet)
-                              # Añadir proveedor: crear adapters/outbound/embedding/{name}.py
-                              # con PROVIDER_NAME = "{name}"
+  provider: "e5_onnx"         # KEY del `providers:` registry. Opciones:
+                              #   "e5_onnx" — multilingual-e5-small via ONNX Runtime.
+                              #               Local, no requiere entrada en providers.
+                              #               Recomendado para Pi 5.
+                              #   "openai"  — text-embedding-3-small vía OpenAI.
+                              #               Requiere `providers.openai.api_key`.
 
   model_dirname: "models/e5-small"
                               # Directorio con los archivos del modelo ONNX, relativo
@@ -121,63 +153,42 @@ memory:
   digest_filename: "mem/last_memories.md"
                               # Fichero markdown leído por el prompt builder en cada
                               # turno, relativo a ~/.inaki/. Si se pone absoluto, se
-                              # usa tal cual. Parte del principio user-data-separation:
-                              # los datos del usuario viven fuera del árbol del proyecto.
+                              # usa tal cual.
 
   min_relevance_score: 0.5    # Umbral mínimo (0.0-1.0) para persistir un recuerdo
-                              # extraído por el LLM. Hechos con relevance < umbral
-                              # se descartan ANTES de generar embeddings (ahorra
-                              # tokens y storage).
+                              # extraído por el LLM.
 
   schedule: "0 3 * * *"       # Cron para la consolidación global nocturna
                               # (una sola tarea que itera todos los agentes).
-                              # Ejemplos:
-                              #   "0 3 * * *"   — todos los días a las 03:00
-                              #   "0 */6 * * *" — cada 6 horas
-                              # Al arrancar el daemon se reconcilia: si cambia
-                              # acá se actualiza la fila en scheduler.db.
 
   delay_seconds: 2            # Pausa (segundos) entre agente y agente durante
-                              # la consolidación global. Evita golpear el
-                              # rate-limit del proveedor LLM cuando hay varios.
+                              # la consolidación global. Evita rate-limits.
 
   keep_last_messages: 0       # Mensajes a preservar por agente tras una
-                              # consolidación exitosa. Los recuerdos extraídos
-                              # ya están en la memoria vectorial, pero los
-                              # últimos N mensajes quedan en `history.db` como
-                              # contexto inmediato para el próximo turno.
-                              #
-                              # Sentinel:  0 → usar fallback del sistema (84)
-                              # Cualquier valor > 0 se respeta tal cual.
-                              #
-                              # Sugerencia: mantener keep_last_messages ≥
-                              # chat_history.max_messages, sino el prompt
-                              # builder no tendrá suficientes filas para
-                              # llenar su ventana tras cada consolidación.
+                              # consolidación exitosa. 0 = usar fallback (84).
 
   # enabled: true             # Flag PER-AGENT — va en agents/{id}.yaml, NO acá
-                              # Controla si ese agente participa en la
-                              # consolidación nocturna. Default: true.
 
   # ---------------------------------------------------------------------------
   # [memory.llm] — LLM dedicado para la consolidación (OPCIONAL)
   # ---------------------------------------------------------------------------
   # Permite usar un LLM DISTINTO al del agente (llm.*) SOLO para consolidar la
   # memoria. Cada campo que definas acá pisa al de `llm.*`; los campos ausentes
-  # se heredan. Útil cuando el LLM del agente es un reasoning model con
-  # reasoning_effort alto — esos tokens se contabilizan contra max_tokens y
-  # pueden dejar la respuesta de consolidación vacía (consolidación necesita
-  # devolver JSON, no razonar).
+  # se heredan. Si cambiás `provider`, las credenciales se resuelven desde el
+  # registry `providers.{nuevo_provider}` — no van acá.
   #
   # Semántica:
   #   - clave AUSENTE → hereda el valor de `llm.*`.
-  #   - clave con valor `null` → override EXPLÍCITO (fuerza None aunque el
-  #     base tenga valor; útil p. ej. para apagar `reasoning_effort`).
+  #   - clave con valor `null` → override EXPLÍCITO (fuerza None).
   #
-  # Validación: si cambiás `provider` y no hay `api_key` resolvible para ese
-  # provider (ni acá ni en el base), el arranque falla con ConfigError.
+  # Validación: si el provider del override requiere creds y no hay entrada en
+  # `providers:` con `api_key`, el arranque falla con ConfigError.
   #
-  # Ejemplo típico — usar un modelo no-reasoning para consolidar:
+  # Ejemplo — chat con un reasoning model, consolidación con uno no-reasoning:
+  #
+  # providers:
+  #   groq:   { api_key: "gsk_..." }
+  #   openai: { api_key: "sk-..." }
   #
   # llm:                      # (base, para el chat)
   #   provider: groq
@@ -185,19 +196,12 @@ memory:
   #   reasoning_effort: high
   #   max_tokens: 2048
   #
-  # llm:                      # (override, para consolidación)
-  #   model: llama-3.3-70b-versatile
-  #   reasoning_effort: null  # apaga reasoning (gpt-oss tenía high)
-  #   max_tokens: 8192        # más presupuesto para el JSON de recuerdos
-  #
-  # llm:
-  #   provider: ~             # ← descomenta para heredar o override
-  #   base_url: ~
-  #   model: ~
-  #   temperature: ~
-  #   max_tokens: ~
-  #   reasoning_effort: ~
-  #   api_key: ~              # en secrets si cambiás de provider
+  # memory:
+  #   llm:                    # (override, para consolidación)
+  #     provider: openai      # cambia vendor → creds resueltas desde providers.openai
+  #     model: gpt-4o-mini
+  #     reasoning_effort: null
+  #     max_tokens: 8192
 
 
 # -----------------------------------------------------------------------------
@@ -205,8 +209,6 @@ memory:
 # -----------------------------------------------------------------------------
 chat_history:
   db_filename: "data/history.db"  # Fichero SQLite relativo a ~/.inaki/.
-                              # Si se pone absoluto, se usa tal cual.
-                              # Separado de inaki.db (que usa sqlite-vec).
 
   max_messages: 21            # Últimos N mensajes inyectados al LLM (0 = sin límite)
 
@@ -215,145 +217,55 @@ chat_history:
 # [tools] — Configuración de selección de tools vía semantic routing
 # -----------------------------------------------------------------------------
 tools:
-  semantic_routing_min_tools: 10  # Nº mínimo de tools registradas para activar routing
-                                  # Si hay ≤ este valor, se envían TODAS al LLM
-  semantic_routing_top_k: 5       # Nº máximo de tools seleccionadas por routing
-  semantic_routing_min_score: 0.0 # Score mínimo de cosine similarity (0.0-1.0)
-                                  # para incluir una tool. 0.0 = sin filtro.
-                                  # Recomendado: 0.3-0.5 para filtrar ruido.
-  sticky_ttl: 3                   # Turnos que una tool seleccionada por routing sigue
-                                  # disponible aunque el routing no la re-seleccione.
-                                  # 0 = feature deshabilitada.
-                                  # N > 0 = la tool sobrevive N turnos; si el routing
-                                  # la vuelve a elegir, el TTL se refresca al máximo.
-                                  # Útil para follow-ups cortos ("y del siguiente?",
-                                  # "sí") donde el embedding del último user_input
-                                  # no tiene señal suficiente. Recomendado: 3-5.
-  tool_call_max_iterations: 5     # Máx. iteraciones del tool-loop por turno
-  circuit_breaker_threshold: 2    # Fallos consecutivos antes de cortar el loop
+  semantic_routing_min_tools: 10
+  semantic_routing_top_k: 5
+  semantic_routing_min_score: 0.0
+  sticky_ttl: 3
+  tool_call_max_iterations: 5
+  circuit_breaker_threshold: 2
 
 
 # -----------------------------------------------------------------------------
 # [skills] — Configuración de selección de skills vía semantic routing
 # -----------------------------------------------------------------------------
 skills:
-  semantic_routing_min_skills: 10  # Nº mínimo de skills cargadas para activar routing
-                                   # Si hay ≤ este valor, se inyectan TODAS al prompt
-  semantic_routing_top_k: 3        # Nº máximo de skills seleccionadas por routing
-  semantic_routing_min_score: 0.0  # Score mínimo de cosine similarity (0.0-1.0)
-                                   # para incluir una skill. 0.0 = sin filtro.
-                                   # Recomendado: 0.3-0.5 para filtrar ruido.
-  sticky_ttl: 3                    # Turnos que una skill seleccionada por routing sigue
-                                   # inyectada en el system prompt aunque el routing no
-                                   # la re-seleccione. 0 = feature deshabilitada.
-                                   # N > 0 = la skill sobrevive N turnos; si el routing
-                                   # la vuelve a elegir, el TTL se refresca al máximo.
-                                   # Útil para follow-ups cortos ("y del siguiente?",
-                                   # "sí") donde el embedding del último user_input
-                                   # no tiene señal suficiente. Recomendado: 3-5.
+  semantic_routing_min_skills: 10
+  semantic_routing_top_k: 3
+  semantic_routing_min_score: 0.0
+  sticky_ttl: 3
 
 
 # -----------------------------------------------------------------------------
-# [semantic_routing] — Políticas transversales al pipeline de semantic routing
+# [semantic_routing] — Políticas transversales al pipeline
 # -----------------------------------------------------------------------------
 semantic_routing:
-  min_words_threshold: 0        # Mínimo de palabras del user_input para activar
-                                # el cálculo de embedding y la re-selección de routing.
-                                # Por debajo de ese umbral (y si existe una
-                                # selección sticky del turno previo), se saltea
-                                # el embedding y se hereda la selección anterior
-                                # intacta — sin decrementar TTL ni persistir
-                                # estado. 0 = feature deshabilitada (el routing corre
-                                # siempre, comportamiento histórico).
-                                #
-                                # Motivación: en follow-ups cortos ("sí", "dale",
-                                # "y eso?") el embedding tiene poca señal y
-                                # generalmente el contexto es el mismo del turno
-                                # anterior. Skipear ahorra una llamada al
-                                # embedder y evita "resetear" la selección.
-                                #
-                                # Palabra = len(user_input.split()).
-                                #
-                                # Primer turno con sticky vacío → el routing corre
-                                # normalmente aunque el input sea corto (no hay
-                                # contexto del cual heredar).
-                                #
-                                # Recomendado: 5 para activar; 0 para desactivar.
+  min_words_threshold: 0
 
 
 # -----------------------------------------------------------------------------
 # [workspace] — Directorio de trabajo del agente (sandbox de las tools de FS)
 # -----------------------------------------------------------------------------
-#
-# Define DÓNDE operan las tools de filesystem (read_file, write_file, patch_file).
-# Los paths relativos del LLM se resuelven contra `workspace.path`, NO contra el
-# cwd del proceso. Esto permite correr múltiples agentes/sub-agentes en paralelo
-# en el mismo proceso sin que se pisen los directorios.
-#
-# Cada agente puede overrridear `path` y/o `containment` en su `agents/{id}.yaml`
-# para aislar su scope del resto.
-# -----------------------------------------------------------------------------
 workspace:
-  path: "~/inaki-workspace"   # Raíz del workspace. Se crea si no existe.
-                              # `{{WORKSPACE}}` en system_prompt se sustituye por
-                              # esta ruta en absoluto (expanduser + resolve).
-                              # Soporta expansión de `~` (home del usuario).
-                              # Ejemplos:
-                              #   "~/inaki-workspace"           ← default
-                              #   "/srv/inaki/projects/alpha"   ← producción dedicada
-                              #   "~/Documents/inaki"           ← usuario desktop
-
-  containment: "strict"       # Guard de contención para paths absolutos y
-                              # escapes via `..`. Modos:
-                              #   "strict" → bloquea cualquier path fuera del
-                              #              workspace con un error. Recomendado
-                              #              en PRODUCCIÓN — evita que el LLM
-                              #              toque archivos sensibles del sistema
-                              #              (p.ej. `/etc/passwd`, `~/.ssh/`).
-                              #
-                              #   "warn"   → loggea warning pero permite el
-                              #              acceso. Útil en desarrollo para
-                              #              detectar qué paths se están saliendo
-                              #              antes de endurecer a strict.
-                              #
-                              #   "off"    → sin check. Solo para debugging
-                              #              local — NO usar en producción.
+  path: "~/inaki-workspace"
+  containment: "strict"       # "strict" | "warn" | "off"
 
 
 # -----------------------------------------------------------------------------
 # [delegation] — Delegación agente-a-agente (defaults globales)
 # -----------------------------------------------------------------------------
-#
-# Controla los valores por defecto para la ejecución de sub-agentes delegados.
-# Per-agent `delegation.enabled: true` y `allowed_targets: [...]` siguen siendo
-# necesarios en cada agents/{id}.yaml para habilitar la delegación en ese agente.
-#
-# Nota: NO existe campo `max_depth` — la prevención de recursión es estructural
-# (el tool `delegate` se filtra automáticamente de los schemas del sub-agente).
-#
 # delegation:
-#   max_iterations_per_sub: 10   # máx. iteraciones del tool-loop por llamada delegada
-#   timeout_seconds: 60          # presupuesto de reloj por llamada delegada (asyncio.wait_for)
+#   max_iterations_per_sub: 10
+#   timeout_seconds: 60
 
 
 # -----------------------------------------------------------------------------
 # [admin] — Admin server del daemon (endpoints de gestión)
 # -----------------------------------------------------------------------------
 admin:
-  host: "127.0.0.1"             # Interfaz de escucha del admin server
-                                # "127.0.0.1" = solo loopback (recomendado en producción)
-                                # "0.0.0.0"   = todas las interfaces (con cuidado)
-
-  port: 6497                    # Puerto del admin server
-                                # Producción Pi 5: mantener en 6497 o cambiar si hay conflicto
-
-  chat_timeout: 300.0           # Timeout en segundos para turnos de chat vía REST
-                                # (POST /admin/chat/turn). El CLI espera hasta este tiempo
-                                # antes de levantar DaemonTimeoutError.
-                                # Aumentar para modelos locales lentos (Raspberry Pi).
-                                # Default: 300 (5 minutos)
-
-  # auth_key: "clave-secreta"   # Clave para el header X-Admin-Key → MOVER A global.secrets.yaml
+  host: "127.0.0.1"
+  port: 6497
+  chat_timeout: 300.0
+  # auth_key: "clave-secreta"   # → global.secrets.yaml
 
 
 # -----------------------------------------------------------------------------
@@ -362,40 +274,16 @@ admin:
 #
 # Habilita la transcripción de mensajes de voz, audio y video_note en el canal
 # de Telegram. Se activa cuando `channels.telegram.voice_enabled: true` en el
-# agente (default). Si un agente tiene `voice_enabled: true` sin bloque
-# `transcription:` resuelto, el bootstrap falla con un error claro.
+# agente (default).
 #
-# ⚠ PRIVACIDAD: el audio se envía al proveedor externo (ej. Groq). Si el
-# contenido es sensible, poné `channels.telegram.voice_enabled: false` en ese
-# agente, o elegí un proveedor local cuando exista.
+# Las credenciales se resuelven desde `providers.{provider}` — no van acá.
 #
 # transcription:
-#   provider: "groq"            # Proveedor activo. Opciones:
-#                               #   "groq" — Whisper vía Groq API (rápido, barato)
-#                               # Añadir proveedor: crear adapters/outbound/transcription/{name}.py
-#                               # con PROVIDER_NAME = "{name}" (descubrimiento automático).
-#
+#   provider: "groq"            # KEY del `providers:` registry que provee creds.
 #   model: "whisper-large-v3-turbo"
-#                               # Modelo de transcripción. Ejemplos Groq:
-#                               #   "whisper-large-v3-turbo"  — rápido, multilingüe
-#                               #   "whisper-large-v3"         — más preciso, más lento
-#
-#   base_url: "https://api.groq.com/openai/v1"
-#                               # URL base del proveedor. Default para Groq.
-#
-#   language: "es"              # Código ISO-639-1 del idioma esperado (opcional).
-#                               # Si es null, el proveedor autodetecta.
-#                               # Recomendado fijarlo ("es", "en") para mejor accuracy.
-#
-#   timeout_seconds: 60         # Timeout en segundos para la llamada HTTP.
-#                               # Aumentar si mandás audios largos o la red es lenta.
-#
-#   max_audio_mb: 25            # Tamaño máximo permitido del audio (MB).
-#                               # Audios más grandes se rechazan ANTES de llamar al
-#                               # proveedor (reacción ❌ + mensaje al usuario).
-#                               # Límite de Groq: 25 MB.
-#
-#   # api_key: "gsk_..."        # API key del proveedor → MOVER A global.secrets.yaml
+#   language: "es"              # ISO-639-1 opcional; null = autodetect
+#   timeout_seconds: 60
+#   max_audio_mb: 25
 
 
 # -----------------------------------------------------------------------------
@@ -403,137 +291,89 @@ admin:
 # -----------------------------------------------------------------------------
 user:
   # timezone: "America/Argentina/Buenos_Aires"
-                                # Timezone IANA usada por el scheduler para
-                                # interpretar expresiones naturales ("mañana a
-                                # las 9") y cron strings.
-                                #
-                                # Si se deja vacío o se omite, se autodetecta
-                                # desde el host (vía tzlocal) con fallback a
-                                # "UTC" si no se puede detectar.
-                                #
-                                # Listado de zonas válidas:
-                                #   https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
-                                #
-                                # Ejemplos: "Europe/Madrid", "America/New_York",
-                                # "Asia/Tokyo", "UTC".
+                                # Vacío/omitido → autodetect desde host (tzlocal)
 
 
 # -----------------------------------------------------------------------------
 # [knowledge] — Fuentes de conocimiento externas (RAG sobre documentos)
 # -----------------------------------------------------------------------------
 #
-# Configura el pipeline de knowledge pre-fetch: antes de cada turno, Iñaki
-# consulta las fuentes configuradas en paralelo e inyecta los fragmentos más
-# relevantes en el system prompt (sección "## Relevant Knowledge").
-#
-# Este bloque vive SOLO en global.yaml — no se puede configurar por agente.
-# Todos los agentes comparten las mismas fuentes configuradas.
-#
 # knowledge:
-#   enabled: true              # Si false, el pre-fetch se saltea completamente
-#
-#   include_memory: true       # Si true, la memoria SQLite del agente se
-#                              # registra automáticamente como fuente "memory"
-#
-#   top_k_per_source: 3        # Resultados máximos por fuente (global default)
-#
-#   min_score: 0.5             # Score mínimo de coseno para incluir un fragmento
-#
-#   max_total_chunks: 10       # Límite total de fragmentos tras el fan-out
-#                              # (ordenados por score desc, se trunca al cap)
-#
+#   enabled: true
+#   include_memory: true
+#   top_k_per_source: 3
+#   min_score: 0.5
+#   max_total_chunks: 10
 #   token_budget_warn_threshold: 4000
-#                              # Si el estimado de tokens (chunks + digest + skills)
-#                              # supera este umbral, se emite un WARNING con el
-#                              # desglose. Heurística: len(texto) / 4.
-#                              # 0 = deshabilitado.
-#
 #   sources:
 #     - id: docs-proyecto
-#       type: document         # Tipo de fuente: "document" = carpeta de archivos
-#       enabled: true          # Si false, la fuente se ignora al arrancar
+#       type: document
+#       enabled: true
 #       description: "Project documentation (markdown and PDF)"
-#       path: ~/proyecto/docs/ # Carpeta a indexar (soporta ~)
-#       glob: "**/*.md"        # Glob para seleccionar archivos
-#       chunk_size: 500        # Tamaño de cada chunk en palabras
-#       chunk_overlap: 80      # Solapamiento entre chunks en palabras
-#       top_k: 3               # Resultados máximos de esta fuente
-#       min_score: 0.5         # Score mínimo de esta fuente
+#       path: ~/proyecto/docs/
+#       glob: "**/*.md"
+#       chunk_size: 500
+#       chunk_overlap: 80
+#       top_k: 3
+#       min_score: 0.5
 
 
 # =============================================================================
 # CONFIGURACIÓN POR AGENTE — config/agents/{id}.yaml
 # =============================================================================
 # Los campos de abajo son propios de cada agente.
-# Se definen en config/agents/{id}.yaml, no en global.yaml.
-# El agente puede sobrescribir cualquier campo de las secciones anteriores.
 # =============================================================================
 
-# [agente] — Identidad del agente (requerido en cada agents/{id}.yaml)
-# id: "general"               # Identificador único (= nombre del archivo sin .yaml)
-# name: "Iñaki-g"             # Nombre para mostrar en CLI y logs
+# id: "general"
+# name: "Iñaki-g"
 # description: "Asistente personal de uso general"
-# system_prompt: |            # Prompt base del agente (requerido, sin valor por defecto)
+# system_prompt: |
 #   Eres Iñaki, un asistente personal inteligente.
-#   Eres conciso, directo y útil.
 #
 # # Override LLM — solo campos que cambian, el resto se hereda del global
 # llm:
 #   model: "anthropic/claude-3-5-haiku"
-#   max_tokens: 4096           # Los agentes dev pueden necesitar más tokens para código
+#   max_tokens: 4096
 #
-# # Override de memoria — único flag válido per-agent
+# # El agente puede rotar una credencial del registry individualmente:
+# providers:
+#   groq: { api_key: "gsk_clave_del_agente..." }
+#
 # memory:
-#   enabled: true              # Si false, este agente NO entra en la
-#                              # consolidación nocturna global. Default: true.
+#   enabled: true
 #
-# # Override de workspace — aislar el scope de FS de este agente
 # workspace:
-#   path: "~/inaki-workspace/agents/coder"   # cada sub-agente con su raíz propia
-#   containment: "strict"                    # se puede endurecer/relajar por agente
+#   path: "~/inaki-workspace/agents/coder"
+#   containment: "strict"
 #
-# # Canales de comunicación para este agente
 # channels:
-#
 #   telegram:
-#     allowed_user_ids: ["123456789", "987654321"]
-#                             # Lista de Telegram user IDs autorizados
-#                             # Vacío ([]) = todos pueden interactuar
-#     reactions: true         # Reaccionar con emojis (👀 procesando, ✅ ok, ❌ error,
-#                             # 👂 transcribiendo audio)
-#     debug: false            # Log de mensajes entrantes y salientes
-#     voice_enabled: true     # Acepta mensajes de voz/audio/video_note y los
-#                             # transcribe (requiere bloque [transcription]).
-#                             # Ponelo en false para que el agente ignore audios
-#                             # (drop silencioso — ni reacción ni reply).
-#                             # Default: true.
-#     # token → en agents/{id}.secrets.yaml
+#     allowed_user_ids: ["123456789"]
+#     reactions: true
+#     voice_enabled: true
+#     # token → agents/{id}.secrets.yaml
 #
 #   rest:
-#     host: "0.0.0.0"         # Escuchar en todas las interfaces (para acceso desde Android)
-#     port: 6498              # Puerto del servidor FastAPI de este agente
-#                             # Cada agente debe tener un puerto diferente
-#     # auth_key → en agents/{id}.secrets.yaml
+#     host: "0.0.0.0"
+#     port: 6498
+#     # auth_key → agents/{id}.secrets.yaml
 
 
 # =============================================================================
 # SECRETS — config/global.secrets.yaml + config/agents/{id}.secrets.yaml
 # =============================================================================
 # Los campos de abajo NUNCA van en archivos commiteables.
-# Copiar los .example y rellenar con valores reales:
-#   cp config/global.secrets.yaml.example config/global.secrets.yaml
-#   cp config/agents/general.secrets.yaml.example config/agents/general.secrets.yaml
 # =============================================================================
 
 # config/global.secrets.yaml:
-# llm:
-#   api_key: "sk-or-..."       # API key del proveedor LLM (shared entre todos los agentes)
-# transcription:
-#   api_key: "gsk_..."         # API key del proveedor de transcripción (solo si voice_enabled)
+# providers:
+#   openrouter: { api_key: "sk-or-..." }
+#   groq:       { api_key: "gsk_...",  base_url: "https://api.groq.com/openai/v1" }
+#   openai:     { api_key: "sk-..." }
 
 # config/agents/general.secrets.yaml:
 # channels:
 #   telegram:
-#     token: "7xxxxxxx:AAF..." # Bot token de BotFather (@BotFather en Telegram)
+#     token: "7xxxxxxx:AAF..."   # Bot token de BotFather
 #   rest:
-#     auth_key: "sxc-..."      # Clave para header X-API-Key en peticiones a la REST API
+#     auth_key: "sxc-..."

@@ -85,8 +85,7 @@ class RunAgentOneShotUseCase:
         # ToolRegistry.get_schemas() returns {"type": "function", "function": {"name": ...}}.
         # The name lives at s["function"]["name"], not at s["name"].
         tool_schemas = [
-            s for s in all_schemas
-            if s.get("function", {}).get("name") != _DELEGATE_TOOL_NAME
+            s for s in all_schemas if s.get("function", {}).get("name") != _DELEGATE_TOOL_NAME
         ]
 
         if len(tool_schemas) < len(all_schemas):

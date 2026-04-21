@@ -30,7 +30,13 @@ _MIME_EXT: dict[str, str] = {
 
 
 class BaseTranscriptionProvider(ITranscriptionProvider):
-    """Clase base para todos los proveedores de transcripción."""
+    """Clase base para todos los proveedores de transcripción.
+
+    ``REQUIRES_CREDENTIALS`` indica si la factory debe exigir una entrada en
+    ``providers:`` al resolver las creds.
+    """
+
+    REQUIRES_CREDENTIALS: bool = True
 
     @staticmethod
     def _format_response_log(provider: str, text: str) -> str:

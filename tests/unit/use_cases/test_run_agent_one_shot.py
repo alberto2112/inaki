@@ -43,7 +43,7 @@ def _make_agent_config(agent_id: str = "test-child") -> AgentConfig:
         name="Test Child",
         description="Agente child de test",
         system_prompt="Sos un agente de test.",
-        llm=LLMConfig(provider="openrouter", model="test-model", api_key="test-key"),
+        llm=LLMConfig(provider="openrouter", model="test-model"),
         embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
         memory=MemoryConfig(db_filename=":memory:", default_top_k=3),
         chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history_oneshot.db"),
@@ -116,7 +116,9 @@ async def test_req_os1_messages_start_clean_with_only_task():
     cfg = _make_agent_config()
     uc = RunAgentOneShotUseCase(llm=llm, tools=tools, agent_config=cfg)
 
-    with patch("core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock) as mock_loop:
+    with patch(
+        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
         mock_loop.return_value = "respuesta"
 
         await uc.execute(
@@ -150,7 +152,9 @@ async def test_req_os2_override_prompt_used_verbatim():
     cfg = _make_agent_config()
     uc = _make_use_case(agent_config=cfg)
 
-    with patch("core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock) as mock_loop:
+    with patch(
+        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
         mock_loop.return_value = "ok"
 
         await uc.execute(
@@ -177,7 +181,9 @@ async def test_req_os2_none_prompt_uses_agent_default():
 
     uc = _make_use_case(agent_config=cfg)
 
-    with patch("core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock) as mock_loop:
+    with patch(
+        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
         mock_loop.return_value = "ok"
 
         await uc.execute(
@@ -201,7 +207,9 @@ async def test_req_os2_override_does_not_contain_default_prompt():
     override = "Override completamente diferente."
     uc = _make_use_case(agent_config=cfg)
 
-    with patch("core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock) as mock_loop:
+    with patch(
+        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
         mock_loop.return_value = "ok"
 
         await uc.execute(
@@ -279,7 +287,9 @@ async def test_req_os3_max_iterations_passed_to_loop():
     cfg = _make_agent_config()
     uc = _make_use_case(agent_config=cfg)
 
-    with patch("core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock) as mock_loop:
+    with patch(
+        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
         mock_loop.return_value = "ok"
 
         await uc.execute(
@@ -308,13 +318,21 @@ async def test_req_os4_full_schemas_no_rag():
     {"type": "function", "function": {"name": ..., "description": ...}}
     """
     schema_a = {"type": "function", "function": {"name": "read_file", "description": "Lee archivo"}}
-    schema_b = {"type": "function", "function": {"name": "write_file", "description": "Escribe archivo"}}
-    schema_c = {"type": "function", "function": {"name": "web_search", "description": "Busca en web"}}
+    schema_b = {
+        "type": "function",
+        "function": {"name": "write_file", "description": "Escribe archivo"},
+    }
+    schema_c = {
+        "type": "function",
+        "function": {"name": "web_search", "description": "Busca en web"},
+    }
 
     tools = _make_tools(schemas=[schema_a, schema_b, schema_c])
     uc = _make_use_case(tools=tools)
 
-    with patch("core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock) as mock_loop:
+    with patch(
+        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
         mock_loop.return_value = "ok"
 
         await uc.execute(
@@ -355,14 +373,22 @@ async def test_req_dg9_delegate_tool_excluded_from_child_schemas():
     {"type": "function", "function": {"name": ..., "description": ...}}
     The filter in RunAgentOneShotUseCase uses s.get("function", {}).get("name").
     """
-    schema_delegate = {"type": "function", "function": {"name": "delegate", "description": "Delega a otro agente"}}
-    schema_other_a = {"type": "function", "function": {"name": "read_file", "description": "Lee archivo"}}
+    schema_delegate = {
+        "type": "function",
+        "function": {"name": "delegate", "description": "Delega a otro agente"},
+    }
+    schema_other_a = {
+        "type": "function",
+        "function": {"name": "read_file", "description": "Lee archivo"},
+    }
     schema_other_b = {"type": "function", "function": {"name": "git_tool", "description": "Git"}}
 
     tools = _make_tools(schemas=[schema_other_a, schema_delegate, schema_other_b])
     uc = _make_use_case(tools=tools)
 
-    with patch("core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock) as mock_loop:
+    with patch(
+        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
         mock_loop.return_value = "ok"
 
         await uc.execute(
@@ -387,14 +413,19 @@ async def test_req_dg9_non_delegate_tools_preserved():
     REQ-DG-9 (corolario): Solo "delegate" se filtra; las demás tools llegan
     íntegras al loop del hijo.
     """
-    schema_delegate = {"type": "function", "function": {"name": "delegate", "description": "Delegar"}}
+    schema_delegate = {
+        "type": "function",
+        "function": {"name": "delegate", "description": "Delegar"},
+    }
     schema_a = {"type": "function", "function": {"name": "read_file", "description": "Leer"}}
     schema_b = {"type": "function", "function": {"name": "write_file", "description": "Escribir"}}
 
     tools = _make_tools(schemas=[schema_a, schema_delegate, schema_b])
     uc = _make_use_case(tools=tools)
 
-    with patch("core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock) as mock_loop:
+    with patch(
+        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
         mock_loop.return_value = "ok"
 
         await uc.execute(
@@ -424,7 +455,9 @@ async def test_req_dg9_no_delegate_in_registry_passes_all():
     tools = _make_tools(schemas=[schema_a, schema_b])
     uc = _make_use_case(tools=tools)
 
-    with patch("core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock) as mock_loop:
+    with patch(
+        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
         mock_loop.return_value = "ok"
 
         await uc.execute(
@@ -463,7 +496,9 @@ async def test_execute_returns_string_response():
     """El método execute retorna el string que devuelve run_tool_loop."""
     uc = _make_use_case()
 
-    with patch("core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock) as mock_loop:
+    with patch(
+        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
         mock_loop.return_value = "Resultado esperado del agente"
 
         result = await uc.execute(
@@ -487,7 +522,9 @@ async def test_circuit_breaker_threshold_from_agent_config():
 
     uc = _make_use_case(agent_config=cfg)
 
-    with patch("core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock) as mock_loop:
+    with patch(
+        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
         mock_loop.return_value = "ok"
 
         await uc.execute(
@@ -506,7 +543,9 @@ async def test_agent_id_passed_to_loop():
     cfg = _make_agent_config(agent_id="child-specialist")
     uc = _make_use_case(agent_config=cfg)
 
-    with patch("core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock) as mock_loop:
+    with patch(
+        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
         mock_loop.return_value = "ok"
 
         await uc.execute(

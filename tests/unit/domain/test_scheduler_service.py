@@ -27,6 +27,7 @@ from core.domain.value_objects.dispatch_result import DispatchResult
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 def _make_config() -> MagicMock:
     cfg = MagicMock()
     cfg.max_retries = 1
@@ -85,6 +86,7 @@ def service(mock_repo: AsyncMock) -> SchedulerService:
 # _handle_missed_on_startup
 # ---------------------------------------------------------------------------
 
+
 @freeze_time("2025-06-01 12:00:00")
 async def test_handle_missed_marks_oneshot_as_missed(
     service: SchedulerService, mock_repo: AsyncMock
@@ -129,6 +131,7 @@ async def test_handle_missed_recomputes_recurrent_next_run(
 # _execute_task retries
 # ---------------------------------------------------------------------------
 
+
 async def test_execute_task_retries_max_retries_then_failed(
     service: SchedulerService, mock_repo: AsyncMock
 ) -> None:
@@ -163,6 +166,7 @@ async def test_execute_task_on_success_calls_finalize(
 # _finalize_task oneshot → COMPLETED
 # ---------------------------------------------------------------------------
 
+
 async def test_finalize_oneshot_sets_completed(
     service: SchedulerService, mock_repo: AsyncMock
 ) -> None:
@@ -175,6 +179,7 @@ async def test_finalize_oneshot_sets_completed(
 # invalidate sets wake event
 # ---------------------------------------------------------------------------
 
+
 def test_invalidate_sets_wake_event(service: SchedulerService) -> None:
     assert not service._wake.is_set()
     service.invalidate()
@@ -184,6 +189,7 @@ def test_invalidate_sets_wake_event(service: SchedulerService) -> None:
 # ---------------------------------------------------------------------------
 # _dispatch_trigger webhook
 # ---------------------------------------------------------------------------
+
 
 def _make_webhook_task(url: str = "https://example.com/hook") -> ScheduledTask:
     return ScheduledTask(
@@ -286,9 +292,7 @@ async def test_dispatch_trigger_channel_send_devuelve_metadata(
 ) -> None:
     task = _make_channel_task()
     service._dispatch.channel_sender.send_message = AsyncMock(
-        return_value=DispatchResult(
-            original_target="cli:local", resolved_target="null:"
-        )
+        return_value=DispatchResult(original_target="cli:local", resolved_target="null:")
     )
 
     output, metadata = await service._dispatch_trigger(task)
@@ -338,21 +342,15 @@ async def test_agent_send_con_output_channel_pasa_sink_construido_al_dispatcher(
     sink resultante llega al llm_dispatcher como ``intermediate_sink=``."""
     task = _make_agent_task(output_channel="telegram:7")
     sentinel_sink = object()
-    service._dispatch.channel_sender.build_intermediate_sink = MagicMock(
-        return_value=sentinel_sink
-    )
+    service._dispatch.channel_sender.build_intermediate_sink = MagicMock(return_value=sentinel_sink)
     service._dispatch.channel_sender.send_message = AsyncMock(
-        return_value=DispatchResult(
-            original_target="telegram:7", resolved_target="telegram:7"
-        )
+        return_value=DispatchResult(original_target="telegram:7", resolved_target="telegram:7")
     )
     service._dispatch.llm_dispatcher.dispatch = AsyncMock(return_value="reply final")
 
     await service._dispatch_trigger(task)
 
-    service._dispatch.channel_sender.build_intermediate_sink.assert_called_once_with(
-        "telegram:7"
-    )
+    service._dispatch.channel_sender.build_intermediate_sink.assert_called_once_with("telegram:7")
     service._dispatch.llm_dispatcher.dispatch.assert_awaited_once()
     call_kwargs = service._dispatch.llm_dispatcher.dispatch.await_args.kwargs
     assert call_kwargs["intermediate_sink"] is sentinel_sink

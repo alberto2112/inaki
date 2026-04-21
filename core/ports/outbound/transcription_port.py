@@ -9,7 +9,6 @@ from abc import ABC, abstractmethod
 
 
 class ITranscriptionProvider(ABC):
-
     @abstractmethod
     async def transcribe(
         self,

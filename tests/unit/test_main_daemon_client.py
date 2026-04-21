@@ -19,20 +19,24 @@ def _write_minimal_config(tmp_path: Path) -> tuple[Path, Path]:
     agents_dir.mkdir(parents=True)
 
     (config_dir / "global.yaml").write_text(
-        yaml.safe_dump({
-            "app": {"name": "Test", "default_agent": "general"},
-            "admin": {"port": 6497, "host": "127.0.0.1", "auth_key": "test-key"},
-        }),
+        yaml.safe_dump(
+            {
+                "app": {"name": "Test", "default_agent": "general"},
+                "admin": {"port": 6497, "host": "127.0.0.1", "auth_key": "test-key"},
+            }
+        ),
         encoding="utf-8",
     )
     (agents_dir / "general.yaml").write_text(
-        yaml.safe_dump({
-            "id": "general",
-            "name": "General",
-            "description": "Test agent",
-            "system_prompt": "You are a test",
-            "channels": {"rest": {"port": 6498, "auth_key": "agent-key"}},
-        }),
+        yaml.safe_dump(
+            {
+                "id": "general",
+                "name": "General",
+                "description": "Test agent",
+                "system_prompt": "You are a test",
+                "channels": {"rest": {"port": 6498, "auth_key": "agent-key"}},
+            }
+        ),
         encoding="utf-8",
     )
     return config_dir, agents_dir
@@ -79,7 +83,10 @@ def test_chat_without_daemon_shows_error(tmp_path: Path) -> None:
         with patch("inaki.cli._build_daemon_client") as mock_build:
             mock_client = MagicMock()
             mock_client.health.return_value = False
-            mock_build.return_value = (mock_client, MagicMock(app=MagicMock(default_agent="general")))
+            mock_build.return_value = (
+                mock_client,
+                MagicMock(app=MagicMock(default_agent="general")),
+            )
 
             result = runner.invoke(app, ["chat", "--agent", "general"])
 

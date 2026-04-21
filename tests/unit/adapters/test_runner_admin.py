@@ -6,7 +6,6 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
-
 def _run(coro):
     return asyncio.run(coro)
 

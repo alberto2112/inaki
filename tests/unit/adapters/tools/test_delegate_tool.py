@@ -564,14 +564,20 @@ async def test_canonical_reason_strings_are_exact():
     """
     # target_not_allowed
     tool = DelegateTool(
-        allowed_targets=["a"], get_agent_container=MagicMock(), max_iterations_per_sub=5, timeout_seconds=10
+        allowed_targets=["a"],
+        get_agent_container=MagicMock(),
+        max_iterations_per_sub=5,
+        timeout_seconds=10,
     )
     r = await tool.execute(agent_id="b", task="t")
     assert DelegationResult.model_validate_json(r.output).reason == "target_not_allowed"
 
     # unknown_agent
     tool2 = DelegateTool(
-        allowed_targets=["b"], get_agent_container=MagicMock(return_value=None), max_iterations_per_sub=5, timeout_seconds=10
+        allowed_targets=["b"],
+        get_agent_container=MagicMock(return_value=None),
+        max_iterations_per_sub=5,
+        timeout_seconds=10,
     )
     r2 = await tool2.execute(agent_id="b", task="t")
     assert DelegationResult.model_validate_json(r2.output).reason == "unknown_agent"
@@ -579,7 +585,10 @@ async def test_canonical_reason_strings_are_exact():
     # result_parse_error (no block)
     container_no_block = _make_child_container("plain text no json")
     tool3 = DelegateTool(
-        allowed_targets=["b"], get_agent_container=MagicMock(return_value=container_no_block), max_iterations_per_sub=5, timeout_seconds=10
+        allowed_targets=["b"],
+        get_agent_container=MagicMock(return_value=container_no_block),
+        max_iterations_per_sub=5,
+        timeout_seconds=10,
     )
     r3 = await tool3.execute(agent_id="b", task="t")
     assert DelegationResult.model_validate_json(r3.output).reason == "result_parse_error"
@@ -590,7 +599,10 @@ async def test_canonical_reason_strings_are_exact():
     uc_timeout.execute = AsyncMock(side_effect=asyncio.TimeoutError())
     container_timeout.run_agent_one_shot = uc_timeout
     tool4 = DelegateTool(
-        allowed_targets=["b"], get_agent_container=MagicMock(return_value=container_timeout), max_iterations_per_sub=5, timeout_seconds=10
+        allowed_targets=["b"],
+        get_agent_container=MagicMock(return_value=container_timeout),
+        max_iterations_per_sub=5,
+        timeout_seconds=10,
     )
     r4 = await tool4.execute(agent_id="b", task="t")
     assert DelegationResult.model_validate_json(r4.output).reason == "timeout"
@@ -601,7 +613,10 @@ async def test_canonical_reason_strings_are_exact():
     uc_maxiter.execute = AsyncMock(side_effect=ToolLoopMaxIterationsError("x"))
     container_maxiter.run_agent_one_shot = uc_maxiter
     tool5 = DelegateTool(
-        allowed_targets=["b"], get_agent_container=MagicMock(return_value=container_maxiter), max_iterations_per_sub=5, timeout_seconds=10
+        allowed_targets=["b"],
+        get_agent_container=MagicMock(return_value=container_maxiter),
+        max_iterations_per_sub=5,
+        timeout_seconds=10,
     )
     r5 = await tool5.execute(agent_id="b", task="t")
     assert DelegationResult.model_validate_json(r5.output).reason == "max_iterations_exceeded"
@@ -612,7 +627,10 @@ async def test_canonical_reason_strings_are_exact():
     uc_exc.execute = AsyncMock(side_effect=KeyError("missing"))
     container_exc.run_agent_one_shot = uc_exc
     tool6 = DelegateTool(
-        allowed_targets=["b"], get_agent_container=MagicMock(return_value=container_exc), max_iterations_per_sub=5, timeout_seconds=10
+        allowed_targets=["b"],
+        get_agent_container=MagicMock(return_value=container_exc),
+        max_iterations_per_sub=5,
+        timeout_seconds=10,
     )
     r6 = await tool6.execute(agent_id="b", task="t")
     assert DelegationResult.model_validate_json(r6.output).reason == "child_exception:KeyError"

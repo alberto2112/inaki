@@ -28,6 +28,7 @@ from infrastructure.config import (
     GlobalConfig,
     LLMConfig,
     MemoryConfig,
+    ProviderConfig,
 )
 from infrastructure.container import AgentContainer
 from core.use_cases.schedule_task import ScheduleTaskUseCase
@@ -36,6 +37,7 @@ from core.use_cases.schedule_task import ScheduleTaskUseCase
 # ---------------------------------------------------------------------------
 # Helpers — mirrors test_container.py pattern exactly
 # ---------------------------------------------------------------------------
+
 
 class FakeEmbedder:
     async def embed_passage(self, text: str) -> list[float]:
@@ -53,7 +55,7 @@ def _make_agent_config(
         name=agent_id.capitalize(),
         description=f"Agent {agent_id}",
         system_prompt="Test prompt",
-        llm=LLMConfig(provider="openrouter", model="test-model", api_key="test-key"),
+        llm=LLMConfig(provider="openrouter", model="test-model"),
         embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
         memory=MemoryConfig(db_filename=":memory:"),
         chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history.db"),
@@ -61,6 +63,7 @@ def _make_agent_config(
             enabled=False,
             allowed_targets=[],
         ),
+        providers={"openrouter": ProviderConfig(api_key="test-key")},
     )
 
 
@@ -72,9 +75,10 @@ def _make_global_config() -> GlobalConfig:
         ToolsConfig,
         WorkspaceConfig,
     )
+
     return GlobalConfig(
         app=AppConfig(ext_dirs=[]),
-        llm=LLMConfig(provider="openrouter", model="test-model", api_key="test-key"),
+        llm=LLMConfig(provider="openrouter", model="test-model"),
         embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
         memory=MemoryConfig(db_filename=":memory:"),
         chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history.db"),
@@ -83,6 +87,7 @@ def _make_global_config() -> GlobalConfig:
         scheduler=SchedulerConfig(),
         workspace=WorkspaceConfig(),
         delegation=DelegationConfig(),
+        providers={"openrouter": ProviderConfig(api_key="test-key")},
     )
 
 
@@ -129,6 +134,7 @@ def _make_mock_use_case() -> MagicMock:
 # Test 1 — Idempotency: wire_scheduler twice → exactly one "scheduler" entry
 # ---------------------------------------------------------------------------
 
+
 def test_wire_scheduler_idempotent() -> None:
     """
     Calling wire_scheduler twice must be a no-op the second time.
@@ -152,6 +158,7 @@ def test_wire_scheduler_idempotent() -> None:
 # Test 2 — None use case → no-op (no tool registered)
 # ---------------------------------------------------------------------------
 
+
 def test_wire_scheduler_noop_when_use_case_is_none() -> None:
     """
     When schedule_task_uc is None, wire_scheduler must be a no-op.
@@ -174,6 +181,7 @@ def test_wire_scheduler_noop_when_use_case_is_none() -> None:
 # Test 3 — Happy path: correct agent_id and user_timezone injected
 # ---------------------------------------------------------------------------
 
+
 def test_wire_scheduler_registers_tool_with_correct_config() -> None:
     """
     Single wire_scheduler call → SchedulerTool registered with the correct
@@ -191,9 +199,7 @@ def test_wire_scheduler_registers_tool_with_correct_config() -> None:
         "scheduler tool must be registered after wire_scheduler"
     )
     tool = container._tools._tools["scheduler"]
-    assert isinstance(tool, SchedulerTool), (
-        "registered tool must be a SchedulerTool instance"
-    )
+    assert isinstance(tool, SchedulerTool), "registered tool must be a SchedulerTool instance"
     assert tool._agent_id == "my-agent", (
         f"SchedulerTool._agent_id must be 'my-agent', got {tool._agent_id!r}"
     )
@@ -207,6 +213,7 @@ def test_wire_scheduler_registers_tool_with_correct_config() -> None:
 # ---------------------------------------------------------------------------
 # Test 4 — Guard flag set after successful wiring
 # ---------------------------------------------------------------------------
+
 
 def test_wire_scheduler_sets_wired_flag() -> None:
     """
@@ -228,6 +235,7 @@ def test_wire_scheduler_sets_wired_flag() -> None:
 # ---------------------------------------------------------------------------
 # Test 5 — None skips flag update
 # ---------------------------------------------------------------------------
+
 
 def test_wire_scheduler_none_does_not_set_flag() -> None:
     """
@@ -251,6 +259,7 @@ def test_wire_scheduler_none_does_not_set_flag() -> None:
 # ---------------------------------------------------------------------------
 # Test 6 — Idempotency with different arguments: second call ignored entirely
 # ---------------------------------------------------------------------------
+
 
 def test_wire_scheduler_idempotent_different_args() -> None:
     """

@@ -42,7 +42,7 @@ def _make_use_case(
         name="Test Agent",
         description="Agente de test",
         system_prompt="Eres un asistente de test.",
-        llm=LLMConfig(provider="openrouter", model="test-model", api_key="test-key"),
+        llm=LLMConfig(provider="openrouter", model="test-model"),
         embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
         memory=MemoryConfig(db_filename=":memory:", default_top_k=3),
         chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history.db"),

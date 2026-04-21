@@ -23,19 +23,21 @@ from adapters.outbound.transcription.groq import (
     GroqTranscriptionProvider,
 )
 from core.domain.errors import TranscriptionError, TranscriptionFileTooLargeError
-from infrastructure.config import TranscriptionConfig
+from infrastructure.config import ResolvedTranscriptionConfig
 
 DEFAULT_ENDPOINT = "https://api.groq.com/openai/v1/audio/transcriptions"
 
 
-def _cfg(**kwargs) -> TranscriptionConfig:
+def _cfg(**kwargs) -> ResolvedTranscriptionConfig:
+    # Creds ya resueltas desde el registry de providers — el adapter las recibe
+    # pre-compuestas vía ``ResolvedTranscriptionConfig``.
     base: dict = {
         "provider": "groq",
         "model": "whisper-large-v3-turbo",
         "api_key": "sk-test",
     }
     base.update(kwargs)
-    return TranscriptionConfig(**base)
+    return ResolvedTranscriptionConfig(**base)
 
 
 def test_provider_name_expuesto() -> None:
@@ -43,7 +45,8 @@ def test_provider_name_expuesto() -> None:
 
 
 def test_init_requiere_api_key() -> None:
-    cfg = TranscriptionConfig(provider="groq", model="whisper-large-v3-turbo")
+    # Sin creds resueltas (provider sin entry en el registry) → adapter falla.
+    cfg = ResolvedTranscriptionConfig(provider="groq", model="whisper-large-v3-turbo", api_key=None)
     with pytest.raises(TranscriptionError) as exc_info:
         GroqTranscriptionProvider(cfg)
     assert "api_key" in str(exc_info.value).lower()
@@ -52,9 +55,7 @@ def test_init_requiere_api_key() -> None:
 @respx.mock
 async def test_transcribe_happy_path() -> None:
     # Con response_format=text, Groq devuelve texto plano (no JSON).
-    route = respx.post(DEFAULT_ENDPOINT).mock(
-        return_value=httpx.Response(200, text="hola mundo")
-    )
+    route = respx.post(DEFAULT_ENDPOINT).mock(return_value=httpx.Response(200, text="hola mundo"))
     provider = GroqTranscriptionProvider(_cfg())
 
     result = await provider.transcribe(b"audio-bytes", "audio/ogg")
@@ -67,7 +68,7 @@ async def test_transcribe_happy_path() -> None:
     body = req.content.decode("utf-8", errors="ignore")
     assert "whisper-large-v3-turbo" in body
     assert "audio-bytes" in body
-    assert "name=\"response_format\"" in body
+    assert 'name="response_format"' in body
     assert "\r\n\r\ntext\r\n" in body or "\ntext\n" in body
 
 
@@ -79,7 +80,7 @@ async def test_transcribe_con_language_explicito_tiene_prioridad() -> None:
     await provider.transcribe(b"x", "audio/ogg", language="es")
 
     body = respx.calls.last.request.content.decode("utf-8", errors="ignore")
-    assert "name=\"language\"" in body
+    assert 'name="language"' in body
     # El lang explícito del caller (es) gana sobre el default del cfg (en).
     assert "\r\n\r\nes\r\n" in body or "\nes\n" in body
 
@@ -92,7 +93,7 @@ async def test_transcribe_usa_language_del_cfg_si_caller_no_da() -> None:
     await provider.transcribe(b"x", "audio/ogg")
 
     body = respx.calls.last.request.content.decode("utf-8", errors="ignore")
-    assert "name=\"language\"" in body
+    assert 'name="language"' in body
     assert "\r\n\r\nes\r\n" in body or "\nes\n" in body
 
 
@@ -104,7 +105,7 @@ async def test_transcribe_sin_language_en_ningun_lado_no_manda_campo() -> None:
     await provider.transcribe(b"x", "audio/ogg")
 
     body = respx.calls.last.request.content.decode("utf-8", errors="ignore")
-    assert "name=\"language\"" not in body
+    assert 'name="language"' not in body
 
 
 @respx.mock
@@ -150,9 +151,7 @@ async def test_transcribe_texto_solo_whitespace_lanza_transcription_error() -> N
 async def test_base_url_custom_sobreescribe_default() -> None:
     custom_endpoint = "https://mi-proxy.internal/openai/v1/audio/transcriptions"
     route = respx.post(custom_endpoint).mock(return_value=httpx.Response(200, text="ok"))
-    provider = GroqTranscriptionProvider(
-        _cfg(base_url="https://mi-proxy.internal/openai/v1")
-    )
+    provider = GroqTranscriptionProvider(_cfg(base_url="https://mi-proxy.internal/openai/v1"))
 
     result = await provider.transcribe(b"x", "audio/ogg")
 

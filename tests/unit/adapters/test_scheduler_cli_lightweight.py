@@ -12,10 +12,12 @@ def _write_minimal_config(config_dir: Path) -> None:
     """Escribe un global.yaml mínimo para tests."""
     config_dir.mkdir(parents=True, exist_ok=True)
     (config_dir / "global.yaml").write_text(
-        yaml.safe_dump({
-            "app": {"name": "Test"},
-            "scheduler": {"db_filename": ":memory:"},
-        }),
+        yaml.safe_dump(
+            {
+                "app": {"name": "Test"},
+                "scheduler": {"db_filename": ":memory:"},
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -30,9 +32,7 @@ def test_lightweight_bootstrap_does_not_import_app_container(tmp_path: Path) -> 
     ctx = MagicMock()
     ctx.obj = {"config_dir": config_dir}
 
-    with patch(
-        "adapters.inbound.cli.scheduler_cli._create_lightweight_uc"
-    ) as mock_create:
+    with patch("adapters.inbound.cli.scheduler_cli._create_lightweight_uc") as mock_create:
         mock_uc = MagicMock()
         mock_create.return_value = (mock_uc, MagicMock())
         _bootstrap_uc(ctx)
@@ -50,9 +50,7 @@ def test_lightweight_bootstrap_returns_use_case(tmp_path: Path) -> None:
     ctx = MagicMock()
     ctx.obj = {"config_dir": config_dir}
 
-    with patch(
-        "adapters.inbound.cli.scheduler_cli._create_lightweight_uc"
-    ) as mock_create:
+    with patch("adapters.inbound.cli.scheduler_cli._create_lightweight_uc") as mock_create:
         mock_uc = MagicMock()
         mock_create.return_value = (mock_uc, MagicMock())
         result = _bootstrap_uc(ctx)
@@ -80,9 +78,7 @@ def test_reload_callback_calls_scheduler_reload(tmp_path: Path) -> None:
         instance.scheduler_reload.return_value = True
         _notify_daemon_reload("http://127.0.0.1:6497", "my-key")
 
-    MockClient.assert_called_once_with(
-        admin_base_url="http://127.0.0.1:6497", auth_key="my-key"
-    )
+    MockClient.assert_called_once_with(admin_base_url="http://127.0.0.1:6497", auth_key="my-key")
     instance.scheduler_reload.assert_called_once()
 
 

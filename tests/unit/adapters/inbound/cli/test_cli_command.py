@@ -27,6 +27,7 @@ def _make_mock_client(health_ok: bool = True) -> MagicMock:
     client = MagicMock()
     client.health.return_value = health_ok
     from core.domain.value_objects.chat_turn_result import ChatTurnResult
+
     client.chat_turn.return_value = ChatTurnResult(reply="resp")
     return client
 
@@ -44,11 +45,17 @@ def test_chat_command_no_instancia_app_container() -> None:
 
     mock_client = _make_mock_client(health_ok=True)
 
-    with patch("inaki.cli._build_daemon_client", return_value=(mock_client, MagicMock(app=MagicMock(default_agent="dev")))):
+    with patch(
+        "inaki.cli._build_daemon_client",
+        return_value=(mock_client, MagicMock(app=MagicMock(default_agent="dev"))),
+    ):
         with patch("adapters.inbound.cli.cli_runner.run_cli"):
             with patch("infrastructure.container.AppContainer") as mock_app_container:
                 runner.invoke(app, ["chat", "--agent", "dev"])
-                mock_app_container.assert_not_called(), "AppContainer fue instanciado en el path chat — violación del diseño"
+                (
+                    mock_app_container.assert_not_called(),
+                    "AppContainer fue instanciado en el path chat — violación del diseño",
+                )
 
 
 def test_chat_command_pasa_agent_id_al_runner() -> None:

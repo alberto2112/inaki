@@ -71,14 +71,14 @@ def test_zero_duration_raises_value_error(raw: str) -> None:
 @pytest.mark.parametrize(
     "raw",
     [
-        "+5x",        # unknown unit
-        "+ 2h",       # space after plus
-        "++5h",       # double plus
-        "+5h2d",      # wrong order (h before d)
-        "+2H",        # uppercase unit letter
-        "5h",         # missing leading plus
-        "",           # empty string
-        "now+5h",     # garbage prefix
+        "+5x",  # unknown unit
+        "+ 2h",  # space after plus
+        "++5h",  # double plus
+        "+5h2d",  # wrong order (h before d)
+        "+2H",  # uppercase unit letter
+        "5h",  # missing leading plus
+        "",  # empty string
+        "now+5h",  # garbage prefix
     ],
 )
 def test_invalid_format_raises_value_error(raw: str) -> None:

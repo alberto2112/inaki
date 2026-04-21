@@ -40,7 +40,6 @@ logger = logging.getLogger(__name__)
 
 
 class SchedulerService:
-
     def __init__(
         self,
         repo: ISchedulerRepository,
@@ -78,11 +77,7 @@ class SchedulerService:
                 with suppress(asyncio.TimeoutError):
                     await asyncio.wait_for(self._wake.wait(), timeout=60.0)
                 continue
-            wait_secs = (
-                (next_task.next_run - now).total_seconds()
-                if next_task.next_run
-                else 0.0
-            )
+            wait_secs = (next_task.next_run - now).total_seconds() if next_task.next_run else 0.0
             if wait_secs > 0:
                 self._wake.clear()
                 with suppress(asyncio.TimeoutError):
@@ -143,9 +138,7 @@ class SchedulerService:
                 error = str(exc)
                 logger.warning("Task %s attempt %d failed: %s", task.id, attempt + 1, exc)
                 # Persist current retry count after each failure
-                await self._repo.update_status(
-                    task.id, TaskStatus.RUNNING, retry_count=attempt + 1
-                )
+                await self._repo.update_status(task.id, TaskStatus.RUNNING, retry_count=attempt + 1)
 
             if task.log_enabled:
                 await self._repo.save_log(
@@ -204,9 +197,7 @@ class SchedulerService:
                     retry_count=0,
                 )
 
-    async def _dispatch_trigger(
-        self, task: ScheduledTask
-    ) -> tuple[str | None, dict | None]:
+    async def _dispatch_trigger(self, task: ScheduledTask) -> tuple[str | None, dict | None]:
         """Ejecuta el trigger y devuelve ``(output, dispatch_metadata)``.
 
         ``dispatch_metadata`` contiene ``{original_target, resolved_target}`` cuando
@@ -215,9 +206,7 @@ class SchedulerService:
         """
         payload = task.trigger_payload
         if isinstance(payload, ChannelSendPayload):
-            dr = await self._dispatch.channel_sender.send_message(
-                payload.target, payload.text
-            )
+            dr = await self._dispatch.channel_sender.send_message(payload.target, payload.text)
             return None, {
                 "original_target": dr.original_target,
                 "resolved_target": dr.resolved_target,

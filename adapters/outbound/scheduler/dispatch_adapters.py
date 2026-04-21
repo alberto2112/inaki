@@ -135,9 +135,7 @@ class HttpCallerAdapter:
             except httpx.ConnectError as exc:
                 raise RuntimeError(f"Webhook connection failed: {exc}") from exc
             if response.status_code not in payload.success_codes:
-                raise RuntimeError(
-                    f"Webhook returned non-success status {response.status_code}"
-                )
+                raise RuntimeError(f"Webhook returned non-success status {response.status_code}")
             return response.text
 
 

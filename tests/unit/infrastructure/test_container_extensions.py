@@ -19,6 +19,7 @@ from infrastructure.container import AgentContainer
 # Fakes
 # ---------------------------------------------------------------------------
 
+
 class FakeEmbedder:
     async def embed_passage(self, text: str) -> list[float]:
         return [1.0, 0.0, 0.0]
@@ -52,6 +53,7 @@ class FailingTool(ITool):
 # Fixture: container mínimo con _tools y _skills pero sin __init__ pesado
 # ---------------------------------------------------------------------------
 
+
 def _make_container(tmp_path: Path) -> AgentContainer:
     """Crea un AgentContainer con _tools y _skills falsos sin __init__ completo."""
     container = AgentContainer.__new__(AgentContainer)
@@ -63,6 +65,7 @@ def _make_container(tmp_path: Path) -> AgentContainer:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _write_manifest(ext_dir: Path, name: str, content: str) -> Path:
     pkg_dir = ext_dir / name
@@ -92,6 +95,7 @@ def _write_skill_yaml(ext_dir: Path, ext_name: str, filename: str, skill_id: str
 # Cleanup sys.modules entre tests para evitar contaminación
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def clean_inaki_ext_modules():
     yield
@@ -103,6 +107,7 @@ def clean_inaki_ext_modules():
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 def test_missing_dir_no_error(tmp_path: Path) -> None:
     """Directorio inexistente → no error, no tools registradas."""
@@ -123,10 +128,9 @@ def test_happy_path_tool_and_skill(tmp_path: Path, monkeypatch) -> None:
 
     skill_file = _write_skill_yaml(ext_dir, "myext", "myext.yaml", "my_skill")
     _write_manifest(
-        ext_dir, "myext",
-        "from _test_fake_tool_mod import FakeTool\n"
-        "TOOLS = [FakeTool]\n"
-        "SKILLS = ['myext.yaml']\n",
+        ext_dir,
+        "myext",
+        "from _test_fake_tool_mod import FakeTool\nTOOLS = [FakeTool]\nSKILLS = ['myext.yaml']\n",
     )
 
     container = _make_container(tmp_path)
@@ -157,7 +161,9 @@ def test_manifest_import_error_skipped(tmp_path: Path) -> None:
     ext_dir = tmp_path / "ext"
     ext_dir.mkdir()
 
-    _write_manifest(ext_dir, "broken", "from totally.nonexistent.module import Foo\nTOOLS = [Foo]\n")
+    _write_manifest(
+        ext_dir, "broken", "from totally.nonexistent.module import Foo\nTOOLS = [Foo]\n"
+    )
 
     container = _make_container(tmp_path)
     container._register_extensions([str(ext_dir)])
@@ -186,10 +192,9 @@ def test_tool_instantiation_error_skipped(tmp_path: Path) -> None:
     sys.modules["_test_failing_tool_mod"] = fail_mod
 
     _write_manifest(
-        ext_dir, "badtool",
-        "from _test_failing_tool_mod import FailingTool\n"
-        "TOOLS = [FailingTool]\n"
-        "SKILLS = []\n",
+        ext_dir,
+        "badtool",
+        "from _test_failing_tool_mod import FailingTool\nTOOLS = [FailingTool]\nSKILLS = []\n",
     )
 
     container = _make_container(tmp_path)
@@ -211,7 +216,8 @@ def test_missing_skill_file_warning(tmp_path: Path, caplog) -> None:
     sys.modules["_test_fake_tool_mod2"] = fake_mod
 
     _write_manifest(
-        ext_dir, "myext",
+        ext_dir,
+        "myext",
         "from _test_fake_tool_mod2 import FakeTool\n"
         "TOOLS = [FakeTool]\n"
         "SKILLS = ['nonexistent.yaml']\n",
@@ -240,10 +246,9 @@ def test_name_collision_warning(tmp_path: Path, caplog) -> None:
     sys.modules["_test_fake_tool_mod3"] = fake_mod
 
     _write_manifest(
-        ext_dir, "collision_ext",
-        "from _test_fake_tool_mod3 import FakeTool\n"
-        "TOOLS = [FakeTool]\n"
-        "SKILLS = []\n",
+        ext_dir,
+        "collision_ext",
+        "from _test_fake_tool_mod3 import FakeTool\nTOOLS = [FakeTool]\nSKILLS = []\n",
     )
 
     container = _make_container(tmp_path)
@@ -290,8 +295,12 @@ def test_multiple_dirs_order(tmp_path: Path) -> None:
     mod_b.ToolB = ToolB
     sys.modules["_test_tool_b_mod"] = mod_b
 
-    _write_manifest(dir1, "ext_a", "from _test_tool_a_mod import ToolA\nTOOLS = [ToolA]\nSKILLS = []\n")
-    _write_manifest(dir2, "ext_b", "from _test_tool_b_mod import ToolB\nTOOLS = [ToolB]\nSKILLS = []\n")
+    _write_manifest(
+        dir1, "ext_a", "from _test_tool_a_mod import ToolA\nTOOLS = [ToolA]\nSKILLS = []\n"
+    )
+    _write_manifest(
+        dir2, "ext_b", "from _test_tool_b_mod import ToolB\nTOOLS = [ToolB]\nSKILLS = []\n"
+    )
 
     container = _make_container(tmp_path)
     container._register_extensions([str(dir1), str(dir2)])

@@ -34,9 +34,7 @@ def test_transcribe_expone_la_firma_del_spec() -> None:
 
 async def test_subclase_concreta_se_puede_instanciar_y_devuelve_str() -> None:
     class _Dummy(ITranscriptionProvider):
-        async def transcribe(
-            self, audio: bytes, mime: str, language: str | None = None
-        ) -> str:
+        async def transcribe(self, audio: bytes, mime: str, language: str | None = None) -> str:
             return "texto"
 
     provider = _Dummy()

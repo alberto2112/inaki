@@ -88,14 +88,40 @@ class AppConfig(BaseModel):
     default_agent: str = "general"
 
 
+class ProviderConfig(BaseModel):
+    """
+    Entrada del registry top-level de proveedores.
+
+    Cada entrada representa UN vendor (groq, openai, openrouter, ollama, etc.)
+    con sus credenciales y endpoint. Las features (`llm`, `embedding`,
+    `transcription`, `memory.llm`) referencian entradas por nombre vía su
+    campo ``provider: <key>``, eliminando duplicación de ``api_key``/``base_url``.
+
+    Campos:
+      - ``type``: nombre del adapter. Si es ``None``, se resuelve a la key del
+        dict (``providers.groq`` → ``type == "groq"``). Solo se explicita cuando
+        se quieren múltiples entradas del mismo adapter con creds distintas
+        (p. ej. ``providers.groq-work: {type: groq, api_key: K2}``).
+      - ``api_key``: credencial. Opcional para providers locales que no la
+        requieren (ollama, e5_onnx).
+      - ``base_url``: override del default del adapter. Opcional.
+
+    ``extra="forbid"`` atrapa typos temprano (``api_ky``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: str | None = None
+    api_key: str | None = None
+    base_url: str | None = None
+
+
 class LLMConfig(BaseModel):
     provider: str = "openrouter"
-    base_url: str | None = None  # None → cada provider usa su propio default
     model: str = "anthropic/claude-3-5-haiku"
     temperature: float = 0.7
     max_tokens: int = 2048
     reasoning_effort: str | None = None
-    api_key: str | None = None
 
 
 class EmbeddingConfig(BaseModel):
@@ -105,8 +131,6 @@ class EmbeddingConfig(BaseModel):
     model_dirname: RuntimePath = "models/e5-small"  # solo e5_onnx — relativo a ~/.inaki/
     model: str = "text-embedding-3-small"  # solo openai
     dimension: int = 384
-    base_url: str = "https://api.openai.com/v1"  # solo openai
-    api_key: str | None = None  # solo openai — en secrets
     cache_filename: RuntimePath = "data/embedding_cache.db"  # relativo a ~/.inaki/
 
 
@@ -115,11 +139,50 @@ class TranscriptionConfig(BaseModel):
 
     provider: str = "groq"
     model: str = "whisper-large-v3-turbo"
-    base_url: str | None = None  # None → el adapter usa su default (p. ej. Groq)
     language: str | None = None  # None → auto-detect por el modelo
-    api_key: str | None = None  # en secrets
     timeout_seconds: int = 60  # segundos para el request HTTP
     max_audio_mb: int = 25  # límite de tamaño de audio (MB) — Groq Whisper: 25
+
+
+# ---------------------------------------------------------------------------
+# ResolvedXConfig — valor compuesto (feature + provider) que recibe el adapter
+# ---------------------------------------------------------------------------
+
+
+class ResolvedLLMConfig(BaseModel):
+    """LLMConfig + credenciales del registry resueltas. Lo recibe el adapter."""
+
+    provider: str
+    model: str
+    temperature: float
+    max_tokens: int
+    reasoning_effort: str | None = None
+    api_key: str | None = None
+    base_url: str | None = None
+
+
+class ResolvedEmbeddingConfig(BaseModel):
+    """EmbeddingConfig + credenciales resueltas del registry."""
+
+    provider: str
+    model_dirname: str
+    model: str
+    dimension: int
+    cache_filename: str
+    api_key: str | None = None
+    base_url: str | None = None
+
+
+class ResolvedTranscriptionConfig(BaseModel):
+    """TranscriptionConfig + credenciales resueltas del registry."""
+
+    provider: str
+    model: str
+    language: str | None = None
+    timeout_seconds: int = 60
+    max_audio_mb: int = 25
+    api_key: str | None = None
+    base_url: str | None = None
 
 
 _KEEP_LAST_MESSAGES_FALLBACK = 84
@@ -137,15 +200,17 @@ class MemoryLLMOverride(BaseModel):
       - Clave presente con valor ``null`` → está en ``model_fields_set`` con valor
         ``None`` → pisa al base con ``None`` (útil para, p. ej., apagar
         ``reasoning_effort`` en consolidación sin tocar el LLM del agente).
+
+    Las credenciales NO viven acá — si el override cambia ``provider``, las creds
+    se resuelven automáticamente desde el registry ``providers`` del nivel
+    superior. Ver ``MemoryConfig.resolved_llm_config``.
     """
 
     provider: str | None = None
-    base_url: str | None = None
     model: str | None = None
     temperature: float | None = None
     max_tokens: int | None = None
     reasoning_effort: str | None = None
-    api_key: str | None = None
 
 
 class MemoryConfig(BaseModel):
@@ -176,35 +241,51 @@ class MemoryConfig(BaseModel):
             return _KEEP_LAST_MESSAGES_FALLBACK
         return self.keep_last_messages
 
-    def resolved_llm_config(self, base: LLMConfig) -> LLMConfig:
+    def merged_llm_config(self, base: LLMConfig) -> LLMConfig:
         """
-        Resuelve la ``LLMConfig`` efectiva para la consolidación de memoria.
+        Devuelve la ``LLMConfig`` efectiva (sin creds) tras aplicar el override.
 
         Merge field-by-field: los campos que el usuario seteó EXPLÍCITAMENTE
         en ``memory.llm.*`` (incluso ``null``) pisan al ``base``; el resto hereda.
+        Si no hay override, devuelve el ``base`` tal cual.
 
-        Validación cruzada: si el override cambia el ``provider`` y la config
-        efectiva resultante no tiene ``api_key`` resolvible, se lanza
-        ``ConfigError`` al arranque (fail-fast, no silencioso durante runtime).
+        Las credenciales se resuelven aparte contra el registry ``providers``
+        — ver ``resolved_llm_config``.
         """
-        from core.domain.errors import ConfigError
-
         if self.llm is None:
             return base
 
         fields_set = self.llm.model_fields_set
         overrides = {f: getattr(self.llm, f) for f in fields_set}
-        result = base.model_copy(update=overrides)
+        return base.model_copy(update=overrides)
 
-        # Si el provider cambia, la api_key heredada del base es de otro
-        # provider y no sirve: se requiere api_key explícita en el override.
-        if result.provider != base.provider and "api_key" not in fields_set:
-            raise ConfigError(
-                f"memory.llm.provider='{result.provider}' difiere de "
-                f"llm.provider='{base.provider}' pero no hay api_key resolvible. "
-                "Definí memory.llm.api_key en el bloque secrets correspondiente."
-            )
-        return result
+    def resolved_llm_config(
+        self,
+        base: LLMConfig,
+        providers: "dict[str, ProviderConfig]",
+    ) -> ResolvedLLMConfig:
+        """
+        Resuelve la ``ResolvedLLMConfig`` efectiva para la consolidación de memoria.
+
+        1. Mergea el override (``memory.llm.*``) sobre ``base`` (``llm`` del agente).
+        2. Resuelve credenciales desde el registry ``providers`` según el
+           ``provider`` efectivo tras el merge.
+
+        El check de ``REQUIRES_CREDENTIALS`` (fail-fast si el provider exige
+        creds y no hay entrada en el registry) queda delegado a la factory
+        — ver ``LLMProviderFactory.create_from_resolved``.
+        """
+        merged = self.merged_llm_config(base)
+        provider_cfg = providers.get(merged.provider, ProviderConfig())
+        return ResolvedLLMConfig(
+            provider=merged.provider,
+            model=merged.model,
+            temperature=merged.temperature,
+            max_tokens=merged.max_tokens,
+            reasoning_effort=merged.reasoning_effort,
+            api_key=provider_cfg.api_key,
+            base_url=provider_cfg.base_url,
+        )
 
 
 class ChatHistoryConfig(BaseModel):
@@ -448,6 +529,8 @@ class AgentConfig(BaseModel):
     delegation: AgentDelegationConfig = AgentDelegationConfig()
     transcription: TranscriptionConfig | None = None
     channels: dict[str, dict[str, Any]] = {}
+    providers: dict[str, ProviderConfig] = {}
+    """Registry de proveedores post-merge. Heredado del global + overrides del agente."""
 
 
 # ---------------------------------------------------------------------------
@@ -471,6 +554,8 @@ class GlobalConfig(BaseModel):
     user: UserConfig = UserConfig()
     transcription: TranscriptionConfig | None = None
     knowledge: KnowledgeConfig = KnowledgeConfig()
+    providers: dict[str, ProviderConfig] = {}
+    """Registry top-level de proveedores — credenciales compartidas por vendor."""
 
 
 # ---------------------------------------------------------------------------
@@ -533,13 +618,21 @@ _SECRETS_YAML_HEADER = """\
 # Poné acá las API keys compartidas entre todos los agentes.
 # Este archivo NUNCA debe commitearse a un repositorio.
 #
+# Las credenciales viven en el bloque top-level `providers:` y se referencian
+# desde cada feature (`llm`, `embedding`, `transcription`, `memory.llm`) por
+# el campo `provider: <key>`. Esto evita duplicar api_key cuando varias
+# features comparten vendor.
+#
 # Ejemplo:
 #
-#   llm:
-#     api_key: "sk-or-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-#
-#   embedding:
-#     api_key: "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+#   providers:
+#     openrouter:
+#       api_key: "sk-or-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+#     groq:
+#       api_key: "gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+#       base_url: "https://api.groq.com/openai/v1"
+#     openai:
+#       api_key: "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 #
 # Los secrets por agente (tokens de Telegram, auth_keys REST) van en
 # ~/.inaki/agents/{id}.secrets.yaml
@@ -570,15 +663,15 @@ def _render_default_global_yaml() -> str:
     """Serializa los defaults de las clases Pydantic como YAML con header."""
     defaults = {
         "app": AppConfig().model_dump(),
-        "llm": LLMConfig().model_dump(exclude={"api_key"}),
-        "embedding": EmbeddingConfig().model_dump(exclude={"api_key"}),
+        "llm": LLMConfig().model_dump(),
+        "embedding": EmbeddingConfig().model_dump(),
         "memory": MemoryConfig().model_dump(),
         "chat_history": ChatHistoryConfig().model_dump(),
         "skills": SkillsConfig().model_dump(),
         "tools": ToolsConfig().model_dump(),
         "scheduler": SchedulerConfig().model_dump(),
         "workspace": WorkspaceConfig().model_dump(),
-        "transcription": TranscriptionConfig().model_dump(exclude={"api_key"}),
+        "transcription": TranscriptionConfig().model_dump(),
         "user": UserConfig().model_dump(),
     }
     body = yaml.safe_dump(defaults, sort_keys=False, default_flow_style=False)
@@ -619,6 +712,73 @@ def ensure_user_config(config_dir: Path, agents_dir: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Legacy shape detection
+# ---------------------------------------------------------------------------
+
+
+_LEGACY_FIELDS: tuple[tuple[str, str], ...] = (
+    ("llm", "api_key"),
+    ("llm", "base_url"),
+    ("embedding", "api_key"),
+    ("embedding", "base_url"),
+    ("transcription", "api_key"),
+    ("transcription", "base_url"),
+)
+
+
+_LEGACY_ERROR_TEMPLATE = """\
+Formato legacy detectado en config: '{field}' ya no existe. \
+Las credenciales ahora viven en el bloque top-level 'providers:'. Ejemplo:
+
+  providers:
+    groq: {{ api_key: TU_API_KEY, base_url: https://api.groq.com/openai/v1 }}
+  llm:
+    provider: groq
+    model: gpt-oss-120b
+
+Ver docs/configuracion.md#providers.\
+"""
+
+
+def _check_legacy_shape(merged: dict) -> None:
+    """
+    Inspecciona el dict crudo mergeado y rechaza el shape viejo.
+
+    Busca ``llm.api_key``, ``llm.base_url``, ``embedding.{api_key,base_url}``,
+    ``transcription.{api_key,base_url}``, ``memory.llm.{api_key,base_url}``.
+    Si alguno existe levanta ``ConfigError`` con mensaje accionable en español
+    que incluye un ejemplo del shape nuevo.
+
+    DEBE correr ANTES de ``model_validate`` porque pydantic strict rechazaría
+    el field desconocido con un mensaje genérico, perdiendo el ejemplo.
+    """
+    from core.domain.errors import ConfigError
+
+    for section, key in _LEGACY_FIELDS:
+        node = merged.get(section)
+        if isinstance(node, dict) and key in node:
+            raise ConfigError(_LEGACY_ERROR_TEMPLATE.format(field=f"{section}.{key}"))
+
+    memory = merged.get("memory")
+    if isinstance(memory, dict):
+        memory_llm = memory.get("llm")
+        if isinstance(memory_llm, dict):
+            for key in ("api_key", "base_url"):
+                if key in memory_llm:
+                    raise ConfigError(_LEGACY_ERROR_TEMPLATE.format(field=f"memory.llm.{key}"))
+
+
+def _parse_providers(merged: dict) -> dict[str, ProviderConfig]:
+    """Construye el dict ``{key: ProviderConfig}`` desde el merged raw."""
+    providers_raw = merged.get("providers") or {}
+    if not isinstance(providers_raw, dict):
+        from core.domain.errors import ConfigError
+
+        raise ConfigError("El bloque 'providers:' debe ser un diccionario de entradas por vendor.")
+    return {key: ProviderConfig(**(entry or {})) for key, entry in providers_raw.items()}
+
+
+# ---------------------------------------------------------------------------
 # Carga de configuración
 # ---------------------------------------------------------------------------
 
@@ -635,6 +795,9 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
         logger.debug("global.secrets.yaml no encontrado — usando solo global.yaml")
 
     merged = _deep_merge(base, secrets)
+
+    _check_legacy_shape(merged)
+    providers = _parse_providers(merged)
 
     app = AppConfig(**merged.get("app", {}))
     llm = LLMConfig(**merged.get("llm", {}))
@@ -680,6 +843,7 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
         user=user,
         transcription=transcription,
         knowledge=knowledge,
+        providers=providers,
     )
     return global_cfg, merged
 
@@ -717,7 +881,10 @@ def load_agent_config(
     # Merge: global como base, agente como override
     merged = _deep_merge(global_raw, agent_raw)
 
+    _check_legacy_shape(merged)
+
     try:
+        providers = _parse_providers(merged)
         transcription_raw = merged.get("transcription")
         transcription = (
             TranscriptionConfig(**transcription_raw) if transcription_raw is not None else None
@@ -738,6 +905,7 @@ def load_agent_config(
             delegation=AgentDelegationConfig(**merged.get("delegation", {})),
             transcription=transcription,
             channels=merged.get("channels", {}),
+            providers=providers,
         )
     except (KeyError, ValueError) as exc:
         logger.warning("Config inválida para agente '%s': %s", agent_id, exc)

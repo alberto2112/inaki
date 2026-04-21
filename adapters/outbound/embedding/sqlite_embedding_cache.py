@@ -34,7 +34,6 @@ CREATE TABLE IF NOT EXISTS embedding_cache (
 
 
 class SqliteEmbeddingCache(IEmbeddingCache):
-
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -50,9 +49,7 @@ class SqliteEmbeddingCache(IEmbeddingCache):
         await conn.execute(_CREATE_TABLE)
         await conn.commit()
 
-    async def get(
-        self, content_hash: str, provider: str, dimension: int
-    ) -> list[float] | None:
+    async def get(self, content_hash: str, provider: str, dimension: int) -> list[float] | None:
         try:
             async with self._conn() as conn:
                 await self._ensure_schema(conn)

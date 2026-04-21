@@ -5,7 +5,6 @@ from core.domain.value_objects.llm_response import LLMResponse
 
 
 class ILLMProvider(ABC):
-
     @abstractmethod
     async def complete(
         self,

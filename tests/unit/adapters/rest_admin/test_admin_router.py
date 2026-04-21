@@ -133,6 +133,8 @@ async def test_consolidate_401_without_key(admin_app) -> None:
 
 
 async def test_protected_endpoint_403_when_no_auth_key_configured(admin_app_no_auth) -> None:
-    async with AsyncClient(transport=ASGITransport(app=admin_app_no_auth), base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=ASGITransport(app=admin_app_no_auth), base_url="http://test"
+    ) as ac:
         resp = await ac.post("/scheduler/reload")
     assert resp.status_code == 403

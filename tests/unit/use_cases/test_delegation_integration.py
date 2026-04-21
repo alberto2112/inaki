@@ -36,6 +36,7 @@ from infrastructure.config import (
     GlobalConfig,
     LLMConfig,
     MemoryConfig,
+    ProviderConfig,
 )
 from infrastructure.container import AgentContainer
 
@@ -71,7 +72,7 @@ def _make_agent_config(
         name=agent_id.capitalize(),
         description=description or f"Integration test agent {agent_id}",
         system_prompt=f"You are {agent_id}.",
-        llm=LLMConfig(provider="openrouter", model="test-model", api_key="test-key"),
+        llm=LLMConfig(provider="openrouter", model="test-model"),
         embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
         memory=MemoryConfig(db_filename=":memory:"),
         chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/integ_history.db"),
@@ -79,6 +80,7 @@ def _make_agent_config(
             enabled=delegation_enabled,
             allowed_targets=allowed_targets or [],
         ),
+        providers={"openrouter": ProviderConfig(api_key="test-key")},
     )
 
 
@@ -86,11 +88,17 @@ def _make_global_config(
     max_iterations_per_sub: int = 10,
     timeout_seconds: int = 60,
 ) -> GlobalConfig:
-    from infrastructure.config import AppConfig, SchedulerConfig, SkillsConfig, ToolsConfig, WorkspaceConfig
+    from infrastructure.config import (
+        AppConfig,
+        SchedulerConfig,
+        SkillsConfig,
+        ToolsConfig,
+        WorkspaceConfig,
+    )
 
     return GlobalConfig(
         app=AppConfig(ext_dirs=[]),
-        llm=LLMConfig(provider="openrouter", model="test-model", api_key="test-key"),
+        llm=LLMConfig(provider="openrouter", model="test-model"),
         embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
         memory=MemoryConfig(db_filename=":memory:"),
         chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/integ_history.db"),
@@ -102,6 +110,7 @@ def _make_global_config(
             max_iterations_per_sub=max_iterations_per_sub,
             timeout_seconds=timeout_seconds,
         ),
+        providers={"openrouter": ProviderConfig(api_key="test-key")},
     )
 
 
@@ -117,8 +126,7 @@ def _make_scripted_llm(responses: list[LLMResponse | str]) -> AsyncMock:
     call_count = [0]
 
     normalized: list[LLMResponse] = [
-        r if isinstance(r, LLMResponse) else LLMResponse.of_text(r)
-        for r in responses
+        r if isinstance(r, LLMResponse) else LLMResponse.of_text(r) for r in responses
     ]
 
     async def _complete(messages, system_prompt, tools=None):
@@ -277,17 +285,21 @@ async def test_happy_path_end_to_end(tmp_path):
     """
     global_cfg = _make_global_config(max_iterations_per_sub=10, timeout_seconds=60)
 
-    parent_llm = _make_scripted_llm([
-        _tool_call_response("child", "compute the sum of 2 and 2"),
-        "The specialist computed 2 + 2 = 4.",  # final answer — no tool calls
-    ])
-    child_llm = _make_scripted_llm([
-        _valid_child_response(
-            status="success",
-            summary="2 + 2 = 4",
-            details="Computed by basic arithmetic.",
-        ),
-    ])
+    parent_llm = _make_scripted_llm(
+        [
+            _tool_call_response("child", "compute the sum of 2 and 2"),
+            "The specialist computed 2 + 2 = 4.",  # final answer — no tool calls
+        ]
+    )
+    child_llm = _make_scripted_llm(
+        [
+            _valid_child_response(
+                status="success",
+                summary="2 + 2 = 4",
+                details="Computed by basic arithmetic.",
+            ),
+        ]
+    )
 
     parent_cfg = _make_agent_config(
         agent_id="parent",
@@ -302,7 +314,7 @@ async def test_happy_path_end_to_end(tmp_path):
     child_cfg = _make_agent_config(
         agent_id="child",
         delegation_enabled=True,
-        allowed_targets=[],    # no further delegation targets
+        allowed_targets=[],  # no further delegation targets
         description="Arithmetic specialist",
     )
 
@@ -397,10 +409,12 @@ async def test_failure_target_not_allowed():
     )
     child_cfg = _make_agent_config(agent_id="child", delegation_enabled=True, allowed_targets=[])
 
-    parent_llm = _make_scripted_llm([
-        _tool_call_response("evil_agent", "do something sneaky"),
-        "I could not complete the task.",  # final answer
-    ])
+    parent_llm = _make_scripted_llm(
+        [
+            _tool_call_response("evil_agent", "do something sneaky"),
+            "I could not complete the task.",  # final answer
+        ]
+    )
     child_llm = _make_scripted_llm([])  # child must NEVER be called
 
     parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
@@ -430,10 +444,12 @@ async def test_failure_unknown_agent():
         allowed_targets=["ghost"],  # allowed, but won't be in containers dict
     )
 
-    parent_llm = _make_scripted_llm([
-        _tool_call_response("ghost", "haunt the server"),
-        "I could not find the agent.",
-    ])
+    parent_llm = _make_scripted_llm(
+        [
+            _tool_call_response("ghost", "haunt the server"),
+            "I could not find the agent.",
+        ]
+    )
 
     # Only build the parent container. "ghost" is NOT in the container registry.
     parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
@@ -463,13 +479,17 @@ async def test_failure_result_parse_error_no_json_block():
     )
     child_cfg = _make_agent_config(agent_id="child", delegation_enabled=True, allowed_targets=[])
 
-    parent_llm = _make_scripted_llm([
-        _tool_call_response("child", "do something"),
-        "Child could not complete the task.",
-    ])
-    child_llm = _make_scripted_llm([
-        "I did the thing but forgot to format the result.",  # no json block
-    ])
+    parent_llm = _make_scripted_llm(
+        [
+            _tool_call_response("child", "do something"),
+            "Child could not complete the task.",
+        ]
+    )
+    child_llm = _make_scripted_llm(
+        [
+            "I did the thing but forgot to format the result.",  # no json block
+        ]
+    )
 
     parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
     child_container = _build_container(child_cfg, global_cfg, child_llm)
@@ -478,9 +498,7 @@ async def test_failure_result_parse_error_no_json_block():
     dr = await _run_delegation_and_extract_result(parent_container)
 
     assert dr.status == "failed"
-    assert dr.reason == "result_parse_error", (
-        f"Expected 'result_parse_error', got {dr.reason!r}"
-    )
+    assert dr.reason == "result_parse_error", f"Expected 'result_parse_error', got {dr.reason!r}"
 
 
 async def test_failure_result_parse_error_invalid_json_in_block():
@@ -495,13 +513,17 @@ async def test_failure_result_parse_error_invalid_json_in_block():
     )
     child_cfg = _make_agent_config(agent_id="child", delegation_enabled=True, allowed_targets=[])
 
-    parent_llm = _make_scripted_llm([
-        _tool_call_response("child", "do something"),
-        "Child had a parse error.",
-    ])
-    child_llm = _make_scripted_llm([
-        "Some output\n```json\n{not: valid json!!}\n```",
-    ])
+    parent_llm = _make_scripted_llm(
+        [
+            _tool_call_response("child", "do something"),
+            "Child had a parse error.",
+        ]
+    )
+    child_llm = _make_scripted_llm(
+        [
+            "Some output\n```json\n{not: valid json!!}\n```",
+        ]
+    )
 
     parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
     child_container = _build_container(child_cfg, global_cfg, child_llm)
@@ -510,9 +532,7 @@ async def test_failure_result_parse_error_invalid_json_in_block():
     dr = await _run_delegation_and_extract_result(parent_container)
 
     assert dr.status == "failed"
-    assert dr.reason == "result_parse_error", (
-        f"Expected 'result_parse_error', got {dr.reason!r}"
-    )
+    assert dr.reason == "result_parse_error", f"Expected 'result_parse_error', got {dr.reason!r}"
 
 
 async def test_failure_timeout():
@@ -527,10 +547,12 @@ async def test_failure_timeout():
     )
     child_cfg = _make_agent_config(agent_id="child", delegation_enabled=True, allowed_targets=[])
 
-    parent_llm = _make_scripted_llm([
-        _tool_call_response("child", "slow task"),
-        "Task timed out.",
-    ])
+    parent_llm = _make_scripted_llm(
+        [
+            _tool_call_response("child", "slow task"),
+            "Task timed out.",
+        ]
+    )
 
     # Child LLM will sleep longer than the timeout
     child_llm = AsyncMock()
@@ -576,10 +598,12 @@ async def test_failure_max_iterations_exceeded():
     )
     child_cfg = _make_agent_config(agent_id="child", delegation_enabled=True, allowed_targets=[])
 
-    parent_llm = _make_scripted_llm([
-        _tool_call_response("child", "infinite loop task"),
-        "Child exceeded max iterations.",
-    ])
+    parent_llm = _make_scripted_llm(
+        [
+            _tool_call_response("child", "infinite loop task"),
+            "Child exceeded max iterations.",
+        ]
+    )
 
     # Child LLM ALWAYS returns a tool call for "dummy_tool" → never final text
     child_tool_call = LLMResponse(
@@ -600,6 +624,7 @@ async def test_failure_max_iterations_exceeded():
     # Build a dummy tool that succeeds so it keeps looping
     dummy_tool = _make_dummy_tool("dummy_tool")
     from core.ports.outbound.tool_port import ToolResult
+
     dummy_tool.execute = AsyncMock(
         return_value=ToolResult(tool_name="dummy_tool", output="ok", success=True)
     )
@@ -635,10 +660,12 @@ async def test_failure_child_exception():
     )
     child_cfg = _make_agent_config(agent_id="child", delegation_enabled=True, allowed_targets=[])
 
-    parent_llm = _make_scripted_llm([
-        _tool_call_response("child", "risky task"),
-        "Child failed unexpectedly.",
-    ])
+    parent_llm = _make_scripted_llm(
+        [
+            _tool_call_response("child", "risky task"),
+            "Child failed unexpectedly.",
+        ]
+    )
 
     child_llm = AsyncMock()
     child_llm.complete.side_effect = RuntimeError("boom")
@@ -654,18 +681,19 @@ async def test_failure_child_exception():
     assert dr.reason.startswith("child_exception:"), (
         f"Reason must start with 'child_exception:'. Got: {dr.reason!r}"
     )
-    assert "RuntimeError" in dr.reason, (
-        f"Reason must contain 'RuntimeError'. Got: {dr.reason!r}"
-    )
+    assert "RuntimeError" in dr.reason, f"Reason must contain 'RuntimeError'. Got: {dr.reason!r}"
 
 
-@pytest.mark.parametrize("scenario,expected_reason", [
-    ("target_not_allowed", "target_not_allowed"),
-    ("unknown_agent", "unknown_agent"),
-    ("result_parse_error_no_block", "result_parse_error"),
-    ("result_parse_error_invalid_json", "result_parse_error"),
-    ("child_exception", "child_exception:RuntimeError"),
-])
+@pytest.mark.parametrize(
+    "scenario,expected_reason",
+    [
+        ("target_not_allowed", "target_not_allowed"),
+        ("unknown_agent", "unknown_agent"),
+        ("result_parse_error_no_block", "result_parse_error"),
+        ("result_parse_error_invalid_json", "result_parse_error"),
+        ("child_exception", "child_exception:RuntimeError"),
+    ],
+)
 async def test_failure_modes_canonical_reason_strings(scenario: str, expected_reason: str):
     """
     REQ-DG-2, REQ-DG-3, REQ-DG-5, REQ-DG-8 — Parametrized sanity check.
@@ -681,10 +709,12 @@ async def test_failure_modes_canonical_reason_strings(scenario: str, expected_re
 
     if scenario == "target_not_allowed":
         # Delegate to an agent not in allowed_targets
-        parent_llm = _make_scripted_llm([
-            _tool_call_response("other_agent", "task"),
-            "Done.",
-        ])
+        parent_llm = _make_scripted_llm(
+            [
+                _tool_call_response("other_agent", "task"),
+                "Done.",
+            ]
+        )
         child_llm = _make_scripted_llm([])
         parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
         child_container = _build_container(child_cfg, global_cfg, child_llm)
@@ -692,10 +722,12 @@ async def test_failure_modes_canonical_reason_strings(scenario: str, expected_re
 
     elif scenario == "unknown_agent":
         # "child" is in allowed_targets but won't be in containers dict
-        parent_llm = _make_scripted_llm([
-            _tool_call_response("child", "task"),
-            "Done.",
-        ])
+        parent_llm = _make_scripted_llm(
+            [
+                _tool_call_response("child", "task"),
+                "Done.",
+            ]
+        )
         child_llm = _make_scripted_llm([])
         parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
         child_container = _build_container(child_cfg, global_cfg, child_llm)
@@ -711,20 +743,24 @@ async def test_failure_modes_canonical_reason_strings(scenario: str, expected_re
             if "no_block" in scenario
             else "Some output\n```json\n{not valid}\n```"
         )
-        parent_llm = _make_scripted_llm([
-            _tool_call_response("child", "task"),
-            "Done.",
-        ])
+        parent_llm = _make_scripted_llm(
+            [
+                _tool_call_response("child", "task"),
+                "Done.",
+            ]
+        )
         child_llm = _make_scripted_llm([child_response])
         parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
         child_container = _build_container(child_cfg, global_cfg, child_llm)
         _wire_both(parent_container, child_container)
 
     elif scenario == "child_exception":
-        parent_llm = _make_scripted_llm([
-            _tool_call_response("child", "risky task"),
-            "Done.",
-        ])
+        parent_llm = _make_scripted_llm(
+            [
+                _tool_call_response("child", "risky task"),
+                "Done.",
+            ]
+        )
         child_llm = AsyncMock()
         child_llm.complete.side_effect = RuntimeError("boom")
         parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
@@ -789,21 +825,25 @@ async def test_req_dg9_child_schemas_exclude_delegate_even_when_child_has_delega
     )
     child_cfg = _make_agent_config(
         agent_id="child",
-        delegation_enabled=True,   # <-- the twist: child also has delegation enabled
-        allowed_targets=[],        # no further targets
+        delegation_enabled=True,  # <-- the twist: child also has delegation enabled
+        allowed_targets=[],  # no further targets
         description="Sub-agent with delegation enabled",
     )
 
     # Parent: delegates to child, then returns final answer
-    parent_llm = _make_scripted_llm([
-        _tool_call_response("child", "compute something"),
-        "The child computed the result.",
-    ])
+    parent_llm = _make_scripted_llm(
+        [
+            _tool_call_response("child", "compute something"),
+            "The child computed the result.",
+        ]
+    )
 
     # Child: returns a valid happy-path response on first call
-    child_llm = _make_scripted_llm([
-        _valid_child_response(status="success", summary="Computed successfully."),
-    ])
+    child_llm = _make_scripted_llm(
+        [
+            _valid_child_response(status="success", summary="Computed successfully."),
+        ]
+    )
 
     parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
     child_container = _build_container(child_cfg, global_cfg, child_llm)
@@ -832,8 +872,7 @@ async def test_req_dg9_child_schemas_exclude_delegate_even_when_child_has_delega
     child_schema_names = [s.get("function", {}).get("name") for s in child_schemas]
 
     assert "delegate" not in child_schema_names, (
-        f"REQ-DG-9: Child schemas must NOT include 'delegate'. "
-        f"Got schemas: {child_schema_names}"
+        f"REQ-DG-9: Child schemas must NOT include 'delegate'. Got schemas: {child_schema_names}"
     )
     assert len(child_schema_names) >= 1, (
         "Child must still have at least one non-delegate schema (dummy_tool)"
@@ -868,13 +907,17 @@ async def test_req_dg9_overlap_from_71_reconfirmed_in_73():
     )
     child_cfg = _make_agent_config(agent_id="child", delegation_enabled=True, allowed_targets=[])
 
-    parent_llm = _make_scripted_llm([
-        _tool_call_response("child", "a simple task"),
-        "Done.",
-    ])
-    child_llm = _make_scripted_llm([
-        _valid_child_response(status="success", summary="Simple task done."),
-    ])
+    parent_llm = _make_scripted_llm(
+        [
+            _tool_call_response("child", "a simple task"),
+            "Done.",
+        ]
+    )
+    child_llm = _make_scripted_llm(
+        [
+            _valid_child_response(status="success", summary="Simple task done."),
+        ]
+    )
 
     parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
     child_container = _build_container(child_cfg, global_cfg, child_llm)
@@ -932,13 +975,17 @@ async def test_child_with_delegation_disabled_can_be_delegation_target(tmp_path)
         description="Worker with delegation disabled",
     )
 
-    parent_llm = _make_scripted_llm([
-        _tool_call_response("worker", "do the thing"),
-        "The worker completed the task.",  # final answer after delegation
-    ])
-    worker_llm = _make_scripted_llm([
-        _valid_child_response(status="success", summary="done"),
-    ])
+    parent_llm = _make_scripted_llm(
+        [
+            _tool_call_response("worker", "do the thing"),
+            "The worker completed the task.",  # final answer after delegation
+        ]
+    )
+    worker_llm = _make_scripted_llm(
+        [
+            _valid_child_response(status="success", summary="done"),
+        ]
+    )
 
     parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
     worker_container = _build_container(worker_cfg, global_cfg, worker_llm)

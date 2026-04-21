@@ -47,7 +47,6 @@ class ConsolidateAllResult:
 
 
 class ConsolidateAllAgentsUseCase:
-
     def __init__(
         self,
         enabled_agents: dict[str, ConsolidateMemoryUseCase],

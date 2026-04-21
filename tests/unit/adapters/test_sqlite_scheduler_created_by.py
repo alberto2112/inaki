@@ -49,6 +49,7 @@ def repo(tmp_path):
 # SC: created_by column added idempotently
 # ---------------------------------------------------------------------------
 
+
 async def test_ensure_schema_idempotent_adds_created_by(repo: SQLiteSchedulerRepo) -> None:
     """Calling ensure_schema twice must not fail and must produce created_by column."""
     await repo.ensure_schema()
@@ -66,16 +67,21 @@ async def test_ensure_schema_idempotent_adds_created_by(repo: SQLiteSchedulerRep
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                200, "idempotent-test", "", "oneshot", "agent_send",
+                200,
+                "idempotent-test",
+                "",
+                "oneshot",
+                "agent_send",
                 '{"type": "agent_send", "agent_id": "agent-x"}',
-                "2026-06-01T10:00:00+00:00", "pending", 1,
-                datetime.now(timezone.utc).isoformat(), "test-agent",
+                "2026-06-01T10:00:00+00:00",
+                "pending",
+                1,
+                datetime.now(timezone.utc).isoformat(),
+                "test-agent",
             ),
         )
         await conn.commit()
-        rows = await conn.execute_fetchall(
-            "SELECT created_by FROM scheduled_tasks WHERE id = 200"
-        )
+        rows = await conn.execute_fetchall("SELECT created_by FROM scheduled_tasks WHERE id = 200")
 
     assert rows[0]["created_by"] == "test-agent"
 
@@ -83,6 +89,7 @@ async def test_ensure_schema_idempotent_adds_created_by(repo: SQLiteSchedulerRep
 # ---------------------------------------------------------------------------
 # SC: count_active_by_agent counts only matching agent's non-terminal tasks
 # ---------------------------------------------------------------------------
+
 
 async def test_count_active_by_agent_counts_only_matching_agent(
     repo: SQLiteSchedulerRepo,
@@ -103,7 +110,9 @@ async def test_count_active_by_agent_excludes_terminal_and_disabled(
     repo: SQLiteSchedulerRepo,
 ) -> None:
     """completed, failed tasks AND tasks with enabled=False must NOT be counted."""
-    await repo.save_task(_make_task("pending-task", created_by="agent-a", status=TaskStatus.PENDING))
+    await repo.save_task(
+        _make_task("pending-task", created_by="agent-a", status=TaskStatus.PENDING)
+    )
     t_completed = await repo.save_task(_make_task("done", created_by="agent-a"))
     t_failed = await repo.save_task(_make_task("fail", created_by="agent-a"))
     t_disabled = await repo.save_task(_make_task("disabled", created_by="agent-a"))
@@ -136,6 +145,7 @@ async def test_count_active_by_agent_includes_running_and_missed(
 # ---------------------------------------------------------------------------
 # SC: rows with created_by="" don't count against any named agent
 # ---------------------------------------------------------------------------
+
 
 async def test_cli_tasks_do_not_count_against_named_agent(
     repo: SQLiteSchedulerRepo,

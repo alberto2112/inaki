@@ -77,6 +77,7 @@ def _build_bot(agent_cfg, mock_container):
         mock_app = MagicMock()
         mock_app_cls.builder.return_value.token.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
+
         return TelegramBot(agent_cfg=agent_cfg, container=mock_container)
 
 
@@ -266,12 +267,14 @@ def test_bot_registra_handlers_voice_audio_video_note(agent_cfg, mock_container)
         mock_app = MagicMock()
         mock_app_cls.builder.return_value.token.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
+
         bot = TelegramBot(agent_cfg=agent_cfg, container=mock_container)
 
     # Se registran 3 MessageHandlers de audio (además del de texto y los commands).
     registered = [c.args[0] for c in mock_app.add_handler.call_args_list]
     voice_handler_callbacks = [
-        h.callback for h in registered
+        h.callback
+        for h in registered
         if hasattr(h, "callback") and h.callback == bot._handle_voice_message
     ]
     assert len(voice_handler_callbacks) == 3, (
@@ -287,11 +290,13 @@ def test_voice_enabled_false_no_registra_handlers_de_voz(mock_container) -> None
         mock_app = MagicMock()
         mock_app_cls.builder.return_value.token.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
+
         bot = TelegramBot(agent_cfg=cfg, container=mock_container)
 
     registered = [c.args[0] for c in mock_app.add_handler.call_args_list]
     voice_handler_callbacks = [
-        h.callback for h in registered
+        h.callback
+        for h in registered
         if hasattr(h, "callback") and h.callback == bot._handle_voice_message
     ]
     assert voice_handler_callbacks == [], (
@@ -300,33 +305,33 @@ def test_voice_enabled_false_no_registra_handlers_de_voz(mock_container) -> None
     )
 
 
-def test_handlers_de_voz_se_registran_antes_que_handler_de_texto(
-    agent_cfg, mock_container
-) -> None:
+def test_handlers_de_voz_se_registran_antes_que_handler_de_texto(agent_cfg, mock_container) -> None:
     """Spec: los handlers de voz deben registrarse ANTES del handler de texto
     para que python-telegram-bot los despache correctamente."""
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
         mock_app_cls.builder.return_value.token.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
+
         bot = TelegramBot(agent_cfg=agent_cfg, container=mock_container)
 
     registered = [c.args[0] for c in mock_app.add_handler.call_args_list]
     # Índices donde aparece cada tipo de MessageHandler.
     text_indices = [
-        i for i, h in enumerate(registered)
+        i
+        for i, h in enumerate(registered)
         if hasattr(h, "callback") and h.callback == bot._handle_message
     ]
     voice_indices = [
-        i for i, h in enumerate(registered)
+        i
+        for i, h in enumerate(registered)
         if hasattr(h, "callback") and h.callback == bot._handle_voice_message
     ]
     assert text_indices, "No se registró el handler de texto"
     assert voice_indices, "No se registraron los handlers de voz"
     # TODOS los handlers de voz deben tener un índice menor al de texto.
     assert max(voice_indices) < min(text_indices), (
-        f"Los handlers de voz {voice_indices} deben registrarse ANTES del de texto "
-        f"{text_indices}"
+        f"Los handlers de voz {voice_indices} deben registrarse ANTES del de texto {text_indices}"
     )
 
 

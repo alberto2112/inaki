@@ -18,7 +18,7 @@ import numpy as np
 
 from adapters.outbound.embedding.base import BaseEmbeddingProvider
 from core.domain.errors import EmbeddingError
-from infrastructure.config import EmbeddingConfig
+from infrastructure.config import ResolvedEmbeddingConfig
 
 PROVIDER_NAME = "e5_onnx"
 
@@ -26,8 +26,9 @@ logger = logging.getLogger(__name__)
 
 
 class E5OnnxProvider(BaseEmbeddingProvider):
+    REQUIRES_CREDENTIALS: bool = False
 
-    def __init__(self, cfg: EmbeddingConfig) -> None:
+    def __init__(self, cfg: ResolvedEmbeddingConfig) -> None:
         self._cfg = cfg
         self._session = None
         self._tokenizer = None

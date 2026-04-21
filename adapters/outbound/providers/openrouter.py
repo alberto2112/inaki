@@ -12,7 +12,7 @@ from adapters.outbound.providers.base import BaseLLMProvider
 from core.domain.entities.message import Message
 from core.domain.errors import LLMError
 from core.domain.value_objects.llm_response import LLMResponse
-from infrastructure.config import LLMConfig
+from infrastructure.config import ResolvedLLMConfig
 
 PROVIDER_NAME = "openrouter"
 
@@ -20,12 +20,11 @@ logger = logging.getLogger(__name__)
 
 
 class OpenRouterProvider(BaseLLMProvider):
-
     _DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 
-    def __init__(self, cfg: LLMConfig) -> None:
+    def __init__(self, cfg: ResolvedLLMConfig) -> None:
         if not cfg.api_key:
-            raise LLMError("OpenRouter requiere api_key en llm.api_key")
+            raise LLMError("OpenRouter requiere api_key en providers.openrouter.api_key")
         self._cfg = cfg
         self._base_url = cfg.base_url or self._DEFAULT_BASE_URL
         self._headers = {
@@ -61,9 +60,7 @@ class OpenRouterProvider(BaseLLMProvider):
                 data = resp.json()
         except httpx.HTTPStatusError as exc:
             body = exc.response.text[:500]
-            raise LLMError(
-                f"OpenRouter HTTP {exc.response.status_code}: {body}"
-            ) from exc
+            raise LLMError(f"OpenRouter HTTP {exc.response.status_code}: {body}") from exc
         except httpx.HTTPError as exc:
             raise LLMError(f"OpenRouter HTTP error: {exc}") from exc
 
@@ -116,8 +113,6 @@ class OpenRouterProvider(BaseLLMProvider):
         except httpx.HTTPStatusError as exc:
             await exc.response.aread()
             body = exc.response.text[:500]
-            raise LLMError(
-                f"OpenRouter HTTP {exc.response.status_code}: {body}"
-            ) from exc
+            raise LLMError(f"OpenRouter HTTP {exc.response.status_code}: {body}") from exc
         except httpx.HTTPError as exc:
             raise LLMError(f"OpenRouter stream error: {exc}") from exc

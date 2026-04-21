@@ -6,7 +6,14 @@ from core.ports.outbound.llm_port import ILLMProvider
 
 
 class BaseLLMProvider(ILLMProvider):
-    """Clase base para todos los proveedores LLM. Define contrato común."""
+    """Clase base para todos los proveedores LLM. Define contrato común.
+
+    ``REQUIRES_CREDENTIALS`` indica si la factory debe exigir una entrada en
+    ``providers:`` al resolver las creds. Providers locales (ollama) lo
+    override a ``False`` para permitir arrancar sin registry.
+    """
+
+    REQUIRES_CREDENTIALS: bool = True
 
     @staticmethod
     def _format_response_log(provider: str, content: str, tool_calls: list[dict]) -> str:
@@ -38,17 +45,21 @@ class BaseLLMProvider(ILLMProvider):
             if m.role == Role.ASSISTANT and m.tool_calls:
                 # OpenAI-compatible: un mismo mensaje assistant puede tener
                 # content textual Y tool_calls. Si no hubo texto, pasamos None.
-                result.append({
-                    "role": "assistant",
-                    "content": m.content if m.content else None,
-                    "tool_calls": m.tool_calls,
-                })
+                result.append(
+                    {
+                        "role": "assistant",
+                        "content": m.content if m.content else None,
+                        "tool_calls": m.tool_calls,
+                    }
+                )
             elif m.role == Role.TOOL:
-                result.append({
-                    "role": "tool",
-                    "tool_call_id": m.tool_call_id or "",
-                    "content": m.content,
-                })
+                result.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": m.tool_call_id or "",
+                        "content": m.content,
+                    }
+                )
             elif m.role in (Role.USER, Role.ASSISTANT):
                 result.append({"role": m.role.value, "content": m.content})
         return result

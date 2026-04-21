@@ -40,7 +40,9 @@ def run_cli(client: IDaemonClient, agent_id: str) -> None:
     """
     session_id = str(uuid.uuid4())
 
-    print(f"\niñaki > Conectado al agente '{agent_id}'. Escribe /help para ver comandos. Ctrl+C para salir.\n")
+    print(
+        f"\niñaki > Conectado al agente '{agent_id}'. Escribe /help para ver comandos. Ctrl+C para salir.\n"
+    )
 
     while True:
         try:
@@ -118,7 +120,7 @@ def run_cli(client: IDaemonClient, agent_id: str) -> None:
             continue
 
         if user_input.startswith("/inspect"):
-            query = user_input[len("/inspect"):].strip()
+            query = user_input[len("/inspect") :].strip()
             if not query:
                 print("Uso: /inspect <mensaje>")
             else:
@@ -161,7 +163,7 @@ def print_inspect(result) -> None:
     """Imprime el resultado de un inspect de forma legible."""
     W = 60
     print(f"\n{'━' * W}")
-    print(f"  RAG Inspect: \"{result.get('user_input', '?')}\"")
+    print(f'  RAG Inspect: "{result.get("user_input", "?")}"')
     print(f"{'━' * W}\n")
     print(json.dumps(result, indent=2, ensure_ascii=False))
 

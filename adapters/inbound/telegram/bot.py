@@ -53,9 +53,7 @@ class TelegramBot:
         if self._voice_enabled:
             self._app.add_handler(MessageHandler(filters.VOICE, self._handle_voice_message))
             self._app.add_handler(MessageHandler(filters.AUDIO, self._handle_voice_message))
-            self._app.add_handler(
-                MessageHandler(filters.VIDEO_NOTE, self._handle_voice_message)
-            )
+            self._app.add_handler(MessageHandler(filters.VIDEO_NOTE, self._handle_voice_message))
         self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
 
     def _is_allowed(self, user_id: int) -> bool:
@@ -112,9 +110,7 @@ class TelegramBot:
 
         uc = self._container.schedule_task
         if uc is None:
-            await update.message.reply_text(
-                "El scheduler no está inicializado en este proceso."
-            )
+            await update.message.reply_text("El scheduler no está inicializado en este proceso.")
             return
 
         args = context.args or []
@@ -274,9 +270,7 @@ class TelegramBot:
                 language=self._agent_cfg.transcription.language,
             )
         except TranscriptionError as exc:
-            logger.warning(
-                "Transcripción fallida para agente '%s': %s", self._agent_cfg.id, exc
-            )
+            logger.warning("Transcripción fallida para agente '%s': %s", self._agent_cfg.id, exc)
             await update.message.reply_text(f"No pude transcribir el audio: {exc}")
             await self._set_reaction(update, "❌")
             return
@@ -309,9 +303,7 @@ class TelegramBot:
                 user_id=str(update.effective_user.id),
             )
         )
-        live_sink = TelegramLiveIntermediateSink(
-            bot=self, chat_id=update.effective_chat.id
-        )
+        live_sink = TelegramLiveIntermediateSink(bot=self, chat_id=update.effective_chat.id)
         try:
             response = await self._container.run_agent.execute(
                 user_input, intermediate_sink=live_sink

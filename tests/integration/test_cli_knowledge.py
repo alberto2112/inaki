@@ -44,9 +44,7 @@ def _build_global_config_mock(docs_path: Path):
         model_dirname="/tmp/fake-model",
         dimension=384,
         cache_filename=":memory:",
-        api_key=None,
         model="fake",
-        base_url="",
     )
 
     knowledge_cfg = SimpleNamespace(
@@ -68,10 +66,11 @@ def _build_global_config_mock(docs_path: Path):
 
     global_cfg = SimpleNamespace(
         app=SimpleNamespace(default_agent="general", log_level="WARNING"),
-        llm=SimpleNamespace(provider="openrouter", api_key=None),
+        llm=SimpleNamespace(provider="openrouter"),
         embedding=embedding_cfg,
         knowledge=knowledge_cfg,
         admin=admin_cfg,
+        providers={},
     )
     return global_cfg
 

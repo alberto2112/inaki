@@ -10,7 +10,7 @@ class TaskLog(BaseModel):
     task_id: int
     started_at: datetime
     finished_at: datetime | None = None
-    status: str   # "success" | "failed" | "missed"
+    status: str  # "success" | "failed" | "missed"
     output: str | None = None
     error: str | None = None
     metadata: dict | None = None

@@ -21,9 +21,14 @@ class FakeEmbedder:
 
 class FakeMemory:
     async def store(self, entry) -> None: ...
-    async def search(self, query_embedding, top_k=5): return []
-    async def search_with_scores(self, query_vec, top_k=5): return []
-    async def get_recent(self, limit=10): return []
+    async def search(self, query_embedding, top_k=5):
+        return []
+
+    async def search_with_scores(self, query_vec, top_k=5):
+        return []
+
+    async def get_recent(self, limit=10):
+        return []
 
 
 def _make_container(tmp_path: Path) -> AgentContainer:

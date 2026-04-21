@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 
 
 class ToolRegistry(IToolExecutor):
-
     def __init__(
         self,
         embedder: IEmbeddingProvider,
@@ -135,8 +134,4 @@ class ToolRegistry(IToolExecutor):
     ) -> list[dict]:
         ranked = await self._rank_tools_by_query(query_embedding, top_k, min_score)
         top_names = {name for name, _ in ranked}
-        return [
-            self._schema_dict(tool)
-            for tool in self._tools.values()
-            if tool.name in top_names
-        ]
+        return [self._schema_dict(tool) for tool in self._tools.values() if tool.name in top_names]

@@ -36,9 +36,7 @@ async def test_min_score_filtra_tools_por_debajo_del_umbral():
             next(n for n, e in registry._embeddings.items() if e is emb)
         ],
     ):
-        result = await registry.get_schemas_relevant(
-            [1.0], top_k=10, min_score=0.4
-        )
+        result = await registry.get_schemas_relevant([1.0], top_k=10, min_score=0.4)
 
     nombres = {s["function"]["name"] for s in result}
     assert "alta" in nombres
@@ -55,9 +53,7 @@ async def test_min_score_cero_no_filtra():
         "adapters.outbound.tools.tool_registry.cosine_similarity",
         return_value=0.05,
     ):
-        result = await registry.get_schemas_relevant(
-            [1.0], top_k=10, min_score=0.0
-        )
+        result = await registry.get_schemas_relevant([1.0], top_k=10, min_score=0.0)
 
     assert len(result) == 2
 
@@ -75,9 +71,7 @@ async def test_min_score_combina_con_top_k():
             next(n for n, e in registry._embeddings.items() if e is emb)
         ],
     ):
-        result = await registry.get_schemas_relevant(
-            [1.0], top_k=1, min_score=0.5
-        )
+        result = await registry.get_schemas_relevant([1.0], top_k=1, min_score=0.5)
 
     # Las 3 pasan min_score=0.5, pero top_k=1 limita a 1
     assert len(result) == 1
@@ -92,8 +86,6 @@ async def test_min_score_alto_devuelve_vacio():
         "adapters.outbound.tools.tool_registry.cosine_similarity",
         return_value=0.3,
     ):
-        result = await registry.get_schemas_relevant(
-            [1.0], top_k=10, min_score=0.9
-        )
+        result = await registry.get_schemas_relevant([1.0], top_k=10, min_score=0.9)
 
     assert result == []

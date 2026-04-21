@@ -19,6 +19,8 @@ from infrastructure.config import (
     LLMConfig,
     MemoryConfig,
     MemoryLLMOverride,
+    ProviderConfig,
+    ResolvedLLMConfig,
 )
 from infrastructure.container import AgentContainer
 from infrastructure.factories.llm_factory import LLMProviderFactory
@@ -28,9 +30,11 @@ def _mk_cfg(
     *,
     memory_llm: MemoryLLMOverride | None = None,
     base_model: str = "openai/gpt-oss-120b",
-    base_api_key: str = "KEY_BASE",
     base_provider: str = "groq",
+    providers: dict[str, ProviderConfig] | None = None,
 ) -> AgentConfig:
+    if providers is None:
+        providers = {"groq": ProviderConfig(api_key="KEY_BASE")}
     return AgentConfig(
         id="test-agent",
         name="Test Agent",
@@ -42,11 +46,11 @@ def _mk_cfg(
             temperature=0.7,
             max_tokens=2048,
             reasoning_effort="high",
-            api_key=base_api_key,
         ),
         embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
         memory=MemoryConfig(db_filename=":memory:", llm=memory_llm),
         chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/hist.db"),
+        providers=providers,
     )
 
 
@@ -61,8 +65,12 @@ def test_resolve_memory_llm_sin_override_reusa_instancia_base() -> None:
 
 def test_resolve_memory_llm_override_que_coincide_con_base_reusa() -> None:
     """
-    Si el override existe pero resuelve a una config idéntica al base
-    (todos los campos del override matchean), se reusa la instancia base.
+    Si el override existe pero resuelve a una config (sin creds) idéntica al
+    base, se reusa la instancia base.
+
+    Tras el refactor a providers top-level, el override ya NO lleva ``api_key``;
+    la comparación es sobre los campos de feature (provider, model, temperature,
+    max_tokens, reasoning_effort).
     """
     cfg = _mk_cfg(
         memory_llm=MemoryLLMOverride(
@@ -71,7 +79,6 @@ def test_resolve_memory_llm_override_que_coincide_con_base_reusa() -> None:
             temperature=0.7,
             max_tokens=2048,
             reasoning_effort="high",
-            api_key="KEY_BASE",
         ),
     )
     base_llm = MagicMock()
@@ -94,33 +101,39 @@ def test_resolve_memory_llm_override_distinto_instancia_provider_nuevo(
     base_llm = MagicMock(name="base_llm")
     instancia_dedicada = MagicMock(name="dedicada")
 
-    cfg_pasado_a_factory: list[LLMConfig] = []
+    resolved_pasado_a_factory: list[ResolvedLLMConfig] = []
 
-    def fake_create(llm_cfg: LLMConfig):
-        cfg_pasado_a_factory.append(llm_cfg)
+    def fake_create_from_resolved(cls, resolved: ResolvedLLMConfig):
+        resolved_pasado_a_factory.append(resolved)
         return instancia_dedicada
 
     monkeypatch.setattr(
         LLMProviderFactory,
-        "create_from_llm_config",
-        classmethod(lambda cls, llm_cfg: fake_create(llm_cfg)),
+        "create_from_resolved",
+        classmethod(fake_create_from_resolved),
     )
 
     resultado = AgentContainer._resolve_memory_llm(cfg, base_llm)
 
     assert resultado is instancia_dedicada
     assert resultado is not base_llm
-    # La factory recibió la config efectiva ya mergeada (override aplicado).
-    assert len(cfg_pasado_a_factory) == 1
-    efectiva = cfg_pasado_a_factory[0]
+    # La factory recibió el ResolvedLLMConfig ya mergeado (override aplicado)
+    # + las creds resueltas desde el registry de providers.
+    assert len(resolved_pasado_a_factory) == 1
+    efectiva = resolved_pasado_a_factory[0]
     assert efectiva.model == "llama-3.3-70b-versatile"
     assert efectiva.reasoning_effort is None
     assert efectiva.max_tokens == 8192
     assert efectiva.provider == "groq"  # heredado
-    assert efectiva.api_key == "KEY_BASE"  # heredado
+    assert efectiva.api_key == "KEY_BASE"  # desde providers["groq"]
 
 
 def test_resolve_memory_llm_propaga_config_error_de_validacion() -> None:
+    """
+    Si el override cambia a un provider que requiere creds y no hay entry en
+    el registry, la factory (``create_from_resolved``) levanta ``ConfigError``
+    al instanciar el adapter.
+    """
     from core.domain.errors import ConfigError
 
     cfg = _mk_cfg(

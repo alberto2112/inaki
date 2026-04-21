@@ -58,7 +58,7 @@ def test_run_cli_delega_mensajes_al_client(mock_client) -> None:
 
     assert mock_client.chat_turn.call_count == 1
     args = mock_client.chat_turn.call_args[0]
-    assert args[0] == "default"        # agent_id
+    assert args[0] == "default"  # agent_id
     assert args[2] == "mensaje de prueba"  # mensaje
 
 

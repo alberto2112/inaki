@@ -21,6 +21,7 @@ from core.domain.value_objects.channel_context import ChannelContext
 # Helpers & fixtures
 # ---------------------------------------------------------------------------
 
+
 def _make_update(user_id: int = 42, text: str = "hola") -> MagicMock:
     """Crea un Update de Telegram falso con los campos mínimos necesarios."""
     update = MagicMock()
@@ -62,6 +63,7 @@ def _make_bot(run_agent_response: str = "ok") -> tuple[TelegramBot, MagicMock]:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 async def test_handle_message_setea_channel_context_antes_de_execute():
     """set_channel_context debe llamarse ANTES de run_agent.execute."""

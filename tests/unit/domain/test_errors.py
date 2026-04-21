@@ -140,4 +140,8 @@ def test_daemon_auth_error_es_subclase_de_daemon_error() -> None:
 
 def test_daemon_auth_error_mensaje_hace_referencia_a_auth_key() -> None:
     exc = DaemonAuthError()
-    assert "auth_key" in str(exc).lower() or "admin-key" in str(exc).lower() or "x-admin-key" in str(exc).lower()
+    assert (
+        "auth_key" in str(exc).lower()
+        or "admin-key" in str(exc).lower()
+        or "x-admin-key" in str(exc).lower()
+    )

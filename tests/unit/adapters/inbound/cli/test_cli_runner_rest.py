@@ -164,8 +164,8 @@ def test_mensaje_normal_llama_chat_turn(mock_client: MagicMock) -> None:
 
     assert mock_client.chat_turn.call_count == 1
     args = mock_client.chat_turn.call_args[0]
-    assert args[0] == "dev"       # agent_id
-    uuid.UUID(args[1])            # session_id es UUID válido
+    assert args[0] == "dev"  # agent_id
+    uuid.UUID(args[1])  # session_id es UUID válido
     assert args[2] == "hola daemon"  # mensaje
 
 
@@ -261,9 +261,7 @@ def test_keyboard_interrupt_durante_turno_sale_limpiamente(mock_client: MagicMoc
 # ---------------------------------------------------------------------------
 
 
-def test_agents_llama_list_agents_y_muestra_resultado(
-    mock_client: MagicMock, capsys
-) -> None:
+def test_agents_llama_list_agents_y_muestra_resultado(mock_client: MagicMock, capsys) -> None:
     """/agents llama client.list_agents() y muestra los agentes disponibles."""
     from adapters.inbound.cli.cli_runner import run_cli
 

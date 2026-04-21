@@ -78,7 +78,11 @@ def chat_app(mock_app_container: MagicMock):
 
 
 VALID_KEY = {"X-Admin-Key": "clave-test"}
-TURN_BODY = {"agent_id": "dev", "session_id": "550e8400-e29b-41d4-a716-446655440000", "message": "hola"}
+TURN_BODY = {
+    "agent_id": "dev",
+    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+    "message": "hola",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +198,9 @@ async def test_post_turn_channel_context_reset_en_error(
 
     calls = mock_agent_container.set_channel_context.call_args_list
     # Debe haberse llamado al menos una vez con None (el finally)
-    assert any(c.args[0] is None for c in calls), "set_channel_context(None) no fue llamado en finally"
+    assert any(c.args[0] is None for c in calls), (
+        "set_channel_context(None) no fue llamado en finally"
+    )
 
 
 # ---------------------------------------------------------------------------

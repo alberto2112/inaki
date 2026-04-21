@@ -51,9 +51,7 @@ def test_agents_dir_created_empty(tmp_path: Path) -> None:
     assert list(agents_dir.iterdir()) == []
 
 
-def test_permission_error_re_raised(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_permission_error_re_raised(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def _boom(self: Path, *args: object, **kwargs: object) -> None:
         raise PermissionError("read-only filesystem")
 

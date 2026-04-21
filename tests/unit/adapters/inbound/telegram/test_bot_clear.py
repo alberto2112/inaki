@@ -27,7 +27,9 @@ def agent_cfg() -> MagicMock:
     cfg.id = "dev"
     cfg.name = "Iñaki"
     cfg.description = "Asistente"
-    cfg.channels = {"telegram": {"token": "dummy-token", "allowed_user_ids": [], "reactions": False}}
+    cfg.channels = {
+        "telegram": {"token": "dummy-token", "allowed_user_ids": [], "reactions": False}
+    }
     return cfg
 
 
@@ -40,6 +42,7 @@ def bot(agent_cfg, mock_container):
         mock_app = MagicMock()
         mock_app_cls.builder.return_value.token.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
+
         return TelegramBot(agent_cfg=agent_cfg, container=mock_container)
 
 

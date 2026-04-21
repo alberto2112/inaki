@@ -28,7 +28,9 @@ def mock_history() -> AsyncMock:
 
 
 @pytest.fixture
-def caso_uso(agent_config, mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools) -> RunAgentUseCase:
+def caso_uso(
+    agent_config, mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools
+) -> RunAgentUseCase:
     """Instancia de RunAgentUseCase con todos los colaboradores mockeados."""
     return RunAgentUseCase(
         llm=mock_llm,
@@ -46,7 +48,9 @@ def caso_uso(agent_config, mock_llm, mock_memory, mock_embedder, mock_skills, mo
 # ---------------------------------------------------------------------------
 
 
-async def test_get_history_delega_a_history_load(caso_uso: RunAgentUseCase, mock_history: AsyncMock, agent_config) -> None:
+async def test_get_history_delega_a_history_load(
+    caso_uso: RunAgentUseCase, mock_history: AsyncMock, agent_config
+) -> None:
     """get_history() debe delegar a _history.load con el agent_id correcto."""
     mensajes_esperados = [Message(role=Role.USER, content="hola")]
     mock_history.load.return_value = mensajes_esperados
@@ -57,7 +61,9 @@ async def test_get_history_delega_a_history_load(caso_uso: RunAgentUseCase, mock
     assert resultado == mensajes_esperados
 
 
-async def test_get_history_retorna_lista_vacia_sin_mensajes(caso_uso: RunAgentUseCase, mock_history: AsyncMock) -> None:
+async def test_get_history_retorna_lista_vacia_sin_mensajes(
+    caso_uso: RunAgentUseCase, mock_history: AsyncMock
+) -> None:
     """get_history() retorna lista vacía cuando no hay historial."""
     mock_history.load.return_value = []
 
@@ -71,14 +77,18 @@ async def test_get_history_retorna_lista_vacia_sin_mensajes(caso_uso: RunAgentUs
 # ---------------------------------------------------------------------------
 
 
-async def test_clear_history_delega_a_history_clear(caso_uso: RunAgentUseCase, mock_history: AsyncMock, agent_config) -> None:
+async def test_clear_history_delega_a_history_clear(
+    caso_uso: RunAgentUseCase, mock_history: AsyncMock, agent_config
+) -> None:
     """clear_history() debe delegar a _history.clear con el agent_id correcto."""
     await caso_uso.clear_history()
 
     mock_history.clear.assert_awaited_once_with(agent_config.id)
 
 
-async def test_clear_history_propaga_excepciones(caso_uso: RunAgentUseCase, mock_history: AsyncMock) -> None:
+async def test_clear_history_propaga_excepciones(
+    caso_uso: RunAgentUseCase, mock_history: AsyncMock
+) -> None:
     """clear_history() propaga cualquier excepción que levante el repositorio."""
     mock_history.clear.side_effect = RuntimeError("error de almacenamiento")
 

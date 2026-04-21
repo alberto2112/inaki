@@ -30,6 +30,7 @@ from infrastructure.config import (
     GlobalConfig,
     LLMConfig,
     MemoryConfig,
+    ProviderConfig,
     SchedulerConfig,
     SkillsConfig,
     ToolsConfig,
@@ -57,18 +58,19 @@ def _make_agent_config(agent_id: str = "test-agent") -> AgentConfig:
         name=agent_id.capitalize(),
         description=f"Agente {agent_id}",
         system_prompt="Prompt de prueba",
-        llm=LLMConfig(provider="openrouter", model="test-model", api_key="test-key"),
+        llm=LLMConfig(provider="openrouter", model="test-model"),
         embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
         memory=MemoryConfig(db_filename=":memory:"),
         chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history.db"),
         delegation=AgentDelegationConfig(enabled=False, allowed_targets=[]),
+        providers={"openrouter": ProviderConfig(api_key="test-key")},
     )
 
 
 def _make_global_config() -> GlobalConfig:
     return GlobalConfig(
         app=AppConfig(ext_dirs=[]),
-        llm=LLMConfig(provider="openrouter", model="test-model", api_key="test-key"),
+        llm=LLMConfig(provider="openrouter", model="test-model"),
         embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
         memory=MemoryConfig(db_filename=":memory:"),
         chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history.db"),
@@ -77,6 +79,7 @@ def _make_global_config() -> GlobalConfig:
         scheduler=SchedulerConfig(),
         workspace=WorkspaceConfig(),
         delegation=DelegationConfig(),
+        providers={"openrouter": ProviderConfig(api_key="test-key")},
     )
 
 
@@ -129,9 +132,7 @@ def test_channel_context_inicializa_en_none() -> None:
     global_cfg = _make_global_config()
     container = _build_minimal_container(agent_cfg, global_cfg)
 
-    assert container._channel_context is None, (
-        "_channel_context debe inicializar en None"
-    )
+    assert container._channel_context is None, "_channel_context debe inicializar en None"
 
 
 # ---------------------------------------------------------------------------
@@ -149,9 +150,7 @@ def test_get_channel_context_devuelve_none_inicialmente() -> None:
 
     resultado = container.get_channel_context()
 
-    assert resultado is None, (
-        "get_channel_context() debe devolver None sin haber seteado contexto"
-    )
+    assert resultado is None, "get_channel_context() debe devolver None sin haber seteado contexto"
 
 
 # ---------------------------------------------------------------------------
@@ -193,9 +192,7 @@ def test_get_channel_context_devuelve_contexto_seteado() -> None:
 
     resultado = container.get_channel_context()
 
-    assert resultado is ctx, (
-        "get_channel_context() debe devolver el mismo objeto seteado"
-    )
+    assert resultado is ctx, "get_channel_context() debe devolver el mismo objeto seteado"
     assert resultado.channel_type == "telegram"
     assert resultado.user_id == "789"
     assert resultado.routing_key == "telegram:789"

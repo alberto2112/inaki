@@ -92,7 +92,9 @@ def test_get_history_retorna_mensajes(client: TestClient, mock_run_agent: RunAge
 # ---------------------------------------------------------------------------
 
 
-def test_delete_history_usa_api_publica(client: TestClient, mock_run_agent: RunAgentUseCase) -> None:
+def test_delete_history_usa_api_publica(
+    client: TestClient, mock_run_agent: RunAgentUseCase
+) -> None:
     """DELETE /history debe llamar run_agent.clear_history() (API pública).
 
     create_autospec garantiza que cualquier acceso a _history levanta AttributeError

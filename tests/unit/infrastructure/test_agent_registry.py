@@ -65,7 +65,10 @@ def test_registry_empty_when_agents_dir_missing(tmp_path: Path) -> None:
 def test_registry_skips_secrets_and_examples(tmp_path: Path) -> None:
     agents_dir = tmp_path / "agents"
     _write_agent(agents_dir, "real")
-    (agents_dir / "real.secrets.yaml").write_text("llm:\n  api_key: x\n", encoding="utf-8")
+    (agents_dir / "real.secrets.yaml").write_text(
+        "providers:\n  openrouter:\n    api_key: x\n",
+        encoding="utf-8",
+    )
     (agents_dir / "sample.example.yaml").write_text("id: sample\n", encoding="utf-8")
 
     registry = AgentRegistry(agents_dir, _GLOBAL_RAW)

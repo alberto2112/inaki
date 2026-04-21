@@ -18,6 +18,7 @@ from core.use_cases._tool_loop import run_tool_loop
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _tool_call_response(tool_name: str, arguments: dict | None = None) -> LLMResponse:
     """Construye la respuesta estructurada que el LLM emitiría para llamar una tool."""
     return LLMResponse(
@@ -42,8 +43,7 @@ def _make_llm(*responses: LLMResponse | str) -> AsyncMock:
     """
     llm = AsyncMock()
     normalized: list[LLMResponse] = [
-        r if isinstance(r, LLMResponse) else LLMResponse.of_text(r)
-        for r in responses
+        r if isinstance(r, LLMResponse) else LLMResponse.of_text(r) for r in responses
     ]
     llm.complete.side_effect = normalized
     return llm
@@ -333,7 +333,10 @@ async def test_circuit_breaker_blocks_after_threshold_failures():
 async def test_circuit_breaker_does_not_execute_tripped_tool():
     """Una tool en circuito abierto NO se ejecuta (tools.execute no se llama)."""
     failing_result = ToolResult(
-        tool_name="flaky", output="error", success=False, retryable=False,
+        tool_name="flaky",
+        output="error",
+        success=False,
+        retryable=False,
     )
     tool_call = _tool_call_response("flaky")
     threshold = 1  # trip tras 1 fallo no-retryable
@@ -494,9 +497,7 @@ async def test_intermediate_sink_receives_text_blocks_before_tool_execution():
     recibe ese texto ANTES de que se ejecute la tool."""
     narrating_call = LLMResponse(
         text_blocks=["Ok, voy a buscar esto."],
-        tool_calls=[
-            {"function": {"name": "mytool", "arguments": "{}"}}
-        ],
+        tool_calls=[{"function": {"name": "mytool", "arguments": "{}"}}],
         raw="",
     )
     llm = _make_llm(narrating_call, "Listo, encontrado.")

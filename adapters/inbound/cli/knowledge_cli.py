@@ -71,17 +71,8 @@ def _build_document_source(fuente_cfg, global_cfg):
 
     from adapters.outbound.knowledge.document_knowledge_source import DocumentKnowledgeSource
 
-    # Crear embedder mínimo (no necesita config de agente completa, usamos global)
-    # Construimos un AgentConfig mínimo solo para el factory
-    import types
-
-    fake_cfg = types.SimpleNamespace(
-        embedding=global_cfg.embedding,
-        llm=global_cfg.llm,
-    )
-
     try:
-        embedder = EmbeddingProviderFactory.create(fake_cfg)
+        embedder = EmbeddingProviderFactory.create(global_cfg.embedding, global_cfg.providers)
     except Exception as exc:
         typer.echo(f"Error initializing embedder: {exc}", err=True)
         raise typer.Exit(code=1)

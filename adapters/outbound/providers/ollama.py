@@ -13,7 +13,7 @@ from adapters.outbound.providers.base import BaseLLMProvider
 from core.domain.entities.message import Message
 from core.domain.errors import LLMError
 from core.domain.value_objects.llm_response import LLMResponse
-from infrastructure.config import LLMConfig
+from infrastructure.config import ResolvedLLMConfig
 
 PROVIDER_NAME = "ollama"
 
@@ -21,8 +21,9 @@ logger = logging.getLogger(__name__)
 
 
 class OllamaProvider(BaseLLMProvider):
+    REQUIRES_CREDENTIALS: bool = False
 
-    def __init__(self, cfg: LLMConfig) -> None:
+    def __init__(self, cfg: ResolvedLLMConfig) -> None:
         self._cfg = cfg
         self._base_url = cfg.base_url or "http://localhost:11434"
 
@@ -54,10 +55,12 @@ class OllamaProvider(BaseLLMProvider):
                     except json.JSONDecodeError:
                         # Si no parsea, lo dejamos: Ollama devolverá un error claro.
                         pass
-                new_tool_calls.append({
-                    **tc,
-                    "function": {**fn, "arguments": args},
-                })
+                new_tool_calls.append(
+                    {
+                        **tc,
+                        "function": {**fn, "arguments": args},
+                    }
+                )
             msg["tool_calls"] = new_tool_calls
         return result
 
@@ -75,14 +78,16 @@ class OllamaProvider(BaseLLMProvider):
             args = fn.get("arguments", {})
             if isinstance(args, dict):
                 args = json.dumps(args, ensure_ascii=False)
-            normalized.append({
-                "id": tc.get("id") or f"call_{uuid.uuid4().hex[:24]}",
-                "type": "function",
-                "function": {
-                    "name": fn.get("name", ""),
-                    "arguments": args,
-                },
-            })
+            normalized.append(
+                {
+                    "id": tc.get("id") or f"call_{uuid.uuid4().hex[:24]}",
+                    "type": "function",
+                    "function": {
+                        "name": fn.get("name", ""),
+                        "arguments": args,
+                    },
+                }
+            )
         return normalized
 
     async def complete(
@@ -113,9 +118,7 @@ class OllamaProvider(BaseLLMProvider):
                 data = resp.json()
         except httpx.HTTPStatusError as exc:
             body = exc.response.text[:500]
-            raise LLMError(
-                f"Ollama HTTP {exc.response.status_code}: {body}"
-            ) from exc
+            raise LLMError(f"Ollama HTTP {exc.response.status_code}: {body}") from exc
         except httpx.HTTPError as exc:
             raise LLMError(f"Ollama HTTP error: {exc}") from exc
 

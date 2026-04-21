@@ -81,8 +81,10 @@ def _make_tool(
         uc.get_log = AsyncMock()
     # Por defecto usa el contexto de canal estándar de prueba
     if get_channel_context is None:
+
         def get_channel_context() -> ChannelContext:
             return _DEFAULT_CHANNEL_CTX
+
     tool = SchedulerTool(
         schedule_task_uc=uc,
         agent_id=agent_id,
@@ -114,6 +116,7 @@ def _make_task(
 # ---------------------------------------------------------------------------
 # create — happy paths
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_create_one_shot_relative_schedule() -> None:
@@ -194,9 +197,9 @@ async def test_create_trigger_type_agent_send() -> None:
     tool, uc = _make_tool()
     task = _make_task(task_id=4, trigger_type=TriggerType.AGENT_SEND)
     # Override payload with agent_send
-    task = task.model_copy(update={
-        "trigger_payload": AgentSendPayload(agent_id="other-agent", task="do something")
-    })
+    task = task.model_copy(
+        update={"trigger_payload": AgentSendPayload(agent_id="other-agent", task="do something")}
+    )
     uc.create_task.return_value = task
 
     result = await tool.execute(
@@ -219,9 +222,7 @@ async def test_create_trigger_type_shell_exec() -> None:
     """create with shell_exec trigger_type → ShellExecPayload validated correctly."""
     tool, uc = _make_tool()
     task = _make_task(task_id=5, trigger_type=TriggerType.SHELL_EXEC)
-    task = task.model_copy(update={
-        "trigger_payload": ShellExecPayload(command="echo hello")
-    })
+    task = task.model_copy(update={"trigger_payload": ShellExecPayload(command="echo hello")})
     uc.create_task.return_value = task
 
     result = await tool.execute(
@@ -266,6 +267,7 @@ async def test_create_created_by_always_from_agent_id_not_kwargs() -> None:
 # ---------------------------------------------------------------------------
 # list — response shape
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_list_returns_correct_shape() -> None:
@@ -316,6 +318,7 @@ async def test_list_empty_returns_zero_total() -> None:
 # get — happy path + TaskNotFoundError
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_get_happy_path() -> None:
     """get by id → full detail including trigger_payload, schedule, created_by."""
@@ -363,6 +366,7 @@ async def test_get_missing_task_id() -> None:
 # update — happy path + BuiltinTaskProtectedError
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_update_happy_path() -> None:
     """update name → ToolResult(success=True) with id and name."""
@@ -388,7 +392,11 @@ async def test_update_builtin_task_protected() -> None:
     result = await tool.execute(operation="update", task_id=1, name="new name")
 
     assert result.success is False
-    assert "builtin" in result.output.lower() or "protected" in result.output.lower() or "1" in result.output
+    assert (
+        "builtin" in result.output.lower()
+        or "protected" in result.output.lower()
+        or "1" in result.output
+    )
 
 
 @pytest.mark.asyncio
@@ -424,6 +432,7 @@ async def test_update_relative_schedule_parsed() -> None:
 # ---------------------------------------------------------------------------
 # delete — happy path + BuiltinTaskProtectedError
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_delete_happy_path() -> None:
@@ -476,6 +485,7 @@ async def test_delete_missing_task_id() -> None:
 # ---------------------------------------------------------------------------
 # Validation rules
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_create_recurring_with_relative_schedule_is_error() -> None:
@@ -617,6 +627,7 @@ async def test_create_invalid_trigger_type_is_error() -> None:
 # Error handling
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_create_too_many_active_tasks_error() -> None:
     """TooManyActiveTasksError → ToolResult(success=False)."""
@@ -707,6 +718,7 @@ async def test_error_result_has_success_false_and_error_field() -> None:
 # LLM kind name mapping round-trip
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_list_task_kind_llm_mapping_oneshot() -> None:
     """list maps domain 'oneshot' → LLM 'one_shot'."""
@@ -774,6 +786,7 @@ async def test_create_maps_recurring_to_domain_recurrent() -> None:
 # ---------------------------------------------------------------------------
 # T4: inyección de channel context en channel_send
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_create_channel_send_target_auto_inyectado_desde_contexto() -> None:
@@ -846,15 +859,16 @@ async def test_create_channel_send_sin_contexto_retorna_error() -> None:
 @pytest.mark.asyncio
 async def test_create_no_channel_send_sin_inyeccion() -> None:
     """trigger no channel_send → no se usa get_channel_context (comportamiento existente)."""
+
     # Contexto que falla si se llama → no debe llamarse para agent_send
     def ctx_falla():
         raise RuntimeError("get_channel_context no debe llamarse para agent_send")
 
     tool, uc = _make_tool(get_channel_context=ctx_falla)
     task = _make_task(task_id=12, trigger_type=TriggerType.AGENT_SEND)
-    task = task.model_copy(update={
-        "trigger_payload": AgentSendPayload(agent_id="otro-agent", task="hacer algo")
-    })
+    task = task.model_copy(
+        update={"trigger_payload": AgentSendPayload(agent_id="otro-agent", task="hacer algo")}
+    )
     uc.create_task.return_value = task
 
     result = await tool.execute(
@@ -971,16 +985,19 @@ async def test_update_channel_send_sin_contexto_error() -> None:
 # envelope no se ve).
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_create_echo_includes_all_confirm_fields() -> None:
     """`create` debe devolver flag booleano + echo de schedule/next_run_at/task_status."""
     tool, uc = _make_tool()
     created = _make_task(task_id=100, name="Echo Task", task_kind=TaskKind.RECURRENT)
-    created = created.model_copy(update={
-        "schedule": "0 8 * * *",
-        "next_run": datetime(2026, 6, 1, 8, 0, 0, tzinfo=timezone.utc),
-        "status": TaskStatus.PENDING,
-    })
+    created = created.model_copy(
+        update={
+            "schedule": "0 8 * * *",
+            "next_run": datetime(2026, 6, 1, 8, 0, 0, tzinfo=timezone.utc),
+            "status": TaskStatus.PENDING,
+        }
+    )
     uc.create_task.return_value = created
 
     result = await tool.execute(
@@ -1041,11 +1058,13 @@ async def test_update_echo_reflects_runtime_reset() -> None:
     # El mock devuelve lo que queremos ver echo'ado, independiente del schedule
     # que el caller le haya pasado al tool.
     post_reset = _make_task(task_id=200, name="Post Reset")
-    post_reset = post_reset.model_copy(update={
-        "schedule": "2026-06-01T09:00:00+00:00",
-        "status": TaskStatus.PENDING,  # reset desde FAILED
-        "next_run": datetime(2026, 6, 1, 9, 0, 0, tzinfo=timezone.utc),
-    })
+    post_reset = post_reset.model_copy(
+        update={
+            "schedule": "2026-06-01T09:00:00+00:00",
+            "status": TaskStatus.PENDING,  # reset desde FAILED
+            "next_run": datetime(2026, 6, 1, 9, 0, 0, tzinfo=timezone.utc),
+        }
+    )
     uc.update_task.return_value = post_reset
 
     result = await tool.execute(
@@ -1090,6 +1109,7 @@ async def test_update_echo_preserves_disabled_intent() -> None:
 # ---------------------------------------------------------------------------
 # logs — listar logs de ejecución de una tarea
 # ---------------------------------------------------------------------------
+
 
 def _make_log(
     log_id: int = 1,
@@ -1214,9 +1234,7 @@ async def test_logs_status_filter_passed_through() -> None:
     tool, uc = _make_tool()
     uc.list_logs.return_value = []
 
-    result = await tool.execute(
-        operation="logs", task_id=100, status_filter="failed"
-    )
+    result = await tool.execute(operation="logs", task_id=100, status_filter="failed")
 
     assert result.success is True
     call_args = uc.list_logs.call_args
@@ -1266,6 +1284,7 @@ async def test_logs_empty_result_returns_empty_list() -> None:
 # ---------------------------------------------------------------------------
 # log_get — obtener un log por id con output completo
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_log_get_existing_returns_full_untruncated() -> None:

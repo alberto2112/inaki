@@ -129,6 +129,12 @@ class SQLiteHistoryStore(IHistoryStore):
                 "ORDER BY id ASC",
                 (agent_id,),
             )
+        logger.info(
+            "load_uninfused: db=%s agent_id=%r encontrados=%d",
+            self._db_path,
+            agent_id,
+            len(rows),
+        )
         return [self._row_to_message(r) for r in rows]
 
     async def mark_infused(self, agent_id: str) -> int:

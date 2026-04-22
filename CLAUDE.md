@@ -70,8 +70,8 @@ Secrets are YAML-only (no env vars). `*.secrets.yaml` files are gitignored.
 
 ### `multi-agent-telegram-broadcast`
 
-The `history` and `memories` tables were extended with native `channel` and `chat_id`
-columns. No auto-migration exists — the DB must be dropped and rebuilt.
+The `history` table was extended with native `channel` and `chat_id` columns. No
+auto-migration exists — the DB must be dropped and rebuilt.
 
 Operator steps: stop daemon → `rm ~/.inaki/data/history.db ~/.inaki/data/inaki.db` → add
 `channels.telegram.broadcast` config (optional) → restart. See `docs/broadcast-smoke.md`

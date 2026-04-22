@@ -40,7 +40,7 @@ class OpenAIProvider(BaseLLMProvider):
             "model": self._cfg.model,
             "messages": self._build_messages(messages, system_prompt),
             "temperature": self._cfg.temperature,
-            "max_tokens": self._cfg.max_tokens,
+            "max_completion_tokens": self._cfg.max_tokens,
         }
         if tools:
             payload["tools"] = tools
@@ -82,7 +82,7 @@ class OpenAIProvider(BaseLLMProvider):
             "model": self._cfg.model,
             "messages": self._build_messages(messages, system_prompt),
             "temperature": self._cfg.temperature,
-            "max_tokens": self._cfg.max_tokens,
+            "max_completion_tokens": self._cfg.max_tokens,
             "stream": True,
         }
         try:

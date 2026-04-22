@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Literal
 
 from croniter import croniter
 
@@ -41,6 +41,8 @@ from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
 from adapters.outbound.tools.tool_registry import ToolRegistry
 from core.domain.entities.task import TaskStatus
 from core.domain.errors import AgentNotFoundError, IñakiError
+from core.domain.services.broadcast_buffer import BroadcastBuffer
+from core.domain.services.rate_limiter import FixedWindowRateLimiter
 from core.domain.services.scheduler_service import SchedulerService
 from core.ports.outbound.transcription_port import ITranscriptionProvider
 from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
@@ -48,7 +50,7 @@ from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
 from core.use_cases.run_agent import RunAgentUseCase
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from core.use_cases.schedule_task import ScheduleTaskUseCase
-from infrastructure.config import AgentConfig, AgentRegistry, GlobalConfig
+from infrastructure.config import AgentConfig, AgentRegistry, GlobalConfig, TelegramChannelConfig
 from infrastructure.factories.embedding_factory import EmbeddingProviderFactory
 from infrastructure.factories.llm_factory import LLMProviderFactory
 from infrastructure.factories.transcription_factory import TranscriptionProviderFactory
@@ -74,6 +76,13 @@ class AgentContainer:
 
         # ScheduleTaskUseCase — wired en fase 3 por AppContainer. None hasta entonces.
         self.schedule_task: ScheduleTaskUseCase | None = None
+
+        # Broadcast adapter — wired en fase 4 por AppContainer. None si el agente no
+        # tiene ningún canal telegram con bloque broadcast:.
+        # Tipo: TcpBroadcastAdapter | None (evitamos importar el adapter en __init__
+        # para no crear dependencia circular; el tipo se declara como object).
+        self.broadcast_adapter: object | None = None
+        self.broadcast_rate_limiter: FixedWindowRateLimiter | None = None
 
         # Contexto de canal activo — se setea en cada turno de conversación
         self._channel_context: ChannelContext | None = None
@@ -796,6 +805,122 @@ class AppContainer:
             except Exception as exc:
                 logger.error("Error en wire_scheduler para agente '%s': %s", agent_id, exc)
 
+        # Phase 4: wire broadcast adapters.
+        # Runs AFTER Phase 1 (todos los containers existen) y después de Phase 2+3.
+        # Por cada agente con un canal telegram que incluya bloque broadcast:, se
+        # instancia un TcpBroadcastAdapter (+ BroadcastBuffer + FixedWindowRateLimiter)
+        # y se almacena en el container. El lifecycle (start/stop) se gestiona en
+        # AppContainer.startup() / shutdown().
+        self._broadcast_adapters: list[object] = []  # TcpBroadcastAdapter instances
+        for agent_cfg in registry.list_all():
+            try:
+                self._wire_broadcast_for_agent(agent_cfg)
+            except Exception as exc:
+                logger.error("Error en wire_broadcast para agente '%s': %s", agent_cfg.id, exc)
+
+    def _wire_broadcast_for_agent(self, agent_cfg: AgentConfig) -> None:
+        """
+        Instancia y almacena el TcpBroadcastAdapter para un agente, si aplica.
+
+        Reglas:
+        - Solo aplica si el agente tiene channel ``telegram`` con bloque ``broadcast:``.
+        - Si broadcast.port → rol server; host = "0.0.0.0".
+        - Si broadcast.remote → rol client; host/port derivados de remote.host ("ip:port").
+        - Se almacena ``broadcast_adapter`` y ``broadcast_rate_limiter`` en el
+          AgentContainer correspondiente.
+        - Si el agente no tiene container (falló en Phase 1) se omite silenciosamente.
+        """
+        from adapters.broadcast.tcp import TcpBroadcastAdapter
+
+        container = self.agents.get(agent_cfg.id)
+        if container is None:
+            return
+
+        tg_raw = agent_cfg.channels.get("telegram")
+        if tg_raw is None:
+            return
+
+        # Coercionar a TelegramChannelConfig para acceso tipado.
+        try:
+            tg_cfg = TelegramChannelConfig.model_validate(tg_raw)
+        except Exception as exc:
+            logger.warning(
+                "Agente '%s': no se pudo parsear TelegramChannelConfig — "
+                "broadcast wiring omitido: %s",
+                agent_cfg.id,
+                exc,
+            )
+            return
+
+        broadcast_cfg = tg_cfg.broadcast
+        if broadcast_cfg is None:
+            # Sin bloque broadcast → nada que hacer.
+            return
+
+        # Determinar rol y parámetros de conexión.
+        # El validador de BroadcastConfig garantiza port XOR remote y auth obligatorio
+        # en modo server — cast para mypy que no puede inferirlo en este scope.
+        role: Literal["server", "client"]
+        auth_str: str
+
+        if broadcast_cfg.port is not None:
+            # Modo server: escucha en todas las interfaces de la LAN.
+            role = "server"
+            host = "0.0.0.0"
+            port = broadcast_cfg.port
+            # auth requerido en server mode — validado por BroadcastConfig
+            auth_str = broadcast_cfg.auth  # type: ignore[assignment]
+        else:
+            # Modo client: remote.host tiene formato "ip:port".
+            # BroadcastConfig validator garantiza que remote is not None en este branch.
+            role = "client"
+            assert broadcast_cfg.remote is not None  # satisface narrowing de mypy
+            remote = broadcast_cfg.remote
+            remote_parts = remote.host.rsplit(":", 1)
+            if len(remote_parts) != 2:
+                logger.error(
+                    "Agente '%s': broadcast.remote.host='%s' no tiene formato 'ip:port' — "
+                    "broadcast wiring omitido",
+                    agent_cfg.id,
+                    remote.host,
+                )
+                return
+            host = remote_parts[0]
+            try:
+                port = int(remote_parts[1])
+            except ValueError:
+                logger.error(
+                    "Agente '%s': broadcast.remote.host='%s' — puerto no es entero — "
+                    "broadcast wiring omitido",
+                    agent_cfg.id,
+                    remote.host,
+                )
+                return
+            auth_str = remote.auth
+
+        buffer = BroadcastBuffer()
+        rate_limiter = FixedWindowRateLimiter()
+        adapter = TcpBroadcastAdapter(
+            agent_id=agent_cfg.id,
+            role=role,
+            host=host,
+            port=port,
+            auth=auth_str,
+            buffer=buffer,
+        )
+
+        container.broadcast_adapter = adapter
+        container.broadcast_rate_limiter = rate_limiter
+        self._broadcast_adapters.append(adapter)
+
+        logger.info(
+            "Agente '%s': broadcast adapter wired (role=%s, host=%s, port=%d)",
+            agent_cfg.id,
+            role,
+            host,
+            port,
+        )
+
     def register_telegram_bot(self, agent_id: str, bot: object) -> None:
         """Registra el bot de Telegram para un agente.
 
@@ -894,16 +1019,36 @@ class AppContainer:
             await self.scheduler_repo.save_task(updated)
 
     async def startup(self) -> None:
-        """Arranca el scheduler service. Llamar en el daemon lifecycle."""
+        """Arranca el scheduler service y los adapters de broadcast. Llamar en el daemon lifecycle."""
         if self.global_config.scheduler.enabled:
             await self._reconcile_consolidate_memory_task()
             await self.scheduler_service.start()
             logger.info("SchedulerService iniciado")
 
+        # Arrancar todos los adapters de broadcast (start es idempotente).
+        for adapter in self._broadcast_adapters:
+            try:
+                await adapter.start()  # type: ignore[attr-defined]
+                logger.info(
+                    "broadcast adapter iniciado: role=%s host=%s port=%d",
+                    adapter._role,  # type: ignore[attr-defined]
+                    adapter._host,  # type: ignore[attr-defined]
+                    adapter._port,  # type: ignore[attr-defined]
+                )
+            except Exception as exc:
+                logger.error("Error arrancando broadcast adapter: %s", exc)
+
     async def shutdown(self) -> None:
-        """Detiene el scheduler service graciosamente."""
+        """Detiene el scheduler service y los adapters de broadcast graciosamente."""
         await self.scheduler_service.stop()
         logger.info("SchedulerService detenido")
+
+        # Detener todos los adapters de broadcast (stop es idempotente).
+        for adapter in self._broadcast_adapters:
+            try:
+                await adapter.stop()  # type: ignore[attr-defined]
+            except Exception as exc:
+                logger.error("Error deteniendo broadcast adapter: %s", exc)
 
     def get_agent(self, agent_id: str) -> AgentContainer:
         if agent_id not in self.agents:

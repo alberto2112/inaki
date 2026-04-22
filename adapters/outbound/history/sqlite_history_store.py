@@ -6,6 +6,8 @@ Solo se persisten mensajes user y assistant — nunca tool calls.
 
 Schema:
   history     — una fila por mensaje con flag `infused` (0=pendiente, 1=procesado).
+                Incluye columnas `channel` y `chat_id` para soportar múltiples
+                canales y grupos dentro del mismo agente.
   agent_state — una fila por agente con el estado conversacional (sticky TTLs)
                 serializado en JSON.
 """
@@ -35,16 +37,25 @@ CREATE TABLE IF NOT EXISTS history (
     role       TEXT    NOT NULL,
     content    TEXT    NOT NULL,
     created_at TEXT    NOT NULL,
-    infused    INTEGER NOT NULL DEFAULT 0
+    infused    INTEGER NOT NULL DEFAULT 0,
+    channel    TEXT    NOT NULL DEFAULT '',
+    chat_id    TEXT    NOT NULL DEFAULT ''
 );
 """
 
+# Índice principal: consultas filtradas por agente + canal + chat + posición.
 _CREATE_INDEX = """
-CREATE INDEX IF NOT EXISTS idx_history_agent ON history(agent_id, id);
+CREATE INDEX IF NOT EXISTS idx_history_agent_channel
+ON history(agent_id, channel, chat_id, id);
 """
 
 _CREATE_INFUSED_INDEX = """
 CREATE INDEX IF NOT EXISTS idx_history_uninfused ON history(agent_id, infused);
+"""
+
+# Índice secundario para consultas cross-agent por canal/chat (p. ej. auditoría).
+_CREATE_CHANNEL_CHAT_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_history_channel_chat ON history(channel, chat_id);
 """
 
 _CREATE_STATE_TABLE = """
@@ -53,6 +64,33 @@ CREATE TABLE IF NOT EXISTS agent_state (
     state_json TEXT NOT NULL
 );
 """
+
+
+def _build_where_filters(
+    agent_id: str,
+    channel: str | None = None,
+    chat_id: str | None = None,
+) -> tuple[str, tuple]:
+    """
+    Construye la cláusula WHERE para consultas de historial.
+
+    Siempre filtra por ``agent_id``. Agrega filtros opcionales por ``channel``
+    y ``chat_id`` cuando se proveen valores no-None.
+
+    Retorna la cadena de condiciones y la tupla de parámetros para sqlite.
+    """
+    condiciones = ["agent_id = ?"]
+    params: list = [agent_id]
+
+    if channel is not None:
+        condiciones.append("channel = ?")
+        params.append(channel)
+
+    if chat_id is not None:
+        condiciones.append("chat_id = ?")
+        params.append(chat_id)
+
+    return " AND ".join(condiciones), tuple(params)
 
 
 class SQLiteHistoryStore(IHistoryStore):
@@ -71,10 +109,17 @@ class SQLiteHistoryStore(IHistoryStore):
         await conn.execute(_CREATE_TABLE)
         await conn.execute(_CREATE_INDEX)
         await conn.execute(_CREATE_INFUSED_INDEX)
+        await conn.execute(_CREATE_CHANNEL_CHAT_INDEX)
         await conn.execute(_CREATE_STATE_TABLE)
         await conn.commit()
 
-    async def append(self, agent_id: str, message: Message) -> None:
+    async def append(
+        self,
+        agent_id: str,
+        message: Message,
+        channel: str = "",
+        chat_id: str = "",
+    ) -> None:
         if message.role not in (Role.USER, Role.ASSISTANT):
             return
 
@@ -86,28 +131,35 @@ class SQLiteHistoryStore(IHistoryStore):
         async with self._conn() as conn:
             await self._ensure_schema(conn)
             await conn.execute(
-                "INSERT INTO history (agent_id, role, content, created_at) VALUES (?, ?, ?, ?)",
-                (agent_id, message.role.value, message.content, ts),
+                "INSERT INTO history (agent_id, role, content, created_at, channel, chat_id) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (agent_id, message.role.value, message.content, ts, channel, chat_id),
             )
             await conn.commit()
 
-    async def load(self, agent_id: str) -> list[Message]:
+    async def load(
+        self,
+        agent_id: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+    ) -> list[Message]:
+        filtros, params = _build_where_filters(agent_id, channel=channel, chat_id=chat_id)
         async with self._conn() as conn:
             await self._ensure_schema(conn)
             if self._max_n > 0:
                 rows = await conn.execute_fetchall(
-                    "SELECT role, content, created_at FROM history "
-                    "WHERE agent_id = ? "
-                    "ORDER BY id DESC LIMIT ?",
-                    (agent_id, self._max_n),
+                    f"SELECT role, content, created_at FROM history "
+                    f"WHERE {filtros} "
+                    f"ORDER BY id DESC LIMIT ?",
+                    (*params, self._max_n),
                 )
                 return [self._row_to_message(r) for r in reversed(rows)]
             else:
                 rows = await conn.execute_fetchall(
-                    "SELECT role, content, created_at FROM history "
-                    "WHERE agent_id = ? "
-                    "ORDER BY id ASC",
-                    (agent_id,),
+                    f"SELECT role, content, created_at FROM history "
+                    f"WHERE {filtros} "
+                    f"ORDER BY id ASC",
+                    params,
                 )
                 return [self._row_to_message(r) for r in rows]
 
@@ -120,19 +172,33 @@ class SQLiteHistoryStore(IHistoryStore):
             )
         return [self._row_to_message(r) for r in rows]
 
-    async def load_uninfused(self, agent_id: str) -> list[Message]:
+    async def load_uninfused(
+        self,
+        agent_id: str,
+        channels: list[str] | None = None,
+    ) -> list[Message]:
+        base_sql = (
+            "SELECT role, content, created_at FROM history WHERE agent_id = ? AND infused = 0"
+        )
+        params: list = [agent_id]
+
+        # Filtro opcional por canal: solo si la lista tiene al menos un elemento.
+        if channels:
+            placeholders = ", ".join("?" * len(channels))
+            base_sql += f" AND channel IN ({placeholders})"
+            params.extend(channels)
+
+        base_sql += " ORDER BY id ASC"
+
         async with self._conn() as conn:
             await self._ensure_schema(conn)
-            rows = await conn.execute_fetchall(
-                "SELECT role, content, created_at FROM history "
-                "WHERE agent_id = ? AND infused = 0 "
-                "ORDER BY id ASC",
-                (agent_id,),
-            )
+            rows = await conn.execute_fetchall(base_sql, tuple(params))
+
         logger.info(
-            "load_uninfused: db=%s agent_id=%r encontrados=%d",
+            "load_uninfused: db=%s agent_id=%r channels=%r encontrados=%d",
             self._db_path,
             agent_id,
+            channels,
             len(rows),
         )
         return [self._row_to_message(r) for r in rows]

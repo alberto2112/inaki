@@ -518,6 +518,136 @@ channels:
 
 ---
 
+## `broadcast` — canal de difusión entre instancias de Iñaki
+
+Permite que dos o más instancias de Iñaki (p. ej. una en cada Raspberry Pi)
+compartan el contexto conversacional de un grupo de Telegram en tiempo real.
+Una instancia actúa como **servidor** (escucha conexiones) y el resto como
+**clientes** (se conectan al servidor). Topología en estrella: un servidor, N clientes.
+
+### Bloques de config
+
+**`allowed_chat_ids`** — grupos autorizados (se suma a la config existente del canal):
+
+```yaml
+channels:
+  telegram:
+    api_key: "..."
+    allowed_user_ids: [12345]
+    allowed_chat_ids: [-1001234567890]  # lista de grupos permitidos; enteros negativos
+```
+
+Si `allowed_chat_ids` está vacío o ausente, solo se admiten chats privados de usuarios en
+`allowed_user_ids`. Para habilitar grupos hay que listar sus chat_ids explícitamente.
+
+---
+
+**`channels.telegram.broadcast`** — modo servidor (esta instancia escucha conexiones entrantes):
+
+```yaml
+channels:
+  telegram:
+    api_key: "..."
+    broadcast:
+      port: 1234                          # puerto TCP de escucha (1024..65535)
+      auth: "shared-secret-entre-agentes" # secreto compartido HMAC-SHA256
+      bot_username: "inaki_a_bot"         # username del bot sin @, para detección de menciones
+      behavior: mention                   # listen | mention | autonomous
+      rate_limiter: 5                     # máx. respuestas proactivas por ventana de 30s por chat
+```
+
+---
+
+**`channels.telegram.broadcast`** — modo cliente (esta instancia conecta al servidor):
+
+```yaml
+channels:
+  telegram:
+    api_key: "..."
+    broadcast:
+      remote:
+        host: "192.168.1.10:1234"           # ip:port del servidor
+        auth: "shared-secret-entre-agentes" # debe coincidir con el servidor
+      bot_username: "inaki_b_bot"
+      behavior: autonomous
+      rate_limiter: 5
+```
+
+---
+
+**`memory.channels_infused`** — limitar qué canales alimentan la consolidación de memoria:
+
+```yaml
+memory:
+  channels_infused: ["telegram"]  # null o ausente = todos los canales se consolidan
+```
+
+Útil cuando tenés un agente activo en CLI y Telegram pero solo querés que las
+conversaciones de Telegram entren en la memoria a largo plazo.
+
+---
+
+### Modos de comportamiento (`behavior`)
+
+| Modo | Descripción |
+|------|-------------|
+| `listen` | El bot nunca responde. Solo absorbe contexto en el buffer de broadcast. Útil para un agente "observador". |
+| `mention` | El bot responde solo cuando alguien lo menciona con `@bot_username`. **Default en grupos.** |
+| `autonomous` | El LLM decide si responder. Si no tiene nada útil que aportar, responde `[SKIP]` internamente y el sistema no envía nada al grupo. |
+
+El **rate limiter** (`rate_limiter: 5`) solo aplica en modo `autonomous`. Limita las
+respuestas proactivas del bot a N mensajes por ventana fija de 30 segundos, por
+combinación `(agente, chat_id)`. Cuando se alcanza el límite, los mensajes siguientes
+se descartan hasta que la ventana se resetea.
+
+---
+
+### Obtener el `chat_id` de un grupo — bootstrap con `/chatid`
+
+Para autorizar un grupo en `allowed_chat_ids` necesitás saber su `chat_id` numérico.
+Las interfaces de Telegram no lo muestran. El flujo de bootstrap es:
+
+1. Agregá el bot al grupo como administrador.
+2. Desde tu cuenta (que ya está en `allowed_user_ids`), enviá el mensaje `/chatid` en
+   el grupo.
+3. El bot responde con el `chat_id` numérico del grupo (p. ej. `-1001234567890`).
+4. Copiá ese número en `allowed_chat_ids` de la config del agente.
+5. Reiniciá el daemon: `systemctl restart inaki`.
+
+**¿Por qué `/chatid` no requiere `allowed_chat_ids`?** Precisamente para resolver el
+huevo y la gallina: el grupo no puede estar en la whitelist si todavía no sabés su id.
+Por eso el comando saltea la validación de `allowed_chat_ids`.
+
+El comando **sí respeta `allowed_user_ids`** — solo usuarios autorizados pueden consultarlo.
+Un atacante que logre poner al bot en un grupo desconocido no puede hacer nada útil
+solo con el chat_id.
+
+---
+
+### Requisito de NTP — sincronización de relojes
+
+El canal de broadcast usa **HMAC-SHA256** con una ventana de frescura de **60 segundos**.
+Al validar un mensaje entrante, el receptor calcula `|now − timestamp_mensaje| > 60s` y si
+es verdadero lo descarta silenciosamente.
+
+**Ambas Raspberry Pi (o cualquier par de agentes) deben tener el reloj sincronizado
+por NTP.** El cliente NTP por defecto de Raspberry Pi OS (`systemd-timesyncd` o `chrony`)
+es suficiente. No requiere configuración adicional si el Pi tiene acceso a internet.
+
+**Modo de falla:** si los relojes derivan más de ~60 segundos entre sí, **todos los
+mensajes de broadcast se descartan** sin ningún aviso visible al usuario. El único
+indicio son las entradas de log con el evento `broadcast.message.dropped.stale_timestamp`.
+Esta condición es operativamente invisible si no se monitorean los logs, por eso el
+requisito es crítico.
+
+Para verificar que NTP está activo:
+```bash
+timedatectl status          # ver "NTP service: active"
+systemctl status systemd-timesyncd  # o chrony
+```
+
+---
+
 ## `config/agents/{id}.secrets.yaml`
 
 ```yaml

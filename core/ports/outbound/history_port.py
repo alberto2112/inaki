@@ -5,11 +5,41 @@ from core.domain.value_objects.conversation_state import ConversationState
 
 class IHistoryStore(ABC):
     @abstractmethod
-    async def append(self, agent_id: str, message: Message) -> None: ...
+    async def append(
+        self,
+        agent_id: str,
+        message: Message,
+        channel: str = "",
+        chat_id: str = "",
+    ) -> None:
+        """
+        Persiste un mensaje en el historial del agente.
+
+        Args:
+            agent_id: Identificador del agente propietario del historial.
+            message: Mensaje a persistir (solo ``Role.USER`` y ``Role.ASSISTANT``).
+            channel: Canal de origen del mensaje (ej: ``"telegram"``, ``"cli"``).
+                     Cadena vacía cuando el canal no aplica o no es relevante.
+            chat_id: Identificador del chat dentro del canal (ej: ID de grupo Telegram).
+                     Cadena vacía para chats privados o canales sin distinción de chat.
+        """
+        ...
 
     @abstractmethod
-    async def load(self, agent_id: str) -> list[Message]:
-        """Retorna los mensajes del historial (ventana en memoria si está configurada)."""
+    async def load(
+        self,
+        agent_id: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+    ) -> list[Message]:
+        """
+        Retorna los mensajes del historial (ventana en memoria si está configurada).
+
+        Args:
+            agent_id: Identificador del agente.
+            channel: Si no es ``None``, filtra por canal exacto.
+            chat_id: Si no es ``None``, filtra por chat_id exacto.
+        """
         ...
 
     @abstractmethod
@@ -18,12 +48,21 @@ class IHistoryStore(ABC):
         ...
 
     @abstractmethod
-    async def load_uninfused(self, agent_id: str) -> list[Message]:
+    async def load_uninfused(
+        self,
+        agent_id: str,
+        channels: list[str] | None = None,
+    ) -> list[Message]:
         """
         Retorna los mensajes que aún no han pasado por el extractor de recuerdos
-        (flag `infused=0`). Usado por la consolidación para evitar re-extraer
+        (flag ``infused=0``). Usado por la consolidación para evitar re-extraer
         hechos de mensajes ya procesados que siguen vivos en el buffer por el
         trim (keep_last).
+
+        Args:
+            agent_id: Identificador del agente.
+            channels: Si es una lista no vacía, solo retorna mensajes cuyos
+                ``channel`` estén en esa lista. ``None`` o lista vacía → sin filtro.
         """
         ...
 

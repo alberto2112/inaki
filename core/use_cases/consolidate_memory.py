@@ -118,8 +118,12 @@ class ConsolidateMemoryUseCase:
         Retorna un mensaje descriptivo del resultado.
         Lanza ConsolidationError si falla (historial intacto).
         """
-        # 1. Cargar solo los mensajes NO procesados aún por el extractor
-        messages = await self._history.load_uninfused(self._agent_id)
+        # 1. Cargar solo los mensajes NO procesados aún por el extractor.
+        # Si channels_infused está configurado, se filtran los canales para que
+        # la consolidación solo incluya mensajes de esos canales (p. ej. solo
+        # "telegram" y no mensajes de CLI o daemon que no aportan recuerdos relevantes).
+        channels_infused = self._memory_cfg.channels_infused or None
+        messages = await self._history.load_uninfused(self._agent_id, channels=channels_infused)
         if not messages:
             return "No hay mensajes nuevos para consolidar."
 

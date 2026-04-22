@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import yaml
-from pydantic import BaseModel, BeforeValidator, ConfigDict, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +225,14 @@ class MemoryConfig(BaseModel):
     delay_seconds: int = 2
     keep_last_messages: int = 0
     enabled: bool = True
+    channels_infused: list[str] | None = None
+    """
+    Canales cuyo historial se incluye en la consolidación de memoria.
+
+    ``None`` o lista vacía → se procesan mensajes de todos los canales.
+    Si se especifica, solo se consolidan mensajes donde ``channel`` está en la lista.
+    Ejemplo: ``["telegram"]`` — no consolida mensajes de CLI ni daemon.
+    """
     llm: MemoryLLMOverride | None = None
     """
     Override opcional del LLM usado SOLO para la consolidación de memoria.
@@ -379,6 +387,114 @@ class WorkspaceConfig(BaseModel):
     def model_post_init(self, __context: object) -> None:
         # Expand ~ in the default value (BeforeValidator no corre en defaults de clase).
         object.__setattr__(self, "path", str(Path(self.path).expanduser()))
+
+
+class RemoteBroadcastConfig(BaseModel):
+    """Config de conexión al servidor broadcast remoto (modo client)."""
+
+    host: str
+    """Dirección del servidor en formato ``ip:port`` (ej: ``"192.168.1.10:9000"``)."""
+
+    auth: str
+    """Secreto compartido con el servidor para autenticación HMAC-SHA256."""
+
+
+class BroadcastConfig(BaseModel):
+    """
+    Config del canal de broadcast TCP entre instancias de Iñaki.
+
+    Un nodo opera como **servidor** si declara ``port`` (sin ``remote``).
+    Un nodo opera como **cliente** si declara ``remote`` (sin ``port``).
+    Ambos ausentes → broadcast inactivo para ese canal.
+
+    Validaciones:
+    - ``port`` y ``remote`` son mutuamente excluyentes (``port XOR remote``).
+    - Si ``port`` está seteado → ``auth`` es obligatorio.
+    - ``port`` debe estar en el rango 1024..65535.
+    """
+
+    port: int | None = None
+    """Puerto TCP en el que escucha el servidor. ``None`` → modo cliente."""
+
+    remote: RemoteBroadcastConfig | None = None
+    """Config del servidor remoto al que conectar como cliente. ``None`` → modo servidor."""
+
+    behavior: Literal["listen", "mention", "autonomous"] = "mention"
+    """
+    Modo de comportamiento en grupos:
+    - ``listen`` → nunca invoca el LLM, solo escucha.
+    - ``mention`` → invoca el LLM solo si el mensaje menciona al bot.
+    - ``autonomous`` → invoca el LLM ante cualquier mensaje (sujeto a rate limiter).
+    """
+
+    rate_limiter: int = 5
+    """Máximo de respuestas proactivas (modo ``autonomous``) por ventana de 30s por chat."""
+
+    auth: str | None = None
+    """Secreto HMAC-SHA256 del servidor. Obligatorio cuando ``port`` está seteado."""
+
+    bot_username: str | None = None
+    """Username del bot Telegram (sin ``@``) para detección de menciones en modo ``mention``."""
+
+    @model_validator(mode="after")
+    def _validar_topologia(self) -> "BroadcastConfig":
+        """Valida que el nodo sea server XOR client, y que server tenga auth."""
+        tiene_port = self.port is not None
+        tiene_remote = self.remote is not None
+
+        if tiene_port and tiene_remote:
+            raise ValueError(
+                "BroadcastConfig: 'port' y 'remote' son mutuamente excluyentes — "
+                "un nodo no puede ser servidor y cliente simultáneamente."
+            )
+
+        if not tiene_port and not tiene_remote:
+            raise ValueError(
+                "BroadcastConfig: debe definirse 'port' (modo servidor) o "
+                "'remote' (modo cliente) — no pueden estar ambos ausentes."
+            )
+
+        if tiene_port:
+            if self.auth is None:
+                raise ValueError(
+                    "BroadcastConfig: 'auth' es obligatorio cuando 'port' está definido."
+                )
+            if not (1024 <= self.port <= 65535):  # type: ignore[operator]
+                raise ValueError(
+                    f"BroadcastConfig: 'port' debe estar en el rango 1024..65535, "
+                    f"recibido: {self.port}."
+                )
+
+        return self
+
+
+class TelegramChannelConfig(BaseModel):
+    """
+    Config tipada del canal Telegram.
+
+    Soporta ``extra="allow"`` para no romper campos desconocidos que puedan
+    existir en configs de usuario hasta que sean adoptados formalmente.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    token: str = ""
+    """Token del bot de Telegram (BotFather). Requerido para que el canal levante."""
+
+    allowed_user_ids: list[int] = Field(default_factory=list)
+    """IDs de usuarios autorizados a interactuar directamente. Lista vacía = sin restricción."""
+
+    allowed_chat_ids: list[int] = Field(default_factory=list)
+    """IDs de grupos autorizados. Lista vacía = solo chats privados de usuarios en allowed_user_ids."""
+
+    reactions: bool = False
+    """Si True, el bot envía una reacción emoji tras procesar un mensaje."""
+
+    voice_enabled: bool = True
+    """Si True, el bot acepta mensajes de voz y los transcribe."""
+
+    broadcast: BroadcastConfig | None = None
+    """Config del canal de broadcast entre instancias. None = broadcast inactivo."""
 
 
 class KnowledgeSourceConfig(BaseModel):
@@ -963,7 +1079,8 @@ class AgentRegistry:
 
 def _validate_channel_uniqueness(agents: dict[str, AgentConfig]) -> None:
     """
-    Rechaza configs donde varios agentes comparten la misma identidad de canal.
+    Rechaza configs donde varios agentes comparten la misma identidad de canal,
+    o donde un mismo agente tiene dos canales con el mismo ``broadcast.port``.
 
     Motivo: un bot de Telegram solo admite UN ``getUpdates`` activo por token
     (Telegram API), y un socket TCP solo acepta UN bind por ``host:port`` (SO).
@@ -975,6 +1092,10 @@ def _validate_channel_uniqueness(agents: dict[str, AgentConfig]) -> None:
     a los subagentes vía la tool ``delegate``. Los subagentes NO deben
     declarar ``channels.telegram`` ni ``channels.rest`` apuntando al mismo
     token/puerto que el principal.
+
+    Broadcast port uniqueness: dentro de un mismo agente, dos canales no pueden
+    declarar el mismo ``broadcast.port`` — ambos intentarían hacer ``bind()``
+    en el mismo puerto del host.
     """
     from core.domain.errors import ConfigError
 
@@ -994,13 +1115,34 @@ def _validate_channel_uniqueness(agents: dict[str, AgentConfig]) -> None:
             if port is not None:
                 rest_addrs.setdefault((host, int(port)), []).append(agent_id)
 
+        # Unicidad de broadcast.port dentro del mismo agente.
+        broadcast_ports: dict[int, list[str]] = {}
+        for channel_name, channel_raw in cfg.channels.items():
+            if not isinstance(channel_raw, dict):
+                continue
+            bc_raw = channel_raw.get("broadcast")
+            if not isinstance(bc_raw, dict):
+                continue
+            bc_port = bc_raw.get("port")
+            if bc_port is not None:
+                broadcast_ports.setdefault(int(bc_port), []).append(channel_name)
+
+        duplicated_bc_ports = {p: chs for p, chs in broadcast_ports.items() if len(chs) > 1}
+        if duplicated_bc_ports:
+            conflicts = "; ".join(
+                f"port {p} declarado en [{', '.join(chs)}]"
+                for p, chs in duplicated_bc_ports.items()
+            )
+            raise ConfigError(
+                f"Agente '{agent_id}': broadcast.port duplicado — {conflicts}. "
+                "Cada canal del agente debe usar un puerto de broadcast distinto."
+            )
+
     duplicated_tokens = {tok: ids for tok, ids in telegram_tokens.items() if len(ids) > 1}
     duplicated_addrs = {addr: ids for addr, ids in rest_addrs.items() if len(ids) > 1}
 
     if duplicated_tokens:
-        agent_lists = "; ".join(
-            f"agentes [{', '.join(ids)}]" for ids in duplicated_tokens.values()
-        )
+        agent_lists = "; ".join(f"agentes [{', '.join(ids)}]" for ids in duplicated_tokens.values())
         raise ConfigError(
             f"Token de Telegram duplicado entre {agent_lists}. "
             "Un token solo admite un polling activo: dejá 'channels.telegram' únicamente "

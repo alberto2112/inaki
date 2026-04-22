@@ -47,8 +47,9 @@ def _make_bot(run_agent_response: str = "ok") -> tuple[TelegramBot, MagicMock]:
     }
 
     container = MagicMock()
-    container.run_agent = AsyncMock()
+    container.run_agent = MagicMock()
     container.run_agent.execute = AsyncMock(return_value=run_agent_response)
+    container.run_agent.set_extra_system_sections = MagicMock()
     container.set_channel_context = MagicMock()
 
     # Parchear Application.builder() para no necesitar token real
@@ -77,7 +78,7 @@ async def test_handle_message_setea_channel_context_antes_de_execute():
     def _set_ctx(c):
         call_order.append(f"set_channel_context({c})")
 
-    async def _execute(inp, intermediate_sink=None):
+    async def _execute(inp, intermediate_sink=None, **kwargs):
         call_order.append("execute")
         return "respuesta"
 

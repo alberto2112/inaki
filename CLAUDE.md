@@ -66,6 +66,17 @@ Secrets are YAML-only (no env vars). `*.secrets.yaml` files are gitignored.
 - **Codebase language** — Variables, docstrings, comments, and error messages are in Spanish.
 - **Target platform** — Raspberry Pi 5 (ARM64, 4GB RAM) via systemd. See `systemd/inaki.service`.
 
+## Migration Notes
+
+### `multi-agent-telegram-broadcast`
+
+The `history` and `memories` tables were extended with native `channel` and `chat_id`
+columns. No auto-migration exists — the DB must be dropped and rebuilt.
+
+Operator steps: stop daemon → `rm ~/.inaki/data/history.db ~/.inaki/data/inaki.db` → add
+`channels.telegram.broadcast` config (optional) → restart. See `docs/broadcast-smoke.md`
+for the full bootstrap walkthrough.
+
 ## Git workflow
 
 - Never create a branch without asking me for the name first.
@@ -80,4 +91,5 @@ Secrets are YAML-only (no env vars). `*.secrets.yaml` files are gitignored.
 - **Execution Flow**: `docs/flujo_ejecucion.md`
 - **Config Reference**: `docs/configuracion.md`
 - **Scheduler Spec**: `docs/scheduler-spec.md`
+- **Broadcast Smoke Test**: `docs/broadcast-smoke.md`
 - **GitHub**: https://github.com/alberto2112/inaki

@@ -3,18 +3,24 @@ TelegramBot — adaptador inbound para Telegram.
 
 Un bot por agente. Se levanta solo si el agente tiene channels.telegram.token en su config.
 Valida que el user_id esté en allowed_user_ids (si la lista no está vacía).
+Para grupos, también valida allowed_chat_ids y despacha según el behavior configurado
+(listen / mention / autonomous).
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 
 from telegram import BotCommand, Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 from adapters.inbound.telegram.message_mapper import (
+    detect_mention,
     extract_audio_payload,
+    format_group_message,
     format_response,
     telegram_update_to_input,
 )
@@ -22,21 +28,51 @@ from adapters.outbound.intermediate_sinks.telegram_live import TelegramLiveInter
 from core.domain.entities.task import ScheduledTask
 from core.domain.errors import TaskNotFoundError, TranscriptionError
 from core.domain.value_objects.channel_context import ChannelContext
+from core.ports.outbound.broadcast_port import BroadcastEmitter, BroadcastMessage, BroadcastReceiver
 from infrastructure.config import AgentConfig
 from infrastructure.container import AgentContainer
 
 logger = logging.getLogger(__name__)
 
+# Tipos de chat que Telegram considera "grupos" (no privados).
+_TIPOS_GRUPO = {"group", "supergroup", "channel"}
+
 
 class TelegramBot:
-    def __init__(self, agent_cfg: AgentConfig, container: AgentContainer) -> None:
+    def __init__(
+        self,
+        agent_cfg: AgentConfig,
+        container: AgentContainer,
+        broadcast_emitter: BroadcastEmitter | None = None,
+        broadcast_receiver: BroadcastReceiver | None = None,
+        rate_limiter=None,
+    ) -> None:
         self._agent_cfg = agent_cfg
         self._container = container
+        self._broadcast_emitter = broadcast_emitter
+        self._broadcast_receiver = broadcast_receiver
+        self._rate_limiter = rate_limiter
+
         tg_cfg = agent_cfg.channels.get("telegram", {})
         self._token: str = tg_cfg.get("token", "")
         self._allowed_ids: list[str] = [str(uid) for uid in tg_cfg.get("allowed_user_ids", [])]
         self._reactions: bool = tg_cfg.get("reactions", False)
         self._voice_enabled: bool = tg_cfg.get("voice_enabled", True)
+
+        # Config de broadcast: lista de chat_ids permitidos + behavior + bot_username
+        self._allowed_chat_ids: list[str] = [str(cid) for cid in tg_cfg.get("allowed_chat_ids", [])]
+        broadcast_raw = tg_cfg.get("broadcast") or {}
+        if hasattr(broadcast_raw, "model_dump"):
+            # Ya es un Pydantic model (Batch 5 en adelante)
+            broadcast_dict: dict = broadcast_raw.model_dump()
+        elif isinstance(broadcast_raw, dict):
+            broadcast_dict = broadcast_raw
+        else:
+            broadcast_dict = {}
+
+        self._behavior: str = broadcast_dict.get("behavior", "mention")
+        self._bot_username: str | None = broadcast_dict.get("bot_username")
+        self._rate_limit_max: int = int(broadcast_dict.get("rate_limiter", 5))
 
         if not self._token:
             raise ValueError(f"Agente '{agent_cfg.id}': channels.telegram.token no configurado")
@@ -47,6 +83,7 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("clear", self._cmd_clear))
         self._app.add_handler(CommandHandler("help", self._cmd_help))
         self._app.add_handler(CommandHandler("scheduler", self._cmd_scheduler))
+        self._app.add_handler(CommandHandler("chatid", self._cmd_chatid))
         # Handlers de voz ANTES del de texto (el dispatcher de python-telegram-bot
         # evalúa handlers en orden de registro). Sólo se registran si el feature
         # flag está activo; con voice_enabled=False no se engancha ningún filtro.
@@ -60,6 +97,40 @@ class TelegramBot:
         if not self._allowed_ids:
             return True  # Lista vacía = todos permitidos
         return str(user_id) in self._allowed_ids
+
+    def _is_allowed_chat(self, chat_id: int) -> bool:
+        """Verifica si el chat_id del grupo está en la lista de permitidos.
+
+        Lista vacía = sin restricción de grupo (todos los grupos autorizados).
+        Solo aplica a mensajes grupales; los privados no pasan por esta verificación.
+        """
+        if not self._allowed_chat_ids:
+            return True
+        return str(chat_id) in self._allowed_chat_ids
+
+    async def _cmd_chatid(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/chatid — responde con el ID del chat actual.
+
+        Bypasea ``allowed_chat_ids`` para poder usarlo antes de agregar el grupo a la whitelist
+        (bootstrap de configuración). Sin embargo, sigue respetando ``allowed_user_ids``:
+        si el usuario no está autorizado, se ignora silenciosamente.
+
+        Útil para obtener el ``chat_id`` de un grupo y agregarlo a ``allowed_chat_ids``.
+        """
+        if not self._is_allowed(update.effective_user.id):
+            return
+
+        chat_id = update.effective_chat.id
+        chat_type = update.effective_chat.type
+        logger.info(
+            "/chatid invocado",
+            extra={
+                "user_id": update.effective_user.id,
+                "chat_id": chat_id,
+                "chat_type": chat_type,
+            },
+        )
+        await update.message.reply_text(str(chat_id))
 
     async def _cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_allowed(update.effective_user.id):
@@ -213,8 +284,98 @@ class TelegramBot:
         if not user_input:
             return
 
+        chat_type = update.message.chat.type
+        es_grupo = chat_type in _TIPOS_GRUPO
+
+        if es_grupo:
+            await self._handle_group_message(update, user_input, chat_type)
+        else:
+            # Chat privado: comportamiento original sin cambios.
+            await self._set_reaction(update, "👀")
+            await self._run_pipeline(update, user_input, chat_type=chat_type)
+
+    async def _handle_group_message(self, update: Update, user_input: str, chat_type: str) -> None:
+        """Maneja mensajes de chats grupales según el behavior configurado.
+
+        Flujo:
+        1. Verificar allowed_chat_ids (si el chat_id no está en la lista y la lista no está vacía,
+           solo se pasa si el usuario está en allowed_user_ids — igual que privado).
+        2. Despachar por behavior:
+           - listen → descarta silenciosamente.
+           - mention → solo procesa si el bot está mencionado.
+           - autonomous → siempre procesa; aplica rate limiter.
+        3. Formatea el contenido con ``format_group_message`` antes de pasarlo al pipeline.
+        """
+        chat_id = update.effective_chat.id
+
+        # Verificación de allowed_chat_ids para grupos:
+        # Si el chat_id está en la whitelist, CUALQUIER usuario del grupo puede escribir.
+        # Si NO está, se usa el fallback de allowed_user_ids (comportamiento privado).
+        if self._allowed_chat_ids and not self._is_allowed_chat(chat_id):
+            # Chat no whitelisted — ignorar silenciosamente para grupos.
+            logger.debug(
+                "Grupo no whitelisted ignorado (chat_id=%s, agent=%s)",
+                chat_id,
+                self._agent_cfg.id,
+            )
+            return
+
+        behavior = self._behavior
+
+        if behavior == "listen":
+            # Modo escucha: recibe mensajes del grupo pero nunca responde.
+            return
+
+        if behavior == "mention":
+            # Solo responde si el bot está explícitamente mencionado.
+            if not self._bot_username:
+                logger.warning(
+                    "behavior='mention' pero bot_username no configurado (agent=%s) — ignorando",
+                    self._agent_cfg.id,
+                )
+                return
+            if not detect_mention(update.message, self._bot_username):
+                return
+
+        # Para autonomous: verificar rate limiter antes de invocar el LLM.
+        extra_sections: list[str] = []
+
+        if behavior == "autonomous":
+            # Sección de instrucción [SKIP] para modo autónomo.
+            seccion_skip = (
+                "## Modo autónomo\n"
+                "Si después de leer el contexto considerás que no tenés nada útil que aportar "
+                "al grupo, respondé EXACTAMENTE con `[SKIP]` (mayúsculas, entre corchetes, nada "
+                "más). El sistema detecta ese marcador y no enviará nada al grupo."
+            )
+            extra_sections.append(seccion_skip)
+
+            if self._rate_limiter is not None:
+                breach = self._rate_limiter.check_and_increment(
+                    self._agent_cfg.id,
+                    str(chat_id),
+                    self._rate_limit_max,
+                )
+                if breach is not None:
+                    logger.debug(
+                        "Rate limit alcanzado en grupo (agent=%s, chat_id=%s, counter=%d)",
+                        self._agent_cfg.id,
+                        chat_id,
+                        breach.counter,
+                    )
+                    # No invocamos el LLM — solo registramos la señal de breach como telemetría.
+                    return
+
+        # Formatear el contenido con prefijo de remitente antes de pasar al pipeline.
+        contenido_grupo = format_group_message(update.message)
+
         await self._set_reaction(update, "👀")
-        await self._run_pipeline(update, user_input)
+        await self._run_pipeline(
+            update,
+            contenido_grupo,
+            chat_type=chat_type,
+            extra_sections=extra_sections,
+        )
 
     async def _handle_voice_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -280,7 +441,8 @@ class TelegramBot:
             await self._set_reaction(update, "❌")
             return
 
-        await self._run_pipeline(update, transcribed)
+        chat_type = update.message.chat.type if update.message else "private"
+        await self._run_pipeline(update, transcribed, chat_type=chat_type)
 
     async def _set_reaction(self, update: Update, emoji: str) -> None:
         """Envía una reacción al mensaje si `reactions` está activo. Silencia fallos."""
@@ -291,31 +453,171 @@ class TelegramBot:
         except Exception:
             pass  # Reacciones opcionales — no deben bloquear el handler.
 
-    async def _run_pipeline(self, update: Update, user_input: str) -> None:
-        """Ejecuta el agente con `user_input` (ya sea texto tipeado o transcripto).
+    async def _run_pipeline(
+        self,
+        update: Update,
+        user_input: str,
+        chat_type: str = "private",
+        extra_sections: list[str] | None = None,
+    ) -> None:
+        """Ejecuta el agente con `user_input` (texto tipeado, transcripto o formateado de grupo).
 
-        Centraliza el ciclo común: channel_context → live_sink → run_agent.execute
-        → reply HTML → reacción ✅/❌ → limpiar contexto al final.
+        Centraliza el ciclo común: channel_context → extra_sections → live_sink →
+        run_agent.execute → [SKIP] check → reply HTML → broadcast egress →
+        reacción ✅/❌ → limpiar contexto al final.
+
+        Args:
+            update: Update de Telegram.
+            user_input: Texto ya formateado para el LLM (con prefijo de usuario si es grupo).
+            chat_type: Tipo de chat (``"private"``, ``"group"``, ``"supergroup"``, ``"channel"``).
+            extra_sections: Secciones adicionales del system prompt (broadcast context,
+                instrucción [SKIP], etc.). Se pasan via ``set_extra_system_sections`` ANTES
+                de invocar ``execute``.
         """
+        chat_id = update.effective_chat.id
+        es_grupo = chat_type in _TIPOS_GRUPO
+        secciones: list[str] = list(extra_sections or [])
+
+        # Inyectar contexto de broadcast si hay receiver y es un grupo.
+        if es_grupo and self._broadcast_receiver is not None:
+            rendered = self._broadcast_receiver.render(str(chat_id))
+            if rendered:
+                secciones.insert(0, rendered)
+
+        # Inyectar secciones adicionales en el use case ANTES de execute().
+        secciones_no_vacias = [s for s in secciones if s]
+        self._container.run_agent.set_extra_system_sections(secciones_no_vacias)
+
         self._container.set_channel_context(
             ChannelContext(
                 channel_type="telegram",
                 user_id=str(update.effective_user.id),
             )
         )
-        live_sink = TelegramLiveIntermediateSink(bot=self, chat_id=update.effective_chat.id)
+        live_sink = TelegramLiveIntermediateSink(bot=self, chat_id=chat_id)
         try:
             response = await self._container.run_agent.execute(
-                user_input, intermediate_sink=live_sink
+                user_input,
+                intermediate_sink=live_sink,
+                channel="telegram",
+                chat_id=str(chat_id),
             )
+
+            # Verificar marcador [SKIP] — solo aplica en modo autónomo en grupos.
+            # La respuesta contiene SOLO el marcador → no enviar nada ni emitir broadcast.
+            if self._behavior == "autonomous" and es_grupo and response.strip() == "[SKIP]":
+                logger.debug(
+                    "autonomous_skip detectado (agent=%s, chat_id=%s)",
+                    self._agent_cfg.id,
+                    chat_id,
+                )
+                return
+
             await update.message.reply_text(format_response(response), parse_mode=ParseMode.HTML)
             await self._set_reaction(update, "✅")
+
+            # Emitir broadcast DESPUÉS del reply, solo para grupos, fire-and-forget.
+            if es_grupo and self._broadcast_emitter is not None:
+                msg_broadcast = BroadcastMessage(
+                    timestamp=time.time(),
+                    agent_id=self._agent_cfg.id,
+                    chat_id=str(chat_id),
+                    message=response,
+                )
+                asyncio.ensure_future(self._emitir_broadcast(msg_broadcast))
+
         except Exception as exc:
             logger.exception("Error procesando mensaje Telegram para '%s'", self._agent_cfg.id)
             await update.message.reply_text(f"Error: {exc}")
             await self._set_reaction(update, "❌")
         finally:
             self._container.set_channel_context(None)
+            # Limpiar extra_sections después del turno para no contaminar el siguiente.
+            self._container.run_agent.set_extra_system_sections([])
+
+    async def _emitir_broadcast(self, msg: BroadcastMessage) -> None:
+        """Emite un BroadcastMessage al canal. Captura y loguea excepciones silenciosamente.
+
+        Este método es invocado via ``asyncio.ensure_future`` — cualquier excepción
+        aquí NO debe propagarse al caller (Telegram reply ya fue enviado).
+        """
+        try:
+            await self._broadcast_emitter.emit(msg)  # type: ignore[union-attr]
+        except Exception as exc:
+            logger.warning(
+                "Fallo al emitir broadcast (agent=%s, chat_id=%s): %s",
+                msg.agent_id,
+                msg.chat_id,
+                exc,
+            )
+
+    async def verificar_bot_username(self) -> None:
+        """Verifica que ``bot_username`` en config coincide con el username real del bot.
+
+        Llama a ``get_me()`` UNA SOLA VEZ al arranque. No bloquea ni falla el startup:
+        - Si ``bot_username`` es ``None`` en config → INFO alentando a configurarlo.
+        - Si el username real difiere del configurado → WARNING (no bloquea).
+        - Si ``get_me()`` falla → WARNING (no bloquea).
+
+        Solo aplica si hay un bloque ``broadcast:`` con ``behavior != "listen"`` —
+        para ``listen`` la detección de menciones no se usa, así que el username
+        no importa operativamente. Sin broadcast config, este método no hace nada.
+        """
+        broadcast_raw = self._agent_cfg.channels.get("telegram", {})
+        if hasattr(broadcast_raw, "get"):
+            broadcast_block = broadcast_raw.get("broadcast")
+        else:
+            broadcast_block = getattr(broadcast_raw, "broadcast", None)
+
+        if broadcast_block is None:
+            # Sin bloque broadcast → nada que validar.
+            return
+
+        try:
+            me = await self._app.bot.get_me()
+        except Exception as exc:
+            logger.warning(
+                "Telegram bot '%s': no se pudo obtener bot info via get_me(): %s",
+                self._agent_cfg.id,
+                exc,
+            )
+            return
+
+        real_username = me.username  # puede ser None si el bot no tiene username
+
+        if self._bot_username is None:
+            logger.info(
+                "Telegram bot '%s': broadcast.bot_username no configurado "
+                "(username real: @%s). Configuralo para que el modo 'mention' funcione correctamente.",
+                self._agent_cfg.id,
+                real_username or "<sin username>",
+            )
+            return
+
+        if real_username is None:
+            logger.warning(
+                "Telegram bot '%s': get_me() devolvió username=None "
+                "(config declara bot_username='%s'). Verificá el token.",
+                self._agent_cfg.id,
+                self._bot_username,
+            )
+            return
+
+        if real_username.lower() != self._bot_username.lower():
+            logger.warning(
+                "Telegram bot '%s': bot_username en config ('%s') no coincide "
+                "con el username real del bot ('@%s'). "
+                "Actualizá broadcast.bot_username en la config para evitar fallos en mention detection.",
+                self._agent_cfg.id,
+                self._bot_username,
+                real_username,
+            )
+        else:
+            logger.info(
+                "Telegram bot '%s': bot_username validado correctamente ('@%s')",
+                self._agent_cfg.id,
+                real_username,
+            )
 
     async def setup_commands(self) -> None:
         """Registra el menú de comandos en Telegram. Reemplaza cualquier lista previa
@@ -326,6 +628,7 @@ class TelegramBot:
             BotCommand("clear", "Limpiar historial de conversación"),
             BotCommand("consolidate", "Extraer recuerdos del historial"),
             BotCommand("scheduler", "Gestionar tareas programadas (list/show/enable/disable)"),
+            BotCommand("chatid", "Obtener el ID del chat actual (útil para configurar grupos)"),
         ]
         try:
             await self._app.bot.set_my_commands(commands)

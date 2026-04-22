@@ -73,8 +73,18 @@ async def _run_telegram_bot(agent_cfg, container, app_container=None) -> None:
     """Arranca el bot de Telegram para un agente usando la API async nativa de PTB 21+."""
     from adapters.inbound.telegram.bot import TelegramBot
 
+    # Leer adapters de broadcast del container (wired en Phase 4 de AppContainer).
+    broadcast_adapter = getattr(container, "broadcast_adapter", None)
+    rate_limiter = getattr(container, "broadcast_rate_limiter", None)
+
     try:
-        bot = TelegramBot(agent_cfg, container)
+        bot = TelegramBot(
+            agent_cfg,
+            container,
+            broadcast_emitter=broadcast_adapter,
+            broadcast_receiver=broadcast_adapter,
+            rate_limiter=rate_limiter,
+        )
     except ValueError as exc:
         logger.warning("Telegram bot no iniciado para '%s': %s", agent_cfg.id, exc)
         return
@@ -89,6 +99,11 @@ async def _run_telegram_bot(agent_cfg, container, app_container=None) -> None:
     async with bot._app:
         await bot._app.start()
         await bot.setup_commands()
+
+        # Validación de bot_username contra la API de Telegram (non-blocking).
+        # Solo aplica si hay broadcast config con bot_username declarado.
+        await bot.verificar_bot_username()
+
         await bot._app.updater.start_polling(drop_pending_updates=True)
         logger.info("Telegram bot '%s' en polling", agent_cfg.id)
         try:

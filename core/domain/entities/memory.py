@@ -11,3 +11,4 @@ class MemoryEntry(BaseModel):
     tags: list[str] = []
     created_at: datetime = Field(default_factory=datetime.utcnow)
     agent_id: str | None = None  # None = recuerdo global compartido
+    channel: str = ""  # Canal del que se extrajeron los mensajes (ej: "telegram", "cli")

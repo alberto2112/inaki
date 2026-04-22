@@ -48,6 +48,72 @@ async def extract_audio_payload(message) -> tuple[bytes, str, int] | None:
     return bytes(data), mime, size
 
 
+def format_group_message(message) -> str:
+    """Formatea un mensaje de grupo con el prefijo del remitente.
+
+    El formato resultante es ``"username: texto"`` (sin @).
+    Si el usuario no tiene username, usa ``first_name``.
+    Si tampoco tiene ``first_name``, usa ``"anonimo"`` como defensa.
+
+    Args:
+        message: Objeto ``telegram.Message`` con el campo ``from_user`` poblado.
+
+    Returns:
+        String con formato ``"<remitente>: <texto>"`` listo para persistir en historial.
+    """
+    from_user = getattr(message, "from_user", None)
+    texto = (message.text or "").strip()
+
+    if from_user is not None:
+        username = getattr(from_user, "username", None)
+        if username:
+            remitente = username
+        else:
+            first_name = getattr(from_user, "first_name", None)
+            remitente = first_name if first_name else "anonimo"
+    else:
+        remitente = "anonimo"
+
+    return f"{remitente}: {texto}"
+
+
+def detect_mention(message, bot_username: str) -> bool:
+    """Detecta si un mensaje menciona al bot por su username.
+
+    Itera ``message.entities`` buscando:
+    - ``type == "mention"``: extrae el substring del texto, compara sin ``@`` con ``bot_username``.
+    - ``type == "text_mention"``: compara ``entity.user.username`` con ``bot_username``.
+
+    Args:
+        message: Objeto ``telegram.Message`` con ``entities`` y ``text`` poblados.
+        bot_username: Username del bot SIN arroba (ej: ``"inakilabs_bot"``).
+
+    Returns:
+        ``True`` si alguna entidad menciona al bot; ``False`` en caso contrario.
+    """
+    entities = getattr(message, "entities", None) or []
+    texto = message.text or ""
+
+    for entity in entities:
+        tipo = getattr(entity, "type", None)
+
+        if tipo == "mention":
+            # La entidad incluye el '@' — extraemos el substring y comparamos sin '@'.
+            fragmento = texto[entity.offset : entity.offset + entity.length]
+            if fragmento.lstrip("@") == bot_username:
+                return True
+
+        elif tipo == "text_mention":
+            # Usuario sin username público — comparamos por username del objeto User.
+            usuario = getattr(entity, "user", None)
+            if usuario is not None:
+                username_entidad = getattr(usuario, "username", None)
+                if username_entidad == bot_username:
+                    return True
+
+    return False
+
+
 def format_response(response: str) -> str:
     """
     Convierte la respuesta markdown del LLM al subset HTML de Telegram.

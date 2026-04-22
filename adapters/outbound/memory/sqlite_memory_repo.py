@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS memories (
     relevance  REAL NOT NULL,
     tags       TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    agent_id   TEXT
+    agent_id   TEXT,
+    channel    TEXT NOT NULL DEFAULT ''
 )
 """
 
@@ -70,8 +71,9 @@ class SQLiteMemoryRepository(IMemoryRepository):
             await self._ensure_schema(conn)
             await conn.execute(
                 """
-                INSERT OR REPLACE INTO memories (id, content, relevance, tags, created_at, agent_id)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO memories
+                    (id, content, relevance, tags, created_at, agent_id, channel)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     entry.id,
@@ -80,6 +82,7 @@ class SQLiteMemoryRepository(IMemoryRepository):
                     json.dumps(entry.tags),
                     entry.created_at.isoformat(),
                     entry.agent_id,
+                    entry.channel,
                 ),
             )
             vec_bytes = struct.pack(f"{len(entry.embedding)}f", *entry.embedding)

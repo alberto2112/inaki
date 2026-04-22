@@ -168,6 +168,8 @@ class RunAgentUseCase:
         user_input: str,
         tools_override: list[dict] | None = None,
         intermediate_sink: IIntermediateSink | None = None,
+        channel: str = "",
+        chat_id: str = "",
     ) -> str:
         """Ejecuta un turno del agente.
 
@@ -182,6 +184,10 @@ class RunAgentUseCase:
                 tipo "ok, voy a buscar..."). El mensaje FINAL del turno NO pasa
                 por el sink — se retorna por el return. Default ``None`` → no
                 se emiten intermedios (backwards-compat).
+            channel: canal de origen del mensaje (ej: ``"telegram"``, ``"cli"``).
+                Cadena vacía cuando no aplica.
+            chat_id: identificador del chat dentro del canal (ej: ID de grupo
+                Telegram). Cadena vacía para chats privados o sin distinción.
         """
         agent_id = self._cfg.id
 
@@ -355,8 +361,13 @@ class RunAgentUseCase:
                 ),
             )
 
-        await self._history.append(agent_id, user_msg)
-        await self._history.append(agent_id, Message(role=Role.ASSISTANT, content=response))
+        await self._history.append(agent_id, user_msg, channel=channel, chat_id=chat_id)
+        await self._history.append(
+            agent_id,
+            Message(role=Role.ASSISTANT, content=response),
+            channel=channel,
+            chat_id=chat_id,
+        )
 
         return response
 

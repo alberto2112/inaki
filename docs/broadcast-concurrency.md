@@ -1,5 +1,11 @@
 # Concurrencia en grupos multi-agente — problema y solución pendiente
 
+> **Nota**: este documento describe el timing del **broadcast como contexto** (buffer
+> que alimenta el system prompt del siguiente turno). Con la incorporación del
+> **broadcast como trigger** (bot-to-bot), un bot también puede responder directamente
+> a un mensaje broadcast que lo mencione por `bot_username` o `alias`. Esa vía NO
+> pasa por el flujo de Telegram privacy — es independiente y se describe al final.
+
 ## El problema: timing del broadcast context
 
 Cuando dos instancias de Iñaki (`A` y `B`) están en el mismo grupo Telegram con
@@ -129,3 +135,42 @@ await self._run_pipeline(update, contenido_grupo, chat_type=chat_type, extra_sec
 **Elegida**: Opción C (sin semáforo).  
 **Revisitar si**: el contexto cruzado faltante en el primer turno se vuelve molesto en la
 práctica, o si se agregan más de dos bots al mismo grupo (la ventana de colisión aumenta).
+
+---
+
+## Broadcast-as-Trigger — bot-to-bot directo
+
+Además del buffer de contexto (descripto arriba), el canal broadcast también actúa
+como **trigger**: si un bot A emite un broadcast cuyo texto contiene el `bot_username`
+de B (o cualquier `alias` configurado), B dispara el pipeline completo y responde al
+grupo — sin esperar un mensaje del usuario.
+
+### Por qué hace falta
+
+La Bot API de Telegram no entrega mensajes de OTROS bots. Sin este mecanismo, B no
+podría reaccionar nunca a una llamada de A aunque A lo mencione explícitamente en el
+grupo. El trigger por broadcast compensa esa limitación de plataforma.
+
+### Anti-loop en dos bots
+
+Con dos bots `A` y `B`, el bucle infinito se evita porque:
+
+1. **Heurística de mención obligatoria**: B solo responde si el mensaje broadcast
+   contiene `B.bot_username` o un alias de B. Si A, en su respuesta, no nombra a B,
+   B no reacciona. Simétricamente para A.
+2. **`[SKIP]` sigue aplicando**: si el LLM no tiene nada útil que decir, corta el
+   turno sin emitir broadcast.
+3. **Rate limiter compartido**: el mismo `FixedWindowRateLimiter` (30s, por
+   `(agent_id, chat_id)`) limita también los triggers bot-to-bot.
+
+### Con 3+ bots — revisar
+
+Con tres bots o más, la ventana de colisión aumenta y una conversación cruzada puede
+converger en un loop lento si todos se nombran entre sí. Mitigaciones a considerar
+cuando eso suceda:
+
+- **Hops counter**: propagar un contador en `BroadcastMessage` y cortar a N saltos.
+- **Jitter previo a respuesta**: pequeño delay aleatorio para romper la simultaneidad.
+- **Decaimiento del rate limiter**: bajar N respuestas/ventana de 5 a 2 o 3.
+
+Ninguna está implementada — se agregan si empieza a pasar en la práctica.

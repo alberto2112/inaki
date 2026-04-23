@@ -552,6 +552,7 @@ channels:
       port: 1234                          # puerto TCP de escucha (1024..65535)
       auth: "shared-secret-entre-agentes" # secreto compartido HMAC-SHA256
       bot_username: "inaki_a_bot"         # username del bot sin @, para detección de menciones
+      aliases: ["inaki"]                  # (opcional) nombres extra para triggers broadcast
       behavior: mention                   # listen | mention | autonomous
       rate_limiter: 5                     # máx. respuestas proactivas por ventana de 30s por chat
 ```
@@ -569,6 +570,7 @@ channels:
         host: "192.168.1.10:1234"           # ip:port del servidor
         auth: "shared-secret-entre-agentes" # debe coincidir con el servidor
       bot_username: "inaki_b_bot"
+      aliases: ["inaki_b", "soporte"]
       behavior: autonomous
       rate_limiter: 5
 ```
@@ -593,12 +595,29 @@ conversaciones de Telegram entren en la memoria a largo plazo.
 |------|-------------|
 | `listen` | El bot nunca responde. Solo absorbe contexto en el buffer de broadcast. Útil para un agente "observador". |
 | `mention` | El bot responde solo cuando alguien lo menciona con `@bot_username`. **Default en grupos.** |
-| `autonomous` | El LLM decide si responder. Si no tiene nada útil que aportar, responde `[SKIP]` internamente y el sistema no envía nada al grupo. |
+| `autonomous` | El LLM decide si responder. Si no tiene nada útil que aportar, responde `[SKIP]` internamente y el sistema no envía nada al grupo. Además, el bot responde a **mensajes broadcast** (bot-to-bot) cuya text contenga `bot_username` o algún `alias` — permite que dos bots dialoguen entre sí en un grupo. |
 
-El **rate limiter** (`rate_limiter: 5`) solo aplica en modo `autonomous`. Limita las
-respuestas proactivas del bot a N mensajes por ventana fija de 30 segundos, por
-combinación `(agente, chat_id)`. Cuando se alcanza el límite, los mensajes siguientes
-se descartan hasta que la ventana se resetea.
+El **rate limiter** (`rate_limiter: 5`) aplica en modo `autonomous` para ambas vías:
+mensajes entrantes de Telegram **y** triggers broadcast bot-to-bot. Limita las respuestas
+proactivas a N mensajes por ventana fija de 30 segundos, por combinación `(agente, chat_id)`.
+Cuando se alcanza el límite, los mensajes siguientes se descartan hasta que la ventana se resetea.
+
+#### `aliases` — nombres alternativos para disparar respuesta broadcast
+
+En modo `autonomous`, cuando otro bot emite un broadcast que contiene el username del
+bot o cualquier alias como substring **case-insensitive**, el bot responde. El match es
+textual (no usa entidades Telegram), pensado específicamente para el canal TCP bot-to-bot.
+
+```yaml
+broadcast:
+  bot_username: "Atillo_007bot"  # username real, críptico
+  aliases: ["inaki", "iñaki"]    # nombres cortos con los que otros bots pueden llamarlo
+  behavior: autonomous
+```
+
+Con esta config, cualquier broadcast que contenga `"inaki"`, `"iñaki"` o `"Atillo_007bot"`
+(ignorando case) dispara una respuesta. Los aliases NO afectan a menciones Telegram reales
+— esas siguen requiriendo `bot_username` exacto en `message.entities`.
 
 ---
 

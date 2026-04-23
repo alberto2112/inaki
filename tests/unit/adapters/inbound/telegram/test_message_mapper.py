@@ -8,7 +8,11 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from adapters.inbound.telegram.message_mapper import detect_mention, format_group_message
+from adapters.inbound.telegram.message_mapper import (
+    detect_broadcast_mention,
+    detect_mention,
+    format_group_message,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -182,3 +186,65 @@ def test_detect_mention_tipo_desconocido_ignorado():
 
     # La URL no es una mención — no coincide
     assert detect_mention(msg, "mi_bot") is False
+
+
+# ---------------------------------------------------------------------------
+# detect_broadcast_mention — match textual case-insensitive sobre broadcast
+# ---------------------------------------------------------------------------
+
+
+def test_detect_broadcast_mention_bot_username_substring():
+    """bot_username aparece como substring en el texto → True."""
+    assert detect_broadcast_mention("che inaki_bot, qué hacés?", "inaki_bot") is True
+
+
+def test_detect_broadcast_mention_case_insensitive():
+    """Match ignora mayúsculas/minúsculas."""
+    assert detect_broadcast_mention("Che INAKI_BOT, qué hacés?", "inaki_bot") is True
+    assert detect_broadcast_mention("che inaki_bot", "INAKI_BOT") is True
+
+
+def test_detect_broadcast_mention_alias_encontrado():
+    """Si bot_username no matchea pero un alias sí → True."""
+    assert (
+        detect_broadcast_mention(
+            "che inaki, qué pensás?", "Atillo_007bot", aliases=["inaki", "iñaki"]
+        )
+        is True
+    )
+
+
+def test_detect_broadcast_mention_alias_acento():
+    """Aliases respetan match literal — 'iñaki' sí, 'inaki' no si solo se listó 'iñaki'."""
+    assert (
+        detect_broadcast_mention("che iñaki", "Atillo_007bot", aliases=["iñaki"]) is True
+    )
+    assert (
+        detect_broadcast_mention("che inaki", "Atillo_007bot", aliases=["iñaki"]) is False
+    )
+
+
+def test_detect_broadcast_mention_no_coincide():
+    """Ningún candidato aparece → False."""
+    assert (
+        detect_broadcast_mention("hablando del clima", "mi_bot", aliases=["alias1"]) is False
+    )
+
+
+def test_detect_broadcast_mention_sin_bot_username_ni_aliases():
+    """Sin username ni aliases → False aunque el texto tenga contenido."""
+    assert detect_broadcast_mention("hola", None, aliases=None) is False
+    assert detect_broadcast_mention("hola", None, aliases=[]) is False
+
+
+def test_detect_broadcast_mention_texto_vacio():
+    """Texto vacío → False."""
+    assert detect_broadcast_mention("", "mi_bot") is False
+    assert detect_broadcast_mention("", "mi_bot", aliases=["alias"]) is False
+
+
+def test_detect_broadcast_mention_alias_vacio_ignorado():
+    """Alias vacío o None dentro de la lista no produce falsos positivos."""
+    # Un alias vacío haría que cualquier texto no vacío matchee — nos aseguramos que NO.
+    assert detect_broadcast_mention("hola mundo", None, aliases=["", "alias"]) is False
+    assert detect_broadcast_mention("hola alias", None, aliases=["", "alias"]) is True

@@ -104,6 +104,9 @@ async def _run_telegram_bot(agent_cfg, container, app_container=None) -> None:
         # Solo aplica si hay broadcast config con bot_username declarado.
         await bot.verificar_bot_username()
 
+        # Suscripción al canal broadcast para trigger bot-to-bot (solo autonomous).
+        await bot.subscribe_broadcast_trigger()
+
         await bot._app.updater.start_polling(drop_pending_updates=True)
         logger.info("Telegram bot '%s' en polling", agent_cfg.id)
         try:

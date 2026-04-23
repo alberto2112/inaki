@@ -391,6 +391,17 @@ user:
 #     #                 puede responder EXACTAMENTE `[SKIP]` cuando no tiene nada
 #     #                 útil — el sistema detecta el marcador y no envía nada.
 #     #                 ⚠ Combinar SIEMPRE con `rate_limiter` para evitar loops.
+#     #                 ⚠ En autonomous, el bot también responde a mensajes
+#     #                 broadcast (otros bots) que contengan `bot_username` o
+#     #                 algún alias como substring case-insensitive.
+#     #
+#     # Aliases (opcional, solo autonomous):
+#     #   Lista de nombres adicionales que disparan respuesta cuando aparecen
+#     #   en un mensaje broadcast. Match textual case-insensitive por substring.
+#     #   No afecta a menciones reales de Telegram (entidades mention /
+#     #   text_mention) — esas siguen requiriendo `bot_username` exacto.
+#     #   Útil si tu bot_username real es críptico (ej: "Atillo_007bot") pero
+#     #   querés que los demás bots lo llamen por un alias corto ("inaki").
 #     #
 #     # --- Modo SERVER (el Iñaki que acepta conexiones) ---
 #     # broadcast:
@@ -399,12 +410,15 @@ user:
 #     #   bot_username: "inaki_dev_bot"
 #     #                           # Username del bot (sin @). Usado para mention
 #     #                           # detection vía message.entities.
+#     #   aliases: ["inaki"]      # (opcional) Nombres extra que disparan respuesta
+#     #                           # cuando aparecen en mensajes broadcast.
 #     #   behavior: "mention"     # listen | mention | autonomous
 #     #   rate_limiter: 5         # Máx respuestas por ventana de 30s por
-#     #                           # (agent_id, chat_id). Solo aplica en
-#     #                           # autonomous. Al superar el límite, inyecta
-#     #                           # un mensaje al system prompt y NO llama al LLM
-#     #                           # hasta que la ventana expire.
+#     #                           # (agent_id, chat_id). Aplica a mensajes
+#     #                           # entrantes Telegram y a triggers broadcast.
+#     #                           # Al superar el límite, inyecta un mensaje al
+#     #                           # system prompt y NO llama al LLM hasta que
+#     #                           # la ventana expire.
 #     #
 #     # --- Modo CLIENT (el Iñaki que se conecta al server) ---
 #     # broadcast:
@@ -412,6 +426,7 @@ user:
 #     #     host: "192.168.1.50:6499"  # host:port del server.
 #     #     auth: "shared-secret"      # DEBE matchear el auth del server. → SECRETS
 #     #   bot_username: "inaki_pro_bot"
+#     #   aliases: ["inaki_pro", "pro"]
 #     #   behavior: "autonomous"
 #     #   rate_limiter: 5
 #     #

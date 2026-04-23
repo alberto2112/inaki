@@ -18,6 +18,7 @@ from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 from adapters.inbound.telegram.message_mapper import (
+    detect_broadcast_mention,
     detect_mention,
     hay_menciones,
     extract_audio_payload,
@@ -73,6 +74,7 @@ class TelegramBot:
 
         self._behavior: str = broadcast_dict.get("behavior", "mention")
         self._bot_username: str | None = broadcast_dict.get("bot_username")
+        self._aliases: list[str] = list(broadcast_dict.get("aliases", []) or [])
         self._rate_limit_max: int = int(broadcast_dict.get("rate_limiter", 5))
 
         if not self._token:
@@ -564,6 +566,133 @@ class TelegramBot:
                 msg.chat_id,
                 exc,
             )
+
+    async def subscribe_broadcast_trigger(self) -> None:
+        """Registra el callback de ingress para responder a mensajes broadcast.
+
+        Solo aplica a agentes con ``behavior: autonomous`` y un ``broadcast_receiver``
+        disponible. Para ``listen`` o ``mention`` no tiene sentido — el primero no
+        responde nunca y el segundo requiere una mención Telegram real (que no
+        existe en un mensaje llegado por TCP).
+        """
+        if self._broadcast_receiver is None:
+            return
+        if self._behavior != "autonomous":
+            logger.debug(
+                "Bot '%s': behavior=%s — no se registra trigger de broadcast",
+                self._agent_cfg.id,
+                self._behavior,
+            )
+            return
+        await self._broadcast_receiver.subscribe(self._on_broadcast_received)
+        logger.info(
+            "Bot '%s': suscripto a broadcast como trigger (bot_username=%s, aliases=%s)",
+            self._agent_cfg.id,
+            self._bot_username,
+            self._aliases,
+        )
+
+    async def _on_broadcast_received(self, msg: BroadcastMessage) -> None:
+        """Callback invocado por el adapter por cada ``BroadcastMessage`` válido.
+
+        Decide si el bot debe responder. Silencioso y defensivo: cualquier
+        excepción queda aquí (fire-and-forget desde el adapter).
+        """
+        try:
+            # Solo respondemos si el mensaje nos menciona por username o alias.
+            if not detect_broadcast_mention(msg.message, self._bot_username, self._aliases):
+                return
+
+            # Rate limiter por (agent_id, chat_id) — la misma ventana que usan
+            # los mensajes entrantes de Telegram en modo autonomous. Evita
+            # tormentas bot-to-bot si la heurística de mención falla.
+            if self._rate_limiter is not None:
+                breach = self._rate_limiter.check_and_increment(
+                    self._agent_cfg.id,
+                    msg.chat_id,
+                    self._rate_limit_max,
+                )
+                if breach is not None:
+                    logger.debug(
+                        "Broadcast trigger rate-limited (agent=%s, chat_id=%s, counter=%d)",
+                        self._agent_cfg.id,
+                        msg.chat_id,
+                        breach.counter,
+                    )
+                    return
+
+            await self._respond_to_broadcast(msg)
+        except Exception:
+            logger.exception(
+                "Error procesando broadcast trigger (agent=%s, from=%s, chat_id=%s)",
+                self._agent_cfg.id,
+                msg.agent_id,
+                msg.chat_id,
+            )
+
+    async def _respond_to_broadcast(self, msg: BroadcastMessage) -> None:
+        """Ejecuta el pipeline ante un broadcast recibido y responde al grupo.
+
+        El input al LLM lleva un prefijo ``[<agent_id> dijo en el grupo]: ...`` para
+        que el modelo sepa que la fuente es otro bot. Respeta ``[SKIP]`` y vuelve a
+        emitir broadcast para mantener el contexto cruzado consistente.
+        """
+        chat_id_int = int(msg.chat_id)
+        contenido = f"[{msg.agent_id} dijo en el grupo]: {msg.message}"
+
+        secciones: list[str] = []
+        if self._broadcast_receiver is not None:
+            rendered = self._broadcast_receiver.render(msg.chat_id)
+            if rendered:
+                secciones.append(rendered)
+
+        seccion_skip = (
+            "## Modo autónomo\n"
+            "Si después de leer el contexto considerás que no tenés nada útil que aportar "
+            "al grupo, respondé EXACTAMENTE con `[SKIP]` (mayúsculas, entre corchetes, nada "
+            "más). El sistema detecta ese marcador y no enviará nada al grupo."
+        )
+        secciones.append(seccion_skip)
+
+        self._container.run_agent.set_extra_system_sections([s for s in secciones if s])
+        self._container.set_channel_context(
+            ChannelContext(channel_type="telegram", user_id=msg.agent_id)
+        )
+        try:
+            response = await self._container.run_agent.execute(
+                contenido,
+                channel="telegram",
+                chat_id=msg.chat_id,
+            )
+
+            if response.strip() == "[SKIP]":
+                logger.debug(
+                    "broadcast_trigger_skip (agent=%s, chat_id=%s, from=%s)",
+                    self._agent_cfg.id,
+                    msg.chat_id,
+                    msg.agent_id,
+                )
+                return
+
+            await self._app.bot.send_message(
+                chat_id=chat_id_int,
+                text=format_response(response),
+                parse_mode=ParseMode.HTML,
+            )
+
+            # Re-emitimos broadcast para que los otros bots vean nuestra respuesta
+            # en su propio buffer (contexto para el próximo turno).
+            if self._broadcast_emitter is not None:
+                msg_out = BroadcastMessage(
+                    timestamp=time.time(),
+                    agent_id=self._agent_cfg.id,
+                    chat_id=msg.chat_id,
+                    message=response,
+                )
+                asyncio.ensure_future(self._emitir_broadcast(msg_out))
+        finally:
+            self._container.set_channel_context(None)
+            self._container.run_agent.set_extra_system_sections([])
 
     async def verificar_bot_username(self) -> None:
         """Verifica que ``bot_username`` en config coincide con el username real del bot.

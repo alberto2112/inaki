@@ -436,6 +436,18 @@ class BroadcastConfig(BaseModel):
     bot_username: str | None = None
     """Username del bot Telegram (sin ``@``) para detección de menciones en modo ``mention``."""
 
+    aliases: list[str] = []
+    """
+    Aliases adicionales (sin ``@``) que disparan respuesta ante mensajes broadcast.
+
+    El match es **textual case-insensitive por substring** y solo aplica a los mensajes
+    recibidos por el canal broadcast TCP (bot-to-bot) — NO a las entidades ``mention``
+    de Telegram, que siguen requiriendo ``bot_username`` exacto.
+
+    Ejemplo: ``bot_username="Atillo_007bot"``, ``aliases=["inaki", "iñaki"]`` hace que
+    cualquier mensaje broadcast que contenga ``"inaki"`` o ``"iñaki"`` dispare el pipeline.
+    """
+
     @model_validator(mode="after")
     def _validar_topologia(self) -> "BroadcastConfig":
         """Valida que el nodo sea server XOR client, y que server tenga auth."""

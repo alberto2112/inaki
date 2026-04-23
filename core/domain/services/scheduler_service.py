@@ -69,21 +69,32 @@ class SchedulerService:
 
     async def _loop(self) -> None:
         while True:
-            now = datetime.now(timezone.utc)
-            next_task = await self._repo.get_next_due(now)
-            if next_task is None:
-                # No active tasks — sleep up to 60s or until invalidated
-                self._wake.clear()
-                with suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(self._wake.wait(), timeout=60.0)
-                continue
-            wait_secs = (next_task.next_run - now).total_seconds() if next_task.next_run else 0.0
-            if wait_secs > 0:
-                self._wake.clear()
-                with suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(self._wake.wait(), timeout=min(wait_secs, 60.0))
-                continue
-            await self._execute_task(next_task)
+            try:
+                now = datetime.now(timezone.utc)
+                next_task = await self._repo.get_next_due(now)
+                if next_task is None:
+                    # No active tasks — sleep up to 60s or until invalidated
+                    self._wake.clear()
+                    with suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(self._wake.wait(), timeout=60.0)
+                    continue
+                wait_secs = (
+                    (next_task.next_run - now).total_seconds() if next_task.next_run else 0.0
+                )
+                if wait_secs > 0:
+                    self._wake.clear()
+                    with suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(self._wake.wait(), timeout=min(wait_secs, 60.0))
+                    continue
+                await self._execute_task(next_task)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # En Python < 3.12, el shutdown del event loop interrumpe aiosqlite
+                # con sqlite3.ProgrammingError antes de que llegue el CancelledError.
+                # sleep(1) cede el control — si hay cancelación pendiente se dispara ahí.
+                logger.debug("Error en loop del scheduler (posible shutdown): %s", exc)
+                await asyncio.sleep(1)
 
     async def _run_once(self) -> None:
         """Test helper: process one due task if any, then return."""

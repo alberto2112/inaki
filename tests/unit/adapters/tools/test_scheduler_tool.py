@@ -536,6 +536,29 @@ async def test_create_unknown_operation_is_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_trigger_payload_como_json_string() -> None:
+    """LLM envía trigger_payload como JSON string → se parsea automáticamente."""
+    ctx = ChannelContext(channel_type="telegram", user_id="99")
+    tool, uc = _make_tool(get_channel_context=lambda: ctx)
+    created = _make_task(task_id=77)
+    uc.create_task.return_value = created
+
+    result = await tool.execute(
+        operation="create",
+        name="JSON String Payload",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload='{"text": "recordatorio"}',  # string en lugar de dict
+        schedule="2026-06-01T10:00:00Z",
+    )
+
+    assert result.success is True, result.output
+    call_arg: ScheduledTask = uc.create_task.call_args[0][0]
+    assert isinstance(call_arg.trigger_payload, ChannelSendPayload)
+    assert call_arg.trigger_payload.text == "recordatorio"
+
+
+@pytest.mark.asyncio
 async def test_create_invalid_trigger_payload_is_error() -> None:
     """channel_send with missing required 'text' field → validation error."""
     tool, uc = _make_tool()
@@ -857,14 +880,10 @@ async def test_create_channel_send_sin_contexto_retorna_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_no_channel_send_sin_inyeccion() -> None:
-    """trigger no channel_send → no se usa get_channel_context (comportamiento existente)."""
-
-    # Contexto que falla si se llama → no debe llamarse para agent_send
-    def ctx_falla():
-        raise RuntimeError("get_channel_context no debe llamarse para agent_send")
-
-    tool, uc = _make_tool(get_channel_context=ctx_falla)
+async def test_create_agent_send_hereda_output_channel() -> None:
+    """agent_send sin output_channel → hereda el canal activo vía get_channel_context."""
+    ctx = ChannelContext(channel_type="telegram", user_id="42")
+    tool, uc = _make_tool(get_channel_context=lambda: ctx)
     task = _make_task(task_id=12, trigger_type=TriggerType.AGENT_SEND)
     task = task.model_copy(
         update={"trigger_payload": AgentSendPayload(agent_id="otro-agent", task="hacer algo")}
@@ -881,6 +900,9 @@ async def test_create_no_channel_send_sin_inyeccion() -> None:
     )
 
     assert result.success is True
+    call_arg: ScheduledTask = uc.create_task.call_args[0][0]
+    assert isinstance(call_arg.trigger_payload, AgentSendPayload)
+    assert call_arg.trigger_payload.output_channel == ctx.routing_key
 
 
 @pytest.mark.asyncio

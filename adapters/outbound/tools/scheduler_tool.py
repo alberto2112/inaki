@@ -57,6 +57,18 @@ _TRIGGER_PAYLOAD_MODELS: dict[str, type[BaseModel]] = {
 
 _VALID_OPERATIONS = ("create", "list", "get", "update", "delete", "logs", "log_get")
 
+
+def _coerce_to_dict(value: Any) -> Any:
+    """Intenta parsear `value` como dict si el LLM lo envió como JSON string."""
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, dict):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return value
+
 # Truncación del output/error en la operación `logs` — protege el contexto
 # del LLM cuando el historial arrastra outputs grandes. `log_get` NO trunca:
 # es la puerta de "dame el detalle completo de este log".
@@ -268,8 +280,15 @@ class SchedulerTool(ITool):
         if not schedule_raw:
             return self._error("Missing required parameter 'schedule'.")
 
-        trigger_payload_raw = params.get("trigger_payload")
+        trigger_payload_raw_original = params.get("trigger_payload")
+        trigger_payload_raw = _coerce_to_dict(trigger_payload_raw_original)
         if not isinstance(trigger_payload_raw, dict):
+            logger.error(
+                "scheduler.create: trigger_payload inválido — type=%s, repr=%r, keys_recibidas=%s",
+                type(trigger_payload_raw_original).__name__,
+                trigger_payload_raw_original,
+                list(params.keys()),
+            )
             return self._error("Missing or invalid 'trigger_payload'. Must be an object.")
 
         # --- Validate recurring + relative guard ---
@@ -492,8 +511,14 @@ class SchedulerTool(ITool):
                     return self._error(str(exc))
 
         if "trigger_payload" in params:
-            payload_raw = params["trigger_payload"]
+            payload_raw_original = params["trigger_payload"]
+            payload_raw = _coerce_to_dict(payload_raw_original)
             if not isinstance(payload_raw, dict):
+                logger.error(
+                    "scheduler.update: trigger_payload inválido — type=%s, repr=%r",
+                    type(payload_raw_original).__name__,
+                    payload_raw_original,
+                )
                 return self._error("'trigger_payload' must be an object.")
             # Need trigger_type to validate — fetch existing task first
             # (handled below when we call update_task)

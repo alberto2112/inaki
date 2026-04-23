@@ -323,10 +323,16 @@ class SchedulerTool(ITool):
         # Si el LLM no especifica agent_id o usa el alias 'self', apuntamos al
         # agente que está creando la tarea. Delegar a otro agente requiere un
         # id explícito distinto.
+        # Si output_channel no fue especificado, heredar el canal activo para que
+        # el resultado se difunda donde se creó la tarea.
         if trigger_type_raw == "agent_send":
             raw_agent_id = trigger_payload_raw.get("agent_id")
             if raw_agent_id is None or str(raw_agent_id).strip().lower() == "self":
                 trigger_payload_raw["agent_id"] = self._agent_id
+            if trigger_payload_raw.get("output_channel") is None:
+                ctx = self._get_channel_context()
+                if ctx is not None:
+                    trigger_payload_raw["output_channel"] = ctx.routing_key
 
         # --- Validate trigger payload ---
         payload_model_cls = _TRIGGER_PAYLOAD_MODELS[trigger_type_raw]

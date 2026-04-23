@@ -171,7 +171,7 @@ async def test_broadcast_trigger_dispara_pipeline_del_otro_bot(par_bots):
     # B corrió el pipeline
     bot_b._container.run_agent.execute.assert_awaited_once()
     call_args = bot_b._container.run_agent.execute.await_args
-    assert "[anacleto dijo en el grupo]" in call_args.args[0]
+    assert "[anacleto]" in call_args.args[0]
     assert "che inaki, qué hora es?" in call_args.args[0]
     assert call_args.kwargs.get("channel") == "telegram"
     assert call_args.kwargs.get("chat_id") == CHAT_ID

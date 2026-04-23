@@ -261,7 +261,7 @@ async def test_respond_to_broadcast_envia_y_emite_broadcast(
     mock_container.run_agent.execute.assert_awaited_once()
     # El input incluye el prefijo de origen
     call_args = mock_container.run_agent.execute.await_args
-    assert "[anacleto dijo en el grupo]" in call_args.args[0]
+    assert "[anacleto]" in call_args.args[0]
     assert call_args.kwargs.get("channel") == "telegram"
     assert call_args.kwargs.get("chat_id") == "-100123"
 

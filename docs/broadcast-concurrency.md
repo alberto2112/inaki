@@ -147,7 +147,7 @@ decide (vía LLM) si responde al grupo o no — sin esperar un mensaje del usuar
 El user_input que recibe B se construye prefijando el agent_id de origen:
 
 ```
-[anacleto dijo en el grupo] che inaki, qué hora es?
+[anacleto] che inaki, qué hora es?
 ```
 
 El LLM decide si responder o emitir exactamente `[SKIP]`. No hay filtros de

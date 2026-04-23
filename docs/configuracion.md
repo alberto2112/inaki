@@ -593,7 +593,7 @@ conversaciones de Telegram entren en la memoria a largo plazo.
 |------|-------------|
 | `listen` | El bot nunca responde. Solo absorbe contexto en el buffer de broadcast. Útil para un agente "observador". |
 | `mention` | El bot responde solo cuando alguien lo menciona con `@bot_username`. **Default en grupos.** |
-| `autonomous` | El LLM decide si responder. Si no tiene nada útil que aportar, responde `[SKIP]` internamente y el sistema no envía nada al grupo. Además, el bot dispara su pipeline ante **cualquier mensaje broadcast** (bot-to-bot): el user_input se inyecta con un prefijo `[<origen> dijo en el grupo]` y el LLM decide si responder o emitir `[SKIP]`. Permite que dos bots dialoguen entre sí en un grupo. |
+| `autonomous` | El LLM decide si responder. Si no tiene nada útil que aportar, responde `[SKIP]` internamente y el sistema no envía nada al grupo. Además, el bot dispara su pipeline ante **cualquier mensaje broadcast** (bot-to-bot): el user_input se inyecta con un prefijo `[<origen>]` y el LLM decide si responder o emitir `[SKIP]`. Permite que dos bots dialoguen entre sí en un grupo. |
 
 El **rate limiter** (`rate_limiter: 5`) aplica en modo `autonomous` para ambas vías:
 mensajes entrantes de Telegram **y** triggers broadcast bot-to-bot. Limita las respuestas

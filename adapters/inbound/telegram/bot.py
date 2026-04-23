@@ -659,12 +659,12 @@ class TelegramBot:
     async def _respond_to_broadcast(self, msg: BroadcastMessage) -> None:
         """Ejecuta el pipeline ante un broadcast recibido y responde al grupo.
 
-        El input al LLM lleva un prefijo ``[<agent_id> dijo en el grupo]: ...`` para
+        El input al LLM lleva un prefijo ``[<agent_id>]: ...`` para
         que el modelo sepa que la fuente es otro bot. Respeta ``[SKIP]`` y vuelve a
         emitir broadcast para mantener el contexto cruzado consistente.
         """
         chat_id_int = int(msg.chat_id)
-        contenido = f"[{msg.agent_id} dijo en el grupo]: {msg.message}"
+        contenido = f"[{msg.agent_id}]: {msg.message}"
 
         secciones: list[str] = []
         if self._broadcast_receiver is not None:

@@ -19,6 +19,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 
 from adapters.inbound.telegram.message_mapper import (
     detect_mention,
+    hay_menciones,
     extract_audio_payload,
     format_group_message,
     format_response,
@@ -324,6 +325,19 @@ class TelegramBot:
 
         if behavior == "listen":
             # Modo escucha: recibe mensajes del grupo pero nunca responde.
+            return
+
+        # Filtro de mención explícita a otro bot.
+        # Si bot_username está configurado y el mensaje menciona a alguien (cualquier behavior)
+        # pero ninguna mención es para este bot → no participar.
+        if self._bot_username and hay_menciones(update.message) and not detect_mention(
+            update.message, self._bot_username
+        ):
+            logger.debug(
+                "Mención a otro bot detectada, ignorando (agent=%s, chat_id=%s)",
+                self._agent_cfg.id,
+                chat_id,
+            )
             return
 
         if behavior == "mention":

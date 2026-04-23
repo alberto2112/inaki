@@ -77,6 +77,19 @@ def format_group_message(message) -> str:
     return f"{remitente}: {texto}"
 
 
+def hay_menciones(message) -> bool:
+    """Devuelve ``True`` si el mensaje contiene al menos una entidad de tipo mención.
+
+    Detecta ``mention`` (``@usuario``) y ``text_mention`` (usuario sin username público).
+    No distingue a quién apunta la mención — solo informa si hay alguna.
+
+    Args:
+        message: Objeto ``telegram.Message`` con el campo ``entities`` poblado.
+    """
+    entities = getattr(message, "entities", None) or []
+    return any(getattr(e, "type", None) in ("mention", "text_mention") for e in entities)
+
+
 def detect_mention(message, bot_username: str) -> bool:
     """Detecta si un mensaje menciona al bot por su username.
 

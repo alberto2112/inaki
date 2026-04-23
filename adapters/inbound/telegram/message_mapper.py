@@ -127,43 +127,6 @@ def detect_mention(message, bot_username: str) -> bool:
     return False
 
 
-def detect_broadcast_mention(
-    text: str,
-    bot_username: str | None,
-    aliases: list[str] | None = None,
-) -> bool:
-    """Detecta si un texto broadcast menciona al bot por username o por cualquier alias.
-
-    A diferencia de :func:`detect_mention` (que usa ``message.entities`` de Telegram),
-    este detector opera sobre **texto plano** — pensado para mensajes recibidos por el
-    canal broadcast TCP, donde no hay entidades. Match case-insensitive por substring.
-
-    Args:
-        text: Texto del mensaje broadcast.
-        bot_username: Username real del bot (sin ``@``). Si ``None``, se omite.
-        aliases: Aliases adicionales (sin ``@``) a probar. Vacío o ``None`` se ignora.
-
-    Returns:
-        ``True`` si ``bot_username`` o algún alias aparece como substring en ``text``
-        (ignorando mayúsculas/minúsculas); ``False`` en caso contrario.
-    """
-    if not text:
-        return False
-
-    texto_lower = text.lower()
-    candidatos: list[str] = []
-    if bot_username:
-        candidatos.append(bot_username)
-    if aliases:
-        candidatos.extend(aliases)
-
-    for candidato in candidatos:
-        if candidato and candidato.lower() in texto_lower:
-            return True
-
-    return False
-
-
 def format_response(response: str) -> str:
     """
     Convierte la respuesta markdown del LLM al subset HTML de Telegram.

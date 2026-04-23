@@ -2,7 +2,8 @@
 
 Cubre:
   - subscribe_broadcast_trigger solo registra en modo autonomous con receiver.
-  - _on_broadcast_received filtra por mention/alias antes de responder.
+  - _on_broadcast_received dispara el pipeline ante CUALQUIER mensaje broadcast
+    (sin filtro por mención — el LLM decide vía [SKIP]).
   - _on_broadcast_received respeta rate limiter y silencia al superarlo.
   - _respond_to_broadcast ejecuta run_agent.execute, envía texto y re-emite broadcast.
   - _respond_to_broadcast honra el marcador [SKIP].
@@ -16,6 +17,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core.ports.outbound.broadcast_port import BroadcastMessage
+
+
+@pytest.fixture(autouse=True)
+def _sin_jitter(monkeypatch):
+    """Elimina el jitter 1-3s del trigger broadcast para que los tests sean inmediatos."""
+    monkeypatch.setattr(
+        "adapters.inbound.telegram.bot.BROADCAST_TRIGGER_JITTER_MIN_SEC", 0.0
+    )
+    monkeypatch.setattr(
+        "adapters.inbound.telegram.bot.BROADCAST_TRIGGER_JITTER_MAX_SEC", 0.0
+    )
 
 
 @pytest.fixture
@@ -41,7 +53,6 @@ def agent_cfg_autonomous() -> MagicMock:
             "broadcast": {
                 "behavior": "autonomous",
                 "bot_username": "inaki_bot",
-                "aliases": ["inaki", "iñaki"],
                 "rate_limiter": 5,
             },
         }
@@ -132,7 +143,7 @@ async def test_subscribe_broadcast_trigger_mention_noop(mock_container, mock_rec
 
 
 # ---------------------------------------------------------------------------
-# _on_broadcast_received — filtro por mención
+# _on_broadcast_received — todo broadcast dispara el pipeline
 # ---------------------------------------------------------------------------
 
 
@@ -145,10 +156,10 @@ def _msg(text: str, chat_id: str = "-100123", agent_id: str = "anacleto") -> Bro
     )
 
 
-async def test_on_broadcast_ignora_si_no_hay_mencion(
+async def test_on_broadcast_dispara_pipeline_sin_filtro(
     agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter, mock_rate_limiter
 ):
-    """Mensaje sin mention ni alias → no se dispara el pipeline."""
+    """Cualquier mensaje broadcast dispara el pipeline — el LLM decide vía [SKIP]."""
     bot = _build_bot(
         agent_cfg_autonomous,
         mock_container,
@@ -157,28 +168,40 @@ async def test_on_broadcast_ignora_si_no_hay_mencion(
         rate_limiter=mock_rate_limiter,
     )
     await bot._on_broadcast_received(_msg("comentario sobre el clima"))
-    mock_container.run_agent.execute.assert_not_awaited()
-
-
-async def test_on_broadcast_responde_si_alias_presente(
-    agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter, mock_rate_limiter
-):
-    """Alias 'inaki' presente case-insensitive → dispara pipeline."""
-    bot = _build_bot(
-        agent_cfg_autonomous,
-        mock_container,
-        receiver=mock_receiver,
-        emitter=mock_emitter,
-        rate_limiter=mock_rate_limiter,
-    )
-    await bot._on_broadcast_received(_msg("che INAKI, acordate de la reunión"))
     mock_container.run_agent.execute.assert_awaited_once()
 
 
-async def test_on_broadcast_responde_si_bot_username_presente(
-    agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter, mock_rate_limiter
+async def test_on_broadcast_aplica_jitter_aleatorio(
+    agent_cfg_autonomous,
+    mock_container,
+    mock_receiver,
+    mock_emitter,
+    mock_rate_limiter,
+    monkeypatch,
 ):
-    """bot_username 'inaki_bot' como substring → dispara."""
+    """Antes de disparar, el callback duerme un jitter aleatorio en el rango configurado."""
+    monkeypatch.setattr(
+        "adapters.inbound.telegram.bot.BROADCAST_TRIGGER_JITTER_MIN_SEC", 1.0
+    )
+    monkeypatch.setattr(
+        "adapters.inbound.telegram.bot.BROADCAST_TRIGGER_JITTER_MAX_SEC", 3.0
+    )
+
+    capturado: dict[str, float] = {}
+
+    def _fake_uniform(a: float, b: float) -> float:
+        capturado["a"] = a
+        capturado["b"] = b
+        return 2.0
+
+    sleeps: list[float] = []
+
+    async def _fake_sleep(sec: float) -> None:
+        sleeps.append(sec)
+
+    monkeypatch.setattr("adapters.inbound.telegram.bot.random.uniform", _fake_uniform)
+    monkeypatch.setattr("adapters.inbound.telegram.bot.asyncio.sleep", _fake_sleep)
+
     bot = _build_bot(
         agent_cfg_autonomous,
         mock_container,
@@ -186,7 +209,10 @@ async def test_on_broadcast_responde_si_bot_username_presente(
         emitter=mock_emitter,
         rate_limiter=mock_rate_limiter,
     )
-    await bot._on_broadcast_received(_msg("mensaje para inaki_bot"))
+    await bot._on_broadcast_received(_msg("hola"))
+
+    assert capturado == {"a": 1.0, "b": 3.0}
+    assert 2.0 in sleeps
     mock_container.run_agent.execute.assert_awaited_once()
 
 
@@ -208,7 +234,7 @@ async def test_on_broadcast_respeta_rate_limiter(
         emitter=mock_emitter,
         rate_limiter=rl,
     )
-    await bot._on_broadcast_received(_msg("inaki, contestá"))
+    await bot._on_broadcast_received(_msg("cualquier cosa"))
     mock_container.run_agent.execute.assert_not_awaited()
     rl.check_and_increment.assert_called_once_with("inaki", "-100123", 5)
 

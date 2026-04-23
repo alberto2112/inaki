@@ -2,9 +2,9 @@
 
 > **Nota**: este documento describe el timing del **broadcast como contexto** (buffer
 > que alimenta el system prompt del siguiente turno). Con la incorporación del
-> **broadcast como trigger** (bot-to-bot), un bot también puede responder directamente
-> a un mensaje broadcast que lo mencione por `bot_username` o `alias`. Esa vía NO
-> pasa por el flujo de Telegram privacy — es independiente y se describe al final.
+> **broadcast como trigger** (bot-to-bot), un bot también dispara su pipeline ante
+> cualquier mensaje broadcast recibido — el LLM decide si responder o emitir `[SKIP]`.
+> Esa vía NO pasa por el flujo de Telegram privacy — es independiente y se describe al final.
 
 ## El problema: timing del broadcast context
 
@@ -141,9 +141,17 @@ práctica, o si se agregan más de dos bots al mismo grupo (la ventana de colisi
 ## Broadcast-as-Trigger — bot-to-bot directo
 
 Además del buffer de contexto (descripto arriba), el canal broadcast también actúa
-como **trigger**: si un bot A emite un broadcast cuyo texto contiene el `bot_username`
-de B (o cualquier `alias` configurado), B dispara el pipeline completo y responde al
-grupo — sin esperar un mensaje del usuario.
+como **trigger**: si un bot A emite un broadcast, B dispara el pipeline completo y
+decide (vía LLM) si responde al grupo o no — sin esperar un mensaje del usuario.
+
+El user_input que recibe B se construye prefijando el agent_id de origen:
+
+```
+[anacleto dijo en el grupo] che inaki, qué hora es?
+```
+
+El LLM decide si responder o emitir exactamente `[SKIP]`. No hay filtros de
+mención en el adapter — la decisión es 100% del modelo.
 
 ### Por qué hace falta
 
@@ -155,18 +163,24 @@ grupo. El trigger por broadcast compensa esa limitación de plataforma.
 
 Con dos bots `A` y `B`, el bucle infinito se evita porque:
 
-1. **Heurística de mención obligatoria**: B solo responde si el mensaje broadcast
-   contiene `B.bot_username` o un alias de B. Si A, en su respuesta, no nombra a B,
-   B no reacciona. Simétricamente para A.
-2. **`[SKIP]` sigue aplicando**: si el LLM no tiene nada útil que decir, corta el
-   turno sin emitir broadcast.
-3. **Rate limiter compartido**: el mismo `FixedWindowRateLimiter` (30s, por
-   `(agent_id, chat_id)`) limita también los triggers bot-to-bot.
+1. **`[SKIP]` es la primera defensa**: el prompt autonomous instruye al LLM a
+   responder `[SKIP]` cuando no tiene nada útil que aportar. Si el modelo respeta
+   la instrucción, corta el turno sin emitir broadcast.
+2. **Rate limiter compartido**: el mismo `FixedWindowRateLimiter` (30s, por
+   `(agent_id, chat_id)`) limita también los triggers bot-to-bot. Si el LLM se
+   desmadra, el rate limiter corta.
+3. **Anti-loop del adapter TCP**: un bot nunca recibe su propio broadcast
+   (filtrado por `agent_id` en `TcpBroadcastAdapter`).
+4. **Jitter aleatorio (1-3s)**: antes de procesar cada broadcast, el bot espera
+   un delay aleatorio. Distribuye las respuestas simultáneas en el tiempo, da
+   margen para que el `BroadcastBuffer` cruce contexto del otro bot, y rompe
+   ráfagas. Constantes `BROADCAST_TRIGGER_JITTER_{MIN,MAX}_SEC` en
+   `adapters/inbound/telegram/bot.py`.
 
 ### Con 3+ bots — revisar
 
 Con tres bots o más, la ventana de colisión aumenta y una conversación cruzada puede
-converger en un loop lento si todos se nombran entre sí. Mitigaciones a considerar
+converger en un loop lento si el LLM no respeta `[SKIP]`. Mitigaciones a considerar
 cuando eso suceda:
 
 - **Hops counter**: propagar un contador en `BroadcastMessage` y cortar a N saltos.

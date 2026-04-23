@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
 
 from telegram import BotCommand, Update
@@ -18,7 +19,6 @@ from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 from adapters.inbound.telegram.message_mapper import (
-    detect_broadcast_mention,
     detect_mention,
     hay_menciones,
     extract_audio_payload,
@@ -38,6 +38,12 @@ logger = logging.getLogger(__name__)
 
 # Tipos de chat que Telegram considera "grupos" (no privados).
 _TIPOS_GRUPO = {"group", "supergroup", "channel"}
+
+# Jitter aleatorio aplicado antes de procesar cada broadcast recibido. Distribuye
+# respuestas simultáneas entre bots para que el BroadcastBuffer pueda cruzar
+# contexto y para romper ráfagas. Module-level para facilitar override en tests.
+BROADCAST_TRIGGER_JITTER_MIN_SEC = 1.0
+BROADCAST_TRIGGER_JITTER_MAX_SEC = 3.0
 
 
 class TelegramBot:
@@ -74,7 +80,6 @@ class TelegramBot:
 
         self._behavior: str = broadcast_dict.get("behavior", "mention")
         self._bot_username: str | None = broadcast_dict.get("bot_username")
-        self._aliases: list[str] = list(broadcast_dict.get("aliases", []) or [])
         self._rate_limit_max: int = int(broadcast_dict.get("rate_limiter", 5))
 
         if not self._token:
@@ -586,10 +591,8 @@ class TelegramBot:
             return
         await self._broadcast_receiver.subscribe(self._on_broadcast_received)
         logger.info(
-            "Bot '%s': suscripto a broadcast como trigger (bot_username=%s, aliases=%s)",
+            "Bot '%s': suscripto a broadcast como trigger (autonomous)",
             self._agent_cfg.id,
-            self._bot_username,
-            self._aliases,
         )
 
     async def _on_broadcast_received(self, msg: BroadcastMessage) -> None:
@@ -599,13 +602,30 @@ class TelegramBot:
         excepción queda aquí (fire-and-forget desde el adapter).
         """
         try:
-            # Solo respondemos si el mensaje nos menciona por username o alias.
-            if not detect_broadcast_mention(msg.message, self._bot_username, self._aliases):
-                return
+            preview = msg.message[:200].replace("\n", " ")
+            logger.info(
+                "broadcast.trigger.eval agent=%s from=%s chat_id=%s preview=%r",
+                self._agent_cfg.id,
+                msg.agent_id,
+                msg.chat_id,
+                preview,
+            )
+
+            jitter = random.uniform(
+                BROADCAST_TRIGGER_JITTER_MIN_SEC, BROADCAST_TRIGGER_JITTER_MAX_SEC
+            )
+            logger.debug(
+                "broadcast.trigger.jitter agent=%s chat_id=%s delay=%.2fs",
+                self._agent_cfg.id,
+                msg.chat_id,
+                jitter,
+            )
+            await asyncio.sleep(jitter)
 
             # Rate limiter por (agent_id, chat_id) — la misma ventana que usan
             # los mensajes entrantes de Telegram en modo autonomous. Evita
-            # tormentas bot-to-bot si la heurística de mención falla.
+            # tormentas bot-to-bot. La decisión fina de responder o [SKIP]
+            # la toma el LLM.
             if self._rate_limiter is not None:
                 breach = self._rate_limiter.check_and_increment(
                     self._agent_cfg.id,
@@ -613,14 +633,20 @@ class TelegramBot:
                     self._rate_limit_max,
                 )
                 if breach is not None:
-                    logger.debug(
-                        "Broadcast trigger rate-limited (agent=%s, chat_id=%s, counter=%d)",
+                    logger.info(
+                        "broadcast.trigger.skip.rate_limited agent=%s chat_id=%s counter=%d",
                         self._agent_cfg.id,
                         msg.chat_id,
                         breach.counter,
                     )
                     return
 
+            logger.info(
+                "broadcast.trigger.fire agent=%s from=%s chat_id=%s",
+                self._agent_cfg.id,
+                msg.agent_id,
+                msg.chat_id,
+            )
             await self._respond_to_broadcast(msg)
         except Exception:
             logger.exception(

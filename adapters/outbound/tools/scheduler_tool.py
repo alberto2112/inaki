@@ -57,6 +57,14 @@ _TRIGGER_PAYLOAD_MODELS: dict[str, type[BaseModel]] = {
 
 _VALID_OPERATIONS = ("create", "list", "get", "update", "delete", "logs", "log_get")
 
+# Ejemplos de trigger_payload por tipo — usados en el mensaje de error para que
+# el LLM pueda auto-corregirse en el retry dentro del tool loop.
+_PAYLOAD_EXAMPLE_BY_TRIGGER: dict[str, str] = {
+    "channel_send": '{"text": "mensaje"}',
+    "agent_send": '{"task": "descripción de lo que el agente debe hacer"}',
+    "shell_exec": '{"command": "comando a ejecutar"}',
+}
+
 
 def _coerce_to_dict(value: Any) -> Any:
     """Intenta parsear `value` como dict si el LLM lo envió como JSON string."""
@@ -109,6 +117,10 @@ class SchedulerTool(ITool):
     description = (
         "Manage scheduled tasks. Operations: create, list, get, update, delete, logs, log_get. "
         "Use 'create' to schedule a future action (one_shot or recurring). "
+        "REQUIRED for 'create': name, task_kind, trigger_type, trigger_payload, schedule. "
+        "trigger_payload is ALWAYS required for 'create' — it is the object that describes "
+        "WHAT the task will do (the text to send, the command to run, the task for the agent). "
+        "Without trigger_payload the create call WILL fail. "
         "Use 'list' to see all active tasks. "
         "Use 'get' to retrieve full detail (including trigger_payload) for a specific task. "
         "Use 'update' to modify mutable fields on a task. "
@@ -150,15 +162,18 @@ class SchedulerTool(ITool):
             "trigger_payload": {
                 "type": "object",
                 "description": (
-                    "Action-specific payload. "
-                    'For \'channel_send\': {"text": "...", "user_id": "...(opcional)"}. '
-                    "El canal de destino se inyecta automáticamente del contexto de conversación — "
-                    "NO incluir 'channel_id' ni 'target'. "
-                    'For \'agent_send\': {"agent_id": "...", "task": "..."}. '
-                    "agent_id acepta 'self' (o omitirlo) para referirse al agente actual; "
-                    "usá un id explícito solo si querés delegar a otro agente. "
-                    'For \'shell_exec\': {"command": "...", "working_dir": null, '
-                    '"env_vars": {}, "timeout": null}.'
+                    "REQUIRED for 'create' and 'update'. Action-specific payload — "
+                    "MUST be a JSON object (not a string, not omitted). "
+                    "Shape depends on trigger_type: "
+                    'channel_send → {"text": "mensaje"} (target se inyecta del contexto; '
+                    "NO incluir channel_id/target). "
+                    'agent_send → {"task": "lo que el agente debe hacer"} '
+                    "(agent_id se resuelve a 'self' automáticamente; "
+                    "incluilo explícito solo para delegar a otro agente). "
+                    'shell_exec → {"command": "comando a ejecutar"} '
+                    "(working_dir, env_vars, timeout son opcionales). "
+                    "Ejemplo completo para agent_send recurrente: "
+                    'trigger_payload={"task": "resumir la jornada"}.'
                 ),
             },
             "schedule": {
@@ -289,7 +304,14 @@ class SchedulerTool(ITool):
                 trigger_payload_raw_original,
                 list(params.keys()),
             )
-            return self._error("Missing or invalid 'trigger_payload'. Must be an object.")
+            example = _PAYLOAD_EXAMPLE_BY_TRIGGER.get(
+                trigger_type_raw, '{"text": "..."}'
+            )
+            return self._error(
+                f"'trigger_payload' is REQUIRED for create and must be a JSON object. "
+                f"For trigger_type='{trigger_type_raw}' use: trigger_payload={example}. "
+                f"Retry the call including the trigger_payload field."
+            )
 
         # --- Validate recurring + relative guard ---
         if task_kind_raw == "recurring" and schedule_raw.startswith("+"):

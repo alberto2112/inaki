@@ -334,6 +334,24 @@ class TelegramBot:
             # Modo escucha: recibe mensajes del grupo pero nunca responde.
             return
 
+        # Filtro de reply a otro participante.
+        # Si el mensaje es una respuesta (reply_to_message) a alguien que NO es el bot,
+        # y además no menciona al bot explícitamente → ignorar.
+        # Los broadcasts llegan por _handle_broadcast_trigger y no pasan por aquí.
+        if update.message.reply_to_message and self._bot_username:
+            reply_from = getattr(update.message.reply_to_message, "from_user", None)
+            replied_to_bot = (
+                reply_from is not None
+                and getattr(reply_from, "username", None) == self._bot_username
+            )
+            if not replied_to_bot and not detect_mention(update.message, self._bot_username):
+                logger.debug(
+                    "Reply a participante ignorado (agent=%s, chat_id=%s)",
+                    self._agent_cfg.id,
+                    chat_id,
+                )
+                return
+
         # Filtro de mención explícita a otro bot.
         # Si bot_username está configurado y el mensaje menciona a alguien (cualquier behavior)
         # pero ninguna mención es para este bot → no participar.

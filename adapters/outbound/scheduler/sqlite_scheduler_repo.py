@@ -222,7 +222,7 @@ class SQLiteSchedulerRepo:
                 """
                 SELECT * FROM scheduled_tasks
                 WHERE enabled = 1 AND status = 'pending'
-                ORDER BY next_run ASC NULLS LAST
+                ORDER BY (next_run IS NULL), next_run ASC
                 LIMIT 1
                 """,
             )

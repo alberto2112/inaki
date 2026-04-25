@@ -28,6 +28,8 @@ dependencies = [
     "rich>=13.0",
     "tzlocal>=5.0",
     "pypdf>=4.0",
+    "textual>=0.80",
+    "ruamel.yaml>=0.18",
 ]
 
 [project.optional-dependencies]

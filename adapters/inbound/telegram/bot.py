@@ -42,8 +42,8 @@ _TIPOS_GRUPO = {"group", "supergroup", "channel"}
 # Jitter aleatorio aplicado antes de procesar cada broadcast recibido. Distribuye
 # respuestas simultáneas entre bots para que el BroadcastBuffer pueda cruzar
 # contexto y para romper ráfagas. Module-level para facilitar override en tests.
-BROADCAST_TRIGGER_JITTER_MIN_SEC = 1.0
-BROADCAST_TRIGGER_JITTER_MAX_SEC = 3.0
+BROADCAST_TRIGGER_JITTER_MIN_SEC = 2.0
+BROADCAST_TRIGGER_JITTER_MAX_SEC = 4.5
 
 
 class TelegramBot:

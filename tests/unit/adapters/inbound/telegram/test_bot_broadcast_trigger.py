@@ -3,10 +3,10 @@
 Cubre:
   - subscribe_broadcast_trigger solo registra en modo autonomous con receiver.
   - _on_broadcast_received dispara el pipeline ante CUALQUIER mensaje broadcast
-    (sin filtro por mención — el LLM decide vía [SKIP]).
+    (sin filtro por mención — el LLM decide vía __SKIP__).
   - _on_broadcast_received respeta rate limiter y silencia al superarlo.
   - _respond_to_broadcast ejecuta run_agent.execute, envía texto y re-emite broadcast.
-  - _respond_to_broadcast honra el marcador [SKIP].
+  - _respond_to_broadcast honra el marcador __SKIP__.
 """
 
 from __future__ import annotations
@@ -159,7 +159,7 @@ def _msg(text: str, chat_id: str = "-100123", agent_id: str = "anacleto") -> Bro
 async def test_on_broadcast_dispara_pipeline_sin_filtro(
     agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter, mock_rate_limiter
 ):
-    """Cualquier mensaje broadcast dispara el pipeline — el LLM decide vía [SKIP]."""
+    """Cualquier mensaje broadcast dispara el pipeline — el LLM decide vía __SKIP__."""
     bot = _build_bot(
         agent_cfg_autonomous,
         mock_container,
@@ -240,7 +240,7 @@ async def test_on_broadcast_respeta_rate_limiter(
 
 
 # ---------------------------------------------------------------------------
-# _respond_to_broadcast — envío y [SKIP]
+# _respond_to_broadcast — envío y __SKIP__
 # ---------------------------------------------------------------------------
 
 
@@ -261,7 +261,7 @@ async def test_respond_to_broadcast_envia_y_emite_broadcast(
     mock_container.run_agent.execute.assert_awaited_once()
     # El input incluye el prefijo de origen
     call_args = mock_container.run_agent.execute.await_args
-    assert "[anacleto]" in call_args.args[0]
+    assert "anacleto dijo:" in call_args.args[0]
     assert call_args.kwargs.get("channel") == "telegram"
     assert call_args.kwargs.get("chat_id") == "-100123"
 
@@ -276,8 +276,8 @@ async def test_respond_to_broadcast_envia_y_emite_broadcast(
 async def test_respond_to_broadcast_skip_no_envia_ni_emite(
     agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter, mock_rate_limiter
 ):
-    """Respuesta '[SKIP]' → ni send_message ni emit."""
-    mock_container.run_agent.execute.return_value = "[SKIP]"
+    """Respuesta '__SKIP__' → ni send_message ni emit."""
+    mock_container.run_agent.execute.return_value = "__SKIP__"
     bot = _build_bot(
         agent_cfg_autonomous,
         mock_container,

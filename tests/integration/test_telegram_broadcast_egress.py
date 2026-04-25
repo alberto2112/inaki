@@ -8,7 +8,7 @@ de _run_pipeline para un chat de grupo.
 Cubre:
 - emit() es llamado DESPUÉS de reply_text() (orden de operaciones).
 - Fallo en emit() no impide que reply_text() haya sido llamada.
-- [SKIP] como respuesta del LLM suprime tanto reply_text como emit.
+- __SKIP__ como respuesta del LLM suprime tanto reply_text como emit.
 """
 
 from __future__ import annotations
@@ -165,14 +165,14 @@ async def test_emit_fallo_no_previene_reply_text(bot_fixture):
 
 
 # ---------------------------------------------------------------------------
-# Test: [SKIP] suprime reply_text Y emit
+# Test: __SKIP__ suprime reply_text Y emit
 # ---------------------------------------------------------------------------
 
 
 async def test_skip_marker_suprime_reply_y_emit(emit_mock):
-    """Si el LLM responde '[SKIP]', no se llama reply_text ni emit."""
+    """Si el LLM responde '__SKIP__', no se llama reply_text ni emit."""
     agent_cfg = _make_agent_cfg(behavior="autonomous")
-    container = _make_container(respuesta_llm="[SKIP]")
+    container = _make_container(respuesta_llm="__SKIP__")
     emitter = MagicMock()
     emitter.emit = emit_mock
 
@@ -197,14 +197,14 @@ async def test_skip_marker_suprime_reply_y_emit(emit_mock):
 
 
 # ---------------------------------------------------------------------------
-# Test: [SKIP] con espacios también es detectado
+# Test: __SKIP__ con espacios también es detectado
 # ---------------------------------------------------------------------------
 
 
 async def test_skip_marker_con_whitespace(emit_mock):
-    """'  [SKIP]  ' (con espacios) también activa el marcador."""
+    """'  __SKIP__  ' (con espacios) también activa el marcador."""
     agent_cfg = _make_agent_cfg(behavior="autonomous")
-    container = _make_container(respuesta_llm="  [SKIP]  ")
+    container = _make_container(respuesta_llm="  __SKIP__  ")
     emitter = MagicMock()
     emitter.emit = emit_mock
 

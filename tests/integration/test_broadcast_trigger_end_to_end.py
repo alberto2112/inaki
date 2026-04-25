@@ -6,7 +6,7 @@ con `behavior: autonomous` y verifica que:
   - Cuando el bot A emite un broadcast, B dispara el pipeline, responde vía
     ``send_message`` y re-emite su respuesta. A no reacciona a su propio broadcast
     (anti-loop por agent_id en el adapter TCP).
-  - El marcador ``[SKIP]`` suprime ``send_message`` y la re-emisión, pero el
+  - El marcador ``__SKIP__`` suprime ``send_message`` y la re-emisión, pero el
     pipeline igualmente se ejecuta (el LLM decide).
 """
 
@@ -125,11 +125,11 @@ async def par_bots():
 
     rl = FixedWindowRateLimiter()
 
-    # A responde [SKIP] por defecto para romper el loop: cuando B re-emite su
+    # A responde __SKIP__ por defecto para romper el loop: cuando B re-emite su
     # respuesta, A la recibe pero no vuelve a emitir. Simula un LLM sensato.
     bot_a = _build_bot(
         _agent_cfg("anacleto", "anacleto_bot"),
-        _container("[SKIP]"),
+        _container("__SKIP__"),
         emitter=adapter_a,
         receiver=adapter_a,
         rate_limiter=rl,
@@ -171,7 +171,7 @@ async def test_broadcast_trigger_dispara_pipeline_del_otro_bot(par_bots):
     # B corrió el pipeline
     bot_b._container.run_agent.execute.assert_awaited_once()
     call_args = bot_b._container.run_agent.execute.await_args
-    assert "[anacleto]" in call_args.args[0]
+    assert "anacleto dijo:" in call_args.args[0]
     assert "che inaki, qué hora es?" in call_args.args[0]
     assert call_args.kwargs.get("channel") == "telegram"
     assert call_args.kwargs.get("chat_id") == CHAT_ID
@@ -180,12 +180,12 @@ async def test_broadcast_trigger_dispara_pipeline_del_otro_bot(par_bots):
     bot_b._app.bot.send_message.assert_awaited_once()
 
     # A NO reaccionó a su propio broadcast (anti-loop por agent_id en el adapter).
-    # Sí procesó la respuesta de B (retornó [SKIP] por fixture, sin send_message).
+    # Sí procesó la respuesta de B (retornó __SKIP__ por fixture, sin send_message).
     bot_a._app.bot.send_message.assert_not_awaited()
 
 
 async def test_broadcast_sin_mencion_igualmente_dispara(par_bots):
-    """Cualquier broadcast (aun sin mencionar a B) dispara el pipeline — LLM decide vía [SKIP]."""
+    """Cualquier broadcast (aun sin mencionar a B) dispara el pipeline — LLM decide vía __SKIP__."""
     bot_a, bot_b, adapter_a, adapter_b = par_bots
 
     msg = BroadcastMessage(
@@ -207,11 +207,11 @@ async def test_broadcast_sin_mencion_igualmente_dispara(par_bots):
 
 
 async def test_broadcast_skip_no_envia(par_bots):
-    """B responde '[SKIP]' → ni send_message ni re-emit."""
+    """B responde '__SKIP__' → ni send_message ni re-emit."""
     bot_a, bot_b, adapter_a, adapter_b = par_bots
 
-    # Sobrescribimos la respuesta de B para que sea [SKIP]
-    bot_b._container.run_agent.execute.return_value = "[SKIP]"
+    # Sobrescribimos la respuesta de B para que sea __SKIP__
+    bot_b._container.run_agent.execute.return_value = "__SKIP__"
 
     msg = BroadcastMessage(
         timestamp=time.time(),

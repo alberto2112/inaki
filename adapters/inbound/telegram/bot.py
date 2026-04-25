@@ -380,12 +380,13 @@ class TelegramBot:
         extra_sections: list[str] = []
 
         if behavior == "autonomous":
-            # Sección de instrucción [SKIP] para modo autónomo.
+            # Sección de instrucción __SKIP__ para modo autónomo.
             seccion_skip = (
                 "## Modo autónomo\n"
                 "Si después de leer el contexto considerás que no tenés nada útil que aportar "
-                "al grupo, respondé EXACTAMENTE con `[SKIP]` (mayúsculas, entre corchetes, nada "
-                "más). El sistema detecta ese marcador y no enviará nada al grupo."
+                "al grupo, respondé EXACTAMENTE con `__SKIP__` (mayúsculas, doble guion bajo "
+                "antes y después, sin llamar ninguna tool, nada más). El sistema detecta ese "
+                "marcador y no enviará nada al grupo."
             )
             extra_sections.append(seccion_skip)
 
@@ -502,7 +503,7 @@ class TelegramBot:
         """Ejecuta el agente con `user_input` (texto tipeado, transcripto o formateado de grupo).
 
         Centraliza el ciclo común: channel_context → extra_sections → live_sink →
-        run_agent.execute → [SKIP] check → reply HTML → broadcast egress →
+        run_agent.execute → __SKIP__ check → reply HTML → broadcast egress →
         reacción ✅/❌ → limpiar contexto al final.
 
         Args:
@@ -510,7 +511,7 @@ class TelegramBot:
             user_input: Texto ya formateado para el LLM (con prefijo de usuario si es grupo).
             chat_type: Tipo de chat (``"private"``, ``"group"``, ``"supergroup"``, ``"channel"``).
             extra_sections: Secciones adicionales del system prompt (broadcast context,
-                instrucción [SKIP], etc.). Se pasan via ``set_extra_system_sections`` ANTES
+                instrucción __SKIP__, etc.). Se pasan via ``set_extra_system_sections`` ANTES
                 de invocar ``execute``.
         """
         chat_id = update.effective_chat.id
@@ -542,9 +543,9 @@ class TelegramBot:
                 chat_id=str(chat_id),
             )
 
-            # Verificar marcador [SKIP] — solo aplica en modo autónomo en grupos.
+            # Verificar marcador __SKIP__ — solo aplica en modo autónomo en grupos.
             # La respuesta contiene SOLO el marcador → no enviar nada ni emitir broadcast.
-            if self._behavior == "autonomous" and es_grupo and response.strip() == "[SKIP]":
+            if self._behavior == "autonomous" and es_grupo and response.strip() == "__SKIP__":
                 logger.debug(
                     "autonomous_skip detectado (agent=%s, chat_id=%s)",
                     self._agent_cfg.id,
@@ -642,7 +643,7 @@ class TelegramBot:
 
             # Rate limiter por (agent_id, chat_id) — la misma ventana que usan
             # los mensajes entrantes de Telegram en modo autonomous. Evita
-            # tormentas bot-to-bot. La decisión fina de responder o [SKIP]
+            # tormentas bot-to-bot. La decisión fina de responder o __SKIP__
             # la toma el LLM.
             if self._rate_limiter is not None:
                 breach = self._rate_limiter.check_and_increment(
@@ -677,12 +678,12 @@ class TelegramBot:
     async def _respond_to_broadcast(self, msg: BroadcastMessage) -> None:
         """Ejecuta el pipeline ante un broadcast recibido y responde al grupo.
 
-        El input al LLM lleva un prefijo ``[<agent_id>]: ...`` para
-        que el modelo sepa que la fuente es otro bot. Respeta ``[SKIP]`` y vuelve a
+        El input al LLM lleva un prefijo ``<agent_id> dijo: ...`` para
+        que el modelo sepa que la fuente es otro bot. Respeta ``__SKIP__`` y vuelve a
         emitir broadcast para mantener el contexto cruzado consistente.
         """
         chat_id_int = int(msg.chat_id)
-        contenido = f"[{msg.agent_id}]: {msg.message}"
+        contenido = f"{msg.agent_id} dijo: {msg.message}"
 
         secciones: list[str] = []
         if self._broadcast_receiver is not None:
@@ -693,7 +694,7 @@ class TelegramBot:
         seccion_skip = (
             "## Modo autónomo\n"
             "Si después de leer el contexto considerás que no tenés nada útil que aportar "
-            "al grupo, respondé EXACTAMENTE con `[SKIP]` (mayúsculas, entre corchetes, nada "
+            "al grupo, respondé EXACTAMENTE con `__SKIP__` (mayúsculas, entre corchetes, nada "
             "más). El sistema detecta ese marcador y no enviará nada al grupo."
         )
         secciones.append(seccion_skip)
@@ -709,7 +710,7 @@ class TelegramBot:
                 chat_id=msg.chat_id,
             )
 
-            if response.strip() == "[SKIP]":
+            if response.strip() == "__SKIP__":
                 logger.debug(
                     "broadcast_trigger_skip (agent=%s, chat_id=%s, from=%s)",
                     self._agent_cfg.id,

@@ -1,0 +1,20 @@
+# Configuración con bloque comentado (caso de uso principal del usuario:
+# tener alternativas listas para descommentear rápidamente)
+
+# llm:
+#   provider: groq
+#   model: llama3-70b-8192
+#   temperature: 0.3
+llm:
+  provider: openai
+  model: gpt-4o
+  temperature: 0.7
+  max_tokens: 4096
+
+# embedding:
+#   provider: openai
+#   model: text-embedding-3-small
+embedding:
+  provider: e5_onnx
+  model_dirname: models/e5-small
+  dimension: 384

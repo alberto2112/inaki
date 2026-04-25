@@ -1,0 +1,21 @@
+# Configuración anidada con comentarios a múltiples niveles
+
+# Bloque de configuración del LLM
+llm:
+  # Provider externo a usar
+  provider: openrouter
+  # Nombre del modelo
+  model: anthropic/claude-3-5-haiku
+  # Temperatura de muestreo (0.0 = determinístico)
+  temperature: 0.7
+  # Tokens máximos de la respuesta
+  max_tokens: 2048
+
+# Bloque de configuración de la aplicación
+app:
+  # Nombre del asistente
+  name: Iñaki
+  # Nivel de log
+  log_level: INFO
+  # Agente por defecto al iniciar
+  default_agent: general

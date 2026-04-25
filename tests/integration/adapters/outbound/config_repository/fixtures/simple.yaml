@@ -1,0 +1,11 @@
+# Configuración simple de ejemplo
+# Cada clave tiene su comentario explicativo
+
+# Nivel de log del sistema
+log_level: INFO
+
+# Nombre para mostrar al usuario
+name: Iñaki
+
+# Versión de la config
+version: 1

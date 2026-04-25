@@ -230,6 +230,14 @@ class TcpBroadcastAdapter:
             return
         self._iniciado = False
 
+        # Cerrar clientes conectados ANTES de cancelar _tarea_principal.
+        # serve_forever()/wait_closed() bloquean hasta que todos los handlers
+        # de conexión terminen. Cerrar los writers aquí causa que reader.readline()
+        # retorne EOF en _bucle_lectura, desbloqueando esos handlers de inmediato.
+        for writer in list(self._clientes):
+            await self._cerrar_writer(writer)
+        self._clientes.clear()
+
         # Cancelar tarea principal
         if self._tarea_principal and not self._tarea_principal.done():
             self._tarea_principal.cancel()
@@ -239,16 +247,11 @@ class TcpBroadcastAdapter:
                 pass
         self._tarea_principal = None
 
-        # Cerrar server (modo server)
+        # Cerrar server (modo server) — puede ya estar cerrado por serve_forever()
         if self._server_obj is not None:
             self._server_obj.close()
             await self._server_obj.wait_closed()
             self._server_obj = None
-
-        # Cerrar clientes conectados (modo server)
-        for writer in list(self._clientes):
-            await self._cerrar_writer(writer)
-        self._clientes.clear()
 
         # Cerrar conexión upstream (modo client)
         if self._writer_upstream is not None:

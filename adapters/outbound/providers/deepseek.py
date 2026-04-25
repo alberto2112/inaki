@@ -41,6 +41,7 @@ class DeepSeekProvider(BaseLLMProvider):
             "messages": self._build_messages(messages, system_prompt),
             "temperature": self._cfg.temperature,
             "max_tokens": self._cfg.max_tokens,
+            "thinking": {"type": "disabled"},
         }
         if tools:
             payload["tools"] = tools
@@ -84,6 +85,7 @@ class DeepSeekProvider(BaseLLMProvider):
             "temperature": self._cfg.temperature,
             "max_tokens": self._cfg.max_tokens,
             "stream": True,
+            "thinking": {"type": "disabled"},
         }
         try:
             async with httpx.AsyncClient(timeout=120) as client:

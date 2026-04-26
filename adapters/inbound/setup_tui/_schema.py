@@ -42,9 +42,13 @@ _SKIP_ORIGINS = (dict, list, set, frozenset)
 
 
 def _is_secret(name: str) -> bool:
-    """True si el nombre del campo sugiere que es un secret."""
+    """True si el nombre del campo sugiere que es un secret.
+
+    Match estricto (igual o sufijo ``_kw``) para evitar falsos positivos:
+    ``max_tokens`` contiene ``token`` como substring pero NO es un secret.
+    """
     lower = name.lower()
-    return any(kw in lower for kw in _SECRET_KEYWORDS)
+    return any(lower == kw or lower.endswith(f"_{kw}") for kw in _SECRET_KEYWORDS)
 
 
 def _is_long(name: str) -> bool:

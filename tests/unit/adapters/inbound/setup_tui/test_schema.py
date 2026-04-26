@@ -154,3 +154,58 @@ class TestSkipComplejos:
         all_fields = [f for _, fields in secciones for f in fields]
         labels = [f.label for f in all_fields]
         assert "providers" not in labels
+
+
+class TestIsSecretMatch:
+    """Inferencia de kind=secret evita falsos positivos por substring."""
+
+    def test_max_tokens_NO_es_secret(self):
+        """``max_tokens`` contiene ``token`` pero NO es un secret."""
+        from adapters.inbound.setup_tui._schema import _is_secret
+
+        assert _is_secret("max_tokens") is False
+
+    def test_token_si_es_secret(self):
+        from adapters.inbound.setup_tui._schema import _is_secret
+
+        assert _is_secret("token") is True
+
+    def test_bot_token_si_es_secret(self):
+        """``bot_token`` (sufijo ``_token``) sí es secret."""
+        from adapters.inbound.setup_tui._schema import _is_secret
+
+        assert _is_secret("bot_token") is True
+
+    def test_api_key_si_es_secret(self):
+        from adapters.inbound.setup_tui._schema import _is_secret
+
+        assert _is_secret("api_key") is True
+
+    def test_groq_api_key_si_es_secret(self):
+        """Sufijo ``_api_key`` se detecta correctamente."""
+        from adapters.inbound.setup_tui._schema import _is_secret
+
+        assert _is_secret("groq_api_key") is True
+
+    def test_authentication_NO_es_secret(self):
+        """``authentication`` contiene ``auth`` pero NO debe marcarse secret."""
+        from adapters.inbound.setup_tui._schema import _is_secret
+
+        assert _is_secret("authentication") is False
+
+    def test_password_si_es_secret(self):
+        from adapters.inbound.setup_tui._schema import _is_secret
+
+        assert _is_secret("password") is True
+
+    def test_memory_llm_max_tokens_kind_es_scalar(self):
+        """Regresión end-to-end: en MemoryLLMOverride, max_tokens → scalar."""
+        from infrastructure.config import MemoryLLMOverride
+
+        secciones = sections_for_model(MemoryLLMOverride, {})
+        all_fields = [f for _, fields in secciones for f in fields]
+        max_tokens = next((f for f in all_fields if f.label == "max_tokens"), None)
+        assert max_tokens is not None
+        assert max_tokens.kind == "scalar", (
+            f"max_tokens NO debe ser secret; kind actual: {max_tokens.kind}"
+        )

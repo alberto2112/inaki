@@ -32,13 +32,17 @@ TICK = 0.05
 
 
 @pytest.fixture(autouse=True)
-def _sin_jitter(monkeypatch):
-    """Elimina el jitter 1-3s del trigger broadcast para que los tests sean inmediatos."""
+def _sin_delay(monkeypatch):
+    """Elimina el delay 7-21s del flush de grupo para que los tests sean inmediatos.
+
+    El flush task arranca apenas se programa porque el ``asyncio.sleep(0)`` no
+    bloquea el loop más allá del próximo tick.
+    """
     monkeypatch.setattr(
-        "adapters.inbound.telegram.bot.BROADCAST_TRIGGER_JITTER_MIN_SEC", 0.0
+        "adapters.inbound.telegram.bot.GROUP_RESPONSE_DELAY_MIN_SEC", 0.0
     )
     monkeypatch.setattr(
-        "adapters.inbound.telegram.bot.BROADCAST_TRIGGER_JITTER_MAX_SEC", 0.0
+        "adapters.inbound.telegram.bot.GROUP_RESPONSE_DELAY_MAX_SEC", 0.0
     )
 
 
@@ -64,6 +68,7 @@ def _agent_cfg(agent_id: str, bot_username: str) -> MagicMock:
 
 def _container(respuesta: str) -> MagicMock:
     c = MagicMock()
+    c.run_agent.record_user_message = AsyncMock()
     c.run_agent.execute = AsyncMock(return_value=respuesta)
     c.run_agent.set_extra_system_sections = MagicMock()
     c.set_channel_context = MagicMock()
@@ -152,7 +157,7 @@ async def par_bots():
 
 
 async def test_broadcast_trigger_dispara_pipeline_del_otro_bot(par_bots):
-    """A emite un broadcast → B dispara pipeline, responde y re-emite."""
+    """A emite un broadcast → B persiste en historial, flushea, responde y re-emite."""
     bot_a, bot_b, adapter_a, adapter_b = par_bots
 
     msg_a = BroadcastMessage(
@@ -162,30 +167,37 @@ async def test_broadcast_trigger_dispara_pipeline_del_otro_bot(par_bots):
         message="che inaki, qué hora es?",
     )
     await adapter_a.emit(msg_a)
-    # Esperar varios ticks para TCP → callback → pipeline → send_message
-    for _ in range(20):
+    # Esperar varios ticks para TCP → callback → record → flush task → send_message
+    for _ in range(40):
         await asyncio.sleep(TICK)
         if bot_b._app.bot.send_message.await_count > 0:
             break
 
-    # B corrió el pipeline
-    bot_b._container.run_agent.execute.assert_awaited_once()
-    call_args = bot_b._container.run_agent.execute.await_args
-    assert "anacleto dijo:" in call_args.args[0]
-    assert "che inaki, qué hora es?" in call_args.args[0]
-    assert call_args.kwargs.get("channel") == "telegram"
-    assert call_args.kwargs.get("chat_id") == CHAT_ID
+    # B persistió el broadcast con prefijo
+    bot_b._container.run_agent.record_user_message.assert_awaited()
+    record_args = bot_b._container.run_agent.record_user_message.await_args
+    assert "anacleto dijo:" in record_args.args[0]
+    assert "che inaki, qué hora es?" in record_args.args[0]
+    assert record_args.kwargs.get("channel") == "telegram"
+    assert record_args.kwargs.get("chat_id") == CHAT_ID
+
+    # B corrió el pipeline (sin user_input — se deriva del historial)
+    bot_b._container.run_agent.execute.assert_awaited()
+    exec_args = bot_b._container.run_agent.execute.await_args
+    assert exec_args.kwargs.get("channel") == "telegram"
+    assert exec_args.kwargs.get("chat_id") == CHAT_ID
 
     # B mandó el mensaje a Telegram (aunque sea mock)
     bot_b._app.bot.send_message.assert_awaited_once()
 
     # A NO reaccionó a su propio broadcast (anti-loop por agent_id en el adapter).
-    # Sí procesó la respuesta de B (retornó __SKIP__ por fixture, sin send_message).
+    # Sí persistió la respuesta de B en su historial; el flush corre y devuelve
+    # __SKIP__ por fixture (no send_message).
     bot_a._app.bot.send_message.assert_not_awaited()
 
 
 async def test_broadcast_sin_mencion_igualmente_dispara(par_bots):
-    """Cualquier broadcast (aun sin mencionar a B) dispara el pipeline — LLM decide vía __SKIP__."""
+    """Cualquier broadcast (aun sin mencionar a B) dispara el flush — LLM decide vía __SKIP__."""
     bot_a, bot_b, adapter_a, adapter_b = par_bots
 
     msg = BroadcastMessage(
@@ -195,7 +207,7 @@ async def test_broadcast_sin_mencion_igualmente_dispara(par_bots):
         message="hablando solo del clima sin nombrar a nadie",
     )
     await adapter_a.emit(msg)
-    for _ in range(20):
+    for _ in range(40):
         await asyncio.sleep(TICK)
         if bot_b._container.run_agent.execute.await_count > 0:
             break
@@ -207,7 +219,7 @@ async def test_broadcast_sin_mencion_igualmente_dispara(par_bots):
 
 
 async def test_broadcast_skip_no_envia(par_bots):
-    """B responde '__SKIP__' → ni send_message ni re-emit."""
+    """B responde '__SKIP__' → ni send_message ni re-emit, pero sí persiste y ejecuta."""
     bot_a, bot_b, adapter_a, adapter_b = par_bots
 
     # Sobrescribimos la respuesta de B para que sea __SKIP__
@@ -220,10 +232,10 @@ async def test_broadcast_skip_no_envia(par_bots):
         message="inaki, cualquier cosa",
     )
     await adapter_a.emit(msg)
-    for _ in range(15):
+    for _ in range(30):
         await asyncio.sleep(TICK)
         if bot_b._container.run_agent.execute.await_count > 0:
             break
 
-    bot_b._container.run_agent.execute.assert_awaited_once()
+    bot_b._container.run_agent.execute.assert_awaited()
     bot_b._app.bot.send_message.assert_not_awaited()

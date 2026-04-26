@@ -470,6 +470,48 @@ class BroadcastConfig(BaseModel):
         return self
 
 
+class TelegramGroupsConfig(BaseModel):
+    """
+    Config tipada del comportamiento del bot en chats grupales.
+
+    Todos los campos son opcionales y se resuelven contra defaults definidos en
+    el adaptador. Ausencia explícita (``None``) significa "heredar del nivel
+    padre" cuando aplica (caso ``reactions``) o "usar default del módulo".
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    min_delay_response: float | None = None
+    """Delay mínimo (segundos) antes de flushar el buffer de grupo al LLM. ``None`` → default del módulo."""
+
+    max_delay_response: float | None = None
+    """Delay máximo (segundos) antes de flushar el buffer. ``None`` → default del módulo."""
+
+    reactions: bool | None = None
+    """Override del flag ``channels.telegram.reactions`` para chats grupales. ``None`` → hereda del padre."""
+
+    @model_validator(mode="after")
+    def _validar_delays(self) -> "TelegramGroupsConfig":
+        if (
+            self.min_delay_response is not None
+            and self.max_delay_response is not None
+            and self.min_delay_response > self.max_delay_response
+        ):
+            raise ValueError(
+                f"TelegramGroupsConfig: min_delay_response ({self.min_delay_response}) "
+                f"no puede ser mayor que max_delay_response ({self.max_delay_response})."
+            )
+        if self.min_delay_response is not None and self.min_delay_response < 0:
+            raise ValueError(
+                f"TelegramGroupsConfig: min_delay_response debe ser >= 0, recibido: {self.min_delay_response}."
+            )
+        if self.max_delay_response is not None and self.max_delay_response < 0:
+            raise ValueError(
+                f"TelegramGroupsConfig: max_delay_response debe ser >= 0, recibido: {self.max_delay_response}."
+            )
+        return self
+
+
 class TelegramChannelConfig(BaseModel):
     """
     Config tipada del canal Telegram.
@@ -497,6 +539,9 @@ class TelegramChannelConfig(BaseModel):
 
     broadcast: BroadcastConfig | None = None
     """Config del canal de broadcast entre instancias. None = broadcast inactivo."""
+
+    groups: TelegramGroupsConfig | None = None
+    """Config específica para chats grupales (delays, override de reactions). None = todos los defaults."""
 
 
 class KnowledgeSourceConfig(BaseModel):

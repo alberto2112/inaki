@@ -46,6 +46,52 @@ def _workspace_absolute_path(agent_config: AgentConfig) -> str:
     return str(Path(agent_config.workspace.path).expanduser().resolve())
 
 
+def _extract_trailing_user_batch(history: list[Message]) -> str:
+    """Extrae los `role=user` consecutivos al final del historial, concatenados con `\\n`.
+
+    Representa "lo que el usuario (o los usuarios/bots de un grupo) acaban de decir
+    desde el último turno del assistant". Vacío si no hay nada al final.
+    """
+    trailing: list[str] = []
+    for msg in reversed(history):
+        if msg.role == Role.USER:
+            trailing.append(msg.content)
+        else:
+            break
+    trailing.reverse()
+    return "\n".join(trailing)
+
+
+def _coalesce_consecutive_same_role(messages: list[Message]) -> list[Message]:
+    """Junta mensajes consecutivos con el mismo rol en uno solo, content joined con `\\n`.
+
+    Necesario cuando el historial puede contener múltiples `role=user` seguidos
+    (caso del buffer de grupo): muchos providers de LLM exigen alternación estricta
+    user/assistant. Solo coalesce mensajes "limpios" — preserva intactos los que
+    tengan `tool_calls` o `tool_call_id` (semántica de tool loop).
+    """
+    if not messages:
+        return []
+    result: list[Message] = [messages[0]]
+    for msg in messages[1:]:
+        prev = result[-1]
+        if (
+            msg.role == prev.role
+            and msg.tool_calls is None
+            and msg.tool_call_id is None
+            and prev.tool_calls is None
+            and prev.tool_call_id is None
+        ):
+            result[-1] = Message(
+                role=prev.role,
+                content=prev.content + "\n" + msg.content,
+                timestamp=prev.timestamp,
+            )
+        else:
+            result.append(msg)
+    return result
+
+
 def _should_bypass_routing_for_short_input(
     *,
     user_input: str,
@@ -163,9 +209,25 @@ class RunAgentUseCase:
             logger.warning("No se pudo leer el digest %s: %s", path, exc)
             return ""
 
+    async def record_user_message(
+        self,
+        content: str,
+        channel: str = "",
+        chat_id: str = "",
+    ) -> None:
+        """Persiste un mensaje `role=user` en el historial sin invocar al LLM.
+
+        Pensado para flujos de grupo donde múltiples mensajes (de varios usuarios o
+        bots vía broadcast) llegan dentro de una ventana de delay y se acumulan en
+        el historial individualmente. Cuando el delay vence, ``execute()`` se llama
+        sin ``user_input`` y deriva el "turno actual" del trailing batch del historial.
+        """
+        msg = Message(role=Role.USER, content=content)
+        await self._history.append(self._cfg.id, msg, channel=channel, chat_id=chat_id)
+
     async def execute(
         self,
-        user_input: str,
+        user_input: str | None = None,
         tools_override: list[dict] | None = None,
         intermediate_sink: IIntermediateSink | None = None,
         channel: str = "",
@@ -175,7 +237,11 @@ class RunAgentUseCase:
         """Ejecuta un turno del agente.
 
         Args:
-            user_input: mensaje del usuario para este turno.
+            user_input: mensaje del usuario para este turno. Si es ``None``, se
+                asume que el caller pre-persistió uno o varios mensajes vía
+                ``record_user_message`` y la "query" del turno se deriva del
+                trailing batch de ``role=user`` en el historial. Modo usado por
+                el flush de buffer de grupo.
             tools_override: si se provee, fuerza ese conjunto de tool schemas
                 y bypasea la selección RAG de tools. La selección RAG de skills
                 sigue activa. Usado por triggers ``agent_send`` del scheduler
@@ -191,6 +257,7 @@ class RunAgentUseCase:
                 Telegram). Cadena vacía para chats privados o sin distinción.
             ephemeral: si True, carga el historial para contexto pero NO persiste
                 el turno ni actualiza el estado sticky. Usado por ``--task``.
+                Solo aplica cuando ``user_input`` es provisto.
         """
         agent_id = self._cfg.id
 
@@ -201,6 +268,24 @@ class RunAgentUseCase:
             history = await self._history.load(agent_id)
         else:
             history = await self._history.load(agent_id, channel=channel, chat_id=chat_id)
+
+        # Modo "history-derived": el caller ya persistió los mensajes vía
+        # ``record_user_message``. La query para embedding/routing se deriva del
+        # trailing batch de role=user del historial.
+        if user_input is not None:
+            query: str = user_input
+        else:
+            query = _extract_trailing_user_batch(history)
+            if not query:
+                logger.warning(
+                    "execute() llamado sin user_input pero el historial no tiene "
+                    "trailing role=user (agent=%s, channel=%s, chat_id=%s) — abortando turno",
+                    agent_id,
+                    channel,
+                    chat_id,
+                )
+                return ""
+
         digest_text = self._read_digest()
         all_skills = await self._skills.list_all()
         all_schemas = self._tools.get_schemas()
@@ -217,7 +302,7 @@ class RunAgentUseCase:
         state_dirty = False
 
         routing_bypass = _should_bypass_routing_for_short_input(
-            user_input=user_input,
+            user_input=query,
             min_words_threshold=self._cfg.semantic_routing.min_words_threshold,
             prev_state=prev_state,
         )
@@ -242,13 +327,13 @@ class RunAgentUseCase:
             logger.info(
                 "[routing] short-input bypass (agent=%s words=%d threshold=%d sticky_skills=%d sticky_tools=%d)",
                 agent_id,
-                len(user_input.split()),
+                len(query.split()),
                 self._cfg.semantic_routing.min_words_threshold,
                 len(prev_state.sticky_skills),
                 len(prev_state.sticky_tools),
             )
         elif skills_routing_active or tools_routing_active:
-            query_vec = await self._embedder.embed_query(user_input)
+            query_vec = await self._embedder.embed_query(query)
             if skills_routing_active:
                 routing_skills = await self._skills.retrieve(
                     query_vec,
@@ -288,7 +373,7 @@ class RunAgentUseCase:
         ):
             if query_vec is None:
                 # Routing no corrió pero hay orquestrador → calcular embedding ahora
-                query_vec = await self._embedder.embed_query(user_input)
+                query_vec = await self._embedder.embed_query(query)
             knowledge_chunks = await self._knowledge_orchestrator.retrieve_all(
                 query_vec=query_vec,
                 top_k=self._knowledge_orchestrator.default_top_k_per_source,
@@ -340,8 +425,14 @@ class RunAgentUseCase:
             extra_sections=self._extra_system_sections or None,
         )
 
-        user_msg = Message(role=Role.USER, content=user_input)
-        messages = history + [user_msg]
+        user_msg: Message | None = None
+        if user_input is not None:
+            user_msg = Message(role=Role.USER, content=user_input)
+            messages: list[Message] = history + [user_msg]
+        else:
+            # Los mensajes ya están en el historial individualmente. Coalescer
+            # consecutivos mismo-rol para que el LLM reciba alternación limpia.
+            messages = _coalesce_consecutive_same_role(history)
 
         try:
             response = await run_tool_loop(
@@ -370,7 +461,11 @@ class RunAgentUseCase:
                         sticky_tools=new_sticky_tools,
                     ),
                 )
-            await self._history.append(agent_id, user_msg, channel=channel, chat_id=chat_id)
+            # En modo history-derived (caller_provided_input=False) los mensajes
+            # del usuario ya fueron persistidos vía record_user_message. Solo
+            # falta la respuesta del assistant.
+            if user_msg is not None:
+                await self._history.append(agent_id, user_msg, channel=channel, chat_id=chat_id)
             await self._history.append(
                 agent_id,
                 Message(role=Role.ASSISTANT, content=response),

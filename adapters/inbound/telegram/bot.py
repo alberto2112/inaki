@@ -39,12 +39,9 @@ logger = logging.getLogger(__name__)
 # Tipos de chat que Telegram considera "grupos" (no privados).
 _TIPOS_GRUPO = {"group", "supergroup", "channel"}
 
-# Jitter aleatorio aplicado antes de procesar cada broadcast recibido. Distribuye
-# respuestas simultáneas entre bots para que el BroadcastBuffer pueda cruzar
-# contexto y para romper ráfagas. Module-level para facilitar override en tests.
-BROADCAST_TRIGGER_JITTER_MIN_SEC = 2.0
-BROADCAST_TRIGGER_JITTER_MAX_SEC = 4.5
-
+# Delay aleatorio antes de flushar el buffer de grupo al LLM. Durante esta ventana,
+# nuevos mensajes (de Telegram o broadcasts de otros bots) se acumulan en el historial
+# y se procesan todos juntos en un único turno. Module-level para override en tests.
 GROUP_RESPONSE_DELAY_MIN_SEC = 7.0
 GROUP_RESPONSE_DELAY_MAX_SEC = 21.0
 
@@ -85,9 +82,35 @@ class TelegramBot:
         self._bot_username: str | None = broadcast_dict.get("bot_username")
         self._rate_limit_max: int = int(broadcast_dict.get("rate_limiter", 5))
 
-        self._pending_messages: dict[str, list[str]] = {}
+        # Config específica de grupos (delays + override de reactions).
+        # Soporta tanto Pydantic model como dict crudo (compat con configs viejas).
+        groups_raw = tg_cfg.get("groups") or {}
+        if hasattr(groups_raw, "model_dump"):
+            groups_dict: dict = groups_raw.model_dump()
+        elif isinstance(groups_raw, dict):
+            groups_dict = groups_raw
+        else:
+            groups_dict = {}
+
+        min_delay_cfg = groups_dict.get("min_delay_response")
+        max_delay_cfg = groups_dict.get("max_delay_response")
+        self._group_min_delay: float = (
+            float(min_delay_cfg) if min_delay_cfg is not None else GROUP_RESPONSE_DELAY_MIN_SEC
+        )
+        self._group_max_delay: float = (
+            float(max_delay_cfg) if max_delay_cfg is not None else GROUP_RESPONSE_DELAY_MAX_SEC
+        )
+
+        # reactions específico de grupos: si está seteado override, sino hereda del padre.
+        reactions_override = groups_dict.get("reactions")
+        self._group_reactions: bool = (
+            bool(reactions_override) if reactions_override is not None else self._reactions
+        )
+
+        # Tasks de flush por chat_id. Cada chat tiene a lo sumo uno corriendo:
+        # mientras está vivo, los mensajes que lleguen se acumulan en el historial
+        # vía record_user_message y se procesan todos juntos cuando el delay vence.
         self._pending_tasks: dict[str, asyncio.Task] = {}
-        self._pending_updates: dict[str, Update] = {}
 
         if not self._token:
             raise ValueError(f"Agente '{agent_cfg.id}': channels.telegram.token no configurado")
@@ -340,21 +363,18 @@ class TelegramBot:
         """Maneja mensajes de chats grupales según el behavior configurado.
 
         Flujo:
-        1. Verificar allowed_chat_ids (si el chat_id no está en la lista y la lista no está vacía,
-           solo se pasa si el usuario está en allowed_user_ids — igual que privado).
-        2. Despachar por behavior:
-           - listen → descarta silenciosamente.
-           - mention → solo procesa si el bot está mencionado.
-           - autonomous → siempre procesa; aplica rate limiter.
-        3. Formatea el contenido con ``format_group_message`` antes de pasarlo al pipeline.
+        1. Filtros: allowed_chat_ids, behavior, destinatario explícito, mention check,
+           rate limiter (autonomous).
+        2. Persistir el mensaje en el historial via ``record_user_message``.
+        3. Reaccionar 👀 (confirma al usuario que lo leíste).
+        4. Programar un flush task si no hay uno corriendo. Mensajes que lleguen
+           dentro de la ventana de delay se acumulan en el historial y se procesan
+           todos juntos en un único turno cuando el delay vence.
         """
         chat_id = update.effective_chat.id
+        chat_id_str = str(chat_id)
 
-        # Verificación de allowed_chat_ids para grupos:
-        # Si el chat_id está en la whitelist, CUALQUIER usuario del grupo puede escribir.
-        # Si NO está, se usa el fallback de allowed_user_ids (comportamiento privado).
         if self._allowed_chat_ids and not self._is_allowed_chat(chat_id):
-            # Chat no whitelisted — ignorar silenciosamente para grupos.
             logger.debug(
                 "Grupo no whitelisted ignorado (chat_id=%s, agent=%s)",
                 chat_id,
@@ -365,41 +385,19 @@ class TelegramBot:
         behavior = self._behavior
 
         if behavior == "listen":
-            # Modo escucha: recibe mensajes del grupo pero nunca responde.
             return
 
-        # DIAGNÓSTICO TEMPORAL — sacar después de confirmar el bug
-        reply = getattr(update.message, "reply_to_message", None)
-        reply_from = getattr(reply, "from_user", None) if reply else None
-        logger.info(
-            "DIAG agent=%s bot_username=%r reply_present=%s reply_username=%r reply_is_bot=%r entities=%r",
-            self._agent_cfg.id,
-            self._bot_username,
-            reply is not None,
-            getattr(reply_from, "username", None) if reply_from else None,
-            getattr(reply_from, "is_bot", None) if reply_from else None,
-            [getattr(e, "type", None) for e in (getattr(update.message, "entities", None) or [])],
-        )
-
-        # Filtro unificado de destinatario explícito.
-        # Reply a un bot ≡ mención implícita. Si el mensaje apunta a alguien concreto
-        # (mención o reply a un bot) y ese alguien NO soy yo → ignorar.
-        # Los broadcasts llegan por _handle_broadcast_trigger y no pasan por aquí.
+        # Filtro unificado de destinatario explícito. Reply a un bot ≡ mención
+        # implícita. Si el mensaje apunta a alguien concreto y ese alguien NO
+        # soy yo → ignorar. Los broadcasts no pasan por aquí.
         if (
             self._bot_username
             and hay_destinatario_explicito(update.message)
             and not dirigido_a(update.message, self._bot_username)
         ):
-            logger.info(
-                "DIAG filter=DROP agent=%s chat_id=%s",
-                self._agent_cfg.id,
-                chat_id,
-            )
             return
-        logger.info("DIAG filter=PASS agent=%s chat_id=%s", self._agent_cfg.id, chat_id)
 
         if behavior == "mention":
-            # Solo responde si el bot está explícitamente dirigido (mención o reply).
             if not self._bot_username:
                 logger.warning(
                     "behavior='mention' pero bot_username no configurado (agent=%s) — ignorando",
@@ -409,60 +407,50 @@ class TelegramBot:
             if not dirigido_a(update.message, self._bot_username):
                 return
 
-        # Para autonomous: verificar rate limiter antes de invocar el LLM.
-        extra_sections: list[str] = []
-
-        if behavior == "autonomous":
-            # Sección de instrucción __SKIP__ para modo autónomo.
-            seccion_skip = (
-                "## Modo autónomo\n"
-                "Si después de leer el contexto considerás que no tenés nada útil que aportar "
-                "al grupo, respondé EXACTAMENTE con `__SKIP__` (mayúsculas, doble guion bajo "
-                "antes y después, sin llamar ninguna tool, nada más). El sistema detecta ese "
-                "marcador y no enviará nada al grupo."
+        if behavior == "autonomous" and self._rate_limiter is not None:
+            breach = self._rate_limiter.check_and_increment(
+                self._agent_cfg.id,
+                chat_id_str,
+                self._rate_limit_max,
             )
-            extra_sections.append(seccion_skip)
-
-            if self._rate_limiter is not None:
-                breach = self._rate_limiter.check_and_increment(
+            if breach is not None:
+                logger.debug(
+                    "Rate limit alcanzado en grupo (agent=%s, chat_id=%s, counter=%d)",
                     self._agent_cfg.id,
-                    str(chat_id),
-                    self._rate_limit_max,
+                    chat_id,
+                    breach.counter,
                 )
-                if breach is not None:
-                    logger.debug(
-                        "Rate limit alcanzado en grupo (agent=%s, chat_id=%s, counter=%d)",
-                        self._agent_cfg.id,
-                        chat_id,
-                        breach.counter,
-                    )
-                    # No invocamos el LLM — solo registramos la señal de breach como telemetría.
-                    return
+                return
 
-        # Formatear el contenido con prefijo de remitente antes de pasar al pipeline.
         contenido_grupo = format_group_message(update.message)
+        await self._container.run_agent.record_user_message(
+            contenido_grupo,
+            channel="telegram",
+            chat_id=chat_id_str,
+        )
+        await self._set_group_reaction(update, "👀")
 
-        # Acumular mensajes durante la ventana de delay. Si ya hay un task corriendo
-        # para este chat, el mensaje se agrega al buffer y el task existente lo procesará.
-        chat_id_str = str(chat_id)
-        self._pending_messages.setdefault(chat_id_str, []).append(contenido_grupo)
+        self._schedule_group_flush(chat_id_str, chat_type)
 
+    def _schedule_group_flush(self, chat_id_str: str, chat_type: str) -> None:
+        """Crea un task de flush si no hay uno activo para este chat.
+
+        Si ya hay uno corriendo, el mensaje recién persistido será visto por ese
+        task cuando despierte — no creamos uno nuevo. Idempotente.
+        """
         task = self._pending_tasks.get(chat_id_str)
         if task is None or task.done():
-            self._pending_updates[chat_id_str] = update
             self._pending_tasks[chat_id_str] = asyncio.create_task(
-                self._flush_group_messages(chat_id_str, chat_type, extra_sections)
+                self._flush_group_buffer(chat_id_str, chat_type)
             )
 
-    async def _flush_group_messages(
-        self, chat_id_str: str, chat_type: str, extra_sections: list[str]
-    ) -> None:
-        """Espera el delay aleatorio y procesa todos los mensajes acumulados en el buffer.
+    async def _flush_group_buffer(self, chat_id_str: str, chat_type: str) -> None:
+        """Espera el delay aleatorio y dispara el pipeline para este chat.
 
-        Múltiples mensajes que lleguen durante la ventana se concatenan en un solo
-        input para el LLM.
+        El pipeline lee el historial vía ``execute()`` sin user_input — la query
+        del turno se deriva del trailing batch de role=user del historial.
         """
-        delay = random.uniform(GROUP_RESPONSE_DELAY_MIN_SEC, GROUP_RESPONSE_DELAY_MAX_SEC)
+        delay = random.uniform(self._group_min_delay, self._group_max_delay)
         logger.debug(
             "group_response_delay agent=%s chat_id=%s delay=%.2fs",
             self._agent_cfg.id,
@@ -470,21 +458,7 @@ class TelegramBot:
             delay,
         )
         await asyncio.sleep(delay)
-
-        messages = self._pending_messages.pop(chat_id_str, [])
-        update = self._pending_updates.pop(chat_id_str, None)
-
-        if not messages or update is None:
-            return
-
-        contenido = "\n".join(messages)
-        await self._set_reaction(update, "👀")
-        await self._run_pipeline(
-            update,
-            contenido,
-            chat_type=chat_type,
-            extra_sections=extra_sections,
-        )
+        await self._run_group_pipeline(chat_id_str, chat_type)
 
     async def _handle_voice_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -554,13 +528,27 @@ class TelegramBot:
         await self._run_pipeline(update, transcribed, chat_type=chat_type)
 
     async def _set_reaction(self, update: Update, emoji: str) -> None:
-        """Envía una reacción al mensaje si `reactions` está activo. Silencia fallos."""
+        """Envía una reacción al mensaje si `reactions` está activo. Silencia fallos.
+
+        Aplica a chats privados y voice. Para reacciones en grupos usar
+        ``_set_group_reaction`` que respeta el override ``groups.reactions``.
+        """
         if not self._reactions:
             return
         try:
             await update.message.set_reaction(emoji)
         except Exception:
             pass  # Reacciones opcionales — no deben bloquear el handler.
+
+    async def _set_group_reaction(self, update: Update, emoji: str) -> None:
+        """Reacción en grupos. Respeta ``channels.telegram.groups.reactions``
+        si está seteado, hereda de ``channels.telegram.reactions`` si no."""
+        if not self._group_reactions:
+            return
+        try:
+            await update.message.set_reaction(emoji)
+        except Exception:
+            pass
 
     async def _run_pipeline(
         self,
@@ -686,8 +674,12 @@ class TelegramBot:
     async def _on_broadcast_received(self, msg: BroadcastMessage) -> None:
         """Callback invocado por el adapter por cada ``BroadcastMessage`` válido.
 
-        Decide si el bot debe responder. Silencioso y defensivo: cualquier
-        excepción queda aquí (fire-and-forget desde el adapter).
+        En el flujo unificado, un broadcast se trata como un mensaje más entrante
+        al chat: se persiste con prefijo ``<agent_id> dijo: ...`` y se programa
+        un flush task. Si ya hay uno corriendo, el broadcast se acumula en el
+        historial del chat y será visto por ese flush cuando despierte.
+
+        Silencioso y defensivo: cualquier excepción queda aquí.
         """
         try:
             preview = msg.message[:200].replace("\n", " ")
@@ -699,21 +691,8 @@ class TelegramBot:
                 preview,
             )
 
-            jitter = random.uniform(
-                BROADCAST_TRIGGER_JITTER_MIN_SEC, BROADCAST_TRIGGER_JITTER_MAX_SEC
-            )
-            logger.debug(
-                "broadcast.trigger.jitter agent=%s chat_id=%s delay=%.2fs",
-                self._agent_cfg.id,
-                msg.chat_id,
-                jitter,
-            )
-            await asyncio.sleep(jitter)
-
-            # Rate limiter por (agent_id, chat_id) — la misma ventana que usan
-            # los mensajes entrantes de Telegram en modo autonomous. Evita
-            # tormentas bot-to-bot. La decisión fina de responder o __SKIP__
-            # la toma el LLM.
+            # Rate limiter por (agent_id, chat_id) — evita tormentas bot-to-bot.
+            # La decisión fina de responder o __SKIP__ la toma el LLM al flushear.
             if self._rate_limiter is not None:
                 breach = self._rate_limiter.check_and_increment(
                     self._agent_cfg.id,
@@ -729,62 +708,68 @@ class TelegramBot:
                     )
                     return
 
-            logger.info(
-                "broadcast.trigger.fire agent=%s from=%s chat_id=%s",
-                self._agent_cfg.id,
-                msg.agent_id,
-                msg.chat_id,
-            )
-            await self._respond_to_broadcast(msg)
-        except Exception:
-            logger.exception(
-                "Error procesando broadcast trigger (agent=%s, from=%s, chat_id=%s)",
-                self._agent_cfg.id,
-                msg.agent_id,
-                msg.chat_id,
-            )
-
-    async def _respond_to_broadcast(self, msg: BroadcastMessage) -> None:
-        """Ejecuta el pipeline ante un broadcast recibido y responde al grupo.
-
-        El input al LLM lleva un prefijo ``<agent_id> dijo: ...`` para
-        que el modelo sepa que la fuente es otro bot. Respeta ``__SKIP__`` y vuelve a
-        emitir broadcast para mantener el contexto cruzado consistente.
-        """
-        chat_id_int = int(msg.chat_id)
-        contenido = f"{msg.agent_id} dijo: {msg.message}"
-
-        secciones: list[str] = []
-        if self._broadcast_receiver is not None:
-            rendered = self._broadcast_receiver.render(msg.chat_id)
-            if rendered:
-                secciones.append(rendered)
-
-        seccion_skip = (
-            "## Modo autónomo\n"
-            "Si después de leer el contexto considerás que no tenés nada útil que aportar "
-            "al grupo, respondé EXACTAMENTE con `__SKIP__` (mayúsculas, entre corchetes, nada "
-            "más). El sistema detecta ese marcador y no enviará nada al grupo."
-        )
-        secciones.append(seccion_skip)
-
-        self._container.run_agent.set_extra_system_sections([s for s in secciones if s])
-        self._container.set_channel_context(
-            ChannelContext(channel_type="telegram", user_id=msg.agent_id)
-        )
-        try:
-            response = await self._container.run_agent.execute(
+            contenido = f"{msg.agent_id} dijo: {msg.message}"
+            await self._container.run_agent.record_user_message(
                 contenido,
                 channel="telegram",
                 chat_id=msg.chat_id,
             )
+            self._schedule_group_flush(msg.chat_id, "supergroup")
+        except Exception:
+            logger.exception(
+                "Error procesando broadcast (agent=%s, from=%s, chat_id=%s)",
+                self._agent_cfg.id,
+                msg.agent_id,
+                msg.chat_id,
+            )
 
-            if response.strip() == "__SKIP__":
+    async def _run_group_pipeline(self, chat_id_str: str, chat_type: str) -> None:
+        """Pipeline de flush para grupos.
+
+        A diferencia de ``_run_pipeline`` (privados/voice), este NO recibe ``Update``:
+        construye la respuesta a partir del historial vía ``execute()`` sin
+        ``user_input`` y la envía al chat con ``send_message`` (no ``reply_text``).
+
+        Inyecta contexto de broadcast via ``broadcast_receiver.render`` y, en
+        modo autónomo, la sección ``__SKIP__`` que permite al LLM optar por silencio.
+        """
+        chat_id_int = int(chat_id_str)
+        secciones: list[str] = []
+
+        if self._broadcast_receiver is not None:
+            rendered = self._broadcast_receiver.render(chat_id_str)
+            if rendered:
+                secciones.append(rendered)
+
+        if self._behavior == "autonomous":
+            secciones.append(
+                "## Modo autónomo\n"
+                "Si después de leer el contexto considerás que no tenés nada útil que aportar "
+                "al grupo, respondé EXACTAMENTE con `__SKIP__` (mayúsculas, doble guion bajo "
+                "antes y después, sin llamar ninguna tool, nada más). El sistema detecta ese "
+                "marcador y no enviará nada al grupo."
+            )
+
+        self._container.run_agent.set_extra_system_sections([s for s in secciones if s])
+        self._container.set_channel_context(
+            ChannelContext(channel_type="telegram", user_id=self._agent_cfg.id)
+        )
+        try:
+            response = await self._container.run_agent.execute(
+                channel="telegram",
+                chat_id=chat_id_str,
+            )
+
+            if not response:
+                # execute() devolvió vacío — historial sin trailing role=user.
+                # Puede pasar si otro flush concurrente ya consumió el batch.
+                return
+
+            if self._behavior == "autonomous" and response.strip() == "__SKIP__":
                 logger.debug(
-                    "broadcast_trigger_skip (agent=%s, chat_id=%s, from=%s)",
+                    "autonomous_skip detectado (agent=%s, chat_id=%s)",
                     self._agent_cfg.id,
-                    msg.chat_id,
-                    msg.agent_id,
+                    chat_id_str,
                 )
                 return
 
@@ -794,16 +779,25 @@ class TelegramBot:
                 parse_mode=ParseMode.HTML,
             )
 
-            # Re-emitimos broadcast para que los otros bots vean nuestra respuesta
-            # en su propio buffer (contexto para el próximo turno).
             if self._broadcast_emitter is not None:
-                msg_out = BroadcastMessage(
+                msg_broadcast = BroadcastMessage(
                     timestamp=time.time(),
                     agent_id=self._agent_cfg.id,
-                    chat_id=msg.chat_id,
+                    chat_id=chat_id_str,
                     message=response,
                 )
-                asyncio.ensure_future(self._emitir_broadcast(msg_out))
+                asyncio.ensure_future(self._emitir_broadcast(msg_broadcast))
+
+        except Exception as exc:
+            logger.exception(
+                "Error procesando flush de grupo (agent=%s, chat_id=%s)",
+                self._agent_cfg.id,
+                chat_id_str,
+            )
+            try:
+                await self._app.bot.send_message(chat_id=chat_id_int, text=f"Error: {exc}")
+            except Exception:
+                pass
         finally:
             self._container.set_channel_context(None)
             self._container.run_agent.set_extra_system_sections([])

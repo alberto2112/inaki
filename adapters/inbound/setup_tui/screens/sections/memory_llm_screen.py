@@ -57,7 +57,6 @@ class MemoryLLMScreen(SectionEditorScreen):
         # Navegar hasta memory.llm
         memory_datos = datos_capa.get("memory") or {}
         self._valores_capa = (memory_datos.get("llm") or {}).copy()
-        import json as _json
         self._yaml_antes = self._container.repo.render_yaml(
             {"memory": {"llm": self._valores_capa}}
         )

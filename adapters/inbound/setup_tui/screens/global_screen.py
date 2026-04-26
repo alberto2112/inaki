@@ -14,7 +14,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import ScrollableContainer
 from textual.screen import Screen
-from textual.widgets import Button, DataTable, Footer, Header, Label, Static
+from textual.widgets import DataTable, Footer, Header, Label
 
 if TYPE_CHECKING:
     from adapters.inbound.setup_tui.di import SetupContainer

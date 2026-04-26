@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
 
 from core.ports.config_repository import IConfigRepository, LayerName
 from core.use_cases.config.list_providers import ListProvidersUseCase, ProviderInfo

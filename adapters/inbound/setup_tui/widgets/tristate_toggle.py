@@ -22,7 +22,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.message import Message
 from textual.reactive import reactive
-from textual.widgets import Button, Label, Static
+from textual.widgets import Button, Static
 
 
 class TristateValorUI(str, Enum):

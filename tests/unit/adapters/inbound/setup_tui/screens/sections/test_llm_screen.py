@@ -7,7 +7,6 @@ No monta el widget en headless — probamos la estructura declarativa.
 
 from __future__ import annotations
 
-import pytest
 
 from adapters.inbound.setup_tui.screens.sections._base import SectionEditorScreen
 from adapters.inbound.setup_tui.screens.sections.llm_screen import LLMScreen

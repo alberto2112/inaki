@@ -12,7 +12,6 @@ duplicarla en core sería deuda de mantenimiento. Ver design.md §Architecture D
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:

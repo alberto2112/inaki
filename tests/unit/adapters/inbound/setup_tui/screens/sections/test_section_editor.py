@@ -13,14 +13,11 @@ Los tests de render/mount se omiten en headless (smoke candidates para Phase 8).
 
 from __future__ import annotations
 
-import pytest
 
 from adapters.inbound.setup_tui.screens.sections._base import (
     FieldSpec,
-    SectionEditorScreen,
     _convertir_tipo,
 )
-from core.use_cases.config.update_agent_layer import CampoTriestado, TristadoValor
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +282,7 @@ class TestImportsPantallasAgentOverride:
 
 class TestGlobalScreenMenu:
     def test_importa_correctamente(self) -> None:
-        from adapters.inbound.setup_tui.screens.global_screen import GlobalScreen, _SECCIONES
+        from adapters.inbound.setup_tui.screens.global_screen import _SECCIONES
         assert len(_SECCIONES) > 0
 
     def test_resolucion_de_pantallas(self) -> None:
@@ -310,7 +307,6 @@ class TestGlobalScreenMenu:
 class TestAgentEditorScreenMenu:
     def test_importa_correctamente(self) -> None:
         from adapters.inbound.setup_tui.screens.agent_editor_screen import (
-            AgentEditorScreen,
             _SECCIONES_OVERRIDE,
         )
         assert len(_SECCIONES_OVERRIDE) > 0

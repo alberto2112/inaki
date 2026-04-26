@@ -7,7 +7,6 @@ esté bien configurada para el modo override de agente.
 
 from __future__ import annotations
 
-import pytest
 
 from adapters.inbound.setup_tui.screens.sections._base import SectionEditorScreen
 from adapters.inbound.setup_tui.screens.sections.agent_memory_llm_screen import (

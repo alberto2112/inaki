@@ -65,7 +65,6 @@ class KnowledgeScreen(SectionEditorScreen):
         super().on_mount()
         # Agregar nota sobre sources al final
         try:
-            from textual.widgets import Static
             nota = Label(
                 "[dim italic]Para editar `sources` manualmente, "
                 "editá `~/.inaki/config/global.yaml` directamente "

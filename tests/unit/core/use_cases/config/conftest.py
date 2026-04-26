@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.ports.config_repository import IConfigRepository, LayerName
+from core.ports.config_repository import IConfigRepository
 
 
 def _make_repo() -> MagicMock:

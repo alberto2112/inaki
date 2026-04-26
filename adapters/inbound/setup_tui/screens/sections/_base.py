@@ -14,14 +14,16 @@ Modos:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, ScrollableContainer, Vertical
+from textual.containers import Horizontal, ScrollableContainer
+from textual.message import Message
+from textual.reactive import reactive
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Input, Label, Select, Static, Switch
+from textual.widgets import Button, Footer, Header, Input, Label, Static
 
 from adapters.inbound.setup_tui.widgets.diff_preview import DiffPreview
 from adapters.inbound.setup_tui.widgets.layer_label import LayerLabel
@@ -416,10 +418,6 @@ class SectionEditorScreen(Screen):
 # ---------------------------------------------------------------------------
 # _HerenciaToggle — toggle simple Heredar / Valor propio (sin null)
 # ---------------------------------------------------------------------------
-
-
-from textual.message import Message
-from textual.reactive import reactive
 
 
 class _HerenciaToggle(Static):

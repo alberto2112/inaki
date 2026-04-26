@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import copy
 
-import pytest
 
 from adapters.inbound.setup_tui.screens.agent_editor_screen import (
     detectar_broadcast_ambiguo,

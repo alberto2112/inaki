@@ -9,9 +9,7 @@ from __future__ import annotations
 
 from adapters.inbound.setup_tui.screens.sections._base import FieldSpec, SectionEditorScreen
 from adapters.inbound.setup_tui.widgets.diff_preview import DiffPreview
-from core.ports.config_repository import LayerName
 from core.use_cases.config.update_agent_layer import CampoTriestado, TristadoValor
-from adapters.inbound.setup_tui.widgets.tristate_toggle import TristateToggle, TristateValorUI
 
 
 class AgentMemoryLLMScreen(SectionEditorScreen):

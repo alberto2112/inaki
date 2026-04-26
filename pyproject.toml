@@ -56,3 +56,17 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[[tool.mypy.overrides]]
+# Textual stubs son incompletos:
+#   - Las subclases de Screen no resuelven `push_screen` en type-check,
+#     pero lo heredan en runtime vía el framework App.
+#   - Button.variant exige Literal[...], pero pasamos strings dinámicos
+#     para alternar estilo primary/default según el estado del widget.
+module = "adapters.inbound.setup_tui.*"
+disable_error_code = ["attr-defined", "arg-type"]
+
+[[tool.mypy.overrides]]
+# ruamel.yaml no expone py.typed marker — third-party sin stubs.
+module = "ruamel.*"
+ignore_missing_imports = true

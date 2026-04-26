@@ -19,9 +19,9 @@ from typing import TYPE_CHECKING, Any
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, ScrollableContainer, Vertical
+from textual.containers import ScrollableContainer, Vertical
 from textual.screen import Screen
-from textual.widgets import Button, DataTable, Footer, Header, Input, Label, Static
+from textual.widgets import Button, DataTable, Footer, Header, Input, Label
 
 from adapters.inbound.setup_tui.screens._broadcast_helpers import (
     _BroadcastAmbiguoModal,
@@ -29,13 +29,11 @@ from adapters.inbound.setup_tui.screens._broadcast_helpers import (
     resolver_broadcast_client,
     resolver_broadcast_server,
 )
-from adapters.inbound.setup_tui.widgets.diff_preview import DiffPreview
 
 if TYPE_CHECKING:
     from adapters.inbound.setup_tui.di import SetupContainer
 
 from core.ports.config_repository import LayerName
-from core.use_cases.config.update_agent_layer import CampoTriestado, TristadoValor
 
 # Re-exportar para que los tests de import desde este módulo sigan funcionando
 __all__ = [

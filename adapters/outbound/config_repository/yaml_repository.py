@@ -21,15 +21,8 @@ from typing import Any
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
 
-from core.ports.config_repository import IConfigRepository, LayerName
+from core.ports.config_repository import LayerName
 
-from .paths import (
-    agent_secrets_path,
-    agent_yaml_path,
-    get_agents_dir,
-    global_secrets_path,
-    global_yaml_path,
-)
 
 # ---------------------------------------------------------------------------
 # Headers de creación para archivos nuevos

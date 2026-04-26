@@ -10,7 +10,6 @@ candidatos para el smoke test manual en Phase 8.
 
 from __future__ import annotations
 
-import pytest
 
 from adapters.inbound.setup_tui.widgets.masked_input import _mascara, _BULLETS
 

@@ -12,9 +12,9 @@ from typing import TYPE_CHECKING, Any
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import ScrollableContainer, Vertical
+from textual.containers import ScrollableContainer
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Input, Label, Static
+from textual.widgets import Button, Footer, Header, Label, Static
 
 from adapters.inbound.setup_tui.widgets.masked_input import MaskedInput
 
@@ -144,7 +144,7 @@ class SecretsScreen(Screen):
         except Exception:
             return
 
-        filas = []
+        filas: list[Static] = []
         self._campos = []
 
         for scope, datos in self._datos_por_scope.items():

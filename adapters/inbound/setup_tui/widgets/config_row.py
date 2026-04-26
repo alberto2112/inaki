@@ -84,12 +84,23 @@ class ConfigRow(Static):
     def _displayed_value(self) -> str:
         """Valor formateado para mostrar en la fila.
 
-        Distingue tres estados visuales:
-          - Valor None explícito (escape hatch ``<null>`` del usuario): ``null`` en dim+italic.
+        Distingue cuatro estados visuales:
+          - Campo triestado en estado ``"inherit"``: ``(heredado)`` en dim italic.
+          - Campo triestado en estado ``"override_null"``: ``<null>`` en amarillo.
+          - Valor None explícito (escape hatch ``<null>`` del usuario): ``<null>`` en amarillo.
           - Valor vacío con default declarado: el default en dim con sufijo ``(default)``.
           - Valor configurado: el valor tal cual (truncado si ``kind == "long"``).
         """
-        # Estado 1: el usuario seteó None explícitamente.
+        # Estado triestado: se muestra antes de los checks generales.
+        if self._field.is_tristate:
+            estado = self._field.tristate_state
+            if estado == "inherit":
+                return "[dim italic](heredado)[/dim italic]"
+            if estado == "override_null":
+                return "[yellow]<null>[/yellow]"
+            # override_value cae al render normal del valor más abajo
+
+        # Estado: el usuario seteó None explícitamente.
         # Color amarillo + texto `<null>` (simétrico con la convención del input).
         # No usamos `dim italic` porque combinado con el color verde de la clase
         # `.value` sale invisible en algunas terminales.

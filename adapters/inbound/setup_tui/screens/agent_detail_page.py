@@ -32,10 +32,22 @@ _SECTION_TO_YAML_KEY: dict[str, str] = {
     "WORKSPACE": "workspace",
     "DELEGATION": "delegation",
     "TRANSCRIPTION": "transcription",
-    # Sub-sub-secciones que el mapper puede emitir
-    "MEMORYLLMOVERRIDE": "memory",
-    "AGENTDELEGATIONCONFIG": "delegation",
+    # Sub-sub-secciones (formato: PADRE.HIJO, generado por el schema mapper)
+    "MEMORY.LLM": "memory",
+    "DELEGATION.AGENTDELEGATIONCONFIG": "delegation",
 }
+
+# Rutas triestadas: campos de memory.llm que el agente puede heredar del global.
+# El prefijo MEMORY.LLM coincide con el nombre de sección generado por el schema mapper.
+_TRISTATE_PATHS: frozenset[str] = frozenset(
+    {
+        "MEMORY.LLM.provider",
+        "MEMORY.LLM.model",
+        "MEMORY.LLM.temperature",
+        "MEMORY.LLM.max_tokens",
+        "MEMORY.LLM.reasoning_effort",
+    }
+)
 
 # Campos raíz del AgentConfig que se mapean directamente (sin sección contenedora)
 _ROOT_SECTION_FIELDS = {"id", "name", "description", "system_prompt"}
@@ -81,8 +93,10 @@ class AgentDetailPage(BasePage):
             except Exception:
                 pass
 
-        # Generar secciones usando AgentConfig como schema
-        sections = sections_for_model(AgentConfig, current)
+        # Generar secciones usando AgentConfig como schema.
+        # Los campos de memory.llm se marcan como triestados para que el usuario
+        # pueda elegir entre heredar del global, valor propio o null explícito.
+        sections = sections_for_model(AgentConfig, current, tristate_paths=_TRISTATE_PATHS)
 
         for section_name, fields in sections:
             yield SectionHeader(section_name)
@@ -125,6 +139,8 @@ class AgentDetailPage(BasePage):
                 title=f"agente {self._agent_id}",
                 timeout=2,
             )
+            # Post-save: avisar si el cambio rompió alguna referencia cruzada
+            self._warn_on_invalid_refs()
         except Exception as exc:
             self.app.notify(
                 f"error al guardar {field_name}: {exc}",
@@ -132,6 +148,68 @@ class AgentDetailPage(BasePage):
                 severity="error",
                 timeout=4,
             )
+
+    def _on_tristate_field_saved(self, field: Field, result: Any) -> None:
+        """Persiste un campo triestado en la capa AGENT del agente.
+
+        Traduce el ``TristateResult`` a ``CampoTriestado`` y llama a
+        ``update_agent_layer.execute`` con la estructura adecuada.
+        """
+        if self._container is None:
+            return
+
+        from core.ports.config_repository import LayerName
+        from core.use_cases.config.update_agent_layer import CampoTriestado, TristadoValor
+
+        if result.mode == "inherit":
+            campo = CampoTriestado(TristadoValor.INHERIT)
+        elif result.mode == "override_null":
+            campo = CampoTriestado(TristadoValor.OVERRIDE_NULL)
+        else:
+            # Coerción de tipo desde el string del input
+            valor_tipado = self._coerce_value(field, result.value or "")
+            campo = CampoTriestado(TristadoValor.OVERRIDE_VALOR, valor=valor_tipado)
+
+        cambios: dict[str, Any] = {"memory": {"llm": {field.label: campo}}}
+        try:
+            self._container.update_agent_layer.execute(
+                agent_id=self._agent_id,
+                cambios=cambios,
+                layer=LayerName.AGENT,
+            )
+            self.app.notify(
+                f"guardado: memory.llm.{field.label}",
+                title="agente",
+                timeout=2,
+            )
+            # Post-save: avisar si el override rompió alguna referencia cruzada
+            # (por ejemplo memory.llm.provider apuntando a un provider inexistente).
+            self._warn_on_invalid_refs()
+        except Exception as exc:
+            self.app.notify(
+                f"error: {exc}",
+                title="error",
+                severity="error",
+                timeout=4,
+            )
+
+    @staticmethod
+    def _coerce_value(field: Field, value: str) -> Any:
+        """Intenta convertir ``value`` al tipo más adecuado según ``field.kind``.
+
+        Orden de prueba: int → float → str original.
+        """
+        if field.kind == "scalar":
+            # Intentar conversión numérica para campos escalares
+            try:
+                return int(value)
+            except (ValueError, TypeError):
+                pass
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                pass
+        return value
 
 
 def _section_to_yaml_key(section_name: str, field_name: str) -> str:

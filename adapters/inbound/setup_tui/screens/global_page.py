@@ -105,6 +105,9 @@ class GlobalPage(BasePage):
                 title="global config",
                 timeout=2,
             )
+            # Post-save: avisar si el cambio rompió alguna referencia cruzada
+            # (default_agent, llm.provider, embedding.provider, etc.).
+            self._warn_on_invalid_refs()
         except Exception as exc:
             self.app.notify(
                 f"error al guardar {field_name}: {exc}",

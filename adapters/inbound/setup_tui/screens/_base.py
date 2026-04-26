@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import ScrollableContainer
@@ -11,6 +13,9 @@ from adapters.inbound.setup_tui.domain.field import Field
 from adapters.inbound.setup_tui.widgets.config_row import ConfigRow
 from adapters.inbound.setup_tui.widgets.status_bar import StatusBar
 from adapters.inbound.setup_tui.widgets.top_bar import TopBar
+
+if TYPE_CHECKING:
+    from adapters.inbound.setup_tui.modals.tristate import TristateResult
 
 
 class BasePage(Screen):
@@ -121,12 +126,20 @@ class BasePage(Screen):
         if not self._fields:
             return
 
+        field = self._current_field()
+
+        # Los campos triestados tienen su propio modal independiente del kind.
+        if field.is_tristate:
+            from adapters.inbound.setup_tui.modals.tristate import EditTristateModal
+
+            self.app.push_screen(EditTristateModal(field), self._after_tristate_edit)
+            return
+
         from adapters.inbound.setup_tui.modals.enum import EditEnumModal
         from adapters.inbound.setup_tui.modals.long import EditLongModal
         from adapters.inbound.setup_tui.modals.scalar import EditScalarModal
         from adapters.inbound.setup_tui.modals.secret import EditSecretModal
 
-        field = self._current_field()
         if field.kind == "scalar":
             self.app.push_screen(EditScalarModal(field), self._after_edit)
         elif field.kind == "enum":
@@ -165,3 +178,87 @@ class BasePage(Screen):
         Las subclases lo sobreescriben para persistir el cambio en el repo.
         La implementación base no hace nada (útil para páginas de solo lectura).
         """
+
+    # ------------------------------------------------------------------
+    # Triestado
+    # ------------------------------------------------------------------
+
+    def _after_tristate_edit(self, result: "TristateResult | None") -> None:
+        """Callback llamado cuando el modal triestado cierra.
+
+        - ``result is None`` → el usuario canceló. No se hace nada.
+        - De lo contrario se actualiza el campo en memoria y se llama al hook.
+        """
+        if result is None:
+            return
+
+        field = self._current_field()
+        field.tristate_state = result.mode  # type: ignore[assignment]
+
+        if result.mode == "override_value":
+            field.value = result.value or ""
+        elif result.mode == "override_null":
+            field.value = None
+        else:  # inherit
+            field.value = ""
+
+        self._current_row().refresh_value()
+        self._on_tristate_field_saved(field, result)
+
+    def _on_tristate_field_saved(self, field: Field, result: "TristateResult") -> None:
+        """Hook para que las subclases persistan el cambio de un campo triestado.
+
+        La implementación base no hace nada.
+        """
+
+    # ------------------------------------------------------------------
+    # Validación cross-ref post-save
+    # ------------------------------------------------------------------
+
+    def _warn_on_invalid_refs(self) -> None:
+        """Post-save: valida referencias cruzadas globales y notifica si hay fallas.
+
+        El save ya pasó cuando llamamos a esto — nuestra responsabilidad es
+        avisar al usuario que rompió una referencia (ej. ``app.default_agent``
+        apuntando a un agente que no existe). NO desarmar el cambio.
+
+        Si la validación lanza ``ReferenciaInvalidaError``, mostramos el
+        warning con el mensaje del error. Si lanza otra cosa (típicamente un
+        ``ValidationError`` de Pydantic porque el YAML quedó estructuralmente
+        roto), mostramos un warning genérico para que el usuario sepa que
+        algo está mal sin perder el cambio.
+        """
+        container = getattr(self, "_container", None)
+        if container is None:
+            return
+
+        from core.domain.errors import ReferenciaInvalidaError
+
+        try:
+            from infrastructure.config import GlobalConfig
+
+            from adapters.inbound.setup_tui.validators.cross_refs import (
+                validate_global_config,
+            )
+
+            efectiva = container.get_effective_config.execute()
+            cfg = GlobalConfig(**efectiva.datos)
+            available_agents = container.list_agents.execute()
+            available_providers = [
+                p.key for p in container.list_providers.execute()
+            ]
+            validate_global_config(cfg, available_agents, available_providers)
+        except ReferenciaInvalidaError as exc:
+            self.app.notify(
+                f"⚠ {exc}",
+                title="referencia inválida",
+                severity="warning",
+                timeout=6,
+            )
+        except Exception as exc:
+            self.app.notify(
+                f"⚠ config inválida tras guardar: {type(exc).__name__}",
+                title="advertencia",
+                severity="warning",
+                timeout=6,
+            )

@@ -34,14 +34,7 @@ class BasePage(Screen):
     viven acá para no duplicarse en cada página.
     """
 
-    CSS = """
-    Screen {
-        background: #0d0d0d;
-    }
-    ScrollableContainer {
-        scrollbar-size: 0 0;
-    }
-    """
+    # CSS global consolidado en SetupApp.CSS — no duplicar acá.
 
     BINDINGS = [
         # priority=True evita que ScrollableContainer se coma las flechas para

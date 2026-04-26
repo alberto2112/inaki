@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from textual.app import ComposeResult
 
+from adapters.inbound.setup_tui._cambios import build_cambios
 from adapters.inbound.setup_tui._schema import sections_for_model
 from adapters.inbound.setup_tui.domain.field import Field
 from adapters.inbound.setup_tui.screens._base import BasePage
@@ -15,27 +16,28 @@ from adapters.inbound.setup_tui.widgets.section_header import SectionHeader
 if TYPE_CHECKING:
     from adapters.inbound.setup_tui.di import SetupContainer
 
-# Mapeo de section_name (lower) → clave top-level del YAML global
+# Mapeo de section_name → clave top-level del YAML global.
+# Las claves son los nombres exactos que emite ``sections_for_model``.
+# Las sub-secciones anidadas (ej. MEMORY.LLM) se mapean a la misma clave
+# top-level que su padre porque el repo las escribe como dicts anidados.
 _SECTION_TO_YAML_KEY: dict[str, str] = {
     "APP": "app",
     "LLM": "llm",
     "EMBEDDING": "embedding",
     "MEMORY": "memory",
+    "MEMORY.LLM": "memory",
     "CHAT_HISTORY": "chat_history",
     "SKILLS": "skills",
     "TOOLS": "tools",
     "SEMANTIC_ROUTING": "semantic_routing",
     "SCHEDULER": "scheduler",
+    "SCHEDULER.CHANNEL_FALLBACK": "scheduler",
     "WORKSPACE": "workspace",
     "DELEGATION": "delegation",
     "ADMIN": "admin",
     "USER": "user",
     "TRANSCRIPTION": "transcription",
     "KNOWLEDGE": "knowledge",
-    # sub-secciones de MEMORY que el schema mapper puede emitir
-    "MEMORYCONFIG": "memory",
-    "SCHEDULERCONFIG": "scheduler",
-    "CHANNELFALLBACKCONFIG": "scheduler",
 }
 
 
@@ -88,15 +90,18 @@ class GlobalPage(BasePage):
 
         section_name, field_name = self._field_section.get(id(field), ("", field.label))
 
-        # Determinar la clave YAML top-level
-        yaml_key = _SECTION_TO_YAML_KEY.get(section_name.upper(), section_name.lower())
-
         # Determinar la capa: secrets si el kind es "secret", sino GLOBAL
         layer = (
             LayerName.GLOBAL_SECRETS if field.kind == "secret" else LayerName.GLOBAL
         )
 
-        cambios = {yaml_key: {field_name: field.value}}
+        # build_cambios respeta secciones anidadas: MEMORY.LLM → {memory: {llm: ...}}
+        cambios = build_cambios(
+            section_name=section_name,
+            field_name=field_name,
+            value=field.value,
+            section_to_yaml=_SECTION_TO_YAML_KEY,
+        )
 
         try:
             self._container.update_global_layer.execute(cambios=cambios, layer=layer)

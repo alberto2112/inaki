@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from textual.app import ComposeResult
 
+from adapters.inbound.setup_tui._cambios import build_cambios
 from adapters.inbound.setup_tui._schema import sections_for_model
 from adapters.inbound.setup_tui.domain.field import Field
 from adapters.inbound.setup_tui.screens._base import BasePage
@@ -15,16 +16,18 @@ from adapters.inbound.setup_tui.widgets.section_header import SectionHeader
 if TYPE_CHECKING:
     from adapters.inbound.setup_tui.di import SetupContainer
 
-# Mapeo de section_name → clave top-level del YAML de agente
-# El mismo patrón que GlobalPage — se mantiene local por ahora
-# (refactor a módulo compartido en Batch 4 si se hace necesario).
+# Mapeo de section_name → clave top-level del YAML de agente.
+# Las claves son los nombres exactos que emite ``sections_for_model``.
+# Las secciones anidadas (ej. MEMORY.LLM) se mapean a la misma clave
+# top-level que su padre porque el repo las escribe como dicts anidados.
 _SECTION_TO_YAML_KEY: dict[str, str] = {
-    # Secciones raíz del AgentConfig (campos simples)
+    # Sección raíz del AgentConfig (campos simples: id, name, description, system_prompt)
     "AGENTCONFIG": "agent",
-    # Sub-secciones generadas por sections_for_model
+    # Sub-secciones generadas por sections_for_model (nombre = field name UPPER)
     "LLM": "llm",
     "EMBEDDING": "embedding",
     "MEMORY": "memory",
+    "MEMORY.LLM": "memory",
     "CHAT_HISTORY": "chat_history",
     "SKILLS": "skills",
     "TOOLS": "tools",
@@ -32,9 +35,6 @@ _SECTION_TO_YAML_KEY: dict[str, str] = {
     "WORKSPACE": "workspace",
     "DELEGATION": "delegation",
     "TRANSCRIPTION": "transcription",
-    # Sub-sub-secciones (formato: PADRE.HIJO, generado por el schema mapper)
-    "MEMORY.LLM": "memory",
-    "DELEGATION.AGENTDELEGATIONCONFIG": "delegation",
 }
 
 # Rutas triestadas: campos de memory.llm que el agente puede heredar del global.
@@ -113,20 +113,21 @@ class AgentDetailPage(BasePage):
 
         section_name, field_name = self._field_section.get(id(field), ("", field.label))
 
-        # Determinar la clave YAML top-level para el cambio
-        yaml_key = _section_to_yaml_key(section_name, field_name)
-
         # Determinar la capa: secrets para campos secret, sino AGENT
         layer = (
             LayerName.AGENT_SECRETS if field.kind == "secret" else LayerName.AGENT
         )
 
-        # Construir el dict de cambios
-        if yaml_key:
-            cambios: dict[str, Any] = {yaml_key: {field_name: field.value}}
-        else:
-            # Campo raíz del agente (id, name, description, system_prompt)
-            cambios = {field_name: field.value}
+        # build_cambios respeta:
+        #   - root fields (id/name/description/system_prompt) → flat {field: value}
+        #   - secciones anidadas (MEMORY.LLM) → {memory: {llm: {field: value}}}
+        cambios: dict[str, Any] = build_cambios(
+            section_name=section_name,
+            field_name=field_name,
+            value=field.value,
+            section_to_yaml=_SECTION_TO_YAML_KEY,
+            root_fields=_ROOT_SECTION_FIELDS,
+        )
 
         try:
             self._container.update_agent_layer.execute(
@@ -210,14 +211,3 @@ class AgentDetailPage(BasePage):
             except (ValueError, TypeError):
                 pass
         return value
-
-
-def _section_to_yaml_key(section_name: str, field_name: str) -> str:
-    """Convierte el nombre de sección en la clave YAML top-level del agente.
-
-    Para los campos raíz (id, name, description, system_prompt) devuelve
-    string vacío, indicando que el cambio va directamente al nivel raíz.
-    """
-    if field_name in _ROOT_SECTION_FIELDS:
-        return ""
-    return _SECTION_TO_YAML_KEY.get(section_name.upper(), section_name.lower())

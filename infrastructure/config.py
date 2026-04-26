@@ -301,6 +301,8 @@ class ChatHistoryConfig(BaseModel):
 
     db_filename: RuntimePath = "data/history.db"  # relativo a ~/.inaki/
     max_messages: int = 0  # 0 = sin límite; N = últimos N mensajes al LLM
+    merge_chats: bool = False  # False = aislar historial por (channel, chat_id);
+                               # True = compartir todo el historial del agente entre canales/chats
 
 
 class ChannelFallbackConfig(BaseModel):

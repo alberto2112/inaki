@@ -194,7 +194,13 @@ class RunAgentUseCase:
         """
         agent_id = self._cfg.id
 
-        history = await self._history.load(agent_id)
+        # Aislar historial por (channel, chat_id) salvo que merge_chats esté activo.
+        # Sin filtro, el LLM recibiría mensajes de otros chats del mismo agente
+        # (p. ej. privado de Telegram viendo mensajes del grupo).
+        if self._cfg.chat_history.merge_chats:
+            history = await self._history.load(agent_id)
+        else:
+            history = await self._history.load(agent_id, channel=channel, chat_id=chat_id)
         digest_text = self._read_digest()
         all_skills = await self._skills.list_all()
         all_schemas = self._tools.get_schemas()
@@ -378,9 +384,18 @@ class RunAgentUseCase:
         """Devuelve el historial activo del agente (sin archivados ni infused)."""
         return await self._history.load(self._cfg.id)
 
-    async def clear_history(self) -> None:
-        """Limpia el historial activo del agente."""
-        await self._history.clear(self._cfg.id)
+    async def clear_history(
+        self,
+        channel: str | None = None,
+        chat_id: str | None = None,
+    ) -> None:
+        """Limpia el historial activo del agente.
+
+        Si ``channel`` y ``chat_id`` son ``None`` (default) borra TODO el
+        historial y resetea ``agent_state``. Si se proveen, borra solo los
+        mensajes de ese (channel, chat_id) y preserva ``agent_state``.
+        """
+        await self._history.clear(self._cfg.id, channel=channel, chat_id=chat_id)
 
     async def inspect(self, user_input: str) -> InspectResult:
         """

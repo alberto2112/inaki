@@ -246,11 +246,25 @@ class SQLiteHistoryStore(IHistoryStore):
                     keep_last,
                 )
 
-    async def clear(self, agent_id: str) -> None:
+    async def clear(
+        self,
+        agent_id: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+    ) -> None:
         async with self._conn() as conn:
             await self._ensure_schema(conn)
-            await conn.execute("DELETE FROM history WHERE agent_id = ?", (agent_id,))
-            await conn.execute("DELETE FROM agent_state WHERE agent_id = ?", (agent_id,))
+            if channel is None and chat_id is None:
+                # Limpieza total: history + agent_state (sticky TTLs).
+                await conn.execute("DELETE FROM history WHERE agent_id = ?", (agent_id,))
+                await conn.execute("DELETE FROM agent_state WHERE agent_id = ?", (agent_id,))
+            else:
+                # Limpieza scoped por (channel, chat_id). NO se toca agent_state:
+                # los sticky skills/tools son per-agente, no per-chat.
+                filtros, params = _build_where_filters(
+                    agent_id, channel=channel, chat_id=chat_id
+                )
+                await conn.execute(f"DELETE FROM history WHERE {filtros}", params)
             await conn.commit()
 
     async def load_state(self, agent_id: str) -> ConversationState:

@@ -220,6 +220,15 @@ chat_history:
 
   max_messages: 21            # Últimos N mensajes inyectados al LLM (0 = sin límite)
 
+  merge_chats: false          # Política de aislamiento del historial.
+                              #   false (default) — el agente solo ve los mensajes
+                              #     del par (channel, chat_id) actual. Privado de
+                              #     Telegram, grupo y CLI quedan aislados entre sí.
+                              #   true — el agente comparte un solo historial entre
+                              #     todos los canales y chats. Útil si querés que
+                              #     el contexto de una conversación privada esté
+                              #     disponible cuando el agente responde en grupo.
+
 
 # -----------------------------------------------------------------------------
 # [tools] — Configuración de selección de tools vía semantic routing

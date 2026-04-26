@@ -91,11 +91,22 @@ class IHistoryStore(ABC):
         ...
 
     @abstractmethod
-    async def clear(self, agent_id: str) -> None:
-        """Elimina todo el historial del agente. Usado por el slash `/clear`.
+    async def clear(
+        self,
+        agent_id: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+    ) -> None:
+        """Elimina historial del agente.
 
-        Debe limpiar tanto los mensajes como el estado conversacional asociado
-        (sticky skills/tools), manteniendo ambos en sincronía.
+        Si tanto ``channel`` como ``chat_id`` son ``None`` borra TODO el historial
+        del agente y también el ``agent_state`` (sticky skills/tools), manteniendo
+        ambos en sincronía. Es el modo "limpieza total" (``/clear_all`` en Telegram,
+        ``DELETE /history`` en REST, ``/clear`` en CLI).
+
+        Si se proveen ``channel`` y/o ``chat_id`` borra SOLO los mensajes que
+        matchean ese filtro y deja el ``agent_state`` intacto (es per-agente, no
+        per-chat). Es el modo "limpieza scoped" (``/clear`` en Telegram).
         """
         ...
 

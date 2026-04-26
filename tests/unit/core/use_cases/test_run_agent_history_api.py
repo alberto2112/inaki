@@ -83,7 +83,7 @@ async def test_clear_history_delega_a_history_clear(
     """clear_history() debe delegar a _history.clear con el agent_id correcto."""
     await caso_uso.clear_history()
 
-    mock_history.clear.assert_awaited_once_with(agent_config.id)
+    mock_history.clear.assert_awaited_once_with(agent_config.id, channel=None, chat_id=None)
 
 
 async def test_clear_history_propaga_excepciones(

@@ -89,6 +89,7 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("start", self._cmd_start))
         self._app.add_handler(CommandHandler("consolidate", self._cmd_consolidate))
         self._app.add_handler(CommandHandler("clear", self._cmd_clear))
+        self._app.add_handler(CommandHandler("clear_all", self._cmd_clear_all))
         self._app.add_handler(CommandHandler("help", self._cmd_help))
         self._app.add_handler(CommandHandler("scheduler", self._cmd_scheduler))
         self._app.add_handler(CommandHandler("chatid", self._cmd_chatid))
@@ -152,7 +153,8 @@ class TelegramBot:
             return
         await update.message.reply_text(
             "/consolidate — Extraer recuerdos del historial\n"
-            "/clear — Limpiar historial sin archivar (igual que en CLI)\n"
+            "/clear — Limpiar historial de ESTE chat (privado o grupo)\n"
+            "/clear_all — Limpiar TODO el historial del agente (todos los chats)\n"
             "/scheduler list — Listar tareas programadas\n"
             "/scheduler show <id> — Detalle de una tarea\n"
             "/scheduler enable <id> — Habilitar una tarea\n"
@@ -172,14 +174,39 @@ class TelegramBot:
             await update.message.reply_text(f"Error: {exc}")
 
     async def _cmd_clear(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Mismo comportamiento que `/clear` en CLI: borra el historial del agente."""
+        """Borra el historial SOLO del chat actual (privado o grupo).
+
+        Para limpiar el historial del agente en todos los chats, usar /clear_all.
+        """
+        if not self._is_allowed(update.effective_user.id):
+            return
+        chat_id = str(update.effective_chat.id)
+        try:
+            await self._container.run_agent.clear_history(
+                channel="telegram",
+                chat_id=chat_id,
+            )
+            await update.message.reply_text("Historial de este chat limpiado.")
+        except Exception as exc:
+            logger.exception(
+                "Error en /clear Telegram para '%s' (chat_id=%s)",
+                self._agent_cfg.id,
+                chat_id,
+            )
+            await update.message.reply_text(f"Error: {exc}")
+
+    async def _cmd_clear_all(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Borra TODO el historial del agente (todos los canales y chats).
+
+        También resetea el ``agent_state`` (sticky skills/tools).
+        """
         if not self._is_allowed(update.effective_user.id):
             return
         try:
             await self._container.run_agent.clear_history()
-            await update.message.reply_text("Historial limpiado.")
+            await update.message.reply_text("Historial completo del agente limpiado.")
         except Exception as exc:
-            logger.exception("Error en /clear Telegram para '%s'", self._agent_cfg.id)
+            logger.exception("Error en /clear_all Telegram para '%s'", self._agent_cfg.id)
             await update.message.reply_text(f"Error: {exc}")
 
     async def _cmd_scheduler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -813,7 +840,8 @@ class TelegramBot:
         commands = [
             BotCommand("start", "Presentación del agente"),
             BotCommand("help", "Lista de comandos disponibles"),
-            BotCommand("clear", "Limpiar historial de conversación"),
+            BotCommand("clear", "Limpiar historial de este chat"),
+            BotCommand("clear_all", "Limpiar todo el historial del agente"),
             BotCommand("consolidate", "Extraer recuerdos del historial"),
             BotCommand("scheduler", "Gestionar tareas programadas (list/show/enable/disable)"),
             BotCommand("chatid", "Obtener el ID del chat actual (útil para configurar grupos)"),

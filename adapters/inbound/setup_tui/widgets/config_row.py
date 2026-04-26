@@ -7,6 +7,7 @@ from textual.reactive import reactive
 from textual.widgets import Label, Static
 
 from adapters.inbound.setup_tui.domain.field import Field
+from adapters.inbound.setup_tui.widgets._masking import mask_secret
 
 _TRUNCATE_LIMIT = 42
 
@@ -100,6 +101,12 @@ class ConfigRow(Static):
         # Estado 2: vacío + hay default → preview del default
         if not val and self._field.default is not None:
             return f"[dim]{self._field.default} (default)[/dim]"
+
+        # Para secrets configurados, el row siempre muestra una versión enmascarada.
+        # El valor REAL vive en field.value; este masking es solo de presentación
+        # — el modal de edición recibe el field con el valor real para no corromper.
+        if self._field.kind == "secret" and val:
+            return mask_secret(val)
 
         if self._field.kind == "long":
             return _truncate(val, _TRUNCATE_LIMIT)

@@ -135,13 +135,18 @@ class MainMenuPage(Screen):
             from adapters.inbound.setup_tui.screens.global_page import GlobalPage
 
             self.app.push_screen(GlobalPage(self._container))
-        elif destino in ("agents", "providers", "secrets"):
-            # Batch 2 — aún no implementado
-            self.app.notify(
-                f"'{_MENU_ITEMS[self._cursor_index][0]}' — disponible en próxima versión",
-                title="pendiente",
-                timeout=2,
-            )
+        elif destino == "agents":
+            from adapters.inbound.setup_tui.screens.agents_page import AgentsPage
+
+            self.app.push_screen(AgentsPage(self._container))
+        elif destino == "providers":
+            from adapters.inbound.setup_tui.screens.providers_page import ProvidersPage
+
+            self.app.push_screen(ProvidersPage(self._container))
+        elif destino == "secrets":
+            from adapters.inbound.setup_tui.screens.secrets_page import SecretsPage
+
+            self.app.push_screen(SecretsPage(self._container))
 
     def action_help(self) -> None:
         self.app.notify(

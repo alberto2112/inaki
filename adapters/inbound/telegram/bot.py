@@ -45,6 +45,9 @@ _TIPOS_GRUPO = {"group", "supergroup", "channel"}
 BROADCAST_TRIGGER_JITTER_MIN_SEC = 2.0
 BROADCAST_TRIGGER_JITTER_MAX_SEC = 4.5
 
+GROUP_RESPONSE_DELAY_MIN_SEC = 7.0
+GROUP_RESPONSE_DELAY_MAX_SEC = 21.0
+
 
 class TelegramBot:
     def __init__(
@@ -81,6 +84,10 @@ class TelegramBot:
         self._behavior: str = broadcast_dict.get("behavior", "mention")
         self._bot_username: str | None = broadcast_dict.get("bot_username")
         self._rate_limit_max: int = int(broadcast_dict.get("rate_limiter", 5))
+
+        self._pending_messages: dict[str, list[str]] = {}
+        self._pending_tasks: dict[str, asyncio.Task] = {}
+        self._pending_updates: dict[str, Update] = {}
 
         if not self._token:
             raise ValueError(f"Agente '{agent_cfg.id}': channels.telegram.token no configurado")
@@ -361,6 +368,19 @@ class TelegramBot:
             # Modo escucha: recibe mensajes del grupo pero nunca responde.
             return
 
+        # DIAGNÓSTICO TEMPORAL — sacar después de confirmar el bug
+        reply = getattr(update.message, "reply_to_message", None)
+        reply_from = getattr(reply, "from_user", None) if reply else None
+        logger.info(
+            "DIAG agent=%s bot_username=%r reply_present=%s reply_username=%r reply_is_bot=%r entities=%r",
+            self._agent_cfg.id,
+            self._bot_username,
+            reply is not None,
+            getattr(reply_from, "username", None) if reply_from else None,
+            getattr(reply_from, "is_bot", None) if reply_from else None,
+            [getattr(e, "type", None) for e in (getattr(update.message, "entities", None) or [])],
+        )
+
         # Filtro unificado de destinatario explícito.
         # Reply a un bot ≡ mención implícita. Si el mensaje apunta a alguien concreto
         # (mención o reply a un bot) y ese alguien NO soy yo → ignorar.
@@ -370,12 +390,13 @@ class TelegramBot:
             and hay_destinatario_explicito(update.message)
             and not dirigido_a(update.message, self._bot_username)
         ):
-            logger.debug(
-                "Destinatario explícito que no soy yo, ignorando (agent=%s, chat_id=%s)",
+            logger.info(
+                "DIAG filter=DROP agent=%s chat_id=%s",
                 self._agent_cfg.id,
                 chat_id,
             )
             return
+        logger.info("DIAG filter=PASS agent=%s chat_id=%s", self._agent_cfg.id, chat_id)
 
         if behavior == "mention":
             # Solo responde si el bot está explícitamente dirigido (mención o reply).
@@ -421,10 +442,46 @@ class TelegramBot:
         # Formatear el contenido con prefijo de remitente antes de pasar al pipeline.
         contenido_grupo = format_group_message(update.message)
 
+        # Acumular mensajes durante la ventana de delay. Si ya hay un task corriendo
+        # para este chat, el mensaje se agrega al buffer y el task existente lo procesará.
+        chat_id_str = str(chat_id)
+        self._pending_messages.setdefault(chat_id_str, []).append(contenido_grupo)
+
+        task = self._pending_tasks.get(chat_id_str)
+        if task is None or task.done():
+            self._pending_updates[chat_id_str] = update
+            self._pending_tasks[chat_id_str] = asyncio.create_task(
+                self._flush_group_messages(chat_id_str, chat_type, extra_sections)
+            )
+
+    async def _flush_group_messages(
+        self, chat_id_str: str, chat_type: str, extra_sections: list[str]
+    ) -> None:
+        """Espera el delay aleatorio y procesa todos los mensajes acumulados en el buffer.
+
+        Múltiples mensajes que lleguen durante la ventana se concatenan en un solo
+        input para el LLM.
+        """
+        delay = random.uniform(GROUP_RESPONSE_DELAY_MIN_SEC, GROUP_RESPONSE_DELAY_MAX_SEC)
+        logger.debug(
+            "group_response_delay agent=%s chat_id=%s delay=%.2fs",
+            self._agent_cfg.id,
+            chat_id_str,
+            delay,
+        )
+        await asyncio.sleep(delay)
+
+        messages = self._pending_messages.pop(chat_id_str, [])
+        update = self._pending_updates.pop(chat_id_str, None)
+
+        if not messages or update is None:
+            return
+
+        contenido = "\n".join(messages)
         await self._set_reaction(update, "👀")
         await self._run_pipeline(
             update,
-            contenido_grupo,
+            contenido,
             chat_type=chat_type,
             extra_sections=extra_sections,
         )

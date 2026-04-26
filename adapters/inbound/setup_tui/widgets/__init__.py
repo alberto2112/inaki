@@ -1,1 +1,1 @@
-"""Widgets custom para la TUI de setup."""
+"""Widgets reutilizables de la TUI de setup."""

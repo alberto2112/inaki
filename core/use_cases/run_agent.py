@@ -261,6 +261,11 @@ class RunAgentUseCase:
         """
         agent_id = self._cfg.id
 
+        # Snapshot antes del primer await para evitar carrera con flushes concurrentes
+        # de distintos grupos: set_extra_system_sections puede ser sobreescrito por otro
+        # flush mientras este execute() espera en la carga del historial.
+        extra_sections_snapshot = list(self._extra_system_sections)
+
         # Aislar historial por (channel, chat_id) salvo que merge_chats esté activo.
         # Sin filtro, el LLM recibiría mensajes de otros chats del mismo agente
         # (p. ej. privado de Telegram viendo mensajes del grupo).
@@ -422,7 +427,7 @@ class RunAgentUseCase:
         )
         system_prompt = context.build_system_prompt(
             self._cfg.system_prompt,
-            extra_sections=self._extra_system_sections or None,
+            extra_sections=extra_sections_snapshot or None,
         )
 
         user_msg: Message | None = None

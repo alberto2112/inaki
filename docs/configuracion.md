@@ -13,31 +13,78 @@ La TUI es **offline-only** — no requiere que el daemon esté corriendo. Lee y 
 directamente en `~/.inaki/config/` usando `ruamel.yaml`, preservando comentarios y
 formato original de los archivos YAML.
 
+### Navegación (V2 — teclado-first)
+
+La TUI V2 usa una arquitectura de **una página por categoría** con navegación lineal:
+
+```
+MainMenuPage → GlobalPage / AgentsPage / ProvidersPage / SecretsPage
+AgentsPage   → AgentDetailPage (por agente)
+```
+
+| Tecla | Acción |
+|-------|--------|
+| `↑` / `k` | subir una fila |
+| `↓` / `j` | bajar una fila |
+| `Enter` | abrir modal de edición del campo seleccionado |
+| `Esc` | volver a la pantalla anterior |
+| `q` | salir |
+| `?` | ayuda rápida |
+
+No hay navegación con mouse como flujo primario.
+
 ### Qué puede editar la TUI
 
 | Pantalla | Qué edita |
 |----------|-----------|
-| **Global** | Todas las secciones de `global.yaml`: app, llm, embedding, memory, tools, skills, chat_history, scheduler, workspace, admin, channels, delegation, transcription, user |
-| **Providers** | Alta/baja/edición de `providers.*` en `global.yaml`; `api_key` siempre a `global.secrets.yaml` |
-| **Agentes** | Crear, clonar, eliminar agentes; editar overrides de cada sección por agente |
-| **Secrets** | Vista consolidada de todos los `*.secrets.yaml`; campos enmascarados; Reveal individual |
+| **GlobalPage** | Todas las secciones de `global.yaml` en forma continua (una lista de secciones con sus campos, sin sub-pantallas) |
+| **ProvidersPage** | Alta/baja/edición de `providers.*` en `global.yaml`; `api_key` siempre a `global.secrets.yaml` |
+| **AgentsPage** | Crear, clonar, eliminar agentes |
+| **AgentDetailPage** | Overrides por agente (mismas secciones que GlobalPage, en la capa del agente) |
+| **SecretsPage** | Vista consolidada de todos los `*.secrets.yaml`; campos enmascarados; reveal individual |
 
-### Nuances de UX importantes
+### Edición modal — un modal por tipo de campo
 
-1. **Edición por capa** — la TUI edita la capa que corresponde al archivo seleccionado.
-   Los campos heredados de capas superiores se muestran con su origen (`[global]`, `[agent]`, etc.)
-   pero NO se copian al escribir — se escribe solo lo que el usuario modificó explícitamente.
+Cada edición se hace 100% en modal — sin edición inline. Cuatro tipos de modal:
 
-2. **Tri-estado para `memory.llm.*`** — los campos de la sección `memory.llm` de un agente
-   tienen tres estados:
-   - **Heredar** → el campo no aparece en el YAML del agente (hereda del global)
-   - **Valor propio** → el campo se escribe con el valor ingresado
-   - **Override null** → el campo se escribe como `null` explícito (deshabilita el valor heredado)
+| Tipo de campo | Modal | Teclas |
+|--------------|-------|--------|
+| `scalar` (str, int, float) | `EditScalarModal` — Input con valor pre-completado | `Enter` guarda, `Esc` cancela |
+| `enum` (Literal) | `EditEnumModal` — ListView con opciones | `↑↓ + Enter`, `Esc` cancela |
+| `long` (system_prompt, description) | `EditLongModal` — TextArea | `Ctrl+S` guarda, `Esc` cancela |
+| `secret` (api_key, token, auth) | `EditSecretModal` — Input password=True | `Enter` guarda, `Esc` cancela |
 
-3. **Broadcast XOR** — si el YAML de un agente tiene configurados simultáneamente
-   `channels.telegram.broadcast.port` (modo server) y `channels.telegram.broadcast.remote.host`
-   (modo client), al abrir el editor aparece un modal de desambiguación. El usuario elige
-   qué modo conservar; el otro se descarta en memoria y se persiste al guardar.
+Los valores actuales se **pre-completan** en el modal. Si el campo está vacío, se muestra el
+default de Pydantic en dim como referencia.
+
+### Escape hatch `<null>`
+
+En cualquier modal de tipo `scalar` o `long`, escribir `<null>` y confirmar guarda
+el campo como `null` en YAML. Útil para deshabilitar un valor heredado (ej.
+`llm.reasoning_effort: null`).
+
+### Tri-estado para `memory.llm.*`
+
+Los campos de `memory.llm` en un agente tienen tres modos — accesibles desde un modal
+especializado al presionar `Enter` en cualquier campo de esa sección:
+
+| Estado | YAML del agente | Significado |
+|--------|----------------|-------------|
+| **Heredar** | campo ausente | usa el valor de `memory.llm.*` del global |
+| **Valor propio** | `memory.llm.campo: valor` | valor explícito del agente |
+| **Override null** | `memory.llm.campo: null` | anula el valor heredado con None |
+
+Campos afectados: `provider`, `model`, `temperature`, `max_tokens`, `reasoning_effort`.
+
+### Validación cross-ref post-save
+
+Después de guardar cualquier campo, la TUI valida referencias cruzadas:
+
+- `app.default_agent` apunta a un agente que existe
+- `llm.provider`, `embedding.provider`, `memory.llm.provider` apuntan a providers registrados
+
+Si hay un problema, se muestra una notificación de warning **pero el cambio se preserva** —
+la TUI no deshace el save. El operador debe corregir el campo en cuestión.
 
 ### Wizard Fernet legacy
 

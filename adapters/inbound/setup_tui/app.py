@@ -1,12 +1,11 @@
 """
-SetupApp — aplicación Textual principal para la TUI de setup.
+SetupApp — aplicación Textual principal para la TUI de setup (v2).
 
-Punto de entrada de la TUI offline. Carga el contenedor liviano (``di.py``)
-y muestra las pantallas de configuración. NO requiere daemon corriendo.
+Punto de entrada offline. Carga el contenedor liviano (``di.py``) y abre
+el ``MainMenuPage``. NO requiere daemon corriendo.
 
 Bienvenida de primera vez: al abrir la TUI por primera vez se muestra un
-modal con nota sobre el rename de ``inaki setup`` (el wizard Fernet anterior
-ahora vive en ``inaki setup secret-key``). El flag se persiste en
+modal con instrucciones básicas. El flag se persiste en
 ``~/.inaki/setup_welcome_seen`` para no volver a mostrarlo.
 """
 
@@ -16,10 +15,12 @@ from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Footer, Header, Label
+from textual.widgets import Label
 
 from adapters.inbound.setup_tui.di import SetupContainer, build_setup_container
+from adapters.inbound.setup_tui.modals._dialog import dialog_css
 
 # ---------------------------------------------------------------------------
 # Flag de bienvenida
@@ -40,72 +41,49 @@ def _marcar_welcome_vista() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Modal de bienvenida
+# Modal de bienvenida (estilo nuevo — borde recto, fondo dark)
 # ---------------------------------------------------------------------------
-
-_TEXTO_BIENVENIDA = """\
-¡Bienvenido a [bold]inaki setup[/bold]!
-
-Esta TUI reemplaza el wizard anterior de configuración.
-
-[yellow]Nota importante:[/yellow]
-El wizard de Fernet (para generar INAKI_SECRET_KEY) ahora está en:
-
-  [bold]inaki setup secret-key[/bold]
-
-Desde acá podés editar toda la configuración de inaki
-sin tocar los archivos YAML a mano.
-
-Usá [bold]Ctrl+S[/bold] para guardar · [bold]F1[/bold] para ayuda · [bold]Q[/bold] para salir.
-"""
 
 
 class WelcomeModal(ModalScreen[None]):
     """Modal de bienvenida que se muestra una sola vez al primer lanzamiento."""
 
-    CSS = """
-    WelcomeModal {
-        align: center middle;
+    DEFAULT_CSS = (
+        dialog_css("WelcomeModal")
+        + """
+    WelcomeModal #dialog {
+        max-height: 30;
     }
-    #dialog {
-        grid-size: 1;
-        grid-gutter: 1 2;
-        padding: 2 4;
-        width: 70;
-        height: auto;
-        border: thick $background 80%;
-        background: $surface;
-    }
-    #titulo {
-        text-align: center;
-        text-style: bold;
-        color: $primary;
-        margin-bottom: 1;
-    }
-    #mensaje {
-        margin-bottom: 1;
-    }
-    #btn-ok {
-        width: 100%;
-        dock: bottom;
+    WelcomeModal .body {
+        margin-top: 1;
+        color: $text;
     }
     """
+    )
 
     BINDINGS = [
-        Binding("enter", "cerrar", "OK", show=False),
-        Binding("escape", "cerrar", "OK", show=False),
+        Binding("enter", "cerrar", show=False),
+        Binding("escape", "cerrar", show=False),
+        Binding("space", "cerrar", show=False),
     ]
 
     def compose(self) -> ComposeResult:
-        from textual.containers import Grid
-
-        with Grid(id="dialog"):
-            yield Label("inaki setup — TUI", id="titulo")
-            yield Label(_TEXTO_BIENVENIDA, id="mensaje", markup=True)
-            yield Button("Entendido", variant="primary", id="btn-ok")
-
-    def on_button_pressed(self, _event: Button.Pressed) -> None:
-        self.action_cerrar()
+        with Vertical(id="dialog"):
+            yield Label("inaki setup — TUI", classes="titulo")
+            yield Label(
+                "Bienvenido a [bold]inaki setup[/bold].\n\n"
+                "Navegá con [bold]↑↓[/bold] o [bold]j/k[/bold]. "
+                "Presioná [bold]Enter[/bold] para editar un campo.\n"
+                "Los cambios se guardan inmediatamente.\n\n"
+                "[yellow]Nota:[/yellow] el wizard Fernet ahora vive en:\n"
+                "  [bold]inaki setup secret-key[/bold]",
+                classes="body",
+            )
+            yield Label(
+                "[bold]enter[/bold] [dim]continuar[/dim]   "
+                "[bold]esc[/bold] [dim]cerrar[/dim]",
+                classes="footer",
+            )
 
     def action_cerrar(self) -> None:
         _marcar_welcome_vista()
@@ -119,7 +97,7 @@ class WelcomeModal(ModalScreen[None]):
 
 class SetupApp(App):
     """
-    Aplicación Textual para editar la configuración de inaki.
+    Aplicación Textual para editar la configuración de inaki (v2).
 
     Offline-only: no conecta al daemon, no instancia LLM ni embedding.
     Todo el I/O va a ``~/.inaki/config/*.yaml`` via ``SetupContainer``.
@@ -127,16 +105,21 @@ class SetupApp(App):
 
     TITLE = "inaki setup"
     SUB_TITLE = "Configuración offline"
-    CSS_PATH = None  # estilos inline en cada pantalla
+    CSS_PATH = None
+
+    CSS = """
+    Screen {
+        background: #0d0d0d;
+    }
+    ScrollableContainer {
+        scrollbar-size: 0 0;
+    }
+    """
 
     BINDINGS = [
-        Binding("ctrl+s", "guardar", "Guardar", show=True),
-        Binding("f1", "ayuda", "Ayuda", show=True),
-        Binding("1", "ir_global", "Global", show=True),
-        Binding("2", "ir_providers", "Providers", show=True),
-        Binding("3", "ir_agentes", "Agentes", show=True),
-        Binding("4", "ir_secrets", "Secrets", show=True),
-        Binding("q", "quit", "Salir", show=True),
+        Binding("q", "quit", "Salir", show=False),
+        Binding("question_mark", "ayuda", show=False),
+        Binding("s", "guardar_mock", show=False),
     ]
 
     def __init__(
@@ -155,62 +138,27 @@ class SetupApp(App):
         self.container: SetupContainer = container or build_setup_container(config_dir)
 
     def compose(self) -> ComposeResult:
-        yield Header()
-        yield Footer()
-        # La pantalla inicial se monta en on_mount para poder hacer push_screen
-        # (compose se llama antes de que el event loop arranque).
+        # El MainMenuPage se monta en on_mount para poder hacer push_screen.
+        # compose no puede usar push_screen directamente.
+        return
+        yield  # type: ignore[misc]  # hace que mypy infiera ComposeResult
 
     async def on_mount(self) -> None:
-        """Monta la pantalla inicial y muestra bienvenida si es primera vez."""
-        from adapters.inbound.setup_tui.screens.global_screen import GlobalScreen
+        """Monta el menú principal y muestra bienvenida si es primera vez."""
+        from adapters.inbound.setup_tui.screens.main_menu import MainMenuPage
 
-        await self.push_screen(GlobalScreen(self.container))
+        await self.push_screen(MainMenuPage(self.container))
 
         if not _welcome_ya_vista():
             self.push_screen(WelcomeModal())
 
-    # ------------------------------------------------------------------
-    # Acciones de teclado
-    # ------------------------------------------------------------------
-
-    async def action_guardar(self) -> None:
-        """Delega Ctrl+S a la pantalla activa si implementa _guardar()."""
-        pantalla_activa = self.screen
-        if hasattr(pantalla_activa, "_guardar"):
-            await pantalla_activa._guardar()  # type: ignore[attr-defined]
-
     def action_ayuda(self) -> None:
-        """Muestra un modal de ayuda básica de teclas."""
         self.notify(
-            "Ctrl+S guardar · F1 ayuda · 1-4 navegar pantallas · Q salir",
+            "↑↓/jk navegar   enter editar   s guardar   q salir   esc volver",
             title="Ayuda rápida",
             timeout=5,
         )
 
-    async def action_ir_global(self) -> None:
-        from adapters.inbound.setup_tui.screens.global_screen import GlobalScreen
-
-        await self._navegar_a(GlobalScreen)
-
-    async def action_ir_providers(self) -> None:
-        from adapters.inbound.setup_tui.screens.providers_screen import ProvidersScreen
-
-        await self._navegar_a(ProvidersScreen)
-
-    async def action_ir_agentes(self) -> None:
-        from adapters.inbound.setup_tui.screens.agents_screen import AgentsScreen
-
-        await self._navegar_a(AgentsScreen)
-
-    async def action_ir_secrets(self) -> None:
-        from adapters.inbound.setup_tui.screens.secrets_screen import SecretsScreen
-
-        await self._navegar_a(SecretsScreen)
-
-    async def _navegar_a(self, clase_pantalla: type) -> None:
-        """Reemplaza la pantalla raíz con una nueva instancia de la pantalla dada."""
-        # pop hasta llegar a la raíz (WelcomeModal puede estar arriba)
-        while len(self.screen_stack) > 1:
-            self.pop_screen()
-        nueva = clase_pantalla(self.container)
-        await self.push_screen(nueva)
+    def action_guardar_mock(self) -> None:
+        """Binding global 's' — los guardados reales ocurren per-edit en GlobalPage."""
+        self.notify("guardar pendientes (mock)", title="setup", timeout=2)

@@ -79,11 +79,17 @@ class YamlRepository:
 
     def __init__(self, config_dir: Path | None = None) -> None:
         if config_dir is None:
-            from .paths import get_config_dir
+            # Layout default del runtime: ~/.inaki/config/global*.yaml +
+            # ~/.inaki/agents/{id}.yaml (sibling, NO subcarpeta de config/).
+            from .paths import get_agents_dir, get_config_dir
 
-            config_dir = get_config_dir()
-        self._config_dir = config_dir
-        self._agents_dir = config_dir / "agents"
+            self._config_dir = get_config_dir()
+            self._agents_dir = get_agents_dir()
+        else:
+            # Override explícito (tests con tmp_path o legacy --config DIR):
+            # agentes bajo config_dir/agents/, layout unificado.
+            self._config_dir = config_dir
+            self._agents_dir = config_dir / "agents"
         self._yaml = YAML(typ="rt")
         self._yaml.preserve_quotes = True
         self._yaml.width = 4096  # Evita el line-wrapping inesperado

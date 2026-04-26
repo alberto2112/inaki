@@ -80,9 +80,12 @@ class AgentDetailPage(BasePage):
         return f"inaki / config / agents / {self._agent_id}"
 
     def compose_body(self) -> ComposeResult:
+        from textual.widgets import Label
+
         from infrastructure.config import AgentConfig
 
         current: dict[str, Any] = {}
+        error_msg: str | None = None
         if self._container is not None:
             try:
                 from core.ports.config_repository import LayerName
@@ -90,8 +93,17 @@ class AgentDetailPage(BasePage):
                 current = self._container.repo.read_layer(
                     LayerName.AGENT, agent_id=self._agent_id
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                error_msg = f"{type(exc).__name__}: {exc}"
+
+        if error_msg is not None:
+            yield SectionHeader(f"ERROR AL CARGAR AGENT {self._agent_id}")
+            yield Label(f"  [red]{error_msg}[/red]", markup=True)
+            yield Label(
+                "  [dim]Corregí el archivo YAML a mano y volvé a abrir esta pantalla.[/dim]",
+                markup=True,
+            )
+            return
 
         # Generar secciones usando AgentConfig como schema.
         # Los campos de memory.llm se marcan como triestados para que el usuario

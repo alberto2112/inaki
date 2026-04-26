@@ -1,14 +1,20 @@
 """
 Resolución de rutas para el repositorio de configuración YAML.
 
-Layout canónico en ``~/.inaki/config/``:
-  global.yaml
-  global.secrets.yaml
-  agents/{id}.yaml
-  agents/{id}.secrets.yaml
+Layout canónico (matchea el runtime ``infrastructure/config.py``):
+  ~/.inaki/config/global.yaml
+  ~/.inaki/config/global.secrets.yaml
+  ~/.inaki/agents/{id}.yaml            ← sibling de config/, no subcarpeta
+  ~/.inaki/agents/{id}.secrets.yaml
 
-Se puede sobreescribir la raíz vía la variable de entorno ``INAKI_CONFIG_DIR``,
-igual que el mecanismo ``--config DIR`` de ``infrastructure/config.py``.
+Layout legacy unificado (cuando se setea ``INAKI_CONFIG_DIR=DIR``):
+  DIR/global.yaml
+  DIR/global.secrets.yaml
+  DIR/agents/{id}.yaml
+  DIR/agents/{id}.secrets.yaml
+
+La TUI MATCHEA al runtime — no impone convención propia. Cualquier desviación
+acá rompe a usuarios con installs existentes.
 """
 
 from __future__ import annotations
@@ -32,19 +38,23 @@ def get_config_dir() -> Path:
 
 def get_agents_dir() -> Path:
     """
-    Devuelve el directorio de configs de agentes (``~/.inaki/config/agents/``).
+    Devuelve el directorio de configs de agentes.
 
-    Históricamente el código de ``infrastructure/config.py`` usa
-    ``~/.inaki/agents/`` (sin ``config/`` intermedio), pero el nuevo adapter
-    TUI unifica todo bajo ``~/.inaki/config/agents/`` para mantener la config
-    agrupada. Si necesitás leer agentes del layout legacy, usá el
-    ``infrastructure/config.py`` directamente.
+    Default (sin env override): ``~/.inaki/agents/`` — sibling de
+    ``~/.inaki/config/``, sin ``config/`` intermedio. Coincide exactamente
+    con la convención que usa ``infrastructure/config.py`` en runtime.
+
+    Con ``INAKI_CONFIG_DIR=DIR`` (modo legacy unificado): ``<DIR>/agents/``,
+    también consistente con el override del runtime.
     """
-    return get_config_dir() / "agents"
+    env_override = os.environ.get("INAKI_CONFIG_DIR")
+    if env_override:
+        return Path(env_override).expanduser().resolve() / "agents"
+    return Path.home() / ".inaki" / "agents"
 
 
 def global_yaml_path() -> Path:
-    """Ruta a ``~/.inaki/config/global.yaml``."""
+    """Ruta a ``~/.inaki/config/global.yaml`` (o ``$INAKI_CONFIG_DIR/global.yaml``)."""
     return get_config_dir() / "global.yaml"
 
 
@@ -55,7 +65,7 @@ def global_secrets_path() -> Path:
 
 def agent_yaml_path(agent_id: str) -> Path:
     """
-    Ruta a ``~/.inaki/config/agents/{agent_id}.yaml``.
+    Ruta a ``~/.inaki/agents/{agent_id}.yaml`` (default) o ``$INAKI_CONFIG_DIR/agents/...`` (legacy).
 
     Args:
         agent_id: Identificador del agente (sin extensión).
@@ -67,7 +77,7 @@ def agent_yaml_path(agent_id: str) -> Path:
 
 def agent_secrets_path(agent_id: str) -> Path:
     """
-    Ruta a ``~/.inaki/config/agents/{agent_id}.secrets.yaml``.
+    Ruta a ``~/.inaki/agents/{agent_id}.secrets.yaml`` (default).
 
     Args:
         agent_id: Identificador del agente (sin extensión).

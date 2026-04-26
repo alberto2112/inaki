@@ -227,16 +227,27 @@ class ProvidersPage(BasePage):
         return "inaki / config / providers"
 
     def compose_body(self) -> ComposeResult:
+        from textual.widgets import Label
+
         from core.use_cases.config.list_providers import ProviderInfo
 
         providers: list[ProviderInfo] = []
+        error_msg: str | None = None
         if self._container is not None:
             try:
                 providers = self._container.list_providers.execute()
-            except Exception:
-                pass
+            except Exception as exc:
+                error_msg = f"{type(exc).__name__}: {exc}"
 
         yield SectionHeader("PROVIDERS")
+
+        if error_msg is not None:
+            yield Label(f"  [red]error al leer providers: {error_msg}[/red]", markup=True)
+            yield Label(
+                "  [dim]Corregí global.yaml a mano y volvé a abrir esta pantalla.[/dim]",
+                markup=True,
+            )
+            return
 
         if not providers:
             yield ConfigRow(

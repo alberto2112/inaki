@@ -95,14 +95,20 @@ class SecretsPage(BasePage):
             )
             return
 
+        from textual.widgets import Label
+
         from core.ports.config_repository import LayerName
 
         # ---- Secrets globales ----
         yield SectionHeader("GLOBAL SECRETS")
+        global_secrets: dict[str, Any] = {}
         try:
             global_secrets = self._container.repo.read_layer(LayerName.GLOBAL_SECRETS)
-        except Exception:
-            global_secrets = {}
+        except Exception as exc:
+            yield Label(
+                f"  [red]error al leer global.secrets.yaml: {type(exc).__name__}: {exc}[/red]",
+                markup=True,
+            )
 
         items_global = _flatten(global_secrets)
         if items_global:
@@ -126,18 +132,26 @@ class SecretsPage(BasePage):
             agent_ids = []
 
         for agent_id in agent_ids:
+            agent_error: str | None = None
+            agent_secrets: dict[str, Any] = {}
             try:
                 agent_secrets = self._container.repo.read_layer(
                     LayerName.AGENT_SECRETS, agent_id=agent_id
                 )
-            except Exception:
-                agent_secrets = {}
+            except Exception as exc:
+                agent_error = f"{type(exc).__name__}: {exc}"
 
             items_agent = _flatten(agent_secrets)
-            if not items_agent:
+            if not items_agent and agent_error is None:
                 continue
 
             yield SectionHeader(f"AGENT/{agent_id.upper()}")
+            if agent_error is not None:
+                yield Label(
+                    f"  [red]error al leer secrets de '{agent_id}': {agent_error}[/red]",
+                    markup=True,
+                )
+                continue
             for flat_key, raw_val in items_agent:
                 raw_str = str(raw_val) if raw_val is not None else ""
                 # Field guarda el valor REAL — masking solo en display.

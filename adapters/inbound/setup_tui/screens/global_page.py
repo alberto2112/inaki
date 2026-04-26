@@ -59,16 +59,30 @@ class GlobalPage(BasePage):
         return "inaki / config / global"
 
     def compose_body(self) -> ComposeResult:
+        from textual.widgets import Label
+
         from infrastructure.config import GlobalConfig
 
         # Cargar valores actuales
         current: dict[str, Any] = {}
+        error_msg: str | None = None
         if self._container is not None:
             try:
                 efectiva = self._container.get_effective_config.execute()
                 current = efectiva.datos
-            except Exception:
-                pass
+            except Exception as exc:
+                error_msg = f"{type(exc).__name__}: {exc}"
+
+        # Si la lectura falló (ej. YAML malformado, claves duplicadas) mostramos
+        # el error en lugar de un schema con todos los campos vacíos.
+        if error_msg is not None:
+            yield SectionHeader("ERROR AL CARGAR CONFIG")
+            yield Label(f"  [red]{error_msg}[/red]", markup=True)
+            yield Label(
+                "  [dim]Corregí el archivo YAML a mano y volvé a abrir esta pantalla.[/dim]",
+                markup=True,
+            )
+            return
 
         # Generar secciones con el schema mapper
         sections = sections_for_model(GlobalConfig, current, section_prefix="APP")

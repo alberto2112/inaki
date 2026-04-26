@@ -708,7 +708,7 @@ class TelegramBot:
                     )
                     return
 
-            contenido = f"{msg.agent_id} dijo: {msg.message}"
+            contenido = f"{msg.agent_id} said: {msg.message}"
             await self._container.run_agent.record_user_message(
                 contenido,
                 channel="telegram",

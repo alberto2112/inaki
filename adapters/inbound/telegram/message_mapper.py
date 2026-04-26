@@ -74,7 +74,7 @@ def format_group_message(message) -> str:
     else:
         remitente = "anonimo"
 
-    return f"{remitente}: {texto}"
+    return f"{remitente} said: {texto}"
 
 
 def hay_menciones(message) -> bool:

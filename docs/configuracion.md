@@ -1,5 +1,82 @@
 # Configuración — Iñaki v2
 
+## Edición interactiva con `inaki setup`
+
+La forma recomendada de editar la configuración es a través de la TUI interactiva:
+
+```bash
+inaki setup          # abre la TUI (sin subcomando)
+inaki setup tui      # ídem explícito
+```
+
+La TUI es **offline-only** — no requiere que el daemon esté corriendo. Lee y escribe
+directamente en `~/.inaki/config/` usando `ruamel.yaml`, preservando comentarios y
+formato original de los archivos YAML.
+
+### Qué puede editar la TUI
+
+| Pantalla | Qué edita |
+|----------|-----------|
+| **Global** | Todas las secciones de `global.yaml`: app, llm, embedding, memory, tools, skills, chat_history, scheduler, workspace, admin, channels, delegation, transcription, user |
+| **Providers** | Alta/baja/edición de `providers.*` en `global.yaml`; `api_key` siempre a `global.secrets.yaml` |
+| **Agentes** | Crear, clonar, eliminar agentes; editar overrides de cada sección por agente |
+| **Secrets** | Vista consolidada de todos los `*.secrets.yaml`; campos enmascarados; Reveal individual |
+
+### Nuances de UX importantes
+
+1. **Edición por capa** — la TUI edita la capa que corresponde al archivo seleccionado.
+   Los campos heredados de capas superiores se muestran con su origen (`[global]`, `[agent]`, etc.)
+   pero NO se copian al escribir — se escribe solo lo que el usuario modificó explícitamente.
+
+2. **Tri-estado para `memory.llm.*`** — los campos de la sección `memory.llm` de un agente
+   tienen tres estados:
+   - **Heredar** → el campo no aparece en el YAML del agente (hereda del global)
+   - **Valor propio** → el campo se escribe con el valor ingresado
+   - **Override null** → el campo se escribe como `null` explícito (deshabilita el valor heredado)
+
+3. **Broadcast XOR** — si el YAML de un agente tiene configurados simultáneamente
+   `channels.telegram.broadcast.port` (modo server) y `channels.telegram.broadcast.remote.host`
+   (modo client), al abrir el editor aparece un modal de desambiguación. El usuario elige
+   qué modo conservar; el otro se descarta en memoria y se persiste al guardar.
+
+### Wizard Fernet legacy
+
+El wizard interactivo de `INAKI_SECRET_KEY` (Fernet) está accesible en:
+
+```bash
+inaki setup secret-key
+```
+
+**No confundir con `inaki setup`** — ese comando abre la TUI. El wizard de Fernet es el
+comando legacy que existía antes del TUI y solo gestiona `INAKI_SECRET_KEY` en el `.env`.
+
+### Interfaz web (V2)
+
+```bash
+inaki setup webui   # imprime "Próximamente" y sale
+```
+
+La webui está pendiente para una versión futura. Por ahora usá la TUI.
+
+### Nota post-edición
+
+Los cambios en la TUI se escriben a disco de forma atómica. Sin embargo, el daemon
+**no recarga la config automáticamente** — si el daemon está corriendo, reiniciarlo:
+
+```bash
+systemctl restart inaki   # Pi 5 con systemd
+# o
+inaki daemon              # si corrés en foreground
+```
+
+### Funcionalidad no disponible en la TUI (V2)
+
+- `knowledge.sources` — las fuentes RAG se editan manualmente en `global.yaml` por ahora.
+- Validación de `api_key` en vivo — la TUI no conecta a los providers para verificar que la key sea válida.
+- Vista de logs o estado del daemon — para eso usá `journalctl -u inaki` o `inaki inspect`.
+
+---
+
 ## Sistema de 4 capas de merge
 
 La configuración final de cada agente se construye mergeando cuatro ficheros en orden.

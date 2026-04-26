@@ -1,0 +1,29 @@
+# Configuración con listas de objetos complejos
+
+# Registry de proveedores disponibles
+providers:
+  # OpenRouter — acceso a múltiples modelos
+  openrouter:
+    api_key: sk-or-test-key
+    base_url: https://openrouter.ai/api/v1
+
+  # Groq — inferencia ultra-rápida
+  groq:
+    api_key: gsk-test-key
+    base_url: https://api.groq.com/openai/v1
+
+  # OpenAI — modelos oficiales
+  openai:
+    api_key: sk-test-key
+
+# Directorios de extensiones a escanear
+ext_dirs:
+  # Extensiones del proyecto
+- ext
+  # Extensiones del usuario (custom tools y skills)
+- ~/.inaki/ext
+
+# IDs de usuarios Telegram autorizados
+allowed_user_ids:
+- 111111111
+- 222222222

@@ -143,3 +143,29 @@ class DaemonAuthError(DaemonClientError):
             status_code=status_code,
             detail="Auth inválida. Verificá la X-Admin-Key en ~/.inaki/config/global.secrets.yaml.",
         )
+
+
+# ---------------------------------------------------------------------------
+# Config repository (setup TUI)
+# ---------------------------------------------------------------------------
+
+
+class AgentYaExisteError(IñakiError):
+    """El id de agente ya está ocupado — no se puede crear un agente con ese id."""
+
+    def __init__(self, agent_id: str) -> None:
+        super().__init__(f"El agente '{agent_id}' ya existe. Elegí un id distinto.")
+        self.agent_id = agent_id
+
+
+class ReferenciaInvalidaError(IñakiError):
+    """Una referencia cruzada en la config apunta a un recurso inexistente."""
+
+    def __init__(self, campo: str, valor: str, disponibles: list[str]) -> None:
+        super().__init__(
+            f"Referencia inválida: '{campo}' apunta a '{valor}', "
+            f"que no existe. Disponibles: {disponibles}"
+        )
+        self.campo = campo
+        self.valor = valor
+        self.disponibles = disponibles

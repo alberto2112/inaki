@@ -12,7 +12,10 @@ Modos de uso:
   inaki --config /etc/inaki/config daemon  → daemon con config custom
   inaki --remote http://raspi.local:6497   → conectarse a un daemon remoto (env: INAKI_REMOTE)
   inaki --remote URL --remote-key KEY chat → conectarse a daemon remoto con auth key explícita
-  inaki setup                              → wizard de configuración del sistema
+  inaki setup                              → TUI interactiva de configuración (offline)
+  inaki setup tui                          → ídem
+  inaki setup secret-key                   → wizard Fernet legacy (INAKI_SECRET_KEY)
+  inaki setup webui                        → placeholder (no disponible aún)
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ import typer
 
 from adapters.inbound.cli.knowledge_cli import knowledge_app
 from adapters.inbound.cli.scheduler_cli import scheduler_app
+from adapters.inbound.cli.setup_cli import setup_app
 
 app = typer.Typer(
     name="inaki",
@@ -35,6 +39,7 @@ app = typer.Typer(
 )
 app.add_typer(scheduler_app, name="scheduler", help="Manage scheduled tasks")
 app.add_typer(knowledge_app, name="knowledge", help="Manage document knowledge sources")
+app.add_typer(setup_app, name="setup", help="Configuración del sistema (TUI offline)")
 
 
 def _get_config_dir() -> Path:
@@ -303,9 +308,3 @@ def consolidate(
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
-@app.command()
-def setup() -> None:
-    """Wizard de configuración del sistema (INAKI_SECRET_KEY y otras variables)."""
-    from adapters.inbound.cli.setup_wizard import run_setup
-
-    run_setup()

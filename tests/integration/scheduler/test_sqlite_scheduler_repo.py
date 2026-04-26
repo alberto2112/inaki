@@ -326,6 +326,23 @@ async def test_list_logs_unknown_task_returns_empty(repo: SQLiteSchedulerRepo) -
     assert result == []
 
 
+async def test_list_logs_global_across_tasks_newest_first(repo: SQLiteSchedulerRepo) -> None:
+    """task_id=None: últimos N logs de todas las tareas, más recientes primero."""
+    task_a = await repo.save_task(_make_task("ta"))
+    task_b = await repo.save_task(_make_task("tb"))
+    base_a = datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+    base_b = datetime(2026, 1, 1, 11, 0, 0, tzinfo=timezone.utc)
+    await _seed_logs(repo, task_a.id, count=2, base=base_a)
+    await _seed_logs(repo, task_b.id, count=2, base=base_b)
+
+    result = await repo.list_logs(None, limit=3, offset=0)
+
+    assert len(result) == 3
+    assert result[0].task_id == task_b.id and result[0].started_at.minute == 1
+    assert result[1].task_id == task_b.id and result[1].started_at.minute == 0
+    assert result[2].task_id == task_a.id and result[2].started_at.minute == 1
+
+
 async def test_list_logs_stable_order_by_id_desc_on_tie(repo: SQLiteSchedulerRepo) -> None:
     """
     Tie-breaker: dos logs con mismo started_at → id DESC (último insertado primero).

@@ -6,7 +6,7 @@ Operations:
   - get      : obtiene una tarea por ID (detalle completo con trigger_payload)
   - update   : modifica campos mutables de una tarea existente
   - delete   : elimina una tarea (builtin tasks protegidas)
-  - logs     : lista logs de ejecución de una tarea (con paginación y truncación)
+  - logs     : lista logs de ejecución (una tarea o global si se omite task_id)
   - log_get  : obtiene un log por ID con output/error completos (sin truncación)
 
 REQs satisfechos: REQ-ST-1, REQ-ST-2, REQ-ST-3, REQ-ST-4, REQ-ST-5, REQ-ST-6,
@@ -125,7 +125,8 @@ class SchedulerTool(ITool):
         "Use 'get' to retrieve full detail (including trigger_payload) for a specific task. "
         "Use 'update' to modify mutable fields on a task. "
         "Use 'delete' to remove a non-builtin task permanently. "
-        "Use 'logs' to list execution logs of a task (newest first, paginated, outputs truncated to 1000 chars). "
+        "Use 'logs' to list execution logs (newest first, paginated, outputs truncated to 1000 chars). "
+        "Omit task_id to list the latest logs across all tasks; include task_id to filter by task. "
         "Use 'log_get' to fetch a single log by id with the FULL untruncated output/error. "
         "Builtin tasks (id < 100) cannot be modified or deleted."
     )
@@ -203,7 +204,10 @@ class SchedulerTool(ITool):
             # --- get / update / delete / logs ---
             "task_id": {
                 "type": "integer",
-                "description": "Task ID (required for get, update, delete, logs).",
+                "description": (
+                    "Task ID (required for get, update, delete). "
+                    "For 'logs': optional — omit to list the latest logs across all tasks."
+                ),
             },
             # --- log_get ---
             "log_id": {
@@ -641,20 +645,25 @@ class SchedulerTool(ITool):
 
     async def _logs(self, params: dict[str, Any]) -> ToolResult:
         """
-        Lista logs de ejecución de una tarea, con truncación por entrada.
+        Lista logs de ejecución, con truncación por entrada.
+
+        Si ``task_id`` es None, lista los últimos ``limit`` logs de todas las tareas.
+        Si se informa ``task_id``, filtra por esa tarea.
 
         - Cap `limit` a `_MAX_LOGS_LIMIT` (50) — protege el contexto del LLM.
         - Trunca `output`/`error` a `_LOG_OUTPUT_TRUNCATION` (1000) por entrada
           y setea flags explícitas (`output_truncated` / `error_truncated`).
           Cuando el LLM necesita el detalle completo, llama `log_get`.
         """
-        task_id = params.get("task_id")
-        if task_id is None:
-            return self._error("Missing required parameter 'task_id'.")
-        try:
-            task_id = int(task_id)
-        except (TypeError, ValueError):
-            return self._error(f"Invalid 'task_id': '{task_id}'. Must be an integer.")
+        task_id_raw = params.get("task_id")
+        task_id: int | None
+        if task_id_raw is None:
+            task_id = None
+        else:
+            try:
+                task_id = int(task_id_raw)
+            except (TypeError, ValueError):
+                return self._error(f"Invalid 'task_id': '{task_id_raw}'. Must be an integer.")
 
         limit_raw = params.get("limit", 10)
         try:
@@ -694,6 +703,7 @@ class SchedulerTool(ITool):
             entries.append(
                 {
                     "log_id": log.id,
+                    "task_id": log.task_id,
                     "started_at": log.started_at.isoformat(),
                     "finished_at": log.finished_at.isoformat() if log.finished_at else None,
                     "status": log.status,

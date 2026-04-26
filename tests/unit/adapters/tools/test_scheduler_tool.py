@@ -1170,7 +1170,9 @@ async def test_logs_happy_path_returns_entries() -> None:
     assert len(data["logs"]) == 2
     # log_id preservado en cada entry (contrato de paginación)
     assert data["logs"][0]["log_id"] == 5
+    assert data["logs"][0]["task_id"] == 100
     assert data["logs"][1]["log_id"] == 4
+    assert data["logs"][1]["task_id"] == 100
     assert data["logs"][0]["status"] == "success"
     assert data["logs"][1]["status"] == "failed"
     # UC fue llamado con limit=2 (no capeado)
@@ -1265,15 +1267,27 @@ async def test_logs_status_filter_passed_through() -> None:
 
 
 @pytest.mark.asyncio
-async def test_logs_missing_task_id_returns_error() -> None:
-    """logs sin task_id → error estructurado."""
+async def test_logs_without_task_id_lists_global() -> None:
+    """logs sin task_id → list_logs(None, ...) y task_id null en la raíz."""
     tool, uc = _make_tool()
+    uc.list_logs.return_value = [
+        _make_log(log_id=9, task_id=200, started_minute=5),
+        _make_log(log_id=8, task_id=100, started_minute=4),
+    ]
 
-    result = await tool.execute(operation="logs")
+    result = await tool.execute(operation="logs", limit=2)
 
-    assert result.success is False
-    assert "task_id" in result.output
-    uc.list_logs.assert_not_awaited()
+    assert result.success is True
+    data = json.loads(result.output)
+    assert data["task_id"] is None
+    assert data["total_returned"] == 2
+    assert data["logs"][0]["task_id"] == 200
+    assert data["logs"][1]["task_id"] == 100
+    uc.list_logs.assert_awaited_once()
+    call_args = uc.list_logs.call_args
+    all_args = list(call_args.args) + list(call_args.kwargs.values())
+    assert None in all_args
+    assert 2 in all_args
 
 
 @pytest.mark.asyncio

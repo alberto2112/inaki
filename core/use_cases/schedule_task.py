@@ -115,7 +115,7 @@ class ScheduleTaskUseCase(ISchedulerUseCase):
 
     async def list_logs(
         self,
-        task_id: int,
+        task_id: int | None,
         limit: int = 10,
         offset: int = 0,
         status_filter: str | None = None,

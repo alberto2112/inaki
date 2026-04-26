@@ -329,13 +329,16 @@ class SQLiteSchedulerRepo:
 
     async def list_logs(
         self,
-        task_id: int,
+        task_id: int | None,
         limit: int = 10,
         offset: int = 0,
         status_filter: str | None = None,
     ) -> list[TaskLog]:
         """
-        Lista logs de `task_id` más-recientes-primero, con paginación.
+        Lista logs más-recientes-primero, con paginación.
+
+        Si ``task_id`` es ``None``, lista todos los logs de la tabla (global).
+        Si es un entero, filtra por esa tarea.
 
         Orden estable: `started_at DESC, id DESC` — el tiebreaker por id garantiza
         que `offset` produce páginas reproducibles aun cuando dos logs caen en el
@@ -344,25 +347,45 @@ class SQLiteSchedulerRepo:
         """
         async with self._conn() as conn:
             await self._ensure_schema_conn(conn)
-            if status_filter is not None:
+            if task_id is not None:
+                if status_filter is not None:
+                    rows = await conn.execute_fetchall(
+                        """
+                        SELECT * FROM task_logs
+                        WHERE task_id = ? AND status = ?
+                        ORDER BY started_at DESC, id DESC
+                        LIMIT ? OFFSET ?
+                        """,
+                        (task_id, status_filter, limit, offset),
+                    )
+                else:
+                    rows = await conn.execute_fetchall(
+                        """
+                        SELECT * FROM task_logs
+                        WHERE task_id = ?
+                        ORDER BY started_at DESC, id DESC
+                        LIMIT ? OFFSET ?
+                        """,
+                        (task_id, limit, offset),
+                    )
+            elif status_filter is not None:
                 rows = await conn.execute_fetchall(
                     """
                     SELECT * FROM task_logs
-                    WHERE task_id = ? AND status = ?
+                    WHERE status = ?
                     ORDER BY started_at DESC, id DESC
                     LIMIT ? OFFSET ?
                     """,
-                    (task_id, status_filter, limit, offset),
+                    (status_filter, limit, offset),
                 )
             else:
                 rows = await conn.execute_fetchall(
                     """
                     SELECT * FROM task_logs
-                    WHERE task_id = ?
                     ORDER BY started_at DESC, id DESC
                     LIMIT ? OFFSET ?
                     """,
-                    (task_id, limit, offset),
+                    (limit, offset),
                 )
         return [self._row_to_tasklog(row) for row in rows]
 

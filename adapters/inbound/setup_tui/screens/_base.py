@@ -164,6 +164,7 @@ class BasePage(Screen):
         field.value = None if result.strip() == "<null>" else result
         self._current_row().refresh_value()
         self._on_field_saved(field)
+        self._notify_daemon_restart_needed()
 
     def _on_field_saved(self, field: Field) -> None:
         """Hook llamado tras actualizar el valor de un campo.
@@ -197,12 +198,26 @@ class BasePage(Screen):
 
         self._current_row().refresh_value()
         self._on_tristate_field_saved(field, result)
+        self._notify_daemon_restart_needed()
 
     def _on_tristate_field_saved(self, field: Field, result: "TristateResult") -> None:
         """Hook para que las subclases persistan el cambio de un campo triestado.
 
         La implementación base no hace nada.
         """
+
+    def _notify_daemon_restart_needed(self) -> None:
+        """Recordatorio post-save: el daemon lee la config solo al arrancar."""
+        try:
+            notify = self.app.notify
+        except (AttributeError, LookupError):
+            return  # sin contexto Textual (tests directos del hook)
+        notify(
+            "Reiniciá el daemon: systemctl --user restart inaki",
+            title="cambio guardado",
+            severity="information",
+            timeout=4,
+        )
 
     # ------------------------------------------------------------------
     # Validación cross-ref post-save

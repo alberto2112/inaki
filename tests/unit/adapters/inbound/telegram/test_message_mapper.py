@@ -10,7 +10,11 @@ from types import SimpleNamespace
 
 from adapters.inbound.telegram.message_mapper import (
     detect_mention,
+    dirigido_a,
+    es_reply_a,
+    es_reply_a_bot,
     format_group_message,
+    hay_destinatario_explicito,
 )
 
 
@@ -185,3 +189,129 @@ def test_detect_mention_tipo_desconocido_ignorado():
 
     # La URL no es una mención — no coincide
     assert detect_mention(msg, "mi_bot") is False
+
+
+# ---------------------------------------------------------------------------
+# Helpers — replies
+# ---------------------------------------------------------------------------
+
+
+def _reply_user(username: str | None, is_bot: bool) -> SimpleNamespace:
+    return SimpleNamespace(username=username, is_bot=is_bot)
+
+
+def _msg_with_reply(
+    reply_from: SimpleNamespace | None,
+    text: str = "ok",
+    entities: list | None = None,
+) -> SimpleNamespace:
+    reply = SimpleNamespace(from_user=reply_from) if reply_from is not None else None
+    return SimpleNamespace(text=text, entities=entities, reply_to_message=reply)
+
+
+# ---------------------------------------------------------------------------
+# es_reply_a
+# ---------------------------------------------------------------------------
+
+
+def test_es_reply_a_coincide():
+    msg = _msg_with_reply(_reply_user(username="mi_bot", is_bot=True))
+    assert es_reply_a(msg, "mi_bot") is True
+
+
+def test_es_reply_a_otro_bot():
+    msg = _msg_with_reply(_reply_user(username="otro_bot", is_bot=True))
+    assert es_reply_a(msg, "mi_bot") is False
+
+
+def test_es_reply_a_sin_reply():
+    msg = SimpleNamespace(text="hola", entities=None, reply_to_message=None)
+    assert es_reply_a(msg, "mi_bot") is False
+
+
+def test_es_reply_a_reply_sin_from_user():
+    msg = SimpleNamespace(text="hola", entities=None, reply_to_message=SimpleNamespace(from_user=None))
+    assert es_reply_a(msg, "mi_bot") is False
+
+
+# ---------------------------------------------------------------------------
+# es_reply_a_bot
+# ---------------------------------------------------------------------------
+
+
+def test_es_reply_a_bot_true():
+    msg = _msg_with_reply(_reply_user(username="anacleto_bot", is_bot=True))
+    assert es_reply_a_bot(msg) is True
+
+
+def test_es_reply_a_bot_humano():
+    msg = _msg_with_reply(_reply_user(username="juan", is_bot=False))
+    assert es_reply_a_bot(msg) is False
+
+
+def test_es_reply_a_bot_sin_reply():
+    msg = SimpleNamespace(text="hola", entities=None, reply_to_message=None)
+    assert es_reply_a_bot(msg) is False
+
+
+# ---------------------------------------------------------------------------
+# dirigido_a — mención OR reply
+# ---------------------------------------------------------------------------
+
+
+def test_dirigido_a_por_mencion():
+    texto = "hola @mi_bot"
+    entity = _entity("mention", offset=5, length=len("@mi_bot"))
+    msg = SimpleNamespace(text=texto, entities=[entity], reply_to_message=None)
+    assert dirigido_a(msg, "mi_bot") is True
+
+
+def test_dirigido_a_por_reply():
+    msg = _msg_with_reply(_reply_user(username="mi_bot", is_bot=True))
+    assert dirigido_a(msg, "mi_bot") is True
+
+
+def test_dirigido_a_otro_bot_mencion():
+    texto = "hola @otro_bot"
+    entity = _entity("mention", offset=5, length=len("@otro_bot"))
+    msg = SimpleNamespace(text=texto, entities=[entity], reply_to_message=None)
+    assert dirigido_a(msg, "mi_bot") is False
+
+
+def test_dirigido_a_otro_bot_reply():
+    msg = _msg_with_reply(_reply_user(username="otro_bot", is_bot=True))
+    assert dirigido_a(msg, "mi_bot") is False
+
+
+def test_dirigido_a_mensaje_generico():
+    """Sin mención ni reply → no dirigido a nadie en particular."""
+    msg = SimpleNamespace(text="hola che", entities=None, reply_to_message=None)
+    assert dirigido_a(msg, "mi_bot") is False
+
+
+# ---------------------------------------------------------------------------
+# hay_destinatario_explicito
+# ---------------------------------------------------------------------------
+
+
+def test_hay_destinatario_explicito_con_mencion():
+    entity = _entity("mention", offset=0, length=len("@alguien"))
+    msg = SimpleNamespace(text="@alguien dale", entities=[entity], reply_to_message=None)
+    assert hay_destinatario_explicito(msg) is True
+
+
+def test_hay_destinatario_explicito_con_reply_a_bot():
+    msg = _msg_with_reply(_reply_user(username="anacleto_bot", is_bot=True))
+    assert hay_destinatario_explicito(msg) is True
+
+
+def test_hay_destinatario_explicito_reply_a_humano():
+    """Reply a un humano NO cuenta — el filtro solo debe aplicar a bots."""
+    msg = _msg_with_reply(_reply_user(username="juan", is_bot=False))
+    assert hay_destinatario_explicito(msg) is False
+
+
+def test_hay_destinatario_explicito_mensaje_generico():
+    """Sin mención ni reply → no hay destinatario explícito."""
+    msg = SimpleNamespace(text="hola che", entities=None, reply_to_message=None)
+    assert hay_destinatario_explicito(msg) is False

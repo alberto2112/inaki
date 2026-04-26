@@ -127,6 +127,47 @@ def detect_mention(message, bot_username: str) -> bool:
     return False
 
 
+def es_reply_a(message, bot_username: str) -> bool:
+    """Devuelve ``True`` si el mensaje es un reply a un mensaje del bot indicado."""
+    reply = getattr(message, "reply_to_message", None)
+    if reply is None:
+        return False
+    reply_from = getattr(reply, "from_user", None)
+    if reply_from is None:
+        return False
+    return getattr(reply_from, "username", None) == bot_username
+
+
+def es_reply_a_bot(message) -> bool:
+    """Devuelve ``True`` si el mensaje es un reply a CUALQUIER usuario marcado como bot."""
+    reply = getattr(message, "reply_to_message", None)
+    if reply is None:
+        return False
+    reply_from = getattr(reply, "from_user", None)
+    if reply_from is None:
+        return False
+    return bool(getattr(reply_from, "is_bot", False))
+
+
+def dirigido_a(message, bot_username: str) -> bool:
+    """Devuelve ``True`` si el mensaje está dirigido al bot indicado.
+
+    Un mensaje está dirigido a un bot si lo menciona explícitamente (``@username``)
+    o si es un reply a un mensaje suyo. Reply ≡ mención implícita.
+    """
+    return detect_mention(message, bot_username) or es_reply_a(message, bot_username)
+
+
+def hay_destinatario_explicito(message) -> bool:
+    """Devuelve ``True`` si el mensaje apunta a un destinatario concreto.
+
+    Cuenta como destinatario explícito:
+    - Una mención (``@usuario`` o text_mention).
+    - Un reply a un usuario marcado como bot.
+    """
+    return hay_menciones(message) or es_reply_a_bot(message)
+
+
 def format_response(response: str) -> str:
     """
     Convierte la respuesta markdown del LLM al subset HTML de Telegram.

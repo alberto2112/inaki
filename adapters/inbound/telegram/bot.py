@@ -19,11 +19,11 @@ from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 from adapters.inbound.telegram.message_mapper import (
-    detect_mention,
-    hay_menciones,
+    dirigido_a,
     extract_audio_payload,
     format_group_message,
     format_response,
+    hay_destinatario_explicito,
     telegram_update_to_input,
 )
 from adapters.outbound.intermediate_sinks.telegram_live import TelegramLiveIntermediateSink
@@ -361,46 +361,31 @@ class TelegramBot:
             # Modo escucha: recibe mensajes del grupo pero nunca responde.
             return
 
-        # Filtro de reply a otro participante.
-        # Si el mensaje es una respuesta (reply_to_message) a alguien que NO es el bot,
-        # y además no menciona al bot explícitamente → ignorar.
+        # Filtro unificado de destinatario explícito.
+        # Reply a un bot ≡ mención implícita. Si el mensaje apunta a alguien concreto
+        # (mención o reply a un bot) y ese alguien NO soy yo → ignorar.
         # Los broadcasts llegan por _handle_broadcast_trigger y no pasan por aquí.
-        if update.message.reply_to_message and self._bot_username:
-            reply_from = getattr(update.message.reply_to_message, "from_user", None)
-            replied_to_bot = (
-                reply_from is not None
-                and getattr(reply_from, "username", None) == self._bot_username
-            )
-            if not replied_to_bot and not detect_mention(update.message, self._bot_username):
-                logger.debug(
-                    "Reply a participante ignorado (agent=%s, chat_id=%s)",
-                    self._agent_cfg.id,
-                    chat_id,
-                )
-                return
-
-        # Filtro de mención explícita a otro bot.
-        # Si bot_username está configurado y el mensaje menciona a alguien (cualquier behavior)
-        # pero ninguna mención es para este bot → no participar.
-        if self._bot_username and hay_menciones(update.message) and not detect_mention(
-            update.message, self._bot_username
+        if (
+            self._bot_username
+            and hay_destinatario_explicito(update.message)
+            and not dirigido_a(update.message, self._bot_username)
         ):
             logger.debug(
-                "Mención a otro bot detectada, ignorando (agent=%s, chat_id=%s)",
+                "Destinatario explícito que no soy yo, ignorando (agent=%s, chat_id=%s)",
                 self._agent_cfg.id,
                 chat_id,
             )
             return
 
         if behavior == "mention":
-            # Solo responde si el bot está explícitamente mencionado.
+            # Solo responde si el bot está explícitamente dirigido (mención o reply).
             if not self._bot_username:
                 logger.warning(
                     "behavior='mention' pero bot_username no configurado (agent=%s) — ignorando",
                     self._agent_cfg.id,
                 )
                 return
-            if not detect_mention(update.message, self._bot_username):
+            if not dirigido_a(update.message, self._bot_username):
                 return
 
         # Para autonomous: verificar rate limiter antes de invocar el LLM.

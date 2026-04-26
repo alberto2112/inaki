@@ -173,6 +173,33 @@ def _require_daemon(client) -> None:
         raise typer.Exit(code=1)
 
 
+def _run_task(client, agent_id: str, task: str) -> None:
+    """Ejecuta una tarea oneshot y vuelca el resultado a stdout."""
+    from rich.console import Console
+
+    spinner = Console(stderr=True)
+    with spinner.status("Ejecutando...", spinner="dots"):
+        turn_result = client.task_turn(agent_id, task)
+    for intermediate in turn_result.intermediates:
+        print(intermediate)
+    print(turn_result.reply)
+
+
+def _invoke_task(
+    config_dir_override: Optional[Path],
+    remote_url: Optional[str],
+    remote_key: Optional[str],
+    agent: Optional[str],
+    task: str,
+) -> None:
+    """Conecta al daemon, ejecuta la tarea y sale."""
+    config_dir, _ = _resolve_dirs(config_dir_override)
+    client, global_config = _build_daemon_client(config_dir, remote_url, remote_key)
+    _require_daemon(client)
+    agent_id = agent or global_config.app.default_agent
+    _handle_daemon_errors(lambda: _run_task(client, agent_id, task))
+
+
 def _invoke_default_chat(
     config_dir_override: Optional[Path],
     remote_url: Optional[str],
@@ -210,6 +237,12 @@ def _root(
         envvar="INAKI_REMOTE_KEY",
         help="Auth key del daemon remoto. Si se omite, usa admin.auth_key del config local.",
     ),
+    task: Optional[str] = typer.Option(
+        None,
+        "--task",
+        metavar="TASK",
+        help="Ejecuta una tarea oneshot y devuelve el resultado por stdout (sin persistir historial).",
+    ),
 ) -> None:
     """Iñaki — asistente personal agentico."""
     ctx.ensure_object(dict)
@@ -217,8 +250,10 @@ def _root(
     ctx.obj["remote_url"] = remote
     ctx.obj["remote_key"] = remote_key
     if ctx.invoked_subcommand is None:
-        # bare `inaki` → default chat
-        _invoke_default_chat(config, remote, remote_key)
+        if task:
+            _invoke_task(config, remote, remote_key, None, task)
+        else:
+            _invoke_default_chat(config, remote, remote_key)
 
 
 @app.command()
@@ -230,6 +265,12 @@ def chat(
         metavar="AGENT_ID|list",
         help="ID del agente o 'list' para listar agentes disponibles",
     ),
+    task: Optional[str] = typer.Option(
+        None,
+        "--task",
+        metavar="TASK",
+        help="Ejecuta una tarea oneshot y devuelve el resultado por stdout (sin persistir historial).",
+    ),
 ) -> None:
     """Chat interactivo con un agente via daemon HTTP."""
     config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
@@ -240,7 +281,11 @@ def chat(
     client, global_config = _build_daemon_client(config_dir, remote_url, remote_key)
     _require_daemon(client)
     agent_id = agent or global_config.app.default_agent
-    _run_cli(client, agent_id)
+
+    if task:
+        _handle_daemon_errors(lambda: _run_task(client, agent_id, task))
+    else:
+        _run_cli(client, agent_id)
 
 
 @app.command()

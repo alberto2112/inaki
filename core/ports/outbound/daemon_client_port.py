@@ -41,6 +41,18 @@ class IDaemonClient(Protocol):
         """
         ...
 
+    def task_turn(self, agent_id: str, mensaje: str) -> ChatTurnResult:
+        """Ejecuta una tarea oneshot: carga historial para contexto pero no persiste el turno.
+
+        Raises:
+            DaemonNotRunningError: si el daemon no es alcanzable.
+            DaemonTimeoutError: si la respuesta supera el timeout configurado.
+            UnknownAgentError: si agent_id no existe en el daemon (HTTP 404).
+            DaemonAuthError: si la autenticación falla (HTTP 401/403).
+            DaemonClientError: para otros errores HTTP del daemon.
+        """
+        ...
+
     def chat_history(self, agent_id: str) -> list[dict[str, str]]:
         """Obtiene el historial de mensajes del agente desde el daemon.
 

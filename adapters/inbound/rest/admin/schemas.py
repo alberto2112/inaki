@@ -62,6 +62,29 @@ class ChatTurnResponse(BaseModel):
     )
 
 
+class TaskTurnRequest(BaseModel):
+    """Body para POST /admin/chat/task."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    agent_id: str = Field(..., description="ID del agente al que se envía la tarea")
+    message: str = Field(..., min_length=1, description="Tarea a ejecutar (oneshot, sin persistencia)")
+
+
+class TaskTurnResponse(BaseModel):
+    """Respuesta de POST /admin/chat/task."""
+
+    reply: str = Field(..., description="Respuesta final del asistente")
+    agent_id: str = Field(..., description="ID del agente que respondió")
+    intermediates: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Bloques de texto que el LLM emitió junto con tool_calls durante el turno. "
+            "En orden de emisión."
+        ),
+    )
+
+
 class HistoryMessage(BaseModel):
     """DTO plano de un mensaje del historial."""
 

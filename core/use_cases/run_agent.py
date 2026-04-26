@@ -170,6 +170,7 @@ class RunAgentUseCase:
         intermediate_sink: IIntermediateSink | None = None,
         channel: str = "",
         chat_id: str = "",
+        ephemeral: bool = False,
     ) -> str:
         """Ejecuta un turno del agente.
 
@@ -188,6 +189,8 @@ class RunAgentUseCase:
                 Cadena vacía cuando no aplica.
             chat_id: identificador del chat dentro del canal (ej: ID de grupo
                 Telegram). Cadena vacía para chats privados o sin distinción.
+            ephemeral: si True, carga el historial para contexto pero NO persiste
+                el turno ni actualiza el estado sticky. Usado por ``--task``.
         """
         agent_id = self._cfg.id
 
@@ -352,22 +355,22 @@ class RunAgentUseCase:
                 "iteraciones de tools sin obtener una respuesta final."
             )
 
-        if state_dirty:
-            await self._history.save_state(
+        if not ephemeral:
+            if state_dirty:
+                await self._history.save_state(
+                    agent_id,
+                    ConversationState(
+                        sticky_skills=new_sticky_skills,
+                        sticky_tools=new_sticky_tools,
+                    ),
+                )
+            await self._history.append(agent_id, user_msg, channel=channel, chat_id=chat_id)
+            await self._history.append(
                 agent_id,
-                ConversationState(
-                    sticky_skills=new_sticky_skills,
-                    sticky_tools=new_sticky_tools,
-                ),
+                Message(role=Role.ASSISTANT, content=response),
+                channel=channel,
+                chat_id=chat_id,
             )
-
-        await self._history.append(agent_id, user_msg, channel=channel, chat_id=chat_id)
-        await self._history.append(
-            agent_id,
-            Message(role=Role.ASSISTANT, content=response),
-            channel=channel,
-            chat_id=chat_id,
-        )
 
         return response
 

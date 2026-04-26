@@ -125,6 +125,32 @@ class DaemonClient:
         )
 
     # ------------------------------------------------------------------
+    # task_turn — oneshot ephemeral: carga historial, no persiste
+    # ------------------------------------------------------------------
+
+    def task_turn(self, agent_id: str, mensaje: str) -> ChatTurnResult:
+        """Ejecuta una tarea oneshot al daemon (ephemeral=True en el servidor).
+
+        Raises:
+            DaemonNotRunningError: si el daemon no es alcanzable.
+            DaemonTimeoutError: si la respuesta supera el timeout configurado.
+            UnknownAgentError: si agent_id no existe en el daemon (HTTP 404).
+            DaemonAuthError: si la autenticación falla (HTTP 401/403).
+            DaemonClientError: para otros errores HTTP del daemon.
+        """
+        data = self._post(
+            "/admin/chat/task",
+            json={"agent_id": agent_id, "message": mensaje},
+            timeout=self._chat_timeout,
+            error_map=self._CHAT_ERROR_MAP,
+            agent_id=agent_id,
+        )
+        return ChatTurnResult(
+            reply=data["reply"],
+            intermediates=list(data.get("intermediates") or []),
+        )
+
+    # ------------------------------------------------------------------
     # chat_history — historial de mensajes del agente (Design §B2)
     # ------------------------------------------------------------------
 

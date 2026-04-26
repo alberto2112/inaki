@@ -1,7 +1,8 @@
 """Router de chat admin — endpoints de conversación turn-based via REST.
 
-Expone tres endpoints bajo /admin/chat/*:
+Expone cuatro endpoints bajo /admin/chat/*:
   POST   /admin/chat/turn     — envía un turno de conversación
+  POST   /admin/chat/task     — oneshot ephemeral (carga historial, no persiste)
   GET    /admin/chat/history  — obtiene el historial de un agente
   DELETE /admin/chat/history  — limpia el historial de un agente
 
@@ -22,6 +23,8 @@ from adapters.inbound.rest.admin.schemas import (
     ChatTurnResponse,
     HistoryMessage,
     HistoryResponse,
+    TaskTurnRequest,
+    TaskTurnResponse,
 )
 from adapters.outbound.intermediate_sinks.buffering import BufferingIntermediateSink
 from core.domain.value_objects.channel_context import ChannelContext
@@ -115,6 +118,56 @@ async def chat_turn(body: ChatTurnRequest, request: Request) -> ChatTurnResponse
         session_id=body.session_id,
         intermediates=sink.messages,
     )
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/chat/task
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/task",
+    response_model=TaskTurnResponse,
+    dependencies=[Depends(check_admin_auth)],
+)
+async def chat_task(body: TaskTurnRequest, request: Request) -> TaskTurnResponse:
+    """Ejecuta una tarea oneshot: carga historial para contexto pero NO persiste el turno.
+
+    Equivalente a chat/turn con ephemeral=True — el agente ve el historial
+    previo pero el turno no queda registrado ni actualiza el estado sticky.
+    """
+    t0 = time.monotonic()
+    logger.info("chat_task agent=%s msg_len=%d", body.agent_id, len(body.message))
+
+    agent_container = _resolver_agente(request, body.agent_id)
+    sink = BufferingIntermediateSink()
+
+    try:
+        reply = await agent_container.run_agent.execute(
+            body.message, intermediate_sink=sink, ephemeral=True
+        )
+    except Exception as exc:
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        logger.error(
+            "chat_task error agent=%s duration_ms=%d",
+            body.agent_id,
+            duration_ms,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={"error": str(exc), "error_code": "internal_error"},
+        ) from exc
+
+    duration_ms = int((time.monotonic() - t0) * 1000)
+    logger.info(
+        "chat_task done agent=%s duration_ms=%d reply_len=%d",
+        body.agent_id,
+        duration_ms,
+        len(reply),
+    )
+
+    return TaskTurnResponse(reply=reply, agent_id=body.agent_id, intermediates=sink.messages)
 
 
 # ---------------------------------------------------------------------------

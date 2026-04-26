@@ -767,27 +767,13 @@ class TelegramBot:
             self._container.run_agent.set_extra_system_sections([])
 
     async def verificar_bot_username(self) -> None:
-        """Verifica que ``bot_username`` en config coincide con el username real del bot.
+        """Obtiene y valida el username del bot contra la API de Telegram.
 
         Llama a ``get_me()`` UNA SOLA VEZ al arranque. No bloquea ni falla el startup:
-        - Si ``bot_username`` es ``None`` en config → INFO alentando a configurarlo.
+        - Si ``bot_username`` no está en config → se auto-detecta para que los filtros funcionen.
         - Si el username real difiere del configurado → WARNING (no bloquea).
         - Si ``get_me()`` falla → WARNING (no bloquea).
-
-        Solo aplica si hay un bloque ``broadcast:`` con ``behavior != "listen"`` —
-        para ``listen`` la detección de menciones no se usa, así que el username
-        no importa operativamente. Sin broadcast config, este método no hace nada.
         """
-        broadcast_raw = self._agent_cfg.channels.get("telegram", {})
-        if hasattr(broadcast_raw, "get"):
-            broadcast_block = broadcast_raw.get("broadcast")
-        else:
-            broadcast_block = getattr(broadcast_raw, "broadcast", None)
-
-        if broadcast_block is None:
-            # Sin bloque broadcast → nada que validar.
-            return
-
         try:
             me = await self._app.bot.get_me()
         except Exception as exc:
@@ -800,21 +786,20 @@ class TelegramBot:
 
         real_username = me.username  # puede ser None si el bot no tiene username
 
-        if self._bot_username is None:
-            logger.info(
-                "Telegram bot '%s': broadcast.bot_username no configurado "
-                "(username real: @%s). Configuralo para que el modo 'mention' funcione correctamente.",
+        if real_username is None:
+            logger.warning(
+                "Telegram bot '%s': get_me() devolvió username=None. "
+                "Los filtros de reply y mención no funcionarán correctamente.",
                 self._agent_cfg.id,
-                real_username or "<sin username>",
             )
             return
 
-        if real_username is None:
-            logger.warning(
-                "Telegram bot '%s': get_me() devolvió username=None "
-                "(config declara bot_username='%s'). Verificá el token.",
+        if self._bot_username is None:
+            self._bot_username = real_username
+            logger.info(
+                "Telegram bot '%s': bot_username auto-detectado: @%s",
                 self._agent_cfg.id,
-                self._bot_username,
+                real_username,
             )
             return
 

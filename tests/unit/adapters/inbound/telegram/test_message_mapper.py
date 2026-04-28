@@ -15,6 +15,7 @@ from adapters.inbound.telegram.message_mapper import (
     es_reply_a_bot,
     format_group_message,
     hay_destinatario_explicito,
+    telegram_update_to_input,
 )
 
 
@@ -37,8 +38,24 @@ def _message(
     text: str = "hola",
     from_user: SimpleNamespace | None = None,
     entities: list | None = None,
+    location: SimpleNamespace | None = None,
 ) -> SimpleNamespace:
-    return SimpleNamespace(text=text, from_user=from_user, entities=entities)
+    return SimpleNamespace(
+        text=text, from_user=from_user, entities=entities, location=location
+    )
+
+
+def _location(
+    latitude: float = 43.251412,
+    longitude: float = 2.301256,
+    live_period: int | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(latitude=latitude, longitude=longitude, live_period=live_period)
+
+
+def _update(message: SimpleNamespace | None) -> SimpleNamespace:
+    """Stub mínimo de ``telegram.Update`` para ``telegram_update_to_input``."""
+    return SimpleNamespace(message=message)
 
 
 # ---------------------------------------------------------------------------
@@ -50,42 +67,42 @@ def test_format_group_message_con_username():
     """Con username presente usa ese como prefijo (sin @)."""
     msg = _message(text="esto es un mensaje", from_user=_user(username="juan_perez"))
     resultado = format_group_message(msg)
-    assert resultado == "juan_perez: esto es un mensaje"
+    assert resultado == "juan_perez said: esto es un mensaje"
 
 
 def test_format_group_message_sin_username_con_first_name():
     """Sin username pero con first_name, usa first_name como prefijo."""
     msg = _message(text="otro mensaje", from_user=_user(username=None, first_name="María"))
     resultado = format_group_message(msg)
-    assert resultado == "María: otro mensaje"
+    assert resultado == "María said: otro mensaje"
 
 
 def test_format_group_message_sin_username_ni_first_name():
     """Sin username ni first_name, usa 'anonimo'."""
     msg = _message(text="mensaje sin nombre", from_user=_user(username=None, first_name=None))
     resultado = format_group_message(msg)
-    assert resultado == "anonimo: mensaje sin nombre"
+    assert resultado == "anonimo said: mensaje sin nombre"
 
 
 def test_format_group_message_sin_from_user():
     """Sin from_user (None), usa 'anonimo'."""
     msg = _message(text="sin usuario", from_user=None)
     resultado = format_group_message(msg)
-    assert resultado == "anonimo: sin usuario"
+    assert resultado == "anonimo said: sin usuario"
 
 
 def test_format_group_message_texto_vacio():
-    """Texto vacío resulta en 'username: ' (sin texto pero con prefijo)."""
+    """Texto vacío resulta en 'username said: ' (sin texto pero con prefijo)."""
     msg = _message(text="", from_user=_user(username="bot"))
     resultado = format_group_message(msg)
-    assert resultado == "bot: "
+    assert resultado == "bot said: "
 
 
 def test_format_group_message_username_tiene_prioridad_sobre_first_name():
     """Si hay ambos username y first_name, el username tiene prioridad."""
     msg = _message(text="test", from_user=_user(username="mi_user", first_name="Mi Nombre"))
     resultado = format_group_message(msg)
-    assert resultado == "mi_user: test"
+    assert resultado == "mi_user said: test"
 
 
 # ---------------------------------------------------------------------------
@@ -315,3 +332,64 @@ def test_hay_destinatario_explicito_mensaje_generico():
     """Sin mención ni reply → no hay destinatario explícito."""
     msg = SimpleNamespace(text="hola che", entities=None, reply_to_message=None)
     assert hay_destinatario_explicito(msg) is False
+
+
+# ---------------------------------------------------------------------------
+# telegram_update_to_input — location
+# ---------------------------------------------------------------------------
+
+
+def test_telegram_update_to_input_texto_normal():
+    """Mensaje de texto normal devuelve el texto strippeado."""
+    update = _update(_message(text="  hola mundo  "))
+    assert telegram_update_to_input(update) == "hola mundo"
+
+
+def test_telegram_update_to_input_location_unica():
+    """Posición única (sin live_period) devuelve formato {GPS:lat,lon}."""
+    msg = _message(text=None, location=_location(latitude=43.251412, longitude=2.301256))
+    assert telegram_update_to_input(_update(msg)) == "{GPS:43.251412,2.301256}"
+
+
+def test_telegram_update_to_input_live_location_se_ignora():
+    """Posición en tiempo real (live_period seteado) devuelve None."""
+    msg = _message(text=None, location=_location(live_period=900))
+    assert telegram_update_to_input(_update(msg)) is None
+
+
+def test_telegram_update_to_input_sin_message():
+    """Update sin message devuelve None."""
+    assert telegram_update_to_input(_update(None)) is None
+
+
+def test_telegram_update_to_input_texto_tiene_prioridad_sobre_location():
+    """Si hay texto, se usa texto (defensivo — Telegram no manda ambos)."""
+    msg = _message(text="texto explicito", location=_location())
+    assert telegram_update_to_input(_update(msg)) == "texto explicito"
+
+
+# ---------------------------------------------------------------------------
+# format_group_message — location
+# ---------------------------------------------------------------------------
+
+
+def test_format_group_message_con_location():
+    """Mensaje de location en grupo formatea como '<user> said: {GPS:lat,lon}'."""
+    msg = _message(
+        text=None,
+        from_user=_user(username="alberto"),
+        location=_location(latitude=43.251412, longitude=2.301256),
+    )
+    resultado = format_group_message(msg)
+    assert resultado == "alberto said: {GPS:43.251412,2.301256}"
+
+
+def test_format_group_message_live_location_cae_a_texto():
+    """Live location no se trata como GPS — cae al texto (vacío en este caso)."""
+    msg = _message(
+        text="",
+        from_user=_user(username="alberto"),
+        location=_location(live_period=900),
+    )
+    resultado = format_group_message(msg)
+    assert "{GPS:" not in resultado

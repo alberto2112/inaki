@@ -12,9 +12,24 @@ _md = MarkdownIt("commonmark", {"html": False}).enable("strikethrough")
 
 
 def telegram_update_to_input(update: Update) -> str | None:
-    """Extrae el texto del mensaje de un Update de Telegram."""
+    """Extrae el texto del mensaje de un Update de Telegram.
+
+    Soporta:
+    - Mensajes de texto: devuelve el texto strippeado.
+    - Ubicaciones únicas (``message.location`` sin ``live_period``): devuelve
+      ``{GPS:lat,lon}`` como representación textual procesable por el LLM.
+
+    Las ubicaciones en tiempo real (``live_period`` seteado) se ignoran porque
+    el flujo actual no consume ``edited_message`` updates — sólo confundirían
+    al LLM al recibir una posición sin saber que se actualizará.
+    """
     if update.message and update.message.text:
         return update.message.text.strip()
+    if update.message and update.message.location:
+        location = update.message.location
+        if getattr(location, "live_period", None):
+            return None
+        return f"{{GPS:{location.latitude},{location.longitude}}}"
     return None
 
 
@@ -62,7 +77,12 @@ def format_group_message(message) -> str:
         String con formato ``"<remitente>: <texto>"`` listo para persistir en historial.
     """
     from_user = getattr(message, "from_user", None)
-    texto = (message.text or "").strip()
+
+    location = getattr(message, "location", None)
+    if location and not getattr(location, "live_period", None):
+        texto = f"{{GPS:{location.latitude},{location.longitude}}}"
+    else:
+        texto = (message.text or "").strip()
 
     if from_user is not None:
         username = getattr(from_user, "username", None)

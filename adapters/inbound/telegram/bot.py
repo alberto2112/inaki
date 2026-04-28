@@ -130,6 +130,7 @@ class TelegramBot:
             self._app.add_handler(MessageHandler(filters.VOICE, self._handle_voice_message))
             self._app.add_handler(MessageHandler(filters.AUDIO, self._handle_voice_message))
             self._app.add_handler(MessageHandler(filters.VIDEO_NOTE, self._handle_voice_message))
+        self._app.add_handler(MessageHandler(filters.LOCATION, self._handle_message))
         self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
 
     def _is_allowed(self, user_id: int) -> bool:

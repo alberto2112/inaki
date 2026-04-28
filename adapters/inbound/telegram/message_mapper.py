@@ -64,17 +64,17 @@ async def extract_audio_payload(message) -> tuple[bytes, str, int] | None:
 
 
 def format_group_message(message) -> str:
-    """Formatea un mensaje de grupo con el prefijo del remitente.
+    """Formatea un mensaje de grupo con marca de tiempo y prefijo del remitente.
 
-    El formato resultante es ``"username: texto"`` (sin @).
-    Si el usuario no tiene username, usa ``first_name``.
-    Si tampoco tiene ``first_name``, usa ``"anonimo"`` como defensa.
+    El formato resultante es ``"(YYYY-MM-DD HH:MM:SS TZ) username said: texto"``.
+    La marca de tiempo usa ``message.date`` (UTC) convertida a timezone local del sistema.
+    Si ``message.date`` no está disponible, se omite el prefijo de timestamp.
 
     Args:
-        message: Objeto ``telegram.Message`` con el campo ``from_user`` poblado.
+        message: Objeto ``telegram.Message`` con los campos ``from_user`` y ``date`` poblados.
 
     Returns:
-        String con formato ``"<remitente>: <texto>"`` listo para persistir en historial.
+        String con formato ``"(<timestamp>) <remitente> said: <texto>"``.
     """
     from_user = getattr(message, "from_user", None)
 
@@ -93,6 +93,11 @@ def format_group_message(message) -> str:
             remitente = first_name if first_name else "anonimo"
     else:
         remitente = "anonimo"
+
+    date = getattr(message, "date", None)
+    if date is not None:
+        ts = date.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+        return f"({ts}) {remitente} said: {texto}"
 
     return f"{remitente} said: {texto}"
 

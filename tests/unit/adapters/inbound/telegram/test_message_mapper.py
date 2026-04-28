@@ -6,6 +6,8 @@ Verifica que el código de producción usa duck-typing con getattr (lo hace).
 
 from __future__ import annotations
 
+import re
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from adapters.inbound.telegram.message_mapper import (
@@ -39,9 +41,10 @@ def _message(
     from_user: SimpleNamespace | None = None,
     entities: list | None = None,
     location: SimpleNamespace | None = None,
+    date: datetime | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
-        text=text, from_user=from_user, entities=entities, location=location
+        text=text, from_user=from_user, entities=entities, location=location, date=date
     )
 
 
@@ -103,6 +106,22 @@ def test_format_group_message_username_tiene_prioridad_sobre_first_name():
     msg = _message(text="test", from_user=_user(username="mi_user", first_name="Mi Nombre"))
     resultado = format_group_message(msg)
     assert resultado == "mi_user said: test"
+
+
+def test_format_group_message_con_timestamp():
+    """Con date presente, incluye prefijo de timestamp en timezone local."""
+    dt = datetime(2026, 4, 12, 19, 32, 5, tzinfo=timezone.utc)
+    msg = _message(text="hola", from_user=_user(username="alberto"), date=dt)
+    resultado = format_group_message(msg)
+    # El formato es "(YYYY-MM-DD HH:MM:SS TZ) username said: texto"
+    assert re.match(r"^\(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \S+\) alberto said: hola$", resultado)
+
+
+def test_format_group_message_sin_date_no_tiene_timestamp():
+    """Sin date (None), el resultado no incluye prefijo de timestamp."""
+    msg = _message(text="hola", from_user=_user(username="alberto"), date=None)
+    resultado = format_group_message(msg)
+    assert resultado == "alberto said: hola"
 
 
 # ---------------------------------------------------------------------------

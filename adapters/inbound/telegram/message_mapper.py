@@ -63,6 +63,23 @@ async def extract_audio_payload(message) -> tuple[bytes, str, int] | None:
     return bytes(data), mime, size
 
 
+async def extract_photo_payload(message) -> tuple[bytes, str, int] | None:
+    """Detecta una foto individual en un Message y devuelve (bytes, mime, size).
+
+    Telegram envía las fotos como una lista de PhotoSize con distintas resoluciones.
+    Se elige la de mayor resolución (última de la lista).
+
+    Retorna ``None`` si no hay foto. Telegram siempre envía JPEG.
+    """
+    if not message.photo:
+        return None
+    photo = message.photo[-1]
+    file = await photo.get_file()
+    data = await file.download_as_bytearray()
+    size = int(getattr(photo, "file_size", None) or 0)
+    return bytes(data), "image/jpeg", size
+
+
 def format_group_message(message) -> str:
     """Formatea un mensaje de grupo con marca de tiempo y prefijo del remitente.
 

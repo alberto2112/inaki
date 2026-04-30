@@ -65,6 +65,12 @@ Secrets are YAML-only (no env vars). `*.secrets.yaml` files are gitignored.
 - **Tool loop** — LLM can call tools iteratively up to `tools.tool_call_max_iterations` (default 5) with a circuit breaker for repeated failures.
 - **Codebase language** — Variables, docstrings, comments, and error messages are in Spanish.
 - **Target platform** — Raspberry Pi 5 (ARM64, 4GB RAM) via systemd. See `systemd/inaki.service`.
+- **Photo handling** — `ProcessPhotoUseCase` orquesta reconocimiento facial (InsightFace, lazy-load en primera foto) + descripción de escena (LLM multimodal). `IVisionPort.detect_and_embed` devuelve `list[FaceDetection]` (bbox + embedding 512 floats). Ver `docs/face-recognition.md`.
+- **InsightFace lazy-load** — El modelo NO se carga al arrancar el daemon. Se carga la primera vez que `IVisionPort.detect_and_embed` es llamado (singleton perezoso en `_get_app()`). Tests verifican esto mockeando el import path del adaptador.
+- **faces.db** — Base de datos separada en `~/.inaki/data/faces.db`. Independiente de `history.db` e `inaki.db`. Usa sqlite-vec para embeddings FLOAT[512]. Se crea automáticamente al primer uso.
+- **`schema_meta` dimension validation** — Al arrancar, el adapter de visión compara la dimensión del modelo con `schema_meta.embedding_dim` en faces.db. Si no coinciden, lanza `EmbeddingDimensionMismatchError`. Cambiar `faces.model` invalida faces.db — ver `docs/face-recognition.md`.
+- **`categoria VARCHAR` pattern** — Las personas ignoradas (via `skip_face`) se persisten en `persons` con `categoria='ignorada'`. Extensible: `NULL` = persona normal, `'ignorada'` = ignorada permanentemente, futuros valores posibles sin ALTER.
+- **`message_face_metadata` side-table** — En `history.db`. Key por `history.id`. `ON DELETE CASCADE` limpia metadata cuando se borra el historial.
 
 ## Migration Notes
 
@@ -76,6 +82,18 @@ auto-migration exists — the DB must be dropped and rebuilt.
 Operator steps: stop daemon → `rm ~/.inaki/data/history.db ~/.inaki/data/inaki.db` → add
 `channels.telegram.broadcast` config (optional) → restart. See `docs/broadcast-smoke.md`
 for the full bootstrap walkthrough.
+
+### `telegram-photo-recognition`
+
+La tabla `message_face_metadata` se agrega como side-table en `history.db`. No hay
+auto-migración — la DB debe borrarse y reconstruirse.
+
+Pasos del operador: detener daemon → `rm ~/.inaki/data/history.db ~/.inaki/data/inaki.db` →
+agregar bloque `photos:` en `~/.inaki/config/global.yaml` (o dejar `photos: null` para
+desactivar) → reiniciar. La DB `faces.db` se crea automáticamente al primer uso.
+
+**Cambio de modelo facial** (`faces.model`): invalida `faces.db` → borrar
+`~/.inaki/data/faces.db` y re-enrolar todas las personas. Ver `docs/face-recognition.md`.
 
 ## Git workflow
 

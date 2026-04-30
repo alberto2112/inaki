@@ -1095,3 +1095,105 @@ SELECT task_id, metadata FROM task_logs WHERE status = 'success';
 ```
 
 Una línea por envío, timestamp ISO8601 UTC. Append-only.
+
+---
+
+## `photos` — Pipeline de reconocimiento facial
+
+Controla el procesamiento de fotos enviadas por Telegram: detección de caras (InsightFace), matching contra el registro, descripción de escena (LLM multimodal) y anotación visual.
+
+`photos: null` (por defecto) deshabilita la feature completa. No se carga ningún modelo ni se crea `faces.db`.
+
+```yaml
+photos:
+  enabled: true
+  enrollment_chats: private   # private | none
+
+  faces:
+    provider: insightface       # único soportado
+    model: buffalo_sc           # buffalo_sc | buffalo_s | buffalo_l
+    match_threshold: 0.55       # coseno ≥ threshold → MATCHED
+    ambiguous_threshold: 0.40   # entre ambiguous y match → AMBIGUOUS
+
+  scene:
+    provider: anthropic         # anthropic | openai | groq
+    model: claude-haiku-4-5-20251001
+    prompt_template: null       # null = prompt built-in en español
+    api_key: null               # conviene en global.secrets.yaml
+
+  dedup:
+    enabled: true
+    schedule: "0 3 * * *"      # cron — job nocturno de deduplicación
+    similarity_threshold: 0.70  # similitud entre centroides para reportar par
+```
+
+### Campos
+
+| Campo | Tipo | Default | Descripción |
+|-------|------|---------|-------------|
+| `enabled` | bool | `true` | Si false, el bot ignora fotos con warning. No carga modelos. |
+| `enrollment_chats` | enum | `private` | Tipos de chat donde el agente ofrece registrar caras. |
+
+#### `faces.*`
+
+| Campo | Tipo | Default | Descripción |
+|-------|------|---------|-------------|
+| `provider` | string | `insightface` | Único proveedor soportado. |
+| `model` | enum | `buffalo_sc` | Modelo InsightFace. Ver tabla de modelos abajo. |
+| `match_threshold` | float | `0.55` | Score de similitud coseno para MATCHED. |
+| `ambiguous_threshold` | float | `0.40` | Score para AMBIGUOUS (entre ambiguous y match). |
+
+**Modelos InsightFace disponibles:**
+
+| Modelo | Tamaño | Precisión | Recomendado para |
+|--------|--------|-----------|------------------|
+| `buffalo_sc` | ~80 MB | Media | Raspberry Pi 5 (por defecto) |
+| `buffalo_s` | ~150 MB | Alta | Dispositivos con más RAM |
+| `buffalo_l` | ~400 MB | Muy alta | Servidores / GPU |
+
+> **Cambiar `faces.model` invalida `faces.db`**. Procedimiento: detener daemon → `rm ~/.inaki/data/faces.db` → reiniciar → re-enrolar personas. Ver [`docs/face-recognition.md`](face-recognition.md).
+
+#### `scene.*`
+
+| Campo | Tipo | Default | Descripción |
+|-------|------|---------|-------------|
+| `provider` | enum | `anthropic` | Proveedor LLM multimodal para describir la escena. |
+| `model` | string | `claude-haiku-4-5-20251001` | Modelo del proveedor. |
+| `prompt_template` | string\|null | `null` | Prompt personalizado. `null` usa el prompt built-in. |
+| `api_key` | string\|null | `null` | API key. Conviene en `global.secrets.yaml`. |
+
+#### `dedup.*`
+
+| Campo | Tipo | Default | Descripción |
+|-------|------|---------|-------------|
+| `enabled` | bool | `true` | Habilita el job nocturno de deduplicación. |
+| `schedule` | cron | `"0 3 * * *"` | Cuándo corre el job (3am por defecto). |
+| `similarity_threshold` | float | `0.70` | Score mínimo entre centroides para reportar par duplicado. |
+
+### Configuración mínima
+
+```yaml
+# global.yaml
+photos:
+  enabled: true
+  scene:
+    provider: anthropic
+    model: claude-haiku-4-5-20251001
+
+# global.secrets.yaml
+photos:
+  scene:
+    api_key: "sk-ant-..."
+```
+
+### Bootstrap
+
+```bash
+# Primera vez
+systemctl --user stop inaki
+# agregar bloque photos: en global.yaml
+systemctl --user start inaki
+# faces.db se crea automáticamente en ~/.inaki/data/faces.db al primer uso
+```
+
+Ver guía completa en [`docs/face-recognition.md`](face-recognition.md).

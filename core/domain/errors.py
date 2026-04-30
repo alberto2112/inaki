@@ -88,6 +88,69 @@ class ToolLoopMaxIterationsError(IñakiError):
 
 
 # ---------------------------------------------------------------------------
+# Vision / Reconocimiento facial
+# ---------------------------------------------------------------------------
+
+
+class VisionError(IñakiError):
+    """Error al procesar una imagen con el proveedor de visión (InsightFace, etc.)."""
+
+
+class SceneDescriptionError(IñakiError):
+    """Error al describir la escena de una imagen con el proveedor LLM multimodal."""
+
+
+class FaceRegistryError(IñakiError):
+    """Error al leer o escribir el registro de personas en faces.db."""
+
+
+class EmbeddingDimensionMismatchError(FaceRegistryError):
+    """El modelo configurado produce embeddings de dimensión distinta a la registrada en faces.db.
+
+    Al arrancar, el adaptador compara la dimensión del modelo cargado contra
+    el valor de `schema_meta.embedding_dim` en faces.db. Si no coinciden,
+    se lanza este error con un mensaje claro indicando la acción requerida:
+    borrar faces.db y re-enrolar todas las personas.
+    """
+
+    def __init__(self, esperada: int, encontrada: int, modelo: str) -> None:
+        super().__init__(
+            f"Dimensión de embedding incompatible: la base de datos faces.db espera "
+            f"{esperada} dimensiones (modelo '{modelo}' del schema guardado), "
+            f"pero el modelo configurado produce {encontrada}. "
+            f"Para resolver: detener el daemon, borrar ~/.inaki/data/faces.db y "
+            f"reiniciar. Se perderán todas las caras registradas — volver a enrolar."
+        )
+        self.esperada = esperada
+        self.encontrada = encontrada
+        self.modelo = modelo
+
+
+class UnknownVisionProviderError(VisionError):
+    """El proveedor de visión solicitado no está registrado en la factory."""
+
+    def __init__(self, provider: str, disponibles: list[str]) -> None:
+        super().__init__(
+            f"Proveedor de visión desconocido: '{provider}'. "
+            f"Disponibles: {disponibles}"
+        )
+        self.provider = provider
+        self.disponibles = disponibles
+
+
+class UnknownSceneProviderError(SceneDescriptionError):
+    """El proveedor de descripción de escena solicitado no está registrado en la factory."""
+
+    def __init__(self, provider: str, disponibles: list[str]) -> None:
+        super().__init__(
+            f"Proveedor de descripción de escena desconocido: '{provider}'. "
+            f"Disponibles: {disponibles}"
+        )
+        self.provider = provider
+        self.disponibles = disponibles
+
+
+# ---------------------------------------------------------------------------
 # Daemon client
 # ---------------------------------------------------------------------------
 

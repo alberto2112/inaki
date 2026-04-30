@@ -701,6 +701,60 @@ class AgentConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class FacesConfig(BaseModel):
+    """Configuración del proveedor de reconocimiento facial (InsightFace)."""
+
+    provider: Literal["insightface"] = "insightface"
+    model: Literal["buffalo_sc", "buffalo_s", "buffalo_l"] = "buffalo_sc"
+    match_threshold: float = 0.55
+    """Score mínimo de similitud coseno para considerar una cara como MATCHED."""
+    ambiguous_threshold: float = 0.40
+    """Score entre ambiguous_threshold y match_threshold → cara AMBIGUOUS."""
+
+    @model_validator(mode="after")
+    def _validar_umbrales(self) -> "FacesConfig":
+        if self.ambiguous_threshold >= self.match_threshold:
+            raise ValueError(
+                f"FacesConfig: ambiguous_threshold ({self.ambiguous_threshold}) "
+                f"debe ser menor que match_threshold ({self.match_threshold})."
+            )
+        return self
+
+
+class SceneConfig(BaseModel):
+    """Configuración del proveedor de descripción de escena (LLM multimodal)."""
+
+    provider: Literal["anthropic", "openai", "groq"] = "anthropic"
+    model: str = "claude-sonnet-4-6"
+    prompt_template: str | None = None
+    """Prompt personalizado en español. None = usar el prompt built-in del adaptador."""
+    api_key: str | None = None
+    """API key del proveedor. Conviene en global.secrets.yaml bajo photos.scene.api_key."""
+
+
+class DedupConfig(BaseModel):
+    """Configuración del job nocturno de deduplicación de personas."""
+
+    enabled: bool = True
+    schedule: str = "0 3 * * *"
+    """Expresión cron para el job de deduplicación. Validada por croniter."""
+    similarity_threshold: float = 0.70
+    """Score mínimo de similitud coseno entre centroides para reportar par duplicado."""
+
+
+class PhotosConfig(BaseModel):
+    """Configuración del pipeline de fotos (reconocimiento facial + escena)."""
+
+    enabled: bool = True
+    """Si False, el bot ignora todas las fotos con warning. No se carga ningún modelo."""
+    enrollment_chats: Literal["private", "none"] = "private"
+    """Tipos de chat donde el agente ofrecerá registrar caras nuevas.
+    'private' = solo chats privados. 'none' = el agente nunca ofrece enrolar."""
+    faces: FacesConfig = FacesConfig()
+    scene: SceneConfig = SceneConfig()
+    dedup: DedupConfig = DedupConfig()
+
+
 class GlobalConfig(BaseModel):
     app: AppConfig
     llm: LLMConfig
@@ -717,6 +771,8 @@ class GlobalConfig(BaseModel):
     user: UserConfig = UserConfig()
     transcription: TranscriptionConfig | None = None
     knowledge: KnowledgeConfig = KnowledgeConfig()
+    photos: PhotosConfig | None = None
+    """Configuración del pipeline de fotos. None = feature desactivada (no se carga nada)."""
     providers: dict[str, ProviderConfig] = {}
     """Registry top-level de proveedores — credenciales compartidas por vendor."""
 
@@ -990,6 +1046,20 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
     else:
         knowledge = KnowledgeConfig()
 
+    photos_raw = merged.get("photos")
+    if photos_raw is not None:
+        faces_raw = photos_raw.pop("faces", {}) or {}
+        scene_raw = photos_raw.pop("scene", {}) or {}
+        dedup_raw = photos_raw.pop("dedup", {}) or {}
+        photos = PhotosConfig(
+            **photos_raw,
+            faces=FacesConfig(**faces_raw),
+            scene=SceneConfig(**scene_raw),
+            dedup=DedupConfig(**dedup_raw),
+        )
+    else:
+        photos = None
+
     global_cfg = GlobalConfig(
         app=app,
         llm=llm,
@@ -1006,6 +1076,7 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
         user=user,
         transcription=transcription,
         knowledge=knowledge,
+        photos=photos,
         providers=providers,
     )
     return global_cfg, merged

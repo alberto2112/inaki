@@ -24,7 +24,9 @@ from adapters.outbound.history.sqlite_history_store import SQLiteHistoryStore
 from adapters.outbound.memory.sqlite_memory_repo import SQLiteMemoryRepository
 from adapters.outbound.scheduler.builtin_tasks import (
     CONSOLIDATE_MEMORY_TASK_ID,
+    FACE_DEDUP_TASK_ID,
     build_consolidate_memory_task,
+    build_face_dedup_task,
 )
 from adapters.outbound.scheduler.dispatch_adapters import (
     ChannelRouter,
@@ -74,8 +76,14 @@ class AgentContainer:
         # Idempotency guard for wire_scheduler
         self._scheduler_wired: bool = False
 
+        # Idempotency guard for wire_photos
+        self._photos_wired: bool = False
+
         # ScheduleTaskUseCase — wired en fase 3 por AppContainer. None hasta entonces.
         self.schedule_task: ScheduleTaskUseCase | None = None
+
+        # ProcessPhotoUseCase — wired en fase 5 por AppContainer. None si photos no habilitado.
+        self.process_photo = None
 
         # Broadcast adapter — wired en fase 4 por AppContainer. None si el agente no
         # tiene ningún canal telegram con bloque broadcast:.
@@ -527,6 +535,145 @@ class AgentContainer:
         self._scheduler_wired = True
         logger.info("AgentContainer '%s': scheduler tool registrada", self.agent_config.id)
 
+    def wire_photos(
+        self,
+        vision,
+        face_registry,
+        global_config: GlobalConfig,
+    ) -> None:
+        """Phase-5 wiring: instantiates photo processing use case and face tools.
+
+        Receives the shared vision and face registry singletons from AppContainer.
+        Creates per-agent adapters: scene describer, annotator, metadata repo, use case.
+        No-op when photos is not enabled or already wired.
+        """
+        if self._photos_wired:
+            return
+
+        photos_cfg = getattr(global_config, "photos", None)
+        if photos_cfg is None or not photos_cfg.enabled:
+            self._photos_wired = True
+            return
+
+        if vision is None or face_registry is None:
+            logger.warning(
+                "AgentContainer '%s': vision o face_registry no disponibles — "
+                "photos wiring omitido",
+                self.agent_config.id,
+            )
+            self._photos_wired = True
+            return
+
+        try:
+            from pathlib import Path
+
+            from adapters.outbound.history.sqlite_message_face_metadata_repo import (
+                SqliteMessageFaceMetadataRepo,
+            )
+            from adapters.outbound.imaging.pillow_annotator import PillowPhotoAnnotator
+            from core.use_cases.process_photo import ProcessPhotoUseCase
+
+            # Metadata repo: side-table en el mismo history.db del agente.
+            history_db = self.agent_config.chat_history.db_filename
+            metadata_repo = SqliteMessageFaceMetadataRepo(history_db)
+
+            # Scene describer: por agente, resuelto desde global photos config.
+            scene_describer = self._build_scene_describer(photos_cfg)
+
+            annotator = PillowPhotoAnnotator()
+
+            self.process_photo = ProcessPhotoUseCase(
+                vision=vision,
+                face_registry=face_registry,
+                scene_describer=scene_describer,
+                annotator=annotator,
+                metadata_repo=metadata_repo,
+                config=photos_cfg,
+            )
+
+            # Registrar las 8 face tools.
+            self._register_face_tools(face_registry, metadata_repo, photos_cfg)
+
+            self._photos_wired = True
+            logger.info(
+                "AgentContainer '%s': photos wired (scene_provider=%s)",
+                self.agent_config.id,
+                photos_cfg.scene.provider,
+            )
+        except Exception as exc:
+            logger.error(
+                "Error en wire_photos para agente '%s': %s", self.agent_config.id, exc
+            )
+            self._photos_wired = True
+
+    def _build_scene_describer(self, photos_cfg):
+        """Instancia el adaptador de descripción de escena según el provider configurado."""
+        from core.domain.errors import IñakiError
+
+        provider = photos_cfg.scene.provider
+        model = photos_cfg.scene.model
+        prompt = photos_cfg.scene.prompt_template
+
+        # Fallback al api_key del provider global cuando no se especifica en photos.scene.
+        api_key = photos_cfg.scene.api_key
+        if not api_key:
+            providers = self.agent_config.providers
+            # Buscar por key directa (ej: providers.openai) o por type explícito.
+            match = providers.get(provider) or next(
+                (p for p in providers.values() if p.type == provider), None
+            )
+            api_key = (match.api_key if match else None) or ""
+
+        if provider == "anthropic":
+            from adapters.outbound.scene.anthropic_describer import (
+                AnthropicSceneDescriberAdapter,
+            )
+            return AnthropicSceneDescriberAdapter(api_key, model, prompt)
+        elif provider == "openai":
+            from adapters.outbound.scene.openai_describer import (
+                OpenAISceneDescriberAdapter,
+            )
+            return OpenAISceneDescriberAdapter(api_key, model, prompt)
+        elif provider == "groq":
+            from adapters.outbound.scene.groq_describer import GroqSceneDescriberAdapter
+            return GroqSceneDescriberAdapter(api_key, model, prompt)
+        else:
+            raise IñakiError(f"Scene provider desconocido: '{provider}'. Válidos: anthropic, openai, groq")
+
+    def _register_face_tools(self, face_registry, metadata_repo, photos_cfg) -> None:
+        """Registra las 8 face tools en el registry del agente."""
+        from adapters.outbound.tools.face_tools import (
+            AddPhotoToPersonTool,
+            FindDuplicatePersonsTool,
+            ForgetPersonTool,
+            ListKnownPersonsTool,
+            MergePersonsTool,
+            RegisterFaceTool,
+            SkipFaceTool,
+            UpdatePersonMetadataTool,
+        )
+
+        agent_id = self.agent_config.id
+        get_ctx = self.get_channel_context
+        dedup_threshold = photos_cfg.dedup.similarity_threshold
+
+        tools = [
+            RegisterFaceTool(face_registry, metadata_repo, agent_id, get_ctx),
+            AddPhotoToPersonTool(face_registry, metadata_repo, agent_id, get_ctx),
+            UpdatePersonMetadataTool(face_registry),
+            ListKnownPersonsTool(face_registry),
+            ForgetPersonTool(face_registry),
+            SkipFaceTool(face_registry, metadata_repo, agent_id, get_ctx),
+            MergePersonsTool(face_registry),
+            FindDuplicatePersonsTool(face_registry, dedup_threshold),
+        ]
+        for tool in tools:
+            self._tools.register(tool)
+
+        logger.info(
+            "AgentContainer '%s': %d face tools registradas", self.agent_config.id, len(tools)
+        )
+
     def _build_discovery_section(
         self,
         get_agent_container: Callable[[str], "AgentContainer | None"],
@@ -818,6 +965,50 @@ class AppContainer:
             except Exception as exc:
                 logger.error("Error en wire_broadcast para agente '%s': %s", agent_cfg.id, exc)
 
+        # Phase 5: wire photos — singletons compartidos (vision lazy, face registry)
+        # + per-agent wiring (scene describer, annotator, metadata repo, use case, tools).
+        self._vision_adapter = None
+        self._face_registry_adapter = None
+        photos_cfg = getattr(global_config, "photos", None)
+        if photos_cfg is not None and photos_cfg.enabled:
+            try:
+                from pathlib import Path
+
+                from adapters.outbound.faces.sqlite_face_registry import (
+                    SqliteFaceRegistryAdapter,
+                )
+                from adapters.outbound.vision.insightface_adapter import (
+                    InsightFaceVisionAdapter,
+                )
+
+                # faces.db: misma carpeta que el history.db del primer agente.
+                first_agent = next(iter(self.agents.values()), None)
+                if first_agent is not None:
+                    history_path = Path(first_agent.agent_config.chat_history.db_filename)
+                    faces_db_path = str(history_path.parent / "faces.db")
+                else:
+                    faces_db_path = "~/.inaki/data/faces.db"
+
+                self._vision_adapter = InsightFaceVisionAdapter(photos_cfg.faces.model)
+                self._face_registry_adapter = SqliteFaceRegistryAdapter(
+                    faces_db_path, embedding_dim=512
+                )
+                logger.info(
+                    "Photos singletons inicializados (faces.db=%s, vision=lazy)", faces_db_path
+                )
+            except Exception as exc:
+                logger.error("Error inicializando photos singletons: %s", exc)
+
+        for agent_id, container in self.agents.items():
+            try:
+                container.wire_photos(
+                    self._vision_adapter,
+                    self._face_registry_adapter,
+                    global_config,
+                )
+            except Exception as exc:
+                logger.error("Error en wire_photos para agente '%s': %s", agent_id, exc)
+
     def _wire_broadcast_for_agent(self, agent_cfg: AgentConfig) -> None:
         """
         Instancia y almacena el TcpBroadcastAdapter para un agente, si aplica.
@@ -1018,10 +1209,98 @@ class AppContainer:
             )
             await self.scheduler_repo.save_task(updated)
 
+    async def _reconcile_face_dedup_task(self) -> None:
+        """Garantiza que la tarea builtin `face_dedup_nightly` en la DB refleja la config actual.
+
+        No-op si photos está deshabilitado o si dedup.enabled=False.
+        Si existe y el schedule cambió → actualiza next_run.
+        Si status FAILED → resetea a PENDING.
+        """
+        photos_cfg = getattr(self.global_config, "photos", None)
+        if photos_cfg is None or not photos_cfg.enabled:
+            return
+        if not photos_cfg.dedup.enabled:
+            return
+
+        # Elegir el primer agente que tiene photos wired.
+        agent_id = next(
+            (
+                aid
+                for aid, container in self.agents.items()
+                if container.process_photo is not None
+            ),
+            None,
+        )
+        if agent_id is None:
+            logger.warning("face_dedup_nightly: no hay agentes con photos wired — omitido")
+            return
+
+        target_schedule = photos_cfg.dedup.schedule
+        target = build_face_dedup_task(target_schedule, agent_id)
+
+        await self.scheduler_repo.ensure_schema()
+        existing = await self.scheduler_repo.get_task(FACE_DEDUP_TASK_ID)
+
+        if existing is None:
+            await self.scheduler_repo.seed_builtin(target)
+            logger.info(
+                "Tarea builtin face_dedup_nightly sembrada (agent=%s, schedule='%s')",
+                agent_id,
+                target_schedule,
+            )
+            return
+
+        now = datetime.now(timezone.utc)
+        needs_save = False
+        new_schedule = existing.schedule
+        new_next_run = existing.next_run
+        new_status = existing.status
+        new_retry = existing.retry_count
+
+        if existing.schedule != target_schedule:
+            new_schedule = target_schedule
+            new_next_run = datetime.fromtimestamp(
+                croniter(target_schedule, now).get_next(), tz=timezone.utc
+            )
+            logger.info(
+                "face_dedup_nightly: schedule actualizado '%s' → '%s'",
+                existing.schedule,
+                target_schedule,
+            )
+            needs_save = True
+
+        if new_status == TaskStatus.FAILED:
+            new_status = TaskStatus.PENDING
+            new_retry = 0
+            if new_next_run is None or new_next_run <= now:
+                new_next_run = datetime.fromtimestamp(
+                    croniter(new_schedule, now).get_next(), tz=timezone.utc
+                )
+            logger.info("face_dedup_nightly: estado FAILED reseteado a PENDING")
+            needs_save = True
+
+        if new_next_run is None:
+            new_next_run = datetime.fromtimestamp(
+                croniter(new_schedule, now).get_next(), tz=timezone.utc
+            )
+            needs_save = True
+
+        if needs_save:
+            updated = existing.model_copy(
+                update={
+                    "schedule": new_schedule,
+                    "next_run": new_next_run,
+                    "status": new_status,
+                    "retry_count": new_retry,
+                }
+            )
+            await self.scheduler_repo.save_task(updated)
+
     async def startup(self) -> None:
         """Arranca el scheduler service y los adapters de broadcast. Llamar en el daemon lifecycle."""
         if self.global_config.scheduler.enabled:
             await self._reconcile_consolidate_memory_task()
+            await self._reconcile_face_dedup_task()
             await self.scheduler_service.start()
             logger.info("SchedulerService iniciado")
 

@@ -3,6 +3,14 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+from core.domain.entities.face import (
+    BBox,
+    FaceDetection,
+    FaceMatch,
+    MatchStatus,
+    MessageFaceMetadata,
+    Person,
+)
 from core.domain.value_objects.conversation_state import ConversationState
 from core.domain.value_objects.llm_response import LLMResponse
 from infrastructure.config import (
@@ -111,3 +119,91 @@ def mock_transcription() -> AsyncMock:
     transcription = AsyncMock()
     transcription.transcribe.return_value = "transcripción de prueba"
     return transcription
+
+
+# ---------------------------------------------------------------------------
+# Fixtures de reconocimiento facial (Phase 1.4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def sample_face_detection() -> FaceDetection:
+    """FaceDetection de ejemplo con un embedding de 512 floats."""
+    return FaceDetection(
+        bbox=BBox(x=10, y=20, w=100, h=150),
+        embedding=[0.1] * 512,
+        detection_score=0.95,
+    )
+
+
+@pytest.fixture
+def sample_person() -> Person:
+    """Persona de ejemplo (conocida, sin categoría especial)."""
+    return Person(
+        nombre="Alberto",
+        apellido="García",
+        relacion="dueño",
+        embeddings_count=3,
+    )
+
+
+@pytest.fixture
+def sample_ignored_person() -> Person:
+    """Persona ignorada (registrada via skip_face). nombre=None, categoria='ignorada'."""
+    return Person(
+        nombre=None,
+        categoria="ignorada",
+        embeddings_count=1,
+    )
+
+
+@pytest.fixture
+def mock_vision() -> AsyncMock:
+    """Mock de IVisionPort. Por defecto devuelve una sola FaceDetection."""
+    vision = AsyncMock()
+    vision.detect_and_embed.return_value = [
+        FaceDetection(
+            bbox=BBox(x=10, y=20, w=100, h=150),
+            embedding=[0.1] * 512,
+            detection_score=0.95,
+        )
+    ]
+    return vision
+
+
+@pytest.fixture
+def mock_face_registry() -> AsyncMock:
+    """Mock de IFaceRegistryPort. Por defecto find_matches devuelve lista vacía."""
+    registry = AsyncMock()
+    registry.find_matches.return_value = []
+    registry.list_persons.return_value = []
+    registry.get_person.return_value = None
+    registry.get_centroid.return_value = None
+    return registry
+
+
+@pytest.fixture
+def mock_scene_describer() -> AsyncMock:
+    """Mock de ISceneDescriberPort. Por defecto devuelve descripción genérica."""
+    describer = AsyncMock()
+    describer.describe_image.return_value = "Dos personas en un café tomando mate."
+    return describer
+
+
+@pytest.fixture
+def mock_annotator() -> MagicMock:
+    """Mock del PillowAnnotator. Por defecto devuelve bytes fake."""
+    annotator = MagicMock()
+    annotator.draw_numbered.return_value = b"\xff\xd8\xff"  # JPEG magic bytes fake
+    return annotator
+
+
+@pytest.fixture
+def mock_metadata_repo() -> AsyncMock:
+    """Mock de IMessageFaceMetadataRepo."""
+    repo = AsyncMock()
+    repo.save.return_value = None
+    repo.get_by_history_id.return_value = None
+    repo.find_recent_for_thread.return_value = []
+    repo.resolve_face_ref.return_value = None
+    return repo

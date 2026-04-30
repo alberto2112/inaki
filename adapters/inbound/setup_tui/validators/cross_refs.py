@@ -149,6 +149,20 @@ def validate_global_config(
                     available=available_providers,
                 )
 
+    # 6. photos.scene.provider (opcional — skip si photos no está configurado)
+    photos = getattr(cfg, "photos", None)
+    if photos is not None:
+        scene = getattr(photos, "scene", None)
+        if scene is not None:
+            scene_provider: str = scene.provider
+            # Los providers de escena son remotos — siempre requieren credenciales.
+            # No forman parte de _PROVIDERS_LOCALES.
+            _validate_provider_campo(
+                campo="photos.scene.provider",
+                valor=scene_provider,
+                available=available_providers,
+            )
+
 
 # ---------------------------------------------------------------------------
 # Helpers internos

@@ -21,6 +21,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from adapters.inbound.telegram.message_mapper import (
     dirigido_a,
     extract_audio_payload,
+    extract_photo_payload,
     format_group_message,
     format_response,
     hay_destinatario_explicito,
@@ -130,6 +131,8 @@ class TelegramBot:
             self._app.add_handler(MessageHandler(filters.VOICE, self._handle_voice_message))
             self._app.add_handler(MessageHandler(filters.AUDIO, self._handle_voice_message))
             self._app.add_handler(MessageHandler(filters.VIDEO_NOTE, self._handle_voice_message))
+        # Handler de fotos — antes del de texto para que PHOTO tenga prioridad.
+        self._app.add_handler(MessageHandler(filters.PHOTO, self._handle_photo_message))
         self._app.add_handler(MessageHandler(filters.LOCATION, self._handle_message))
         self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
 
@@ -337,6 +340,126 @@ class TelegramBot:
         if task.executions_remaining is not None:
             lines.append(f"Executions remaining: {task.executions_remaining}")
         return "\n".join(lines)
+
+    async def _handle_photo_message(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handler para mensajes con foto (``filters.PHOTO``).
+
+        Flujo:
+        1. Album guard: si ``media_group_id`` está seteado, descarta silenciosamente
+           (sin respuesta, sin tokens, sin escritura en DB).
+        2. Feature check: si ``process_photo`` no está disponible, responde con
+           aviso de que la visión no está habilitada.
+        3. Descarga la foto de mayor resolución.
+        4. Persiste el mensaje "[foto recibida]" en el historial → obtiene history_id.
+        5. Llama a ``ProcessPhotoUseCase.execute()`` → texto contextual + imagen anotada.
+        6. Si hay imagen anotada, la envía con ``reply_photo``.
+        7. Llama a ``_run_pipeline`` con el texto contextual como user_input.
+        """
+        if not self._is_allowed(update.effective_user.id):
+            logger.warning(
+                "Foto rechazada de user_id=%s (no autorizado)",
+                update.effective_user.id,
+            )
+            return
+
+        # Album guard — PRIMERO: descarta silenciosamente álbumes (media_group_id seteado).
+        if getattr(update.message, "media_group_id", None) is not None:
+            return
+
+        chat_type = update.effective_chat.type
+        chat_id = str(update.effective_chat.id)
+
+        # Feature check: si photos no está wired, avisar y salir.
+        process_photo_uc = getattr(self._container, "process_photo", None)
+        if process_photo_uc is None:
+            await update.message.reply_text(
+                "La función de reconocimiento visual no está habilitada."
+            )
+            return
+
+        # Extraer bytes de la foto.
+        payload = await extract_photo_payload(update.message)
+        if payload is None:
+            return
+        image_bytes, _mime, _size = payload
+
+        caption_raw = (getattr(update.message, "caption", None) or "").strip()
+        # "!transcribí este texto" → prompt override para el scene describer.
+        if caption_raw.startswith("!"):
+            scene_prompt = caption_raw[1:].strip()
+            caption = ""
+        else:
+            scene_prompt = None
+            caption = caption_raw
+
+        await self._set_reaction(update, "👁")
+
+        # Persistir en el historial y obtener el history_id.
+        # Si el usuario adjuntó una descripción, la incluimos en el registro.
+        if scene_prompt:
+            history_content = f"__PHOTO__ !{scene_prompt}"
+        elif caption:
+            history_content = f"[foto recibida] {caption}"
+        else:
+            history_content = "[foto recibida]"
+        history_id = await self._container.run_agent.record_photo_message(
+            history_content,
+            channel="telegram",
+            chat_id=chat_id,
+        )
+
+        try:
+            result = await process_photo_uc.execute(
+                image_bytes=image_bytes,
+                history_id=history_id,
+                agent_id=self._agent_cfg.id,
+                channel="telegram",
+                chat_id=chat_id,
+                chat_type=chat_type,
+                analysis_only=bool(caption),
+                scene_prompt=scene_prompt,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Error procesando foto Telegram para '%s'", self._agent_cfg.id
+            )
+            await update.message.reply_text(f"Error al procesar la foto: {exc}")
+            await self._set_reaction(update, "❌")
+            return
+
+        # Enviar imagen anotada si existe (cara desconocida en chat privado).
+        if result.annotated_image:
+            await update.message.reply_photo(result.annotated_image)
+
+        # Si el use case pide saltar el agente (photos.enabled=False en runtime),
+        # responder con aviso y terminar.
+        if result.should_skip_run_agent:
+            await update.message.reply_text(
+                "La función de reconocimiento visual no está habilitada."
+            )
+            return
+
+        # Modo transcripción/extracción ("!"): el resultado del descriptor va directo
+        # al chat y se guarda como mensaje del asistente para que el usuario pueda iterar.
+        if scene_prompt and result.text_context:
+            direct_text = result.text_context
+            await update.message.reply_text(direct_text)
+            await self._container.run_agent.record_assistant_message(
+                f"photo_transcription: {direct_text}",
+                channel="telegram",
+                chat_id=chat_id,
+            )
+            await self._set_reaction(update, "✅")
+            return
+
+        # Reinyectar el texto contextual como user_input en el pipeline del agente.
+        # Si el usuario adjuntó una descripción a la foto, la agregamos al contexto.
+        user_input = result.text_context
+        if caption:
+            user_input = f"{result.text_context}\n\nDescripción del usuario: {caption}"
+        await self._run_pipeline(update, user_input, chat_type=chat_type)
 
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_allowed(update.effective_user.id):

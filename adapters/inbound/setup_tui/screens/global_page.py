@@ -38,6 +38,10 @@ _SECTION_TO_YAML_KEY: dict[str, str] = {
     "USER": "user",
     "TRANSCRIPTION": "transcription",
     "KNOWLEDGE": "knowledge",
+    "PHOTOS": "photos",
+    "PHOTOS.FACES": "photos",
+    "PHOTOS.SCENE": "photos",
+    "PHOTOS.DEDUP": "photos",
 }
 
 

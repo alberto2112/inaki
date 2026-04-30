@@ -11,7 +11,7 @@ class IHistoryStore(ABC):
         message: Message,
         channel: str = "",
         chat_id: str = "",
-    ) -> None:
+    ) -> int | None:
         """
         Persiste un mensaje en el historial del agente.
 
@@ -22,6 +22,11 @@ class IHistoryStore(ABC):
                      Cadena vacía cuando el canal no aplica o no es relevante.
             chat_id: Identificador del chat dentro del canal (ej: ID de grupo Telegram).
                      Cadena vacía para chats privados o canales sin distinción de chat.
+
+        Returns:
+            El ID autoincremental de la fila insertada, o ``None`` si el rol no
+            se persiste (p. ej. tool_call). Útil para obtener el ``history_id``
+            necesario al vincular metadata de fotos.
         """
         ...
 

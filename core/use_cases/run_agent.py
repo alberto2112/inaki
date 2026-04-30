@@ -225,6 +225,35 @@ class RunAgentUseCase:
         msg = Message(role=Role.USER, content=content)
         await self._history.append(self._cfg.id, msg, channel=channel, chat_id=chat_id)
 
+    async def record_photo_message(
+        self,
+        content: str,
+        channel: str = "",
+        chat_id: str = "",
+    ) -> int:
+        """Persiste un mensaje `role=user` y devuelve el history_id de la fila insertada.
+
+        Usado por el handler de fotos de Telegram para obtener el ``history_id``
+        necesario en ``ProcessPhotoUseCase.execute()``.
+        """
+        msg = Message(role=Role.USER, content=content)
+        row_id = await self._history.append(self._cfg.id, msg, channel=channel, chat_id=chat_id)
+        return row_id or 0
+
+    async def record_assistant_message(
+        self,
+        content: str,
+        channel: str = "",
+        chat_id: str = "",
+    ) -> None:
+        """Persiste un mensaje `role=assistant` en el historial sin invocar al LLM.
+
+        Usado cuando el sistema genera una respuesta directa (ej: transcripción de imagen)
+        que debe quedar en el historial para que el usuario pueda iterar sobre ella.
+        """
+        msg = Message(role=Role.ASSISTANT, content=content)
+        await self._history.append(self._cfg.id, msg, channel=channel, chat_id=chat_id)
+
     async def execute(
         self,
         user_input: str | None = None,

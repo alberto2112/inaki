@@ -119,9 +119,9 @@ class SQLiteHistoryStore(IHistoryStore):
         message: Message,
         channel: str = "",
         chat_id: str = "",
-    ) -> None:
+    ) -> int | None:
         if message.role not in (Role.USER, Role.ASSISTANT):
-            return
+            return None
 
         if message.timestamp is None:
             message.timestamp = datetime.now(timezone.utc)
@@ -130,12 +130,13 @@ class SQLiteHistoryStore(IHistoryStore):
 
         async with self._conn() as conn:
             await self._ensure_schema(conn)
-            await conn.execute(
+            cursor = await conn.execute(
                 "INSERT INTO history (agent_id, role, content, created_at, channel, chat_id) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (agent_id, message.role.value, message.content, ts, channel, chat_id),
             )
             await conn.commit()
+            return cursor.lastrowid
 
     async def load(
         self,

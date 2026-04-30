@@ -335,6 +335,60 @@ user:
 #       min_score: 0.5
 
 
+# -----------------------------------------------------------------------------
+# [photos] — Pipeline de reconocimiento facial y descripción de escena
+# -----------------------------------------------------------------------------
+#
+# Habilita el procesamiento de fotos enviadas al bot de Telegram:
+#   - Reconocimiento facial con InsightFace (local, no requiere API key)
+#   - Descripción de escena con un proveedor LLM multimodal (Anthropic/OpenAI/Groq)
+#   - Base de datos de personas en ~/.inaki/data/faces.db
+#   - Registro persistente de caras ("ignoradas" y conocidas)
+#
+# ⚠ ADVERTENCIA DE MEMORIA: InsightFace ocupa ~400MB de RAM una vez cargado.
+#   Se carga de forma lazy (en la primera foto recibida).
+#   Si el agente no procesa fotos por períodos prolongados, reiniciar el daemon
+#   para liberar memoria en Pi 5 (4GB RAM).
+#
+# ⚠ CAMBIO DE MODELO: Cambiar `faces.model` invalida faces.db.
+#   Procedimiento: detener daemon → borrar ~/.inaki/data/faces.db → reiniciar.
+#   Todas las caras registradas se pierden — volver a enrolar.
+#
+# photos:
+#   enabled: true                # false → bot ignora fotos, no carga modelos
+#
+#   enrollment_chats: private    # Dónde el agente ofrece registrar caras:
+#                                #   "private" → solo en chats privados
+#                                #   "none"    → nunca ofrece enrolar
+#
+#   faces:
+#     provider: insightface      # Único provider soportado actualmente
+#     model: buffalo_sc          # Modelo InsightFace:
+#                                #   buffalo_sc → rápido, liviano (~200MB descarga)
+#                                #   buffalo_s  → más preciso, algo más pesado
+#                                #   buffalo_l  → máxima precisión, ~1GB
+#     match_threshold: 0.55      # Similitud coseno mínima para → MATCHED
+#     ambiguous_threshold: 0.40  # Similitud entre ambos → AMBIGUOUS (pedir confirmación)
+#
+#   scene:
+#     provider: anthropic        # Proveedor LLM multimodal para describir la escena:
+#                                #   "anthropic" → Messages API con content type image
+#                                #   "openai"    → Chat Completions con image_url base64
+#                                #   "groq"      → OpenAI-compatible endpoint de Groq
+#     model: claude-sonnet-4-6   # Modelo a usar (según el provider)
+#                                #   anthropic: claude-sonnet-4-6, claude-opus-4-7, etc.
+#                                #   openai: gpt-4o, gpt-4o-mini
+#                                #   groq: llama-4-scout-17b-16e-instruct, etc.
+#     prompt_template: null      # Prompt personalizado. null = usar el prompt español
+#                                # built-in del adaptador.
+#     # api_key → global.secrets.yaml bajo photos.scene.api_key
+#
+#   dedup:
+#     enabled: true              # Habilita el job nocturno de deduplicación
+#     schedule: "0 3 * * *"      # Cron del job (expresión croniter)
+#     similarity_threshold: 0.70 # Score mínimo entre centroides para reportar par duplicado
+
+
 # =============================================================================
 # CONFIGURACIÓN POR AGENTE — config/agents/{id}.yaml
 # =============================================================================

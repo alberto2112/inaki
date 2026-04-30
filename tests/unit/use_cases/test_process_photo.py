@@ -239,7 +239,8 @@ async def test_unknown_en_grupo_no_anota_pero_describe_escena():
     )
 
     assert resultado.annotated_image is None
-    assert "sin enrolamiento en grupos" in resultado.text_context
+    assert "Desconocida." in resultado.text_context
+    assert "chat privado" in resultado.text_context
     mocks["annotator"].draw_numbered.assert_not_called()
     # Sigue persistiendo metadata para auditoría
     mocks["metadata_repo"].save.assert_called_once()

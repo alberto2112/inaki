@@ -248,7 +248,9 @@ class ProcessPhotoUseCase:
             for fm in matched:
                 top_persona, top_score = fm.candidates[0]
                 nombre_completo = self._formatear_nombre(top_persona)
-                lineas.append(f"- {nombre_completo} (similitud {top_score:.2f})")
+                idx_str = fm.face_ref.split("#")[-1] if "#" in fm.face_ref else ""
+                prefijo = f"Cara [{idx_str}]: " if idx_str else ""
+                lineas.append(f"- {prefijo}{nombre_completo} (similitud {top_score:.2f})")
             secciones.append("\n".join(lineas))
 
         if desconocidas:
@@ -281,11 +283,17 @@ class ProcessPhotoUseCase:
                         lineas.append(f"- Cara [{idx_str}] → face_ref: {fm.face_ref} — desconocida.")
                 secciones.append("\n".join(lineas))
             else:
-                secciones.append(
-                    f"Detectada{'s' if cantidad > 1 else ''} {cantidad} "
-                    f"{sustantivo} desconocida{'s' if cantidad > 1 else ''} "
-                    f"(sin enrolamiento en grupos)."
-                )
+                # Grupo: mostrar candidatos pero sin face_refs ni sugerencias de enrollment.
+                lineas = [f"{'Cara' if cantidad == 1 else 'Caras'} no identificada{'s' if cantidad > 1 else ''} con certeza: {cantidad}."]
+                for fm in desconocidas:
+                    if fm.status == MatchStatus.AMBIGUOUS and fm.candidates:
+                        top_persona, top_score = fm.candidates[0]
+                        nombre = self._formatear_nombre(top_persona)
+                        lineas.append(f"- Posible match: {nombre} (similitud {top_score:.2f}, no confirmado).")
+                    else:
+                        lineas.append("- Desconocida.")
+                lineas.append("(El registro de nuevas personas solo está disponible en chat privado.)")
+                secciones.append("\n".join(lineas))
 
         if scene_description is not None:
             secciones.append(f"Descripción de la escena:\n{scene_description}")

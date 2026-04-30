@@ -117,11 +117,6 @@ class ProcessPhotoUseCase:
         es_privado = (
             chat_type == "private" and self._config.enrollment_chats == "private"
         )
-        matched_visibles = [
-            fm
-            for fm in face_matches
-            if fm.status == MatchStatus.MATCHED and fm.categoria != "ignorada"
-        ]
         desconocidas = [
             fm
             for fm in face_matches
@@ -139,11 +134,9 @@ class ProcessPhotoUseCase:
 
         # 7. Construir contexto textual en español
         text_context = self._construir_contexto(
-            matched=matched_visibles,
-            desconocidas=desconocidas,
+            face_matches=face_matches,
             scene_description=scene_description,
             es_privado=es_privado,
-            hay_caras=bool(face_matches),
             analysis_only=analysis_only,
         )
 
@@ -233,78 +226,70 @@ class ProcessPhotoUseCase:
     def _construir_contexto(
         self,
         *,
-        matched: list[FaceMatch],
-        desconocidas: list[FaceMatch],
+        face_matches: list[FaceMatch],
         scene_description: str | None,
         es_privado: bool,
-        hay_caras: bool,
         analysis_only: bool = False,
     ) -> str:
-        """Construye el texto contextual en español para el agente."""
+        """Construye el texto contextual en español para el agente.
+
+        Lista unificada de caras ordenada por idx (igual que la imagen anotada)
+        para que el agente nunca confunda qué número corresponde a qué persona.
+        """
         secciones: list[str] = ["📷 Foto recibida."]
 
-        if matched:
-            lineas = ["Personas reconocidas:"]
-            for fm in matched:
-                top_persona, top_score = fm.candidates[0]
-                nombre_completo = self._formatear_nombre(top_persona)
-                idx_str = fm.face_ref.split("#")[-1] if "#" in fm.face_ref else ""
-                prefijo = f"Cara [{idx_str}]: " if idx_str else ""
-                lineas.append(f"- {prefijo}{nombre_completo} (similitud {top_score:.2f})")
-            secciones.append("\n".join(lineas))
+        visibles = [fm for fm in face_matches if fm.categoria != "ignorada"]
+        visibles.sort(key=lambda fm: self._idx_de_face_ref(fm.face_ref))
 
-        if desconocidas:
-            cantidad = len(desconocidas)
-            sustantivo = "cara" if cantidad == 1 else "caras"
-            if analysis_only:
-                # El usuario mandó la foto con descripción → solo informar, sin enrollment.
-                lineas = [f"{'Cara' if cantidad == 1 else 'Caras'} no identificada{'s' if cantidad > 1 else ''}: {cantidad}."]
-                for fm in desconocidas:
-                    if fm.status == MatchStatus.AMBIGUOUS and fm.candidates:
-                        top_persona, top_score = fm.candidates[0]
-                        nombre = self._formatear_nombre(top_persona)
-                        lineas.append(f"- Posible match: {nombre} (similitud {top_score:.2f}, no confirmado).")
-                    else:
-                        lineas.append("- Desconocida.")
-                secciones.append("\n".join(lineas))
-            elif es_privado:
-                lineas = [f"Caras no identificadas con certeza: {cantidad} (numeradas en la imagen anotada)."]
-                for fm in desconocidas:
-                    idx_str = fm.face_ref.split("#")[-1] if "#" in fm.face_ref else fm.face_ref
-                    if fm.status == MatchStatus.AMBIGUOUS and fm.candidates:
-                        top_persona, top_score = fm.candidates[0]
-                        nombre = self._formatear_nombre(top_persona)
+        if visibles:
+            hay_no_identificadas = any(
+                fm.status in (MatchStatus.UNKNOWN, MatchStatus.AMBIGUOUS) for fm in visibles
+            )
+            lineas = [f"Caras detectadas ({len(visibles)}):"]
+            for fm in visibles:
+                idx_str = fm.face_ref.split("#")[-1] if "#" in fm.face_ref else fm.face_ref
+                if fm.status == MatchStatus.MATCHED and fm.candidates:
+                    top_persona, top_score = fm.candidates[0]
+                    nombre = self._formatear_nombre(top_persona)
+                    lineas.append(f"- Cara [{idx_str}]: {nombre} — reconocida (similitud {top_score:.2f})")
+                elif fm.status == MatchStatus.AMBIGUOUS and fm.candidates:
+                    top_persona, top_score = fm.candidates[0]
+                    nombre = self._formatear_nombre(top_persona)
+                    if es_privado and not analysis_only:
                         lineas.append(
-                            f"- Cara [{idx_str}] → face_ref: {fm.face_ref}"
-                            f" — posible match: {nombre} (similitud {top_score:.2f})."
-                            f" Podés usar add_photo_to_person para reforzar el reconocimiento."
+                            f"- Cara [{idx_str}]: posible match {nombre} (similitud {top_score:.2f}, no confirmado)"
+                            f" — face_ref: {fm.face_ref}. Podés usar add_photo_to_person para reforzar."
                         )
                     else:
-                        lineas.append(f"- Cara [{idx_str}] → face_ref: {fm.face_ref} — desconocida.")
-                secciones.append("\n".join(lineas))
-            else:
-                # Grupo: mostrar candidatos pero sin face_refs ni sugerencias de enrollment.
-                lineas = [f"{'Cara' if cantidad == 1 else 'Caras'} no identificada{'s' if cantidad > 1 else ''} con certeza: {cantidad}."]
-                for fm in desconocidas:
-                    if fm.status == MatchStatus.AMBIGUOUS and fm.candidates:
-                        top_persona, top_score = fm.candidates[0]
-                        nombre = self._formatear_nombre(top_persona)
-                        lineas.append(f"- Posible match: {nombre} (similitud {top_score:.2f}, no confirmado).")
+                        lineas.append(f"- Cara [{idx_str}]: posible match {nombre} (similitud {top_score:.2f}, no confirmado)")
+                else:
+                    if es_privado and not analysis_only:
+                        lineas.append(f"- Cara [{idx_str}]: desconocida — face_ref: {fm.face_ref}")
                     else:
-                        lineas.append("- Desconocida.")
+                        lineas.append(f"- Cara [{idx_str}]: desconocida")
+
+            if hay_no_identificadas and not es_privado:
                 lineas.append("(El registro de nuevas personas solo está disponible en chat privado.)")
-                secciones.append("\n".join(lineas))
+            elif hay_no_identificadas and es_privado and not analysis_only:
+                lineas.append("Las caras no identificadas están numeradas en la imagen anotada.")
+
+            secciones.append("\n".join(lineas))
 
         if scene_description is not None:
             secciones.append(f"Descripción de la escena:\n{scene_description}")
         elif self._scene_describer is not None:
-            # Describer configurado pero falló (independiente de si hay caras)
             secciones.append("No se pudo obtener descripción de escena.")
-        elif not hay_caras:
-            # Sin describer y sin caras → el agente no tiene contenido visual ninguno
+        elif not visibles:
             secciones.append("(Sin descripción de escena configurada y sin caras detectadas.)")
 
         return "\n\n".join(secciones)
+
+    @staticmethod
+    def _idx_de_face_ref(face_ref: str) -> int:
+        try:
+            return int(face_ref.split("#")[-1])
+        except (ValueError, IndexError):
+            return 0
 
     @staticmethod
     def _formatear_nombre(persona: Person) -> str:

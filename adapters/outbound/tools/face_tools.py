@@ -28,6 +28,7 @@ from typing import Any
 import numpy as np
 
 from core.domain.entities.face import Person
+from core.domain.errors import FaceRegistryError
 from core.domain.value_objects.channel_context import ChannelContext
 from core.ports.outbound.face_registry_port import IFaceRegistryPort
 from core.ports.outbound.message_face_metadata_port import IMessageFaceMetadataRepo
@@ -97,6 +98,48 @@ def _resolver_chat_context(
         return get_channel_context()
     except Exception:  # noqa: BLE001
         return None
+
+
+import re as _re  # noqa: E402
+
+_FACE_REF_RE = _re.compile(r"^\d+#\d+$")
+
+
+async def _resolver_person(registry: IFaceRegistryPort, persona_ref: str) -> Person:
+    """Resuelve una persona por UUID o por nombre.
+
+    Acepta:
+    - UUID directo (lo que devuelve list_known_persons)
+    - Nombre o apellido (búsqueda case-insensitive, falla si hay ambigüedad)
+
+    Lanza FaceRegistryError si es un face_ref (ej: '1805#1') — el agente está
+    confundiendo face_ref con person_id.
+    """
+    if _FACE_REF_RE.match(persona_ref):
+        raise FaceRegistryError(
+            f"'{persona_ref}' es un face_ref, no un person_id. "
+            "Usá el UUID de la persona (de list_known_persons) o su nombre."
+        )
+
+    persona = await registry.get_person(persona_ref)
+    if persona:
+        return persona
+
+    todas = await registry.list_persons(incluir_ignoradas=True)
+    ref_lower = persona_ref.lower()
+    candidatas = [
+        p for p in todas
+        if (p.nombre or "").lower() == ref_lower
+        or (p.apellido or "").lower() == ref_lower
+        or f"{p.nombre or ''} {p.apellido or ''}".strip().lower() == ref_lower
+    ]
+    if len(candidatas) == 1:
+        return candidatas[0]
+    if len(candidatas) > 1:
+        raise FaceRegistryError(
+            f"Múltiples personas con el nombre '{persona_ref}'. Usá el UUID exacto."
+        )
+    raise FaceRegistryError(f"Persona no encontrada: {persona_ref!r}")
 
 
 # ----------------------------------------------------------------------
@@ -255,14 +298,25 @@ class AddPhotoToPersonTool(ITool):
         self._get_channel_context = get_channel_context
 
     async def execute(self, **kwargs: Any) -> ToolResult:
-        person_id = str(kwargs.get("person_id") or "").strip()
+        person_ref = str(kwargs.get("person_id") or "").strip()
         face_ref = str(kwargs.get("face_ref") or "").strip()
-        if not person_id or not face_ref:
+        if not person_ref or not face_ref:
             return ToolResult(
                 tool_name=self.name,
                 output="Both 'person_id' and 'face_ref' are required.",
                 success=False,
                 error="missing required parameters",
+                retryable=False,
+            )
+
+        try:
+            persona = await _resolver_person(self._registry, person_ref)
+        except FaceRegistryError as exc:
+            return ToolResult(
+                tool_name=self.name,
+                output=str(exc),
+                success=False,
+                error="person not found",
                 retryable=False,
             )
 
@@ -293,6 +347,7 @@ class AddPhotoToPersonTool(ITool):
             )
 
         embedding, source_history_id = resolved
+        person_id = persona.id
 
         try:
             await self._registry.add_embedding_to_person(
@@ -349,13 +404,24 @@ class UpdatePersonMetadataTool(ITool):
         self._registry = face_registry
 
     async def execute(self, **kwargs: Any) -> ToolResult:
-        person_id = str(kwargs.get("person_id") or "").strip()
-        if not person_id:
+        person_ref = str(kwargs.get("person_id") or "").strip()
+        if not person_ref:
             return ToolResult(
                 tool_name=self.name,
                 output="'person_id' is required.",
                 success=False,
                 error="missing person_id",
+                retryable=False,
+            )
+
+        try:
+            persona = await _resolver_person(self._registry, person_ref)
+        except FaceRegistryError as exc:
+            return ToolResult(
+                tool_name=self.name,
+                output=str(exc),
+                success=False,
+                error="person not found",
                 retryable=False,
             )
 
@@ -374,9 +440,9 @@ class UpdatePersonMetadataTool(ITool):
             )
 
         try:
-            persona = await self._registry.update_person_metadata(person_id, **campos)
+            persona = await self._registry.update_person_metadata(persona.id, **campos)
         except Exception as exc:
-            logger.exception("UpdatePersonMetadataTool: error con %s", person_id)
+            logger.exception("UpdatePersonMetadataTool: error con %s", person_ref)
             return ToolResult(
                 tool_name=self.name,
                 output=f"Error updating person: {exc}",

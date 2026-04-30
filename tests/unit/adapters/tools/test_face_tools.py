@@ -145,6 +145,8 @@ async def test_register_face_no_channel_context():
 
 async def test_add_photo_to_person_happy_path():
     registry = AsyncMock()
+    persona = Person(id="p-001", nombre="Alberto")
+    registry.get_person.return_value = persona
     metadata = _build_metadata_with_embedding(face_idx=0)
     metadata_repo = AsyncMock()
     metadata_repo.resolve_face_ref.return_value = (metadata, 0)
@@ -172,9 +174,11 @@ async def test_add_photo_to_person_happy_path():
 
 async def test_update_person_metadata_happy_path():
     registry = AsyncMock()
+    persona = Person(id="p-001", nombre="Alberto")
     persona_actualizada = Person(
         id="p-001", nombre="Alberto", apellido="Hernández", relacion="dueño"
     )
+    registry.get_person.return_value = persona
     registry.update_person_metadata.return_value = persona_actualizada
 
     tool = UpdatePersonMetadataTool(face_registry=registry)

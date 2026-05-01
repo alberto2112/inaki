@@ -1090,7 +1090,9 @@ class AppContainer:
             auth_str = remote.auth
 
         buffer = BroadcastBuffer()
-        rate_limiter = FixedWindowRateLimiter()
+        rate_limiter = FixedWindowRateLimiter(
+            window_seconds=float(broadcast_cfg.rate_limiter_window)
+        )
         adapter = TcpBroadcastAdapter(
             agent_id=agent_cfg.id,
             role=role,

@@ -1,8 +1,11 @@
 """Tests unitarios para FixedWindowRateLimiter.
 
-Cubre: incremento de contador, breach en límite >=, reset al expirar ventana,
+Cubre: incremento de contador, breach en límite >, reset al expirar ventana,
 independencia de claves (agent_id, chat_id), y cálculo de retry_in.
 Usa el parámetro injectable ``_now`` para tiempo determinista.
+
+Semántica del breach: con ``limit=N``, exactamente ``N`` emisiones pasan; la
+``(N+1)``-ésima es rechazada (counter > limit).
 """
 
 from __future__ import annotations
@@ -44,21 +47,22 @@ def test_contador_se_incrementa_dentro_de_ventana():
 
 
 # ---------------------------------------------------------------------------
-# Breach — umbral >= limit
+# Breach — umbral > limit (exactamente `limit` emisiones pasan)
 # ---------------------------------------------------------------------------
 
 
-def test_breach_en_limite_exacto():
-    """El breach se activa exactamente cuando counter >= limit (no >)."""
+def test_breach_solo_al_superar_limit():
+    """El breach se activa cuando counter > limit. Con limit=N pasan N llamadas."""
     now = 1000.0
     limiter = FixedWindowRateLimiter(_now=lambda: now)
     limit = 3
 
-    # Llamadas 1 y 2: no breach
+    # Llamadas 1, 2, 3: no breach (counter == limit todavía pasa)
+    assert limiter.check_and_increment("a", "c", limit) is None
     assert limiter.check_and_increment("a", "c", limit) is None
     assert limiter.check_and_increment("a", "c", limit) is None
 
-    # Llamada 3: counter == limit → breach
+    # Llamada 4: counter == limit + 1 → breach
     signal = limiter.check_and_increment("a", "c", limit)
     assert signal is not None
     assert isinstance(signal, BreachSignal)
@@ -69,6 +73,7 @@ def test_breach_contiene_agent_id_y_chat_id():
     now = 1000.0
     limiter = FixedWindowRateLimiter(_now=lambda: now)
 
+    # Con limit=1 pasa la primera; la segunda es breach.
     limiter.check_and_increment("agente_z", "grupo_99", limit=1)
     signal = limiter.check_and_increment("agente_z", "grupo_99", limit=1)
     assert signal is not None
@@ -82,11 +87,12 @@ def test_breach_counter_correcto():
     limiter = FixedWindowRateLimiter(_now=lambda: now)
     limit = 2
 
-    limiter.check_and_increment("a", "c", limit)
-    signal = limiter.check_and_increment("a", "c", limit)  # counter = 2 = limit
+    limiter.check_and_increment("a", "c", limit)  # counter=1
+    limiter.check_and_increment("a", "c", limit)  # counter=2 = limit, pasa
+    signal = limiter.check_and_increment("a", "c", limit)  # counter=3 > limit, breach
 
     assert signal is not None
-    assert signal.counter == 2
+    assert signal.counter == 3
 
 
 # ---------------------------------------------------------------------------
@@ -141,15 +147,16 @@ def test_reset_de_ventana_reinicia_contador():
     limiter = FixedWindowRateLimiter(window_seconds=30.0, _now=lambda: tiempo_actual)
     limit = 2
 
-    # Llena la ventana hasta breach
-    limiter.check_and_increment("a", "c", limit)
-    signal = limiter.check_and_increment("a", "c", limit)
-    assert signal is not None  # breach en counter=2
+    # Llena la ventana hasta breach (con limit=2: pasan 2, breach en la 3ra)
+    limiter.check_and_increment("a", "c", limit)  # counter=1
+    limiter.check_and_increment("a", "c", limit)  # counter=2 = limit, pasa
+    signal = limiter.check_and_increment("a", "c", limit)  # counter=3 > limit, breach
+    assert signal is not None
 
     # Avanzar más de 30s → nueva ventana
     tiempo_actual = 1031.0
     signal_nuevo = limiter.check_and_increment("a", "c", limit)
-    # Primera llamada en nueva ventana: counter=1 < limit=2 → no breach
+    # Primera llamada en nueva ventana: counter=1, no breach
     assert signal_nuevo is None
 
 
@@ -157,8 +164,8 @@ def test_reset_exacto_en_limite_de_ventana():
     """El reset ocurre cuando now - window_start >= 30s (límite incluido).
 
     Nota de diseño: la primera llamada a check_and_increment inicializa la ventana
-    y retorna None (nunca breach en primer intento). El breach ocurre en llamadas
-    siguientes dentro de la ventana activa.
+    y retorna None (nunca breach en primer intento). El breach ocurre cuando counter
+    SUPERA el limit dentro de la ventana activa.
     """
     tiempo_actual = 1000.0
     limiter = FixedWindowRateLimiter(window_seconds=30.0, _now=lambda: tiempo_actual)
@@ -167,15 +174,18 @@ def test_reset_exacto_en_limite_de_ventana():
     # Primera llamada: abre ventana, counter=1, no breach
     assert limiter.check_and_increment("a", "c", limit) is None
 
-    # Segunda llamada: counter=2 = limit → breach
+    # Segunda llamada: counter=2 = limit → todavía pasa
+    assert limiter.check_and_increment("a", "c", limit) is None
+
+    # Tercera llamada: counter=3 > limit → breach
     signal = limiter.check_and_increment("a", "c", limit)
     assert signal is not None
-    assert signal.counter == 2
+    assert signal.counter == 3
 
     # Exactamente en t=1030 (diferencia == window_seconds): reset
     tiempo_actual = 1030.0
     signal_reset = limiter.check_and_increment("a", "c", limit)
-    # Counter vuelve a 1 < limit=2 → NO breach (primera llamada en nueva ventana)
+    # Counter vuelve a 1 → NO breach (primera llamada en nueva ventana)
     assert signal_reset is None
 
 
@@ -190,7 +200,8 @@ def test_claves_independientes_agent_id():
     limiter = FixedWindowRateLimiter(_now=lambda: now)
     limit = 2
 
-    # Dos llamadas de agente_a — breach en counter=2
+    # Tres llamadas de agente_a: las primeras 2 pasan, la 3ra es breach
+    limiter.check_and_increment("agente_a", "chat", limit)
     limiter.check_and_increment("agente_a", "chat", limit)
     signal_a = limiter.check_and_increment("agente_a", "chat", limit)
     assert signal_a is not None
@@ -206,7 +217,8 @@ def test_claves_independientes_chat_id():
     limiter = FixedWindowRateLimiter(_now=lambda: now)
     limit = 2
 
-    # Dos llamadas en chat_1 — breach
+    # Tres llamadas en chat_1: pasan 2, breach en la 3ra
+    limiter.check_and_increment("agente", "chat_1", limit)
     limiter.check_and_increment("agente", "chat_1", limit)
     signal_1 = limiter.check_and_increment("agente", "chat_1", limit)
     assert signal_1 is not None
@@ -224,13 +236,14 @@ def test_pares_distintos_no_interfieren():
 
     pares = [("a1", "c1"), ("a1", "c2"), ("a2", "c1"), ("a2", "c2")]
     for ag, ch in pares:
-        for _ in range(9):
+        # Las primeras `limit` llamadas pasan (counter llega hasta limit sin breach)
+        for _ in range(10):
             assert limiter.check_and_increment(ag, ch, limit) is None
 
-    # Ninguno superó el límite todavía
+    # La (limit+1)-ésima supera el límite → breach
     for ag, ch in pares:
         signal = limiter.check_and_increment(ag, ch, limit)
-        assert signal is not None  # counter=10 = limit
+        assert signal is not None  # counter=11 > limit=10
         assert signal.agent_id == ag
         assert signal.chat_id == ch
 
@@ -246,7 +259,7 @@ def test_reset_limpia_estado():
     limiter = FixedWindowRateLimiter(_now=lambda: now)
     limit = 1
 
-    # Producir breach
+    # Producir breach: con limit=1 pasa la primera, la segunda es breach
     limiter.check_and_increment("a", "c", limit)
     assert limiter.check_and_increment("a", "c", limit) is not None
 

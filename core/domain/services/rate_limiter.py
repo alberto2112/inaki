@@ -75,10 +75,11 @@ class FixedWindowRateLimiter:
         - Si la clave no existe → inicializa ventana en ``now``, contador = 1, retorna ``None``.
         - Si ``now - window_start < window_seconds`` → incrementa contador en ventana activa.
         - Si ``now - window_start >= window_seconds`` → resetea ventana a ``now``, contador = 1.
-        - Después de actualizar: si ``counter >= limit`` → retorna ``BreachSignal``; si no, ``None``.
+        - Después de actualizar: si ``counter > limit`` → retorna ``BreachSignal``; si no, ``None``.
 
-        El umbral de breach es ``>= limit`` (no ``> limit``): el primer
-        intento que alcanza el límite ya es rechazado, no el siguiente.
+        El umbral de breach es ``> limit`` (no ``>= limit``): exactamente ``limit``
+        emisiones pasan por ventana. El primer intento que SUPERA el límite es
+        rechazado.
 
         Args:
             agent_id: Identificador del agente emisor.
@@ -110,7 +111,7 @@ class FixedWindowRateLimiter:
             counter = 1
             self._state[clave] = (window_start, counter)
 
-        if counter >= limit:
+        if counter > limit:
             retry_in = max(0.0, self._window - (now - window_start))
             return BreachSignal(
                 agent_id=agent_id,
@@ -120,6 +121,29 @@ class FixedWindowRateLimiter:
             )
 
         return None
+
+    @property
+    def window_seconds(self) -> float:
+        """Duración actual de la ventana en segundos."""
+        return self._window
+
+    def set_window(self, seconds: float) -> None:
+        """Sobrescribe la duración de la ventana en runtime.
+
+        El cambio aplica a partir del próximo ``check_and_increment``: las
+        ventanas ya abiertas conservan su ``window_start`` y se reevalúan
+        contra el nuevo umbral. Útil para overrides via comandos del bot
+        (no se persiste en config).
+
+        Args:
+            seconds: Nueva duración de la ventana, debe ser > 0.
+
+        Raises:
+            ValueError: Si ``seconds`` es <= 0.
+        """
+        if seconds <= 0:
+            raise ValueError(f"window_seconds debe ser > 0, recibido: {seconds}")
+        self._window = float(seconds)
 
     def reset(self, agent_id: str, chat_id: str) -> None:
         """Elimina el estado de la ventana para el par ``(agent_id, chat_id)``.

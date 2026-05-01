@@ -467,12 +467,18 @@ user:
 #     #                           # Username del bot (sin @). Usado para mention
 #     #                           # detection vía message.entities de Telegram.
 #     #   behavior: "mention"     # listen | mention | autonomous
-#     #   rate_limiter: 5         # Máx respuestas por ventana de 30s por
-#     #                           # (agent_id, chat_id). Aplica a mensajes
-#     #                           # entrantes Telegram y a triggers broadcast.
-#     #                           # Al superar el límite, inyecta un mensaje al
-#     #                           # system prompt y NO llama al LLM hasta que
-#     #                           # la ventana expire.
+#     #   rate_limiter: 5         # Máx respuestas POR VENTANA por (agent_id,
+#     #                           # chat_id). Exactamente N pasan; la N+1 se
+#     #                           # bloquea hasta que la ventana expire. Aplica a
+#     #                           # mensajes entrantes Telegram y a triggers
+#     #                           # broadcast.
+#     #   rate_limiter_window: 30 # Duración de la ventana en segundos (default
+#     #                           # 30). ⚠ En behavior=autonomous, un ciclo
+#     #                           # bot-to-bot suele tomar 15-40s (flush delay +
+#     #                           # LLM + red). Si la ventana es menor que el
+#     #                           # ciclo, el contador se resetea entre
+#     #                           # intercambios y el limiter es inefectivo.
+#     #                           # Recomendado: 300 (5min) o más.
 #     #
 #     # --- Modo CLIENT (el Iñaki que se conecta al server) ---
 #     # broadcast:
@@ -482,6 +488,7 @@ user:
 #     #   bot_username: "inaki_pro_bot"
 #     #   behavior: "autonomous"
 #     #   rate_limiter: 5
+#     #   rate_limiter_window: 300
 #     #
 #     # Reconexión automática con backoff exponencial + jitter. El cliente queda
 #     # reintentando hasta que el server levante — no hay feature flag; la

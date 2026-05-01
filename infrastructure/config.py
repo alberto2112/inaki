@@ -459,7 +459,18 @@ class BroadcastConfig(BaseModel):
     """
 
     rate_limiter: int = 5
-    """Máximo de respuestas proactivas (modo ``autonomous``) por ventana de 30s por chat."""
+    """Máximo de respuestas proactivas (modo ``autonomous``) por ventana por chat.
+
+    El primer mensaje que SUPERA este límite (``counter > rate_limiter``) es bloqueado;
+    es decir, exactamente ``rate_limiter`` mensajes pasan por ventana."""
+
+    rate_limiter_window: int = 30
+    """Duración de la ventana del rate limiter en segundos. Default 30s.
+
+    Importante: el ciclo bot-to-bot toma typically 15-40s (delay de flush + LLM + red).
+    Si la ventana es menor que el ciclo, el contador se resetea entre intercambios
+    y el limiter es inefectivo — bots pueden hablar indefinidamente. Para grupos con
+    behavior='autonomous' se recomienda 300s (5min) o más."""
 
     auth: str | None = None
     """Secreto HMAC-SHA256 del servidor. Obligatorio cuando ``port`` está seteado."""

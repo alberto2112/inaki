@@ -102,6 +102,13 @@ class TelegramBot:
         self._behavior: str = broadcast_dict.get("behavior", "mention")
         self._bot_username: str | None = broadcast_dict.get("bot_username")
         self._rate_limit_max: int = int(broadcast_dict.get("rate_limiter", 5))
+        # Defaults preservados desde config para soportar `/ratelimit reset`.
+        # Las mutaciones en runtime (vía comando) NO se persisten — al reiniciar
+        # el daemon se vuelven a leer estos valores.
+        self._rate_limit_max_default: int = self._rate_limit_max
+        self._rate_limit_window_default: int = int(
+            broadcast_dict.get("rate_limiter_window", 30)
+        )
 
         # Flags por event_type para emisión al canal de broadcast.
         # Defaults: solo assistant_response activo (backward-compat).
@@ -155,6 +162,7 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("help", self._cmd_help))
         self._app.add_handler(CommandHandler("scheduler", self._cmd_scheduler))
         self._app.add_handler(CommandHandler("chatid", self._cmd_chatid))
+        self._app.add_handler(CommandHandler("ratelimit", self._cmd_ratelimit))
         # Handlers de voz ANTES del de texto (el dispatcher de python-telegram-bot
         # evalúa handlers en orden de registro). Sólo se registran si el feature
         # flag está activo; con voice_enabled=False no se engancha ningún filtro.
@@ -224,6 +232,7 @@ class TelegramBot:
             "/scheduler show <id> — Detalle de una tarea\n"
             "/scheduler enable <id> — Habilitar una tarea\n"
             "/scheduler disable <id> — Deshabilitar una tarea\n"
+            "/ratelimit — Mostrar/ajustar el rate limiter del broadcast en runtime\n"
             "/start — Presentación\n"
             "/help — Este mensaje"
         )
@@ -273,6 +282,116 @@ class TelegramBot:
         except Exception as exc:
             logger.exception("Error en /clear_all Telegram para '%s'", self._agent_cfg.id)
             await update.message.reply_text(f"Error: {exc}")
+
+    async def _cmd_ratelimit(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """`/ratelimit [count [window] | reset]` — override en runtime del rate limiter.
+
+        Sintaxis:
+        - ``/ratelimit`` → muestra los valores actuales (count y ventana en segundos).
+        - ``/ratelimit <count>`` → cambia solo el count. Clamp: 1..99.
+        - ``/ratelimit <count> <window>`` → cambia ambos. Clamp: count 1..99, window 1..900s.
+        - ``/ratelimit reset`` → vuelve a los valores de config.
+
+        El cambio es solo en memoria — al reiniciar el daemon se reaplican los valores
+        de ``~/.inaki/config/...``. Aplica al bot completo (todos los chats).
+        """
+        if not self._is_allowed(update.effective_user.id):
+            return
+
+        if self._rate_limiter is None:
+            await update.message.reply_text(
+                "El broadcast no está configurado en este agente — el rate limiter no aplica."
+            )
+            return
+
+        args = context.args or []
+
+        # Sin argumentos: mostrar estado actual.
+        if not args:
+            window = int(self._rate_limiter.window_seconds)
+            await update.message.reply_text(
+                f"Rate limiter actual:\n"
+                f"  count = {self._rate_limit_max} (default: {self._rate_limit_max_default})\n"
+                f"  window = {window}s (default: {self._rate_limit_window_default}s)\n"
+                f"\n"
+                f"Sintaxis:\n"
+                f"  /ratelimit <count>\n"
+                f"  /ratelimit <count> <window>\n"
+                f"  /ratelimit reset"
+            )
+            return
+
+        # Reset → volver a los valores de config.
+        if args[0].lower() == "reset":
+            self._rate_limit_max = self._rate_limit_max_default
+            self._rate_limiter.set_window(float(self._rate_limit_window_default))
+            logger.info(
+                "ratelimit.reset agent=%s count=%d window=%ds",
+                self._agent_cfg.id,
+                self._rate_limit_max,
+                self._rate_limit_window_default,
+            )
+            await update.message.reply_text(
+                f"Rate limiter reseteado a config: "
+                f"count={self._rate_limit_max}, window={self._rate_limit_window_default}s."
+            )
+            return
+
+        # Parseo de count.
+        try:
+            count_raw = int(args[0])
+        except ValueError:
+            await update.message.reply_text(
+                f"Count inválido: '{args[0]}'. Debe ser un entero entre 1 y 99."
+            )
+            return
+
+        if count_raw < 1:
+            await update.message.reply_text("Count debe ser >= 1.")
+            return
+
+        # Clamp count a [1, 99].
+        count = min(count_raw, 99)
+        count_clamped = count_raw > 99
+
+        # Parseo opcional de window.
+        window: int | None = None
+        window_clamped = False
+        if len(args) >= 2:
+            try:
+                window_raw = int(args[1])
+            except ValueError:
+                await update.message.reply_text(
+                    f"Window inválida: '{args[1]}'. Debe ser un entero entre 1 y 900 (segundos)."
+                )
+                return
+            if window_raw < 1:
+                await update.message.reply_text("Window debe ser >= 1 segundo.")
+                return
+            window = min(window_raw, 900)
+            window_clamped = window_raw > 900
+
+        # Aplicar mutaciones.
+        self._rate_limit_max = count
+        if window is not None:
+            self._rate_limiter.set_window(float(window))
+
+        # Construir respuesta con avisos de clamp si aplican.
+        current_window = int(self._rate_limiter.window_seconds)
+        partes = [f"Rate limiter actualizado: count={count}, window={current_window}s."]
+        if count_clamped:
+            partes.append(f"⚠ count clampeado de {count_raw} a 99 (máx).")
+        if window_clamped:
+            partes.append(f"⚠ window clampeada de {window_raw}s a 900s (máx).")
+        partes.append("(en memoria — se pierde al reiniciar el daemon)")
+
+        logger.info(
+            "ratelimit.update agent=%s count=%d window=%ds",
+            self._agent_cfg.id,
+            count,
+            current_window,
+        )
+        await update.message.reply_text("\n".join(partes))
 
     async def _cmd_scheduler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """`/scheduler {list|show|enable|disable} [id]` — gestión read-only/toggle de tareas."""
@@ -455,6 +574,7 @@ class TelegramBot:
                 chat_type=chat_type,
                 analysis_only=bool(caption),
                 scene_prompt=scene_prompt,
+                sender_name=extract_sender_name(update.message),
             )
         except Exception as exc:
             logger.exception(
@@ -1139,6 +1259,7 @@ class TelegramBot:
             BotCommand("consolidate", "Extraer recuerdos del historial"),
             BotCommand("scheduler", "Gestionar tareas programadas (list/show/enable/disable)"),
             BotCommand("chatid", "Obtener el ID del chat actual (útil para configurar grupos)"),
+            BotCommand("ratelimit", "Ver/ajustar el rate limiter del broadcast en runtime"),
         ]
         try:
             await self._app.bot.set_my_commands(commands)

@@ -677,7 +677,8 @@ channels:
       auth: "shared-secret-entre-agentes" # secreto compartido HMAC-SHA256
       bot_username: "inaki_a_bot"         # username del bot sin @, para detección de menciones
       behavior: mention                   # listen | mention | autonomous
-      rate_limiter: 5                     # máx. respuestas proactivas por ventana de 30s por chat
+      rate_limiter: 5                     # máx. respuestas proactivas por ventana por chat
+      rate_limiter_window: 30             # duración de la ventana en segundos (default 30)
 ```
 
 ---
@@ -695,6 +696,7 @@ channels:
       bot_username: "inaki_b_bot"
       behavior: autonomous
       rate_limiter: 5
+      rate_limiter_window: 300            # ⚠ recomendado 300s (5min) para autonomous
 ```
 
 ---
@@ -753,9 +755,33 @@ conversaciones de Telegram entren en la memoria a largo plazo.
 | `autonomous` | El LLM decide si responder. Si no tiene nada útil que aportar, responde `[SKIP]` internamente y el sistema no envía nada al grupo. Además, el bot dispara su pipeline ante **cualquier mensaje broadcast** (bot-to-bot): el user_input se inyecta con un prefijo `[<origen>]` y el LLM decide si responder o emitir `[SKIP]`. Permite que dos bots dialoguen entre sí en un grupo. |
 
 El **rate limiter** (`rate_limiter: 5`) aplica en modo `autonomous` para ambas vías:
-mensajes entrantes de Telegram **y** triggers broadcast bot-to-bot. Limita las respuestas
-proactivas a N mensajes por ventana fija de 30 segundos, por combinación `(agente, chat_id)`.
-Cuando se alcanza el límite, los mensajes siguientes se descartan hasta que la ventana se resetea.
+mensajes entrantes de Telegram **y** triggers broadcast bot-to-bot. Permite exactamente
+N mensajes por ventana fija (configurable vía `rate_limiter_window`, default `30` segundos),
+por combinación `(agente, chat_id)`. La emisión N+1 dentro de la misma ventana se descarta
+hasta que la ventana se resetea.
+
+> ⚠ **Aviso para `behavior: autonomous`**: un ciclo bot-to-bot completo (delay de flush
+> de 7-21s + LLM + red) suele tomar entre 15 y 40 segundos. Si `rate_limiter_window` es
+> menor que el ciclo, el contador se resetea entre intercambios y el limiter es **inefectivo**:
+> los bots pueden hablar indefinidamente. Para grupos con varios bots autónomos, configurar
+> al menos `rate_limiter_window: 300` (5 minutos).
+
+#### Override en runtime — `/ratelimit`
+
+Para tunear el rate limiter sin reiniciar el daemon, cualquier usuario en `allowed_user_ids`
+puede usar el comando `/ratelimit`:
+
+```text
+/ratelimit                  → muestra count y window actuales
+/ratelimit <count>          → cambia el count (clamp 1..99)
+/ratelimit <count> <window> → cambia ambos (count 1..99, window 1..900s)
+/ratelimit reset            → vuelve a los valores de config
+```
+
+El cambio aplica al bot completo (todos los chats donde participa) y persiste **solo en
+memoria** — al reiniciar el daemon se vuelven a leer los valores de
+`~/.inaki/config/agents/{id}.yaml`. Útil para cortar al vuelo un loop bot-to-bot que se
+está descontrolando o para subir el límite temporalmente durante una conversación activa.
 
 ---
 

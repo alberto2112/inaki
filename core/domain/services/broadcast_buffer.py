@@ -93,10 +93,11 @@ class BroadcastBuffer:
     def render(self, chat_id: str) -> str | None:
         """Genera una sección markdown con el contexto de grupo.
 
-        Formato::
+        El formato de cada línea depende del ``event_type`` del mensaje:
 
-            ## Contexto del grupo (otros agentes)
-            - [HH:MM:SS] agent_id: mensaje
+        - ``assistant_response``: ``"- [HH:MM:SS] {agent_id}: {content}"``
+        - ``user_input_voice``:   ``"- [HH:MM:SS] {sender} (audio): {content}"``
+        - ``user_input_photo``:   ``"- [HH:MM:SS] {sender} (foto): {content}"``
 
         Retorna ``None`` si el buffer está vacío o todos los mensajes
         expiraron — el llamador puede omitir la inyección en el prompt.
@@ -114,7 +115,7 @@ class BroadcastBuffer:
         lineas = ["## Contexto del grupo (otros agentes)"]
         for m in mensajes:
             hora = datetime.fromtimestamp(m.timestamp, tz=timezone.utc).strftime("%H:%M:%S")
-            lineas.append(f"- [{hora}] {m.agent_id}: {m.message}")
+            lineas.append(_formatear_linea(m, hora))
 
         return "\n".join(lineas)
 
@@ -128,3 +129,16 @@ class BroadcastBuffer:
         umbral = now - self._ttl
         while bucket and bucket[0].timestamp < umbral:
             bucket.popleft()
+
+
+def _formatear_linea(m: BroadcastMessage, hora: str) -> str:
+    """Formatea una línea del buffer según el ``event_type``.
+
+    Pure function — facilita testing aislado y mantiene ``render()`` legible.
+    """
+    if m.event_type == "user_input_voice":
+        return f"- [{hora}] {m.sender} (audio): {m.content}"
+    if m.event_type == "user_input_photo":
+        return f"- [{hora}] {m.sender} (foto): {m.content}"
+    # assistant_response (default y backward-compat)
+    return f"- [{hora}] {m.agent_id}: {m.content}"

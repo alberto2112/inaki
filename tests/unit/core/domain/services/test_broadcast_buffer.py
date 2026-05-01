@@ -19,7 +19,7 @@ def _msg(
     agent_id: str = "agente_a", chat_id: str = "chat_1", ts: float = 1000.0
 ) -> BroadcastMessage:
     """Crea un BroadcastMessage mínimo para tests."""
-    return BroadcastMessage(timestamp=ts, agent_id=agent_id, chat_id=chat_id, message="hola")
+    return BroadcastMessage(timestamp=ts, agent_id=agent_id, chat_id=chat_id, event_type="assistant_response", content="hola")
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +159,7 @@ def test_render_formato_seccion_markdown():
     buffer = BroadcastBuffer(ttl=3600.0, _now=lambda: ts + 1.0)
 
     buffer.append(
-        BroadcastMessage(timestamp=ts, agent_id="agente_x", chat_id="c", message="hola mundo")
+        BroadcastMessage(timestamp=ts, agent_id="agente_x", chat_id="c", event_type="assistant_response", content="hola mundo")
     )
 
     result = buffer.render("c")
@@ -177,10 +177,10 @@ def test_render_multiple_mensajes_orden_cronologico():
     buffer = BroadcastBuffer(ttl=3600.0, _now=lambda: ts_base + 100.0)
 
     buffer.append(
-        BroadcastMessage(timestamp=ts_base + 10, agent_id="a1", chat_id="c", message="primero")
+        BroadcastMessage(timestamp=ts_base + 10, agent_id="a1", chat_id="c", event_type="assistant_response", content="primero")
     )
     buffer.append(
-        BroadcastMessage(timestamp=ts_base + 20, agent_id="a2", chat_id="c", message="segundo")
+        BroadcastMessage(timestamp=ts_base + 20, agent_id="a2", chat_id="c", event_type="assistant_response", content="segundo")
     )
 
     result = buffer.render("c")
@@ -197,9 +197,103 @@ def test_render_formato_linea_completa():
     buffer = BroadcastBuffer(ttl=3600.0, _now=lambda: ts + 1.0)
 
     buffer.append(
-        BroadcastMessage(timestamp=ts, agent_id="bot_dev", chat_id="grp", message="mensaje de test")
+        BroadcastMessage(timestamp=ts, agent_id="bot_dev", chat_id="grp", event_type="assistant_response", content="mensaje de test")
     )
 
     result = buffer.render("grp")
     assert result is not None
     assert "- [00:01:00] bot_dev: mensaje de test" in result
+
+
+# ---------------------------------------------------------------------------
+# render — formato por event_type
+# ---------------------------------------------------------------------------
+
+
+def test_render_user_input_voice_formato():
+    """user_input_voice se renderiza con prefijo '{sender} (audio):'."""
+    ts = 1704067260.0  # 2024-01-01 00:01:00 UTC
+    buffer = BroadcastBuffer(ttl=3600.0, _now=lambda: ts + 1.0)
+
+    buffer.append(
+        BroadcastMessage(
+            timestamp=ts,
+            agent_id="bot_a",
+            chat_id="grp",
+            event_type="user_input_voice",
+            content="cuánto es 5+5",
+            sender="alberto",
+        )
+    )
+
+    result = buffer.render("grp")
+    assert result is not None
+    assert "- [00:01:00] alberto (audio): cuánto es 5+5" in result
+    # No debe aparecer el agent_id del emisor — el sender humano lo reemplaza
+    assert "bot_a" not in result
+
+
+def test_render_user_input_photo_formato():
+    """user_input_photo se renderiza con prefijo '{sender} (foto):'."""
+    ts = 1704067320.0  # 2024-01-01 00:02:00 UTC
+    buffer = BroadcastBuffer(ttl=3600.0, _now=lambda: ts + 1.0)
+
+    buffer.append(
+        BroadcastMessage(
+            timestamp=ts,
+            agent_id="bot_a",
+            chat_id="grp",
+            event_type="user_input_photo",
+            content="persona caminando hacia la cámara",
+            sender="alberto",
+        )
+    )
+
+    result = buffer.render("grp")
+    assert result is not None
+    assert "- [00:02:00] alberto (foto): persona caminando hacia la cámara" in result
+
+
+def test_render_mixto_cronologico_3_event_types():
+    """Mensajes de los 3 event_types aparecen en orden cronológico, cada uno con su formato."""
+    ts_base = 1704067200.0  # 2024-01-01 00:00:00 UTC
+    buffer = BroadcastBuffer(ttl=3600.0, _now=lambda: ts_base + 100.0)
+
+    buffer.append(
+        BroadcastMessage(
+            timestamp=ts_base + 10,
+            agent_id="bot_a",
+            chat_id="grp",
+            event_type="user_input_voice",
+            content="hola, ¿cómo va?",
+            sender="alberto",
+        )
+    )
+    buffer.append(
+        BroadcastMessage(
+            timestamp=ts_base + 20,
+            agent_id="bot_a",
+            chat_id="grp",
+            event_type="assistant_response",
+            content="todo bien",
+        )
+    )
+    buffer.append(
+        BroadcastMessage(
+            timestamp=ts_base + 30,
+            agent_id="bot_a",
+            chat_id="grp",
+            event_type="user_input_photo",
+            content="gato durmiendo",
+            sender="alberto",
+        )
+    )
+
+    result = buffer.render("grp")
+    assert result is not None
+
+    idx_voice = result.index("alberto (audio): hola")
+    idx_assistant = result.index("bot_a: todo bien")
+    idx_photo = result.index("alberto (foto): gato durmiendo")
+
+    assert idx_voice < idx_assistant < idx_photo

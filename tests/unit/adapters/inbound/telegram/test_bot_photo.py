@@ -441,3 +441,131 @@ def test_photo_handler_registrado_antes_que_texto(agent_cfg, mock_container) -> 
     assert max(photo_indices) < min(text_indices), (
         f"Photo handler {photo_indices} debe registrarse antes que text handler {text_indices}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Emisión de eventos broadcast desde el handler de foto (Phase 3.3)
+# ---------------------------------------------------------------------------
+
+
+def _mk_agent_cfg_con_emit_photo(allowed_user_ids: list[int]) -> MagicMock:
+    """AgentConfig con telegram.broadcast.emit.user_input_photo=true."""
+    cfg = MagicMock()
+    cfg.id = "agente_a"
+    cfg.name = "Iñaki"
+    cfg.description = "Asistente"
+    cfg.channels = {
+        "telegram": {
+            "token": "dummy-token",
+            "allowed_user_ids": allowed_user_ids,
+            "reactions": True,
+            "voice_enabled": False,
+            "broadcast": {
+                "behavior": "mention",
+                "emit": {
+                    "assistant_response": True,
+                    "user_input_photo": True,
+                    "user_input_voice": False,
+                },
+            },
+        }
+    }
+    cfg.transcription = None
+    cfg.delegation = MagicMock()
+    cfg.delegation.enabled = False
+    return cfg
+
+
+async def test_handle_photo_grupo_dispara_emit_event_user_input_photo(mock_container):
+    """En chat grupal con flag user_input_photo=true, el handler dispara _emit_event."""
+    cfg = _mk_agent_cfg_con_emit_photo(allowed_user_ids=[12345])
+
+    with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
+        mock_app = MagicMock()
+        mock_app_cls.builder.return_value.token.return_value.build.return_value = mock_app
+        from adapters.inbound.telegram.bot import TelegramBot
+
+        bot = TelegramBot(agent_cfg=cfg, container=mock_container, broadcast_emitter=None)
+
+    # Spy sobre _emit_event para verificar argumentos sin depender del emitter real
+    bot._emit_event = AsyncMock()
+
+    update = _mk_update(chat_type="group")
+    update.message.from_user = MagicMock(username="alberto", first_name="Alberto")
+    context = MagicMock()
+
+    await bot._handle_photo_message(update, context)
+    # Dar chance a las tareas async pendientes (asyncio.ensure_future)
+    import asyncio
+    await asyncio.sleep(0)
+
+    # Buscar la llamada con event_type="user_input_photo"
+    photo_calls = [
+        c for c in bot._emit_event.await_args_list
+        if c.kwargs.get("event_type") == "user_input_photo"
+    ]
+    assert len(photo_calls) == 1, (
+        f"Esperaba 1 llamada user_input_photo, hubo {len(photo_calls)}: "
+        f"{bot._emit_event.await_args_list}"
+    )
+    photo_call = photo_calls[0]
+    assert photo_call.kwargs["chat_id"] == "99"
+    assert photo_call.kwargs["sender"] == "alberto"
+    assert "📷 Foto recibida" in photo_call.kwargs["content"]
+
+
+async def test_handle_photo_modo_bang_emite_user_input_photo_sin_assistant_response():
+    """Modo `!`: emite user_input_photo y NO dispara pipeline (sin assistant_response)."""
+    cfg = _mk_agent_cfg_con_emit_photo(allowed_user_ids=[12345])
+
+    container = MagicMock()
+    container.process_photo = AsyncMock()
+    container.process_photo.execute.return_value = ProcessPhotoResult(
+        text_context="texto extraído de la foto",
+        annotated_image=None,
+        should_skip_run_agent=False,
+    )
+    container.run_agent = MagicMock()
+    container.run_agent.execute = AsyncMock(return_value="no debería llamarse")
+    container.run_agent.record_photo_message = AsyncMock(return_value=42)
+    container.run_agent.record_assistant_message = AsyncMock()
+    container.run_agent.update_message_content = AsyncMock()
+    container.run_agent.set_extra_system_sections = MagicMock()
+    container.run_agent.set_photo_debug_path = MagicMock()
+    container.set_channel_context = MagicMock()
+
+    with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
+        mock_app = MagicMock()
+        mock_app_cls.builder.return_value.token.return_value.build.return_value = mock_app
+        from adapters.inbound.telegram.bot import TelegramBot
+
+        bot = TelegramBot(agent_cfg=cfg, container=container, broadcast_emitter=None)
+
+    bot._emit_event = AsyncMock()
+
+    update = _mk_update(chat_type="group", caption="!transcribí esto")
+    update.message.from_user = MagicMock(username="alberto", first_name="Alberto")
+    context = MagicMock()
+
+    await bot._handle_photo_message(update, context)
+    import asyncio
+    await asyncio.sleep(0)
+
+    # Pipeline NO se dispara en modo `!` — assistant_response NO se emite
+    container.run_agent.execute.assert_not_called()
+    # record_assistant_message SÍ se llama (escribe el text_context al historial)
+    container.run_agent.record_assistant_message.assert_awaited_once()
+
+    # Solo user_input_photo emitido — no assistant_response
+    photo_calls = [
+        c for c in bot._emit_event.await_args_list
+        if c.kwargs.get("event_type") == "user_input_photo"
+    ]
+    assistant_calls = [
+        c for c in bot._emit_event.await_args_list
+        if c.kwargs.get("event_type") == "assistant_response"
+    ]
+    assert len(photo_calls) == 1
+    assert len(assistant_calls) == 0
+    assert photo_calls[0].kwargs["content"] == "texto extraído de la foto"
+    assert photo_calls[0].kwargs["sender"] == "alberto"

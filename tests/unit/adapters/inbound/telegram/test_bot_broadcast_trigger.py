@@ -95,7 +95,8 @@ def _msg(text: str, chat_id: str = "-100123", agent_id: str = "anacleto") -> Bro
         timestamp=time.time(),
         agent_id=agent_id,
         chat_id=chat_id,
-        message=text,
+        event_type="assistant_response",
+        content=text,
     )
 
 
@@ -252,3 +253,102 @@ async def test_on_broadcast_es_idempotente_si_hay_flush_activo(
     except (asyncio.CancelledError, BaseException):
         pass
     _ = bot_module  # silenciar unused import warning si hubiera
+
+
+# ---------------------------------------------------------------------------
+# _on_broadcast_received — dispatch por event_type (Task 3.5)
+# ---------------------------------------------------------------------------
+
+
+async def test_on_broadcast_user_input_voice_persiste_con_prefijo_audio(
+    agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter, mock_rate_limiter
+):
+    """user_input_voice se persiste con prefijo '{sender} (audio): {content}'."""
+    bot = _build_bot(
+        agent_cfg_autonomous,
+        mock_container,
+        receiver=mock_receiver,
+        emitter=mock_emitter,
+        rate_limiter=mock_rate_limiter,
+    )
+    msg = BroadcastMessage(
+        timestamp=time.time(),
+        agent_id="bot_a",
+        chat_id="-100123",
+        event_type="user_input_voice",
+        content="cuánto es 5+5",
+        sender="alberto",
+    )
+    await bot._on_broadcast_received(msg)
+
+    mock_container.run_agent.record_user_message.assert_awaited_once()
+    contenido = mock_container.run_agent.record_user_message.await_args.args[0]
+    assert contenido == "alberto (audio): cuánto es 5+5"
+    # Flush programado
+    assert "-100123" in bot._pending_tasks
+    bot._pending_tasks["-100123"].cancel()
+    try:
+        await bot._pending_tasks["-100123"]
+    except (asyncio.CancelledError, BaseException):
+        pass
+
+
+async def test_on_broadcast_user_input_photo_persiste_con_prefijo_foto(
+    agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter, mock_rate_limiter
+):
+    """user_input_photo se persiste con prefijo '{sender} (foto): {content}'."""
+    bot = _build_bot(
+        agent_cfg_autonomous,
+        mock_container,
+        receiver=mock_receiver,
+        emitter=mock_emitter,
+        rate_limiter=mock_rate_limiter,
+    )
+    msg = BroadcastMessage(
+        timestamp=time.time(),
+        agent_id="bot_a",
+        chat_id="-100123",
+        event_type="user_input_photo",
+        content="persona caminando",
+        sender="alberto",
+    )
+    await bot._on_broadcast_received(msg)
+
+    mock_container.run_agent.record_user_message.assert_awaited_once()
+    contenido = mock_container.run_agent.record_user_message.await_args.args[0]
+    assert contenido == "alberto (foto): persona caminando"
+    assert "-100123" in bot._pending_tasks
+    bot._pending_tasks["-100123"].cancel()
+    try:
+        await bot._pending_tasks["-100123"]
+    except (asyncio.CancelledError, BaseException):
+        pass
+
+
+async def test_on_broadcast_assistant_response_mantiene_prefijo_legacy(
+    agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter, mock_rate_limiter
+):
+    """assistant_response sigue persistiendo con '{agent_id} said: {content}' (backward-compat)."""
+    bot = _build_bot(
+        agent_cfg_autonomous,
+        mock_container,
+        receiver=mock_receiver,
+        emitter=mock_emitter,
+        rate_limiter=mock_rate_limiter,
+    )
+    msg = BroadcastMessage(
+        timestamp=time.time(),
+        agent_id="anacleto",
+        chat_id="-100123",
+        event_type="assistant_response",
+        content="hola humano",
+    )
+    await bot._on_broadcast_received(msg)
+
+    contenido = mock_container.run_agent.record_user_message.await_args.args[0]
+    assert contenido == "anacleto said: hola humano"
+    bot._pending_tasks["-100123"].cancel()
+    try:
+        await bot._pending_tasks["-100123"]
+    except (asyncio.CancelledError, BaseException):
+        pass

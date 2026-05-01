@@ -203,3 +203,50 @@ sudo date -s "+2 minutes"
    sudo systemctl start systemd-timesyncd
    ```
    Esperar unos segundos a que NTP resincronice. El broadcast vuelve a funcionar.
+
+---
+
+## Escenario E: Eventos tipificados — `user_input_voice` y `user_input_photo`
+
+**Setup adicional**: en Pi_A activar `broadcast.emit.user_input_voice: true` y
+`broadcast.emit.user_input_photo: true` en el YAML. En Pi_B dejarlos en `false` (default).
+Reiniciar ambos daemons. Pi_A debe tener `voice_enabled: true` y un `process_photo` wired
+(secciones de transcripción y `photos:` en config global).
+
+### E1 — Audio: Pi_A transcribe y comparte la transcripción
+
+**Objetivo:** que Pi_B reciba la transcripción del audio que solo Pi_A procesó.
+
+1. Desde tu cuenta humana, mandá un mensaje de voz al grupo.
+2. Pi_A reacciona 🔊, transcribe el audio y dispara su pipeline normal.
+3. **Esperado en logs de Pi_A**: entrada con evento `broadcast.message.received` o
+   equivalente que liste `event_type=user_input_voice` con la transcripción en `content`
+   y el username humano en `sender`.
+4. **Esperado en buffer de Pi_B**: render del contexto incluye `[HH:MM:SS] {sender}
+   (audio): {transcripción}` cuando Pi_B sea mencionado en un turno posterior.
+5. Pi_B no transcribe el audio raw (no tiene la capacidad activa) pero ve el resultado.
+
+### E2 — Foto: Pi_A describe y comparte la descripción
+
+**Objetivo:** que Pi_B reciba la descripción de escena de una foto que solo Pi_A procesó.
+
+1. Mandá una foto al grupo.
+2. Pi_A reacciona 👁, corre `process_photo` y dispara el pipeline normal.
+3. **Esperado en logs de Pi_A**: `event_type=user_input_photo` con la descripción en
+   `content`. El evento se emite **antes** del `assistant_response`.
+4. **Esperado en buffer de Pi_B**: línea `[HH:MM:SS] {sender} (foto): {descripción}`.
+5. **Edge case modo `!`**: si la foto va con caption `!transcribí esto`, Pi_A escribe
+   directo al chat sin pasar por LLM y emite **solo** `user_input_photo` (no
+   `assistant_response`). Pi_B ve el evento de foto pero no una respuesta de agente.
+
+### E3 — Versiones desincronizadas (wire format breaking change)
+
+**Setup**: actualizar Pi_A pero **no** Pi_B (downgrade pre-cambio).
+
+1. Pi_A emite con el wire format nuevo (campos `event_type`, `sender`, `content`).
+2. Pi_B parsea con código viejo: el HMAC canonical es distinto → mismatch → mensaje
+   descartado silenciosamente.
+3. **Esperado en Pi_B**: log `broadcast.message.dropped.hmac_mismatch`.
+
+**Mitigación**: este change es upgrade-en-bloque. Detener daemon en TODOS los Pis del
+LAN, actualizar código simultáneo, restart. Sin DB schema changes — solo wire format.

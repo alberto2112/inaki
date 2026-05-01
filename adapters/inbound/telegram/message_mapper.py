@@ -80,6 +80,34 @@ async def extract_photo_payload(message) -> tuple[bytes, str, int] | None:
     return bytes(data), "image/jpeg", size
 
 
+def extract_sender_name(message) -> str:
+    """Extrae el nombre del remitente humano de un mensaje de Telegram.
+
+    Patrón de fallback: ``username > first_name > "anonimo"``. Usa duck-typing
+    via ``getattr`` para tolerar stubs en tests (no requiere importar
+    ``telegram.User``).
+
+    Args:
+        message: Objeto Message de Telegram (real o stub) con ``from_user``.
+
+    Returns:
+        El nombre del remitente, o ``"anonimo"`` si no se puede determinar.
+    """
+    from_user = getattr(message, "from_user", None)
+    if from_user is None:
+        return "anonimo"
+
+    username = getattr(from_user, "username", None)
+    if username:
+        return username
+
+    first_name = getattr(from_user, "first_name", None)
+    if first_name:
+        return first_name
+
+    return "anonimo"
+
+
 def format_group_message(message) -> str:
     """Formatea un mensaje de grupo con marca de tiempo y prefijo del remitente.
 
@@ -93,23 +121,13 @@ def format_group_message(message) -> str:
     Returns:
         String con formato ``"(<timestamp>) <remitente> said: <texto>"``.
     """
-    from_user = getattr(message, "from_user", None)
-
     location = getattr(message, "location", None)
     if location and not getattr(location, "live_period", None):
         texto = f"{{GPS:{location.latitude},{location.longitude}}}"
     else:
         texto = (message.text or "").strip()
 
-    if from_user is not None:
-        username = getattr(from_user, "username", None)
-        if username:
-            remitente = username
-        else:
-            first_name = getattr(from_user, "first_name", None)
-            remitente = first_name if first_name else "anonimo"
-    else:
-        remitente = "anonimo"
+    remitente = extract_sender_name(message)
 
     date = getattr(message, "date", None)
     if date is not None:

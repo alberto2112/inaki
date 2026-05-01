@@ -95,6 +95,23 @@ desactivar) → reiniciar. La DB `faces.db` se crea automáticamente al primer u
 **Cambio de modelo facial** (`faces.model`): invalida `faces.db` → borrar
 `~/.inaki/data/faces.db` y re-enrolar todas las personas. Ver `docs/face-recognition.md`.
 
+### `broadcast-cross-agent-events`
+
+El wire format del broadcast TCP cambió: el `BroadcastMessage` ahora carga `event_type`
+(Literal de 3 valores), `sender` y `content` (renombre desde `message`). El HMAC canonical
+incluye los nuevos campos, por lo que **versiones viejas y nuevas no son compatibles** —
+mensajes con formato distinto se descartan por mismatch silenciosamente.
+
+**Pasos del operador**: detener el daemon en TODOS los Pis del LAN broadcast
+simultáneamente → actualizar código → reiniciar. No hay migración de DB. Si un solo Pi
+queda atrás, los broadcasts entre él y los actualizados se pierden silenciosamente
+(visible en logs como `broadcast.message.dropped.hmac_mismatch`).
+
+**Nuevos flags `broadcast.emit.*`**: defaults backward-compat (`assistant_response=true`,
+otros `false`) — sin cambios en config existente, comportamiento idéntico al previo. Para
+broadcastear transcripciones de voice o descripciones de fotos, activar `user_input_voice`
+y/o `user_input_photo` en UN bot del grupo (ver `docs/configuracion.md`).
+
 ## Git workflow
 
 - Never create a branch without asking me for the name first.

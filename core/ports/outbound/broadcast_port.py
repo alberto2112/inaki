@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
+
+EventType = Literal["assistant_response", "user_input_voice", "user_input_photo"]
+"""Tipos de evento que viajan por el canal de broadcast.
+
+- ``assistant_response``: respuesta de texto del LLM tras un turno del asistente.
+- ``user_input_voice``: transcripción de un audio enviado por un humano.
+- ``user_input_photo``: descripción/contexto extraído de una foto enviada por un humano.
+"""
 
 
 @dataclass(frozen=True)
@@ -25,8 +33,17 @@ class BroadcastMessage:
     chat_id: str
     """Identificador del chat de origen (ej: ``"-100123"`` para grupos Telegram)."""
 
-    message: str
-    """Texto plano de la respuesta del asistente. Tool calls excluidos."""
+    event_type: EventType
+    """Clasificación del evento — ver ``EventType`` para los valores válidos."""
+
+    content: str
+    """Texto del evento. Para ``assistant_response`` es la respuesta del LLM
+    (tool calls excluidos). Para ``user_input_voice`` es la transcripción.
+    Para ``user_input_photo`` es la descripción de escena."""
+
+    sender: str = ""
+    """Nombre del humano emisor — solo poblado para eventos ``user_input_*``.
+    Para ``assistant_response`` queda vacío (el emisor humano no aplica)."""
 
 
 # Alias de tipo para callbacks de ingress. Recibe un BroadcastMessage y

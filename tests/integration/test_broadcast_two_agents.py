@@ -101,7 +101,8 @@ async def test_client_emit_llega_al_buffer_del_server(par_server_client):
         timestamp=time.time(),
         agent_id="client_bot",
         chat_id=CHAT_ID,
-        message="hola desde el client",
+        event_type="assistant_response",
+        content="hola desde el client",
     )
 
     await client.emit(msg)
@@ -110,7 +111,7 @@ async def test_client_emit_llega_al_buffer_del_server(par_server_client):
     # El server tiene agent_id "server_bot" y recibe mensajes de "client_bot" → no anti-loop
     msgs_server = buf_server.recent(CHAT_ID)
     assert len(msgs_server) == 1
-    assert msgs_server[0].message == "hola desde el client"
+    assert msgs_server[0].content == "hola desde el client"
     assert msgs_server[0].agent_id == "client_bot"
 
 
@@ -130,7 +131,8 @@ async def test_server_emit_llega_al_buffer_del_client(par_server_client):
         timestamp=time.time(),
         agent_id="server_bot",
         chat_id=CHAT_ID,
-        message="hola desde el server",
+        event_type="assistant_response",
+        content="hola desde el server",
     )
 
     await server.emit(msg)
@@ -139,7 +141,7 @@ async def test_server_emit_llega_al_buffer_del_client(par_server_client):
     # El client tiene agent_id "client_bot" → recibe mensajes de "server_bot"
     msgs_client = buf_client.recent(CHAT_ID)
     assert len(msgs_client) == 1
-    assert msgs_client[0].message == "hola desde el server"
+    assert msgs_client[0].content == "hola desde el server"
     assert msgs_client[0].agent_id == "server_bot"
 
 
@@ -164,13 +166,14 @@ async def test_callback_subscribe_invocado(par_server_client):
         timestamp=time.time(),
         agent_id="client_bot",
         chat_id=CHAT_ID,
-        message="mensaje para callback",
+        event_type="assistant_response",
+        content="mensaje para callback",
     )
     await client.emit(msg)
     await asyncio.sleep(TICK * 3)  # tiempo extra para que el callback corra
 
     assert len(mensajes_recibidos) == 1
-    assert mensajes_recibidos[0].message == "mensaje para callback"
+    assert mensajes_recibidos[0].content == "mensaje para callback"
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +190,8 @@ async def test_antiloop_server_no_ve_sus_propios_mensajes(par_server_client):
         timestamp=time.time(),
         agent_id="server_bot",
         chat_id=CHAT_ID,
-        message="no debo verme a mí mismo",
+        event_type="assistant_response",
+        content="no debo verme a mí mismo",
     )
 
     await server.emit(msg)
@@ -212,7 +216,8 @@ async def test_antiloop_client_no_ve_sus_propios_mensajes(par_server_client):
         timestamp=time.time(),
         agent_id="client_bot",
         chat_id=CHAT_ID,
-        message="mensaje del client",
+        event_type="assistant_response",
+        content="mensaje del client",
     )
 
     await client.emit(msg)
@@ -238,7 +243,8 @@ async def test_multiples_mensajes_acumulados_en_orden(par_server_client):
             timestamp=time.time() + i * 0.001,
             agent_id="client_bot",
             chat_id=CHAT_ID,
-            message=f"mensaje {i}",
+            event_type="assistant_response",
+            content=f"mensaje {i}",
         )
         await client.emit(msg)
         await asyncio.sleep(0.01)
@@ -247,5 +253,5 @@ async def test_multiples_mensajes_acumulados_en_orden(par_server_client):
 
     msgs = buf_server.recent(CHAT_ID)
     assert len(msgs) == 3
-    contenidos = [m.message for m in msgs]
+    contenidos = [m.content for m in msgs]
     assert contenidos == ["mensaje 0", "mensaje 1", "mensaje 2"]

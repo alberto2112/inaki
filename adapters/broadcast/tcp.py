@@ -37,10 +37,24 @@ logger = logging.getLogger(__name__)
 _FRESHNESS_WINDOW = 60.0
 
 
-def _firmar(auth: str, timestamp: float, agent_id: str, chat_id: str, message: str) -> str:
+_VALID_EVENT_TYPES = frozenset(
+    {"assistant_response", "user_input_voice", "user_input_photo"}
+)
+
+
+def _firmar(
+    auth: str,
+    timestamp: float,
+    agent_id: str,
+    chat_id: str,
+    event_type: str,
+    sender: str,
+    content: str,
+) -> str:
     """Calcula HMAC-SHA256 sobre los campos canónicos del mensaje.
 
-    El string canónico es ``f"{timestamp}|{agent_id}|{chat_id}|{message}"``.
+    El string canónico es
+    ``f"{timestamp}|{agent_id}|{chat_id}|{event_type}|{sender}|{content}"``.
     El resultado es el hex digest del HMAC.
 
     Args:
@@ -48,17 +62,26 @@ def _firmar(auth: str, timestamp: float, agent_id: str, chat_id: str, message: s
         timestamp: Epoch UTC (float).
         agent_id: Identificador del agente emisor.
         chat_id: Identificador del chat de origen.
-        message: Texto del mensaje.
+        event_type: Tipo de evento (assistant_response | user_input_voice | user_input_photo).
+        sender: Nombre del humano emisor (vacío para assistant_response).
+        content: Texto del evento.
 
     Returns:
         Hex digest del HMAC.
     """
-    canonico = f"{timestamp}|{agent_id}|{chat_id}|{message}"
+    canonico = f"{timestamp}|{agent_id}|{chat_id}|{event_type}|{sender}|{content}"
     return hmac.new(auth.encode(), canonico.encode(), hashlib.sha256).hexdigest()
 
 
 def _verificar_hmac(
-    auth: str, timestamp: float, agent_id: str, chat_id: str, message: str, digest_recibido: str
+    auth: str,
+    timestamp: float,
+    agent_id: str,
+    chat_id: str,
+    event_type: str,
+    sender: str,
+    content: str,
+    digest_recibido: str,
 ) -> bool:
     """Verifica en tiempo constante el HMAC de un mensaje recibido.
 
@@ -67,13 +90,15 @@ def _verificar_hmac(
         timestamp: Epoch UTC del mensaje.
         agent_id: Identificador del emisor.
         chat_id: Identificador del chat.
-        message: Texto del mensaje.
+        event_type: Tipo de evento.
+        sender: Nombre del humano emisor.
+        content: Texto del evento.
         digest_recibido: Hex digest recibido en el wire frame.
 
     Returns:
         ``True`` si el HMAC es válido, ``False`` en caso contrario.
     """
-    esperado = _firmar(auth, timestamp, agent_id, chat_id, message)
+    esperado = _firmar(auth, timestamp, agent_id, chat_id, event_type, sender, content)
     return hmac.compare_digest(esperado, digest_recibido)
 
 
@@ -431,12 +456,22 @@ class TcpBroadcastAdapter:
         Returns:
             JSON string (sin newline).
         """
-        digest = _firmar(self._auth, msg.timestamp, msg.agent_id, msg.chat_id, msg.message)
+        digest = _firmar(
+            self._auth,
+            msg.timestamp,
+            msg.agent_id,
+            msg.chat_id,
+            msg.event_type,
+            msg.sender,
+            msg.content,
+        )
         payload = {
             "timestamp": msg.timestamp,
             "agent_id": msg.agent_id,
             "chat_id": msg.chat_id,
-            "message": msg.message,
+            "event_type": msg.event_type,
+            "sender": msg.sender,
+            "content": msg.content,
             "hmac": digest,
         }
         return json.dumps(payload, ensure_ascii=False)
@@ -470,7 +505,9 @@ class TcpBroadcastAdapter:
             timestamp: float = float(datos["timestamp"])
             agent_id: str = str(datos["agent_id"])
             chat_id: str = str(datos["chat_id"])
-            message: str = str(datos["message"])
+            event_type: str = str(datos["event_type"])
+            sender: str = str(datos.get("sender", ""))
+            content: str = str(datos["content"])
             digest_recibido: str = str(datos["hmac"])
         except (KeyError, TypeError, ValueError):
             logger.warning(
@@ -479,8 +516,18 @@ class TcpBroadcastAdapter:
             )
             return None
 
+        # Validar event_type contra el conjunto cerrado
+        if event_type not in _VALID_EVENT_TYPES:
+            logger.warning(
+                "broadcast.message.dropped.invalid_event_type",
+                extra={"agent_id": self._agent_id, "event_type": event_type},
+            )
+            return None
+
         # Verificar HMAC
-        if not _verificar_hmac(self._auth, timestamp, agent_id, chat_id, message, digest_recibido):
+        if not _verificar_hmac(
+            self._auth, timestamp, agent_id, chat_id, event_type, sender, content, digest_recibido
+        ):
             logger.warning(
                 "broadcast.message.dropped.hmac_mismatch",
                 extra={"agent_id": self._agent_id, "from_agent_id": agent_id},
@@ -504,7 +551,9 @@ class TcpBroadcastAdapter:
             timestamp=timestamp,
             agent_id=agent_id,
             chat_id=chat_id,
-            message=message,
+            event_type=event_type,  # type: ignore[arg-type]
+            content=content,
+            sender=sender,
         )
 
     # ------------------------------------------------------------------

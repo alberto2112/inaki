@@ -49,12 +49,14 @@ def _linea_valida(
     """Genera una línea JSON válida con HMAC correcto y timestamp fresco."""
     if ts is None:
         ts = time.time()
-    digest = _firmar(auth, ts, agent_id, chat_id, message)
+    digest = _firmar(auth, ts, agent_id, chat_id, "assistant_response", "", message)
     payload = {
         "timestamp": ts,
         "agent_id": agent_id,
         "chat_id": chat_id,
-        "message": message,
+        "event_type": "assistant_response",
+        "sender": "",
+        "content": message,
         "hmac": digest,
     }
     return json.dumps(payload)
@@ -67,7 +69,7 @@ def _linea_valida(
 
 def test_firmar_produce_hex_digest():
     """_firmar retorna una cadena hex no vacía."""
-    digest = _firmar("secreto", 1000.0, "ag", "ch", "msg")
+    digest = _firmar("secreto", 1000.0, "ag", "ch", "assistant_response", "", "msg")
     assert isinstance(digest, str)
     assert len(digest) == 64  # SHA-256 hex digest son 64 chars
 
@@ -80,39 +82,39 @@ def test_verificar_hmac_valid_roundtrip():
     chat_id = "grupo_42"
     message = "mensaje de prueba"
 
-    digest = _firmar(auth, ts, agent_id, chat_id, message)
-    assert _verificar_hmac(auth, ts, agent_id, chat_id, message, digest) is True
+    digest = _firmar(auth, ts, agent_id, chat_id, "assistant_response", "", message)
+    assert _verificar_hmac(auth, ts, agent_id, chat_id, "assistant_response", "", message, digest) is True
 
 
 def test_verificar_hmac_tampered_message():
     """_verificar_hmac retorna False si el campo message fue modificado."""
     auth = "secreto"
     ts = 1704067200.0
-    digest = _firmar(auth, ts, "ag", "ch", "original")
-    assert _verificar_hmac(auth, ts, "ag", "ch", "MODIFICADO", digest) is False
+    digest = _firmar(auth, ts, "ag", "ch", "assistant_response", "", "original")
+    assert _verificar_hmac(auth, ts, "ag", "ch", "assistant_response", "", "MODIFICADO", digest) is False
 
 
 def test_verificar_hmac_tampered_timestamp():
     """_verificar_hmac retorna False si el timestamp fue modificado."""
     auth = "secreto"
     ts = 1704067200.0
-    digest = _firmar(auth, ts, "ag", "ch", "msg")
-    assert _verificar_hmac(auth, ts + 1, "ag", "ch", "msg", digest) is False
+    digest = _firmar(auth, ts, "ag", "ch", "assistant_response", "", "msg")
+    assert _verificar_hmac(auth, ts + 1, "ag", "ch", "assistant_response", "", "msg", digest) is False
 
 
 def test_verificar_hmac_tampered_agent_id():
     """_verificar_hmac retorna False si agent_id fue modificado."""
     auth = "secreto"
     ts = 1704067200.0
-    digest = _firmar(auth, ts, "original", "ch", "msg")
-    assert _verificar_hmac(auth, ts, "atacante", "ch", "msg", digest) is False
+    digest = _firmar(auth, ts, "original", "ch", "assistant_response", "", "msg")
+    assert _verificar_hmac(auth, ts, "atacante", "ch", "assistant_response", "", "msg", digest) is False
 
 
 def test_verificar_hmac_wrong_auth():
     """_verificar_hmac retorna False si se usa una clave diferente."""
     ts = 1704067200.0
-    digest = _firmar("clave_correcta", ts, "ag", "ch", "msg")
-    assert _verificar_hmac("clave_incorrecta", ts, "ag", "ch", "msg", digest) is False
+    digest = _firmar("clave_correcta", ts, "ag", "ch", "assistant_response", "", "msg")
+    assert _verificar_hmac("clave_incorrecta", ts, "ag", "ch", "assistant_response", "", "msg", digest) is False
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +242,9 @@ def test_parsear_hmac_invalido_retorna_none(caplog):
         "timestamp": ahora,
         "agent_id": "otro",
         "chat_id": "c",
-        "message": "msg",
+        "event_type": "assistant_response",
+        "sender": "",
+        "content": "msg",
         "hmac": "deadbeef" * 8,  # HMAC falso de 64 chars
     }
     linea = json.dumps(payload)
@@ -249,3 +253,183 @@ def test_parsear_hmac_invalido_retorna_none(caplog):
         result = adapter._parsear_y_validar(linea)
 
     assert result is None
+    # El path tomado debe ser hmac_mismatch, no malformed (campos completos pero HMAC roto)
+    assert any("hmac_mismatch" in str(r.message) for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Wire format por event_type (Task 2.4)
+# ---------------------------------------------------------------------------
+
+
+def _payload_firmado(
+    auth: str,
+    *,
+    event_type: str,
+    sender: str,
+    content: str,
+    agent_id: str = "otro_bot",
+    chat_id: str = "chat_1",
+    ts: float | None = None,
+) -> str:
+    """Construye una línea JSON con HMAC válido para el shape extendido."""
+    if ts is None:
+        ts = time.time()
+    digest = _firmar(auth, ts, agent_id, chat_id, event_type, sender, content)
+    return json.dumps(
+        {
+            "timestamp": ts,
+            "agent_id": agent_id,
+            "chat_id": chat_id,
+            "event_type": event_type,
+            "sender": sender,
+            "content": content,
+            "hmac": digest,
+        }
+    )
+
+
+def test_parsear_user_input_voice_roundtrip():
+    """Mensaje de event_type=user_input_voice con sender se deserializa correctamente."""
+    auth = "secreto"
+    adapter = _make_adapter(auth=auth)
+    linea = _payload_firmado(
+        auth,
+        event_type="user_input_voice",
+        sender="alberto",
+        content="cuánto es 5+5",
+    )
+
+    msg = adapter._parsear_y_validar(linea)
+
+    assert msg is not None
+    assert msg.event_type == "user_input_voice"
+    assert msg.sender == "alberto"
+    assert msg.content == "cuánto es 5+5"
+
+
+def test_parsear_user_input_photo_roundtrip():
+    """Mensaje de event_type=user_input_photo con sender y descripción se deserializa."""
+    auth = "secreto"
+    adapter = _make_adapter(auth=auth)
+    linea = _payload_firmado(
+        auth,
+        event_type="user_input_photo",
+        sender="alberto",
+        content="persona caminando hacia la cámara",
+    )
+
+    msg = adapter._parsear_y_validar(linea)
+
+    assert msg is not None
+    assert msg.event_type == "user_input_photo"
+    assert msg.sender == "alberto"
+    assert msg.content == "persona caminando hacia la cámara"
+
+
+def test_parsear_event_type_invalido_descarta_con_warning(caplog):
+    """event_type fuera del conjunto cerrado se descarta con warning específico."""
+    auth = "secreto"
+    adapter = _make_adapter(auth=auth)
+    linea = _payload_firmado(
+        auth,
+        event_type="unknown_event",
+        sender="",
+        content="x",
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = adapter._parsear_y_validar(linea)
+
+    assert result is None
+    assert any("invalid_event_type" in str(r.message) for r in caplog.records)
+
+
+def test_parsear_event_type_faltante_descarta(caplog):
+    """JSON sin campo event_type se descarta como malformed."""
+    auth = "secreto"
+    adapter = _make_adapter(auth=auth)
+    ts = time.time()
+    payload = {
+        "timestamp": ts,
+        "agent_id": "otro",
+        "chat_id": "c",
+        "sender": "",
+        "content": "x",
+        "hmac": "0" * 64,
+    }
+    linea = json.dumps(payload)
+
+    with caplog.at_level(logging.WARNING):
+        result = adapter._parsear_y_validar(linea)
+
+    assert result is None
+    assert any("malformed" in str(r.message) for r in caplog.records)
+
+
+def test_parsear_sender_ausente_default_vacio():
+    """Si el campo sender no está en el payload, se asume vacío (backward-tolerant)."""
+    auth = "secreto"
+    adapter = _make_adapter(auth=auth)
+    ts = time.time()
+    # HMAC se calcula con sender="" porque ese es el default que usará el parser
+    digest = _firmar(auth, ts, "otro", "chat_1", "assistant_response", "", "hola")
+    payload = {
+        "timestamp": ts,
+        "agent_id": "otro",
+        "chat_id": "chat_1",
+        "event_type": "assistant_response",
+        # sender ausente
+        "content": "hola",
+        "hmac": digest,
+    }
+    linea = json.dumps(payload)
+
+    msg = adapter._parsear_y_validar(linea)
+
+    assert msg is not None
+    assert msg.sender == ""
+    assert msg.content == "hola"
+
+
+def test_hmac_canonical_incluye_event_type():
+    """Cambiar el event_type produce un HMAC distinto."""
+    auth = "secreto"
+    ts = 1000.0
+    digest_assistant = _firmar(auth, ts, "ag", "ch", "assistant_response", "", "msg")
+    digest_voice = _firmar(auth, ts, "ag", "ch", "user_input_voice", "", "msg")
+
+    assert digest_assistant != digest_voice
+
+
+def test_hmac_canonical_incluye_sender():
+    """Cambiar el sender produce un HMAC distinto."""
+    auth = "secreto"
+    ts = 1000.0
+    digest_vacio = _firmar(auth, ts, "ag", "ch", "user_input_voice", "", "msg")
+    digest_alberto = _firmar(auth, ts, "ag", "ch", "user_input_voice", "alberto", "msg")
+
+    assert digest_vacio != digest_alberto
+
+
+def test_serializar_incluye_event_type_y_sender_en_json():
+    """_serializar produce JSON con los campos nuevos."""
+    from core.ports.outbound.broadcast_port import BroadcastMessage
+
+    adapter = _make_adapter(auth="secreto")
+    msg = BroadcastMessage(
+        timestamp=1000.0,
+        agent_id="ag",
+        chat_id="ch",
+        event_type="user_input_voice",
+        content="hola",
+        sender="alberto",
+    )
+
+    serialized = adapter._serializar(msg)
+    parsed = json.loads(serialized)
+
+    assert parsed["event_type"] == "user_input_voice"
+    assert parsed["sender"] == "alberto"
+    assert parsed["content"] == "hola"
+    assert "message" not in parsed  # rename completo, sin campo legacy

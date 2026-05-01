@@ -22,6 +22,7 @@ from adapters.inbound.telegram.message_mapper import (
     dirigido_a,
     extract_audio_payload,
     extract_photo_payload,
+    extract_sender_name,
     format_group_message,
     format_response,
     hay_destinatario_explicito,
@@ -39,6 +40,25 @@ logger = logging.getLogger(__name__)
 
 # Tipos de chat que Telegram considera "grupos" (no privados).
 _TIPOS_GRUPO = {"group", "supergroup", "channel"}
+
+
+def _format_history_prefix(msg: BroadcastMessage) -> str:
+    """Construye el contenido a persistir en historial según el ``event_type`` del broadcast.
+
+    Pure function — testeable de forma aislada y reusable desde el callback de
+    ingress (``_on_broadcast_received``).
+
+    Reglas:
+    - ``assistant_response`` → ``"{agent_id} said: {content}"`` (backward-compat).
+    - ``user_input_voice``   → ``"{sender} (audio): {content}"``.
+    - ``user_input_photo``   → ``"{sender} (foto): {content}"``.
+    """
+    if msg.event_type == "user_input_voice":
+        return f"{msg.sender} (audio): {msg.content}"
+    if msg.event_type == "user_input_photo":
+        return f"{msg.sender} (foto): {msg.content}"
+    # assistant_response (default)
+    return f"{msg.agent_id} said: {msg.content}"
 
 # Delay aleatorio antes de flushar el buffer de grupo al LLM. Durante esta ventana,
 # nuevos mensajes (de Telegram o broadcasts de otros bots) se acumulan en el historial
@@ -82,6 +102,17 @@ class TelegramBot:
         self._behavior: str = broadcast_dict.get("behavior", "mention")
         self._bot_username: str | None = broadcast_dict.get("bot_username")
         self._rate_limit_max: int = int(broadcast_dict.get("rate_limiter", 5))
+
+        # Flags por event_type para emisión al canal de broadcast.
+        # Defaults: solo assistant_response activo (backward-compat).
+        emit_dict: dict = broadcast_dict.get("emit") or {}
+        if not isinstance(emit_dict, dict):
+            emit_dict = {}
+        self._emit_flags: dict[str, bool] = {
+            "assistant_response": bool(emit_dict.get("assistant_response", True)),
+            "user_input_voice": bool(emit_dict.get("user_input_voice", False)),
+            "user_input_photo": bool(emit_dict.get("user_input_photo", False)),
+        }
 
         # Config específica de grupos (delays + override de reactions).
         # Soporta tanto Pydantic model como dict crudo (compat con configs viejas).
@@ -457,6 +488,17 @@ class TelegramBot:
                 channel="telegram",
                 chat_id=chat_id,
             )
+            # Emitir user_input_photo solo si es chat grupal — sin assistant_response
+            # porque este modo no pasa por LLM. Gated por flag.
+            if chat_type in _TIPOS_GRUPO:
+                asyncio.ensure_future(
+                    self._emit_event(
+                        event_type="user_input_photo",
+                        chat_id=chat_id,
+                        content=direct_text,
+                        sender=extract_sender_name(update.message),
+                    )
+                )
             await self._set_reaction(update, "✅")
             return
 
@@ -468,6 +510,18 @@ class TelegramBot:
         if caption:
             enriched_content = f"{result.text_context}\n\nDescripción del usuario: {caption}"
         await self._container.run_agent.update_message_content(history_id, enriched_content)
+
+        # Emitir user_input_photo (solo grupos) ANTES de correr el pipeline, para que
+        # otros agentes vean la descripción antes que la respuesta del LLM.
+        if chat_type in _TIPOS_GRUPO and result.text_context:
+            asyncio.ensure_future(
+                self._emit_event(
+                    event_type="user_input_photo",
+                    chat_id=chat_id,
+                    content=result.text_context,
+                    sender=extract_sender_name(update.message),
+                )
+            )
 
         # Si photos.debug está activo, registrar la ruta del archivo de debug en run_agent
         # para que Phase 2 (historial + system prompt + mensajes al LLM) se agregue al archivo.
@@ -667,6 +721,19 @@ class TelegramBot:
             return
 
         chat_type = update.message.chat.type if update.message else "private"
+
+        # Emitir el evento user_input_voice si el flag está activo. Solo aplica
+        # a chats grupales — en privado no hay otros agentes que reciban el evento.
+        if chat_type in _TIPOS_GRUPO:
+            asyncio.ensure_future(
+                self._emit_event(
+                    event_type="user_input_voice",
+                    chat_id=str(update.effective_chat.id),
+                    content=transcribed,
+                    sender=extract_sender_name(update.message),
+                )
+            )
+
         await self._run_pipeline(update, transcribed, chat_type=chat_type)
 
     async def _set_reaction(self, update: Update, emoji: str) -> None:
@@ -765,14 +832,15 @@ class TelegramBot:
             await self._set_reaction(update, "✅")
 
             # Emitir broadcast DESPUÉS del reply, solo para grupos, fire-and-forget.
-            if es_grupo and self._broadcast_emitter is not None:
-                msg_broadcast = BroadcastMessage(
-                    timestamp=time.time(),
-                    agent_id=self._agent_cfg.id,
-                    chat_id=str(chat_id),
-                    message=response,
+            # Gated por broadcast.emit.assistant_response (default true).
+            if es_grupo:
+                asyncio.ensure_future(
+                    self._emit_event(
+                        event_type="assistant_response",
+                        chat_id=str(chat_id),
+                        content=response,
+                    )
                 )
-                asyncio.ensure_future(self._emitir_broadcast(msg_broadcast))
 
         except Exception as exc:
             logger.exception("Error procesando mensaje Telegram para '%s'", self._agent_cfg.id)
@@ -782,6 +850,61 @@ class TelegramBot:
             self._container.set_channel_context(None)
             # Limpiar extra_sections después del turno para no contaminar el siguiente.
             self._container.run_agent.set_extra_system_sections([])
+
+    async def _emit_event(
+        self,
+        *,
+        event_type: str,
+        chat_id: str,
+        content: str,
+        sender: str = "",
+    ) -> None:
+        """Emite un evento broadcast respetando el flag de config para ese event_type.
+
+        Centraliza la decisión de emitir o no — los handlers sólo declaran QUÉ
+        evento corresponde a su flujo, sin replicar lógica de gating.
+
+        Reglas:
+        - Si ``broadcast_emitter`` no está configurado → no-op silencioso.
+        - Si el flag ``emit.{event_type}`` está en ``False`` → no-op silencioso.
+        - Si ``content.strip()`` es vacío → no-op silencioso (mismo patrón que el
+          voice handler post-transcripción).
+        - Caso normal → construye ``BroadcastMessage`` y llama ``emitter.emit``
+          como fire-and-forget (excepciones loggeadas, no propagadas).
+
+        Args:
+            event_type: ``"assistant_response"``, ``"user_input_voice"`` o
+                ``"user_input_photo"``.
+            chat_id: ID del chat de origen como string.
+            content: Texto del evento (respuesta del LLM, transcripción o descripción).
+            sender: Nombre del humano emisor — solo aplica a eventos ``user_input_*``;
+                vacío para ``assistant_response``.
+        """
+        if self._broadcast_emitter is None:
+            return
+        if not self._emit_flags.get(event_type, False):
+            return
+        if not content.strip():
+            return
+
+        msg = BroadcastMessage(
+            timestamp=time.time(),
+            agent_id=self._agent_cfg.id,
+            chat_id=chat_id,
+            event_type=event_type,  # type: ignore[arg-type]
+            content=content,
+            sender=sender,
+        )
+        try:
+            await self._broadcast_emitter.emit(msg)
+        except Exception as exc:
+            logger.warning(
+                "Fallo al emitir broadcast event_type=%s (agent=%s, chat_id=%s): %s",
+                event_type,
+                self._agent_cfg.id,
+                chat_id,
+                exc,
+            )
 
     async def _emitir_broadcast(self, msg: BroadcastMessage) -> None:
         """Emite un BroadcastMessage al canal. Captura y loguea excepciones silenciosamente.
@@ -833,7 +956,7 @@ class TelegramBot:
         Silencioso y defensivo: cualquier excepción queda aquí.
         """
         try:
-            preview = msg.message[:200].replace("\n", " ")
+            preview = msg.content[:200].replace("\n", " ")
             logger.info(
                 "broadcast.trigger.eval agent=%s from=%s chat_id=%s preview=%r",
                 self._agent_cfg.id,
@@ -859,7 +982,7 @@ class TelegramBot:
                     )
                     return
 
-            contenido = f"{msg.agent_id} said: {msg.message}"
+            contenido = _format_history_prefix(msg)
             await self._container.run_agent.record_user_message(
                 contenido,
                 channel="telegram",
@@ -930,14 +1053,13 @@ class TelegramBot:
                 parse_mode=ParseMode.HTML,
             )
 
-            if self._broadcast_emitter is not None:
-                msg_broadcast = BroadcastMessage(
-                    timestamp=time.time(),
-                    agent_id=self._agent_cfg.id,
+            asyncio.ensure_future(
+                self._emit_event(
+                    event_type="assistant_response",
                     chat_id=chat_id_str,
-                    message=response,
+                    content=response,
                 )
-                asyncio.ensure_future(self._emitir_broadcast(msg_broadcast))
+            )
 
         except Exception as exc:
             logger.exception(

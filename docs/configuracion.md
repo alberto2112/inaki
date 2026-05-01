@@ -699,6 +699,39 @@ channels:
 
 ---
 
+### `broadcast.emit` — qué tipos de eventos emite cada bot
+
+Cada bot tiene flags por `event_type` que controlan **qué** emite al canal. Defaults
+diseñados para mantener backward-compat y evitar duplicados accidentales:
+
+```yaml
+channels:
+  telegram:
+    broadcast:
+      port: 1234
+      auth: "..."
+      emit:
+        assistant_response: true   # default true — respuestas del LLM tras turno en grupo
+        user_input_voice: false    # default false — transcripciones de audio
+        user_input_photo: false    # default false — descripciones de foto procesadas
+```
+
+**Cuándo activar `user_input_voice` / `user_input_photo`:**
+
+Estos events son útiles cuando hay **múltiples bots en el mismo grupo Telegram** y solo
+algunos tienen las capacidades correspondientes (transcripción de audio, reconocimiento
+visual). Activarlos permite que el bot con la capacidad **comparta el resultado procesado**
+para que los otros bots tengan ese contexto en sus buffers.
+
+**Regla de configuración**: activá cada flag en **un único bot** del grupo — el que
+posee la capacidad. Si dos bots emiten el mismo evento, el receptor lo verá dos veces
+(no hay deduplicación; es decisión del admin).
+
+`assistant_response` queda en `true` por default para mantener el comportamiento del
+broadcast existente (los bots ven las respuestas de los otros bots).
+
+---
+
 **`memory.channels_infused`** — limitar qué canales alimentan la consolidación de memoria:
 
 ```yaml

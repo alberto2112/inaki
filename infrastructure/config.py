@@ -401,6 +401,35 @@ class RemoteBroadcastConfig(BaseModel):
     """Secreto compartido con el servidor para autenticación HMAC-SHA256."""
 
 
+class BroadcastEmitConfig(BaseModel):
+    """Flags por agente que controlan qué tipos de eventos se emiten al broadcast.
+
+    Cada flag corresponde a un ``event_type`` del ``BroadcastMessage``:
+
+    - ``assistant_response`` (default ``True``): respuestas del LLM tras un turno.
+      Backward-compat con el comportamiento original del broadcast.
+    - ``user_input_voice`` (default ``False``): transcripciones de audio. El admin
+      lo activa en UN bot del grupo con capacidad de transcripción para evitar
+      duplicados.
+    - ``user_input_photo`` (default ``False``): descripciones de foto. El admin
+      lo activa en UN bot del grupo con capacidad de visión.
+
+    El modelo es ``strict=True`` para rechazar coerciones implícitas (e.g.,
+    string ``"yes"`` o entero ``2`` no-booleano).
+    """
+
+    model_config = {"strict": True}
+
+    assistant_response: bool = True
+    """Si ``True``, emite ``event_type="assistant_response"`` tras cada turno LLM en grupos."""
+
+    user_input_voice: bool = False
+    """Si ``True``, emite ``event_type="user_input_voice"`` tras transcribir un audio."""
+
+    user_input_photo: bool = False
+    """Si ``True``, emite ``event_type="user_input_photo"`` tras procesar una foto."""
+
+
 class BroadcastConfig(BaseModel):
     """
     Config del canal de broadcast TCP entre instancias de Iñaki.
@@ -437,6 +466,10 @@ class BroadcastConfig(BaseModel):
 
     bot_username: str | None = None
     """Username del bot Telegram (sin ``@``) para detección de menciones en modo ``mention``."""
+
+    emit: BroadcastEmitConfig = BroadcastEmitConfig()
+    """Flags que controlan qué tipos de eventos se emiten al broadcast.
+    Sin override usa los defaults: solo ``assistant_response`` activo."""
 
     @model_validator(mode="after")
     def _validar_topologia(self) -> "BroadcastConfig":

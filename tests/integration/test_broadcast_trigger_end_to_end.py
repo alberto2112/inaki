@@ -164,7 +164,8 @@ async def test_broadcast_trigger_dispara_pipeline_del_otro_bot(par_bots):
         timestamp=time.time(),
         agent_id="anacleto",
         chat_id=CHAT_ID,
-        message="che inaki, qué hora es?",
+        event_type="assistant_response",
+        content="che inaki, qué hora es?",
     )
     await adapter_a.emit(msg_a)
     # Esperar varios ticks para TCP → callback → record → flush task → send_message
@@ -204,7 +205,8 @@ async def test_broadcast_sin_mencion_igualmente_dispara(par_bots):
         timestamp=time.time(),
         agent_id="anacleto",
         chat_id=CHAT_ID,
-        message="hablando solo del clima sin nombrar a nadie",
+        event_type="assistant_response",
+        content="hablando solo del clima sin nombrar a nadie",
     )
     await adapter_a.emit(msg)
     for _ in range(40):
@@ -229,7 +231,8 @@ async def test_broadcast_skip_no_envia(par_bots):
         timestamp=time.time(),
         agent_id="anacleto",
         chat_id=CHAT_ID,
-        message="inaki, cualquier cosa",
+        event_type="assistant_response",
+        content="inaki, cualquier cosa",
     )
     await adapter_a.emit(msg)
     for _ in range(30):

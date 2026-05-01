@@ -15,6 +15,7 @@ from adapters.inbound.telegram.message_mapper import (
     dirigido_a,
     es_reply_a,
     es_reply_a_bot,
+    extract_sender_name,
     format_group_message,
     hay_destinatario_explicito,
     telegram_update_to_input,
@@ -59,6 +60,41 @@ def _location(
 def _update(message: SimpleNamespace | None) -> SimpleNamespace:
     """Stub mínimo de ``telegram.Update`` para ``telegram_update_to_input``."""
     return SimpleNamespace(message=message)
+
+
+# ---------------------------------------------------------------------------
+# extract_sender_name
+# ---------------------------------------------------------------------------
+
+
+def test_extract_sender_name_con_username():
+    """username tiene prioridad cuando está presente."""
+    msg = _message(from_user=_user(username="alberto"))
+    assert extract_sender_name(msg) == "alberto"
+
+
+def test_extract_sender_name_username_prioritario_sobre_first_name():
+    """Con username y first_name, username gana."""
+    msg = _message(from_user=_user(username="alb", first_name="Alberto"))
+    assert extract_sender_name(msg) == "alb"
+
+
+def test_extract_sender_name_fallback_first_name():
+    """Sin username pero con first_name, usa first_name."""
+    msg = _message(from_user=_user(username=None, first_name="María"))
+    assert extract_sender_name(msg) == "María"
+
+
+def test_extract_sender_name_sin_nada_es_anonimo():
+    """Sin username ni first_name, retorna 'anonimo'."""
+    msg = _message(from_user=_user(username=None, first_name=None))
+    assert extract_sender_name(msg) == "anonimo"
+
+
+def test_extract_sender_name_sin_from_user_es_anonimo():
+    """Sin from_user (None), retorna 'anonimo'."""
+    msg = _message(from_user=None)
+    assert extract_sender_name(msg) == "anonimo"
 
 
 # ---------------------------------------------------------------------------

@@ -112,6 +112,36 @@ otros `false`) — sin cambios en config existente, comportamiento idéntico al 
 broadcastear transcripciones de voice o descripciones de fotos, activar `user_input_voice`
 y/o `user_input_photo` en UN bot del grupo (ver `docs/configuracion.md`).
 
+### `memory-management-tools`
+
+Se exponen al LLM tres tools nuevas (`search_memory`, `delete_memory`,
+`update_memory`) y se añaden los métodos `IMemoryRepository.delete()` y
+`update()` con soft-delete reversible. Resuelve el caso "borrá esa memoria
+errónea" que antes el agente no podía cumplir.
+
+`memories` recibe una columna `deleted INTEGER NOT NULL DEFAULT 0` y el índice
+de scope se reescribe como **partial index** sobre `deleted = 0` (más compacto:
+solo indexa entries activas). `search`, `search_with_scores` y `get_recent`
+filtran `deleted = 0` automáticamente; el `update` y el `delete` operan solo
+sobre entries activas (no se permite editar o re-borrar una soft-deleted).
+
+Migración en caliente:
+
+```bash
+sqlite3 ~/.inaki/data/inaki.db <<'SQL'
+ALTER TABLE memories ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0;
+DROP INDEX IF EXISTS idx_memories_scope;
+CREATE INDEX idx_memories_scope
+  ON memories(agent_id, channel, chat_id, created_at DESC)
+  WHERE deleted = 0;
+SQL
+```
+
+**Bug fix en `store`/`update`**: la tabla virtual `vec0` (`memory_embeddings`)
+NO soporta `INSERT OR REPLACE` — el path REPLACE rompe con UNIQUE
+constraint. Se reemplaza por `DELETE` + `INSERT`. Esto siempre fue un latent
+bug en `store` cuando el mismo id se reescribía.
+
 ### `memory-scoped-by-channel-chat`
 
 La tabla `memories` se extiende con columnas `channel TEXT` y `chat_id TEXT` (ambas

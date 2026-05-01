@@ -34,13 +34,18 @@ CREATE TABLE IF NOT EXISTS memories (
     created_at TEXT NOT NULL,
     agent_id   TEXT,
     channel    TEXT,
-    chat_id    TEXT
+    chat_id    TEXT,
+    deleted    INTEGER NOT NULL DEFAULT 0
 )
 """
 
+# Partial index: solo indexa los recuerdos activos. Hace que las queries
+# habituales (search/get_recent que filtran por deleted=0) usen un índice
+# más chico y rápido.
 _CREATE_SCOPE_INDEX = """
 CREATE INDEX IF NOT EXISTS idx_memories_scope
     ON memories(agent_id, channel, chat_id, created_at DESC)
+    WHERE deleted = 0
 """
 
 _CREATE_EMBEDDINGS = """
@@ -79,8 +84,8 @@ class SQLiteMemoryRepository(IMemoryRepository):
             await conn.execute(
                 """
                 INSERT OR REPLACE INTO memories
-                    (id, content, relevance, tags, created_at, agent_id, channel, chat_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, content, relevance, tags, created_at, agent_id, channel, chat_id, deleted)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     entry.id,
@@ -91,11 +96,19 @@ class SQLiteMemoryRepository(IMemoryRepository):
                     entry.agent_id,
                     entry.channel,
                     entry.chat_id,
+                    int(entry.deleted),
                 ),
             )
+            # vec0 (sqlite-vec) no soporta INSERT OR REPLACE: el path REPLACE
+            # falla con UNIQUE constraint. Para soportar re-store del mismo id
+            # (consolidación reintentada), borramos y re-insertamos.
             vec_bytes = struct.pack(f"{len(entry.embedding)}f", *entry.embedding)
             await conn.execute(
-                "INSERT OR REPLACE INTO memory_embeddings (id, embedding) VALUES (?, ?)",
+                "DELETE FROM memory_embeddings WHERE id = ?",
+                (entry.id,),
+            )
+            await conn.execute(
+                "INSERT INTO memory_embeddings (id, embedding) VALUES (?, ?)",
                 (entry.id, vec_bytes),
             )
             await conn.commit()
@@ -113,13 +126,19 @@ class SQLiteMemoryRepository(IMemoryRepository):
 
         async with self._conn() as conn:
             await self._ensure_schema(conn)
+            # NOTA: filtramos `deleted = 0` después del MATCH; sqlite-vec no
+            # acepta filtros adicionales sobre la tabla virtual. El `k` se queda
+            # tal cual — si todos los topk matcheados están borrados, se devuelve
+            # lista vacía (caso muy raro en práctica).
             rows = await conn.execute_fetchall(
                 """
-                SELECT m.id, m.content, m.relevance, m.tags, m.created_at, m.agent_id
+                SELECT m.id, m.content, m.relevance, m.tags, m.created_at,
+                       m.agent_id, m.channel, m.chat_id, m.deleted
                 FROM memory_embeddings e
                 JOIN memories m ON e.id = m.id
                 WHERE e.embedding MATCH ?
                   AND k = ?
+                  AND m.deleted = 0
                 ORDER BY distance
                 """,
                 (vec_bytes, top_k),
@@ -148,12 +167,14 @@ class SQLiteMemoryRepository(IMemoryRepository):
             await self._ensure_schema(conn)
             rows = await conn.execute_fetchall(
                 """
-                SELECT m.id, m.content, m.relevance, m.tags, m.created_at, m.agent_id,
+                SELECT m.id, m.content, m.relevance, m.tags, m.created_at,
+                       m.agent_id, m.channel, m.chat_id, m.deleted,
                        e.distance
                 FROM memory_embeddings e
                 JOIN memories m ON e.id = m.id
                 WHERE e.embedding MATCH ?
                   AND k = ?
+                  AND m.deleted = 0
                 ORDER BY e.distance
                 """,
                 (vec_bytes, top_k),
@@ -197,7 +218,7 @@ class SQLiteMemoryRepository(IMemoryRepository):
         si el caller pasa ``None`` no aplica filtro — usar ``""`` no es
         soportado actualmente).
         """
-        clauses: list[str] = []
+        clauses: list[str] = ["deleted = 0"]
         params: list[object] = []
         if agent_id is not None:
             clauses.append("agent_id = ?")
@@ -209,9 +230,9 @@ class SQLiteMemoryRepository(IMemoryRepository):
             clauses.append("chat_id = ?")
             params.append(chat_id)
 
-        where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
+        where = f"WHERE {' AND '.join(clauses)} "
         sql = (
-            "SELECT id, content, relevance, tags, created_at, agent_id, channel, chat_id "
+            "SELECT id, content, relevance, tags, created_at, agent_id, channel, chat_id, deleted "
             f"FROM memories {where}ORDER BY created_at DESC LIMIT ?"
         )
         params.append(limit)
@@ -221,9 +242,128 @@ class SQLiteMemoryRepository(IMemoryRepository):
             rows = await conn.execute_fetchall(sql, tuple(params))
         return [self._row_to_entry(row) for row in rows]
 
+    async def delete(self, memory_id: str) -> MemoryEntry | None:
+        """
+        Soft-delete: marca ``deleted=1`` en la fila. La memoria deja de aparecer
+        en ``search``/``search_with_scores``/``get_recent`` pero el embedding y
+        los datos siguen en disco — restaurable con un futuro ``UPDATE deleted=0``.
+
+        Devuelve la entry tal como queda tras el delete (con ``deleted=True``)
+        o ``None`` si el id no existía o ya estaba borrado (idempotencia).
+        """
+        async with self._conn() as conn:
+            await self._ensure_schema(conn)
+            cursor = await conn.execute(
+                "UPDATE memories SET deleted = 1 WHERE id = ? AND deleted = 0",
+                (memory_id,),
+            )
+            await conn.commit()
+            if cursor.rowcount == 0:
+                logger.debug("delete: memoria '%s' no existe o ya borrada", memory_id)
+                return None
+            row = await (
+                await conn.execute(
+                    "SELECT id, content, relevance, tags, created_at, "
+                    "agent_id, channel, chat_id, deleted "
+                    "FROM memories WHERE id = ?",
+                    (memory_id,),
+                )
+            ).fetchone()
+        if row is None:
+            return None
+        logger.info("Memoria soft-deleted: %s", memory_id)
+        return self._row_to_entry(row)
+
+    async def update(
+        self,
+        memory_id: str,
+        content: str | None = None,
+        tags: list[str] | None = None,
+        relevance: float | None = None,
+        embedding: list[float] | None = None,
+    ) -> MemoryEntry | None:
+        """
+        Update parcial. Solo actualiza los campos no-``None``. Si se pasa
+        ``content`` el caller DEBE pasar también ``embedding`` (el repo no
+        recomputa embeddings — eso es responsabilidad del caller, que tiene
+        acceso al ``IEmbeddingProvider``).
+
+        Devuelve la entry actualizada o ``None`` si el id no existe o está
+        soft-deleted (no permitimos editar un recuerdo borrado — primero
+        habría que restaurarlo).
+        """
+        sets: list[str] = []
+        params: list[object] = []
+        if content is not None:
+            sets.append("content = ?")
+            params.append(content)
+        if tags is not None:
+            sets.append("tags = ?")
+            params.append(json.dumps(tags))
+        if relevance is not None:
+            sets.append("relevance = ?")
+            params.append(relevance)
+
+        if not sets and embedding is None:
+            # Nada que actualizar — devolver la entry actual si existe y está activa.
+            async with self._conn() as conn:
+                await self._ensure_schema(conn)
+                row = await (
+                    await conn.execute(
+                        "SELECT id, content, relevance, tags, created_at, "
+                        "agent_id, channel, chat_id, deleted "
+                        "FROM memories WHERE id = ? AND deleted = 0",
+                        (memory_id,),
+                    )
+                ).fetchone()
+            return self._row_to_entry(row) if row is not None else None
+
+        async with self._conn() as conn:
+            await self._ensure_schema(conn)
+            if sets:
+                params.append(memory_id)
+                cursor = await conn.execute(
+                    f"UPDATE memories SET {', '.join(sets)} "
+                    "WHERE id = ? AND deleted = 0",
+                    tuple(params),
+                )
+                if cursor.rowcount == 0:
+                    await conn.commit()
+                    logger.debug("update: memoria '%s' no existe o está borrada", memory_id)
+                    return None
+
+            if embedding is not None:
+                # vec0 no soporta INSERT OR REPLACE — DELETE + INSERT.
+                vec_bytes = struct.pack(f"{len(embedding)}f", *embedding)
+                await conn.execute(
+                    "DELETE FROM memory_embeddings WHERE id = ?",
+                    (memory_id,),
+                )
+                await conn.execute(
+                    "INSERT INTO memory_embeddings (id, embedding) VALUES (?, ?)",
+                    (memory_id, vec_bytes),
+                )
+
+            await conn.commit()
+
+            row = await (
+                await conn.execute(
+                    "SELECT id, content, relevance, tags, created_at, "
+                    "agent_id, channel, chat_id, deleted "
+                    "FROM memories WHERE id = ? AND deleted = 0",
+                    (memory_id,),
+                )
+            ).fetchone()
+
+        if row is None:
+            return None
+        logger.info("Memoria actualizada: %s (campos=%s)", memory_id, [s.split(" =")[0] for s in sets])
+        return self._row_to_entry(row)
+
     def _row_to_entry(self, row) -> MemoryEntry:
-        # `channel` y `chat_id` pueden no existir en filas de DBs pre-migración;
-        # SQLite Row no implementa .get(), así que probamos con KeyError-guard.
+        # `channel`, `chat_id`, `deleted` pueden no existir en filas de DBs
+        # pre-migración; SQLite Row no implementa .get(), así que probamos con
+        # KeyError-guard.
         try:
             channel = row["channel"]
         except (KeyError, IndexError):
@@ -232,6 +372,10 @@ class SQLiteMemoryRepository(IMemoryRepository):
             chat_id = row["chat_id"]
         except (KeyError, IndexError):
             chat_id = None
+        try:
+            deleted = bool(row["deleted"])
+        except (KeyError, IndexError):
+            deleted = False
         return MemoryEntry(
             id=row["id"],
             content=row["content"],
@@ -242,4 +386,5 @@ class SQLiteMemoryRepository(IMemoryRepository):
             agent_id=row["agent_id"],
             channel=channel,
             chat_id=chat_id,
+            deleted=deleted,
         )

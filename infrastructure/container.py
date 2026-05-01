@@ -350,6 +350,11 @@ class AgentContainer:
         from pathlib import Path
 
         from adapters.outbound.tools.knowledge_search_tool import KnowledgeSearchTool
+        from adapters.outbound.tools.memory_tools import (
+            DeleteMemoryTool,
+            SearchMemoryTool,
+            UpdateMemoryTool,
+        )
         from adapters.outbound.tools.patch_file_tool import PatchFileTool
         from adapters.outbound.tools.read_file_tool import ReadFileTool
         from adapters.outbound.tools.web_search_tool import WebSearchTool
@@ -392,6 +397,12 @@ class AgentContainer:
                 embedder=self._embedder,
             )
         )
+        # Tools de gestión directa de memoria — el LLM puede buscar por
+        # similitud y borrar/editar entries por id. Sin filtro de scope: el
+        # agente puede tocar cualquier recuerdo del mismo agent_id.
+        self._tools.register(SearchMemoryTool(memory=self._memory, embedder=self._embedder))
+        self._tools.register(DeleteMemoryTool(memory=self._memory))
+        self._tools.register(UpdateMemoryTool(memory=self._memory, embedder=self._embedder))
         self._tools.register(WebSearchTool())
         self._tools.register(ReadFileTool(workspace=workspace_path, containment=ws_cfg.containment))
         self._tools.register(

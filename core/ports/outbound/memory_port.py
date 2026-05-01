@@ -47,5 +47,39 @@ class IMemoryRepository(ABC):
         Devuelve los `limit` recuerdos más recientes, opcionalmente filtrados por
         ``(agent_id, channel, chat_id)``. Cada filtro es opcional e
         independiente; ``None`` significa "sin filtro por ese campo".
+
+        Las memorias soft-deleted (``deleted=True``) no se incluyen.
+        """
+        ...
+
+    @abstractmethod
+    async def delete(self, memory_id: str) -> MemoryEntry | None:
+        """
+        Soft-delete por id. La entry deja de aparecer en ``search`` y
+        ``get_recent`` pero permanece en almacenamiento (reversible).
+
+        Devuelve la entry borrada (con ``deleted=True``) o ``None`` si el id
+        no existía o ya estaba borrado (idempotencia).
+        """
+        ...
+
+    @abstractmethod
+    async def update(
+        self,
+        memory_id: str,
+        content: str | None = None,
+        tags: list[str] | None = None,
+        relevance: float | None = None,
+        embedding: list[float] | None = None,
+    ) -> MemoryEntry | None:
+        """
+        Update parcial. Solo se actualizan los campos no-``None``.
+
+        Si se cambia ``content``, el caller debería pasar también ``embedding``
+        recomputado — el repo NO recalcula embeddings automáticamente porque
+        no tiene la dependencia del ``IEmbeddingProvider``.
+
+        Devuelve la entry actualizada o ``None`` si el id no existe o está
+        soft-deleted (no se permite editar un recuerdo borrado).
         """
         ...

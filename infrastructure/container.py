@@ -1025,6 +1025,50 @@ class AppContainer:
             except Exception as exc:
                 logger.error("Error en wire_photos para agente '%s': %s", agent_id, exc)
 
+        # Phase 6: wire memory extractor sub-agents.
+        # Si memory.llm.agent_id apunta a un sub-agente, le pasamos su
+        # run_agent_one_shot al ConsolidateMemoryUseCase. Si el agent_id
+        # no existe o no es un sub-agente, se loggea ERROR y la consolidación
+        # cae de vuelta al prompt hardcodeado + LLM resuelto (graceful).
+        delegation_cfg = global_config.delegation
+        for agent_id, container in self.agents.items():
+            if registry.is_sub_agent(agent_id):
+                continue
+            if container.consolidate_memory is None:
+                continue
+            mem_llm = container.agent_config.memory.llm
+            extractor_id = mem_llm.agent_id if mem_llm is not None else None
+            if not extractor_id:
+                continue
+            extractor_container = self.agents.get(extractor_id)
+            if extractor_container is None:
+                logger.error(
+                    "Agente '%s': memory.llm.agent_id='%s' no existe — "
+                    "consolidación usará el prompt extractor por defecto",
+                    agent_id,
+                    extractor_id,
+                )
+                continue
+            if not registry.is_sub_agent(extractor_id):
+                logger.error(
+                    "Agente '%s': memory.llm.agent_id='%s' debe apuntar a un "
+                    "sub-agente (en agents/sub-agents/), no a un agente regular — "
+                    "consolidación usará el prompt extractor por defecto",
+                    agent_id,
+                    extractor_id,
+                )
+                continue
+            container.consolidate_memory.set_extractor(
+                extractor_container.run_agent_one_shot,
+                max_iterations=delegation_cfg.max_iterations_per_sub,
+                timeout_seconds=delegation_cfg.timeout_seconds,
+            )
+            logger.info(
+                "Agente '%s': memory extractor wired → sub-agente '%s'",
+                agent_id,
+                extractor_id,
+            )
+
     def _wire_broadcast_for_agent(self, agent_cfg: AgentConfig) -> None:
         """
         Instancia y almacena el TcpBroadcastAdapter para un agente, si aplica.

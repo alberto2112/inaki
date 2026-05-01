@@ -37,6 +37,7 @@ from core.ports.outbound.embedding_port import IEmbeddingProvider
 from core.ports.outbound.history_port import IHistoryStore
 from core.ports.outbound.llm_port import ILLMProvider
 from core.ports.outbound.memory_port import IMemoryRepository
+from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from infrastructure.config import MemoryConfig
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,26 @@ class ConsolidateMemoryUseCase:
         self._agent_id = agent_id
         self._memory_cfg = memory_config
 
+        # Extractor sub-agente — wired post-construcción por AppContainer Phase 6
+        # cuando memory.llm.agent_id apunta a un sub-agente válido. Si está
+        # seteado, execute() delega la extracción al sub-agente vía one-shot.
+        # Si es None, usa el prompt hardcodeado + self._llm como antes.
+        self._extractor_one_shot: RunAgentOneShotUseCase | None = None
+        self._extractor_max_iterations: int = 5
+        self._extractor_timeout_seconds: int = 180
+
+    def set_extractor(
+        self,
+        one_shot: RunAgentOneShotUseCase,
+        *,
+        max_iterations: int = 5,
+        timeout_seconds: int = 180,
+    ) -> None:
+        """Configura un sub-agente extractor. Reemplaza el prompt hardcodeado."""
+        self._extractor_one_shot = one_shot
+        self._extractor_max_iterations = max_iterations
+        self._extractor_timeout_seconds = timeout_seconds
+
     async def execute(self) -> str:
         """
         Ejecuta la consolidación completa.
@@ -135,16 +156,27 @@ class ConsolidateMemoryUseCase:
             return f"{m.role.value}: {m.content}"
 
         history_text = "\n".join(_fmt(m) for m in messages if m.role in (Role.USER, Role.ASSISTANT))
-        prompt = _EXTRACTOR_PROMPT_TEMPLATE.format(history=history_text)
 
-        # 3. Llamar al LLM extractor (consolidación no usa tools → esperamos
-        # solo text_blocks; .text concatena por si viniera más de un bloque).
+        # 3. Extracción: dos caminos.
+        #    a) Sub-agente extractor configurado → delegar via one-shot. El
+        #       sub-agente tiene su propio system_prompt (con instrucciones de
+        #       extracción) y recibe el historial como user task.
+        #    b) Default → prompt hardcodeado + LLM directo (comportamiento legacy).
         try:
-            response = await self._llm.complete(
-                messages=[],
-                system_prompt=prompt,
-            )
-            raw_json = response.text
+            if self._extractor_one_shot is not None:
+                raw_json = await self._extractor_one_shot.execute(
+                    task=history_text,
+                    system_prompt=None,  # usar el system_prompt del sub-agente
+                    max_iterations=self._extractor_max_iterations,
+                    timeout_seconds=self._extractor_timeout_seconds,
+                )
+            else:
+                prompt = _EXTRACTOR_PROMPT_TEMPLATE.format(history=history_text)
+                response = await self._llm.complete(
+                    messages=[],
+                    system_prompt=prompt,
+                )
+                raw_json = response.text
         except Exception as exc:
             raise ConsolidationError(f"El LLM falló durante la extracción: {exc}") from exc
 

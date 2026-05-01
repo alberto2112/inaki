@@ -204,6 +204,16 @@ class MemoryLLMOverride(BaseModel):
     Las credenciales NO viven acá — si el override cambia ``provider``, las creds
     se resuelven automáticamente desde el registry ``providers`` del nivel
     superior. Ver ``MemoryConfig.resolved_llm_config``.
+
+    ``agent_id`` (delegación a sub-agente):
+      Cuando se especifica, la consolidación NO usa el LLM directo — delega
+      al sub-agente referenciado vía ``RunAgentOneShotUseCase``. El
+      ``system_prompt`` del sub-agente se usa como prompt extractor (debe
+      devolver JSON con la lista de recuerdos). Los demás campos
+      (``provider``, ``model``, etc.) se ignoran cuando ``agent_id`` está
+      seteado. Si el agent_id no resuelve a un sub-agente válido, el
+      AppContainer loggea un ERROR y la consolidación cae de vuelta al
+      prompt hardcodeado + LLM resuelto.
     """
 
     provider: str | None = None
@@ -211,6 +221,7 @@ class MemoryLLMOverride(BaseModel):
     temperature: float | None = None
     max_tokens: int | None = None
     reasoning_effort: str | None = None
+    agent_id: str | None = None
 
 
 class MemoryConfig(BaseModel):

@@ -164,7 +164,7 @@ class SQLiteHistoryStore(IHistoryStore):
             await self._ensure_schema(conn)
             if self._max_n > 0:
                 rows = await conn.execute_fetchall(
-                    f"SELECT role, content, created_at FROM history "
+                    f"SELECT role, content, created_at, channel, chat_id FROM history "
                     f"WHERE {filtros} "
                     f"ORDER BY id DESC LIMIT ?",
                     (*params, self._max_n),
@@ -172,7 +172,7 @@ class SQLiteHistoryStore(IHistoryStore):
                 return [self._row_to_message(r) for r in reversed(rows)]
             else:
                 rows = await conn.execute_fetchall(
-                    f"SELECT role, content, created_at FROM history "
+                    f"SELECT role, content, created_at, channel, chat_id FROM history "
                     f"WHERE {filtros} "
                     f"ORDER BY id ASC",
                     params,
@@ -183,7 +183,8 @@ class SQLiteHistoryStore(IHistoryStore):
         async with self._conn() as conn:
             await self._ensure_schema(conn)
             rows = await conn.execute_fetchall(
-                "SELECT role, content, created_at FROM history WHERE agent_id = ? ORDER BY id ASC",
+                "SELECT role, content, created_at, channel, chat_id FROM history "
+                "WHERE agent_id = ? ORDER BY id ASC",
                 (agent_id,),
             )
         return [self._row_to_message(r) for r in rows]
@@ -194,7 +195,8 @@ class SQLiteHistoryStore(IHistoryStore):
         channels: list[str] | None = None,
     ) -> list[Message]:
         base_sql = (
-            "SELECT role, content, created_at FROM history WHERE agent_id = ? AND infused = 0"
+            "SELECT role, content, created_at, channel, chat_id "
+            "FROM history WHERE agent_id = ? AND infused = 0"
         )
         params: list = [agent_id]
 
@@ -335,8 +337,20 @@ class SQLiteHistoryStore(IHistoryStore):
             await conn.commit()
 
     def _row_to_message(self, row: aiosqlite.Row) -> Message:
+        # ``channel``/``chat_id`` pueden no estar presentes en el SELECT (algunas
+        # queries internas no los pidan). Defensivo contra eso.
+        try:
+            channel = row["channel"]
+        except (KeyError, IndexError):
+            channel = None
+        try:
+            chat_id = row["chat_id"]
+        except (KeyError, IndexError):
+            chat_id = None
         return Message(
             role=Role(row["role"]),
             content=row["content"],
             timestamp=datetime.fromisoformat(row["created_at"]),
+            channel=channel,
+            chat_id=chat_id,
         )

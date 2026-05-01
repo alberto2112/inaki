@@ -112,6 +112,37 @@ otros `false`) — sin cambios en config existente, comportamiento idéntico al 
 broadcastear transcripciones de voice o descripciones de fotos, activar `user_input_voice`
 y/o `user_input_photo` en UN bot del grupo (ver `docs/configuracion.md`).
 
+### `memory-scoped-by-channel-chat`
+
+La tabla `memories` se extiende con columnas `channel TEXT` y `chat_id TEXT` (ambas
+nullable) más un índice `(agent_id, channel, chat_id, created_at DESC)`. Cada
+`MemoryEntry` extraído ahora se persiste con el scope de la conversación de origen y
+el digest markdown se aísla por scope (`mem/digest_{channel}_{chat_id}.md`). Esto evita
+que recuerdos de un grupo de Telegram se filtren a un chat privado del mismo agente.
+
+A diferencia de las migraciones previas, **no hace falta borrar `inaki.db`** —
+las filas existentes quedan con `channel = NULL` y `chat_id = NULL` (recuerdos
+"globales" pre-migración) y siguen siendo recuperables por `search`. Se migra en
+caliente con `ALTER TABLE`:
+
+```bash
+sqlite3 ~/.inaki/data/inaki.db <<'SQL'
+ALTER TABLE memories ADD COLUMN channel TEXT;
+ALTER TABLE memories ADD COLUMN chat_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_memories_scope
+  ON memories(agent_id, channel, chat_id, created_at DESC);
+SQL
+```
+
+**Cambios de config**: el default de `memory.digest_filename` pasa de
+`mem/last_memories.md` a `mem/digest_{channel}_{chat_id}.md`. Si tenés un override
+explícito en tu YAML, actualizalo al template — sin placeholders el sistema vuelve a
+escribir un único archivo (comportamiento legacy, recuerdos cruzados).
+
+**Cambio semántico de `memory.delay_seconds`**: ahora también se respeta entre
+scopes `(channel, chat_id)` dentro del mismo agente, no solo entre agentes en la
+consolidación global.
+
 ## Git workflow
 
 - Never create a branch without asking me for the name first.

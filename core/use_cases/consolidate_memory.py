@@ -4,34 +4,41 @@ ConsolidateMemoryUseCase — extrae recuerdos del historial y lo trunca.
 Flujo:
   1. Cargar mensajes pendientes de procesamiento (`infused = 0`)
   2. Si no hay pendientes → no-op idempotente (sin trim, sin nada)
-  3. Enviar esos mensajes al LLM con prompt extractor
-  4. El LLM devuelve JSON con lista de recuerdos
-  5. Filtrar hechos por min_relevance_score
-  6. Para cada hecho: generar embedding + construir MemoryEntry + persistir
-  7. Marcar todos los mensajes del agente como `infused = 1`
-     (evita que la próxima corrida reprocese mensajes que siguen vivos en
-     el buffer tras el trim, lo cual generaría recuerdos duplicados en la
-     memoria vectorial)
-  8. Regenerar digest markdown (best-effort)
-  9. `history.trim(agent_id, keep_last=resolved_keep_last)`
-     Preserva los últimos N mensajes como contexto inmediato para el próximo
-     turno. El valor sale de `memory.keep_last_messages` (0 = fallback 84).
- 10. Si falla en cualquier punto: NO marcar, NO truncar, historial intacto.
+  3. AGRUPAR mensajes por ``(channel, chat_id)`` — cada grupo es una
+     conversación distinta. Sin esto, el LLM extractor mezclaría
+     contextos no relacionados (p. ej. dos grupos de Telegram distintos
+     manejados por el mismo agente).
+  4. Por cada grupo:
+       a. Enviar los mensajes del grupo al LLM con prompt extractor
+       b. Filtrar hechos por min_relevance_score
+       c. Para cada hecho: generar embedding + construir MemoryEntry
+          (con ``channel``/``chat_id`` del grupo) + persistir
+       d. Regenerar digest markdown del scope ``(channel, chat_id)``
+       e. Esperar ``delay_seconds`` antes del siguiente grupo
+          (excepto el último) para no saturar el LLM remoto.
+  5. Marcar TODOS los mensajes del agente como `infused = 1` después
+     de procesar todos los grupos.
+  6. `history.trim(agent_id, keep_last=resolved_keep_last)`.
 
-El truncado y el marcado son TRANSACCIONALES: solo ocurren si la extracción
-y persistencia son exitosas.
+Si falla la extracción/persistencia de UN grupo, abortamos: NO marcamos
+infused, NO truncamos, historial intacto. Los recuerdos de los grupos
+anteriores ya quedaron en el storage vectorial — son inocuos: el próximo
+intento volverá a ver los mismos mensajes uninfused y los reextraerá.
+Para evitar duplicados a largo plazo, los embeddings idénticos (mismo
+``content``) se reemplazan por id en el adaptador SQLite.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 
 from core.domain.entities.memory import MemoryEntry
-from core.domain.entities.message import Role
+from core.domain.entities.message import Message, Role
 from core.domain.errors import ConsolidationError
 from core.ports.outbound.embedding_port import IEmbeddingProvider
 from core.ports.outbound.history_port import IHistoryStore
@@ -105,6 +112,7 @@ class ConsolidateMemoryUseCase:
         history: IHistoryStore,
         agent_id: str,
         memory_config: MemoryConfig,
+        delay_seconds: int = 0,
     ) -> None:
         self._llm = llm
         self._memory = memory
@@ -112,6 +120,10 @@ class ConsolidateMemoryUseCase:
         self._history = history
         self._agent_id = agent_id
         self._memory_cfg = memory_config
+        # Espera entre extracciones de scopes ``(channel, chat_id)`` distintos
+        # dentro del mismo agente. Misma intención que el delay entre agentes
+        # del ``ConsolidateAllAgentsUseCase``: respetar rate limits del LLM remoto.
+        self._delay_seconds = max(0, int(delay_seconds))
 
         # Extractor sub-agente — wired post-construcción por AppContainer Phase 6
         # cuando memory.llm.agent_id apunta a un sub-agente válido. Si está
@@ -148,20 +160,103 @@ class ConsolidateMemoryUseCase:
         if not messages:
             return "No hay mensajes nuevos para consolidar."
 
-        # 2. Formatear historial para el LLM (incluye timestamp si está disponible)
-        def _fmt(m):
+        # 2. Agrupar por (channel, chat_id) preservando orden de aparición.
+        # OrderedDict garantiza determinismo: el primer scope que aparezca en
+        # el historial se procesa primero (útil para tests y logs reproducibles).
+        groups: "OrderedDict[tuple[str | None, str | None], list[Message]]" = OrderedDict()
+        for msg in messages:
+            if msg.role not in (Role.USER, Role.ASSISTANT):
+                continue
+            key = (msg.channel, msg.chat_id)
+            groups.setdefault(key, []).append(msg)
+
+        if not groups:
+            return "No hay mensajes user/assistant para consolidar."
+
+        logger.info(
+            "Consolidación '%s': %d mensaje(s) repartidos en %d scope(s) (channel, chat_id)",
+            self._agent_id,
+            len(messages),
+            len(groups),
+        )
+
+        # 3. Procesar cada grupo. Si UN grupo falla, abortamos sin marcar
+        # infused ni truncar — el caller ve el error y los grupos previos ya
+        # tienen sus recuerdos en la DB (idempotencia por id en SQLite).
+        total_stored = 0
+        scope_keys = list(groups.keys())
+        for idx, scope in enumerate(scope_keys):
+            channel, chat_id = scope
+            stored = await self._consolidate_scope(channel, chat_id, groups[scope])
+            total_stored += stored
+
+            # Delay entre scopes (no antes del primero, no después del último).
+            is_last = idx == len(scope_keys) - 1
+            if not is_last and self._delay_seconds > 0:
+                logger.debug(
+                    "Consolidación '%s': esperando %ds antes del siguiente scope",
+                    self._agent_id,
+                    self._delay_seconds,
+                )
+                await asyncio.sleep(self._delay_seconds)
+
+        # 4. Marcar todos los mensajes del agente como infused ANTES del trim.
+        # Esto es el gate que evita que la próxima corrida reprocese mensajes
+        # que sigan vivos en el buffer (por el keep_last del trim). Si falla,
+        # abortamos — los recuerdos ya están persistidos en inaki.db pero el
+        # error queda visible y se puede reintentar.
+        try:
+            await self._history.mark_infused(self._agent_id)
+        except Exception as exc:
+            raise ConsolidationError(f"Error marcando mensajes como infused: {exc}") from exc
+
+        # 5. Truncar historial (solo si llegamos hasta aquí sin errores).
+        keep_last = self._memory_cfg.resolved_keep_last_messages()
+        try:
+            await self._history.trim(self._agent_id, keep_last=keep_last)
+        except Exception as exc:
+            raise ConsolidationError(f"Error truncando historial: {exc}") from exc
+
+        logger.info(
+            "Consolidación completada para '%s': %d recuerdo(s) extraído(s) "
+            "en %d scope(s), últimos %d mensaje(s) preservados",
+            self._agent_id,
+            total_stored,
+            len(groups),
+            keep_last,
+        )
+        return (
+            f"✓ {total_stored} recuerdo(s) extraído(s) en {len(groups)} scope(s). "
+            f"Historial truncado (últimos {keep_last} mensajes preservados)."
+        )
+
+    async def _consolidate_scope(
+        self,
+        channel: str | None,
+        chat_id: str | None,
+        scope_messages: list[Message],
+    ) -> int:
+        """
+        Extrae y persiste recuerdos para UN scope ``(channel, chat_id)``.
+
+        Devuelve la cantidad de recuerdos persistidos. Lanza
+        ``ConsolidationError`` ante cualquier fallo del LLM o de la
+        persistencia — el caller decide si propagar o continuar.
+        """
+
+        def _fmt(m: Message) -> str:
             if m.timestamp is not None:
                 ts = m.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
                 return f"{m.role.value} [{ts}]: {m.content}"
             return f"{m.role.value}: {m.content}"
 
-        history_text = "\n".join(_fmt(m) for m in messages if m.role in (Role.USER, Role.ASSISTANT))
+        history_text = "\n".join(_fmt(m) for m in scope_messages)
 
-        # 3. Extracción: dos caminos.
-        #    a) Sub-agente extractor configurado → delegar via one-shot. El
-        #       sub-agente tiene su propio system_prompt (con instrucciones de
-        #       extracción) y recibe el historial como user task.
-        #    b) Default → prompt hardcodeado + LLM directo (comportamiento legacy).
+        # Extracción: dos caminos.
+        #  a) Sub-agente extractor configurado → delegar via one-shot. El
+        #     sub-agente tiene su propio system_prompt (con instrucciones de
+        #     extracción) y recibe el historial como user task.
+        #  b) Default → prompt hardcodeado + LLM directo (comportamiento legacy).
         try:
             if self._extractor_one_shot is not None:
                 raw_json = await self._extractor_one_shot.execute(
@@ -178,21 +273,36 @@ class ConsolidateMemoryUseCase:
                 )
                 raw_json = response.text
         except Exception as exc:
-            raise ConsolidationError(f"El LLM falló durante la extracción: {exc}") from exc
+            raise ConsolidationError(
+                f"El LLM falló durante la extracción "
+                f"(channel={channel!r}, chat_id={chat_id!r}): {exc}"
+            ) from exc
 
-        # 4. Parsear JSON
+        logger.debug(
+            "Extractor scope=(%r, %r) — respuesta raw (primeros 500 chars): %s",
+            channel,
+            chat_id,
+            raw_json[:500],
+        )
+
         try:
             facts = self._parse_facts(raw_json)
         except ConsolidationError:
             raise
         except Exception as exc:
-            raise ConsolidationError(f"Error parseando respuesta del LLM: {exc}") from exc
+            raise ConsolidationError(
+                f"Error parseando respuesta del LLM "
+                f"(channel={channel!r}, chat_id={chat_id!r}): {exc}"
+            ) from exc
 
         if not facts:
-            # LLM dice que no hay nada relevante — archivamos igual
-            logger.info("El LLM no encontró recuerdos relevantes en el historial")
+            logger.info(
+                "Scope (%r, %r): el LLM no encontró recuerdos relevantes",
+                channel,
+                chat_id,
+            )
 
-        # 4b. Filtrar por relevance_score mínimo (ahorra tokens de embedding)
+        # Filtro por relevance mínimo (ahorra tokens de embedding).
         threshold = self._memory_cfg.min_relevance_score
         filtered: list[dict] = []
         dropped = 0
@@ -207,13 +317,15 @@ class ConsolidateMemoryUseCase:
                 dropped += 1
         if dropped:
             logger.info(
-                "Consolidación: %d recuerdo(s) descartado(s) por relevance < %.2f",
+                "Scope (%r, %r): %d recuerdo(s) descartado(s) por relevance < %.2f",
+                channel,
+                chat_id,
                 dropped,
                 threshold,
             )
         facts = filtered
 
-        # 5. Generar embeddings y persistir
+        # Embeddings + persistencia.
         stored = 0
         for fact in facts:
             try:
@@ -230,47 +342,23 @@ class ConsolidateMemoryUseCase:
                     embedding=embedding,
                     relevance=float(fact.get("relevance", 0.5)),
                     tags=fact.get("tags", []),
-                    agent_id=self._agent_id,  # atribución: quién extrajo este hecho
+                    agent_id=self._agent_id,
+                    channel=channel,
+                    chat_id=chat_id,
                     created_at=created_at or datetime.now(timezone.utc),
                 )
                 await self._memory.store(entry)
                 stored += 1
             except Exception as exc:
                 raise ConsolidationError(
-                    f"Error persistiendo recuerdo '{fact.get('content', '')}': {exc}"
+                    f"Error persistiendo recuerdo '{fact.get('content', '')}' "
+                    f"(channel={channel!r}, chat_id={chat_id!r}): {exc}"
                 ) from exc
 
-        # 6. Marcar todos los mensajes del agente como infused ANTES del trim.
-        # Esto es el gate que evita que la próxima corrida reprocese mensajes
-        # que sigan vivos en el buffer (por el keep_last del trim). Si falla,
-        # abortamos — los recuerdos ya están persistidos en inaki.db pero el
-        # error queda visible y se puede reintentar.
-        try:
-            await self._history.mark_infused(self._agent_id)
-        except Exception as exc:
-            raise ConsolidationError(f"Error marcando mensajes como infused: {exc}") from exc
+        # Regenerar el digest del scope (best-effort, no aborta).
+        await self._write_digest(channel, chat_id)
 
-        # 7. Regenerar digest markdown (best-effort, no rompe consolidación)
-        await self._write_digest()
-
-        # 8. Truncar historial (solo si llegamos hasta aquí sin errores).
-        # Preserva los últimos N mensajes como contexto inmediato para el
-        # próximo turno; los recuerdos extraídos ya están en la memoria
-        # vectorial, así que el resto del historial es descartable.
-        keep_last = self._memory_cfg.resolved_keep_last_messages()
-        try:
-            await self._history.trim(self._agent_id, keep_last=keep_last)
-        except Exception as exc:
-            raise ConsolidationError(f"Error truncando historial: {exc}") from exc
-
-        logger.info(
-            "Consolidación completada para '%s': %d recuerdo(s) extraído(s), "
-            "últimos %d mensaje(s) preservados",
-            self._agent_id,
-            stored,
-            keep_last,
-        )
-        return f"✓ {stored} recuerdo(s) extraído(s). Historial truncado (últimos {keep_last} mensajes preservados)."
+        return stored
 
     def _render_digest(self, memories: list[MemoryEntry]) -> str:
         now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
@@ -285,17 +373,36 @@ class ConsolidateMemoryUseCase:
             lines.append(f"- [{date_str}] {m.content}{tag_suffix}")
         return "\n".join(lines) + "\n"
 
-    async def _write_digest(self) -> None:
-        """Regenera el digest markdown. Nunca propaga excepciones — un fallo no aborta la consolidación."""
+    async def _write_digest(self, channel: str | None, chat_id: str | None) -> None:
+        """
+        Regenera el digest markdown del scope ``(channel, chat_id)``.
+        Nunca propaga excepciones — un fallo no aborta la consolidación.
+        """
         try:
-            latest = await self._memory.get_recent(self._memory_cfg.digest_size)
+            latest = await self._memory.get_recent(
+                self._memory_cfg.digest_size,
+                agent_id=self._agent_id,
+                channel=channel,
+                chat_id=chat_id,
+            )
             markdown = self._render_digest(latest)
-            path = Path(self._memory_cfg.digest_filename)
+            path = self._memory_cfg.resolved_digest_path(channel, chat_id)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(markdown, encoding="utf-8")
-            logger.info("Digest regenerado: %s (%d recuerdos)", path, len(latest))
+            logger.info(
+                "Digest scope=(%r, %r) regenerado: %s (%d recuerdos)",
+                channel,
+                chat_id,
+                path,
+                len(latest),
+            )
         except Exception as exc:  # noqa: BLE001 — best-effort
-            logger.error("No se pudo regenerar el digest: %s", exc)
+            logger.error(
+                "No se pudo regenerar el digest scope=(%r, %r): %s",
+                channel,
+                chat_id,
+                exc,
+            )
 
     def _parse_facts(self, raw: str) -> list[dict]:
         """Extrae y valida el JSON de recuerdos del LLM."""

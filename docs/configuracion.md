@@ -212,17 +212,23 @@ memory:
                                  # Memoria GLOBAL — compartida entre todos los agentes
   default_top_k: 5               # Número de recuerdos recuperados por búsqueda vectorial
   digest_size: 14                # Nº de recuerdos volcados al digest markdown
-  digest_filename: "mem/last_memories.md"
-                                 # Digest leído por el prompt builder (relativo a ~/.inaki/)
+  digest_filename: "mem/digest_{channel}_{chat_id}.md"
+                                 # Template del digest leído por el prompt builder
+                                 # (relativo a ~/.inaki/). Los placeholders `{channel}`
+                                 # y `{chat_id}` se sustituyen sanitizados por scope:
+                                 # cada conversación tiene su propio digest aislado.
+                                 # Ejemplos: `mem/digest_telegram_-1001234.md`,
+                                 # `mem/digest_cli_default.md`.
   min_relevance_score: 0.5       # Umbral mínimo (0.0-1.0) para persistir un hecho extraído
                                  # por el LLM. Filtra ANTES de embedear (ahorra tokens).
   schedule: "0 3 * * *"          # Cron global: cuándo corre la consolidación nocturna.
                                  # Una única tarea que itera TODOS los agentes habilitados.
                                  # Reconciliada al arrancar el daemon: si cambia acá se
                                  # actualiza la fila en scheduler.db automáticamente.
-  delay_seconds: 2               # Pausa (segundos) entre agente y agente durante la
-                                 # consolidación global. Evita golpear rate-limits del
-                                 # proveedor LLM cuando hay varios agentes habilitados.
+  delay_seconds: 2               # Pausa (segundos) entre llamadas al LLM extractor.
+                                 # Aplica TANTO entre agentes (consolidación global) como
+                                 # entre scopes (channel, chat_id) DENTRO de cada agente.
+                                 # Evita rate-limits del proveedor LLM remoto.
   keep_last_messages: 0          # Mensajes por agente a preservar tras la consolidación.
                                  # Tras extraer los recuerdos al storage vectorial, el
                                  # resto del historial se trunca pero SE PRESERVAN los
@@ -887,7 +893,7 @@ Layout por defecto:
 ├── agents/            # YAMLs por agente + secrets
 ├── data/              # DBs SQLite (inaki.db, history.db, scheduler.db, embedding_cache.db)
 ├── models/            # Modelos ONNX (e.g. e5-small/)
-├── mem/               # Digest markdown (last_memories.md)
+├── mem/               # Digest markdown — un archivo por scope (digest_{channel}_{chat_id}.md)
 ├── ext/               # Extensiones del usuario
 └── .env               # INAKI_SECRET_KEY
 ```
@@ -901,7 +907,7 @@ embedding:
 
 memory:
   db_filename: "/srv/inaki/data/inaki.db"
-  digest_filename: "/srv/inaki/mem/last_memories.md"
+  digest_filename: "/srv/inaki/mem/digest_{channel}_{chat_id}.md"
 
 chat_history:
   db_filename: "/srv/inaki/data/history.db"
@@ -973,7 +979,8 @@ keep_last=N)` donde `N` sale de `memory.keep_last_messages` con el sentinel
 - Los **últimos N mensajes** del agente quedan en `history.db` como contexto
   inmediato para el próximo turno (el prompt builder los inyecta normal).
 - El **resto** se borra — los hechos relevantes ya están en la memoria
-  vectorial (`inaki.db`) y los recuerdos recientes en `last_memories.md`.
+  vectorial (`inaki.db`) y los recuerdos recientes en los digests por scope
+  bajo `~/.inaki/mem/digest_{channel}_{chat_id}.md`.
 - Los **N preservados** quedan marcados con `infused=1` para que la próxima
   consolidación **no los vuelva a procesar** (evita duplicados en la memoria
   vectorial por re-extracción).

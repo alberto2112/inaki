@@ -154,6 +154,10 @@ class AgentContainer:
                 history=self._history,
                 agent_id=cfg.id,
                 memory_config=cfg.memory,
+                # Mismo delay que se aplica entre agentes en
+                # ``ConsolidateAllAgentsUseCase``, ahora también respetado
+                # entre scopes (channel, chat_id) dentro de ESTE agente.
+                delay_seconds=cfg.memory.delay_seconds,
             )
 
     @staticmethod

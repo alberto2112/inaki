@@ -32,8 +32,15 @@ CREATE TABLE IF NOT EXISTS memories (
     relevance  REAL NOT NULL,
     tags       TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    agent_id   TEXT
+    agent_id   TEXT,
+    channel    TEXT,
+    chat_id    TEXT
 )
+"""
+
+_CREATE_SCOPE_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_memories_scope
+    ON memories(agent_id, channel, chat_id, created_at DESC)
 """
 
 _CREATE_EMBEDDINGS = """
@@ -62,6 +69,7 @@ class SQLiteMemoryRepository(IMemoryRepository):
 
     async def _ensure_schema(self, conn: aiosqlite.Connection) -> None:
         await conn.execute(_CREATE_MEMORIES)
+        await conn.execute(_CREATE_SCOPE_INDEX)
         await conn.execute(_CREATE_EMBEDDINGS)
         await conn.commit()
 
@@ -71,8 +79,8 @@ class SQLiteMemoryRepository(IMemoryRepository):
             await conn.execute(
                 """
                 INSERT OR REPLACE INTO memories
-                    (id, content, relevance, tags, created_at, agent_id)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (id, content, relevance, tags, created_at, agent_id, channel, chat_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     entry.id,
@@ -81,6 +89,8 @@ class SQLiteMemoryRepository(IMemoryRepository):
                     json.dumps(entry.tags),
                     entry.created_at.isoformat(),
                     entry.agent_id,
+                    entry.channel,
+                    entry.chat_id,
                 ),
             )
             vec_bytes = struct.pack(f"{len(entry.embedding)}f", *entry.embedding)
@@ -168,17 +178,60 @@ class SQLiteMemoryRepository(IMemoryRepository):
 
         return resultado
 
-    async def get_recent(self, limit: int = 10) -> list[MemoryEntry]:
+    async def get_recent(
+        self,
+        limit: int = 10,
+        agent_id: str | None = None,
+        channel: str | None = None,
+        chat_id: str | None = None,
+    ) -> list[MemoryEntry]:
+        """
+        Devuelve los `limit` recuerdos más recientes, opcionalmente filtrados por
+        ``(agent_id, channel, chat_id)``.
+
+        Cada filtro es opcional e independiente:
+        - ``agent_id is None`` → no filtra por agente
+        - ``channel is None`` → no filtra por canal
+        - ``chat_id is None`` → no filtra por chat
+        Cuando un filtro está provisto, hace match EXACTO (incluye matchear NULL
+        si el caller pasa ``None`` no aplica filtro — usar ``""`` no es
+        soportado actualmente).
+        """
+        clauses: list[str] = []
+        params: list[object] = []
+        if agent_id is not None:
+            clauses.append("agent_id = ?")
+            params.append(agent_id)
+        if channel is not None:
+            clauses.append("channel = ?")
+            params.append(channel)
+        if chat_id is not None:
+            clauses.append("chat_id = ?")
+            params.append(chat_id)
+
+        where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
+        sql = (
+            "SELECT id, content, relevance, tags, created_at, agent_id, channel, chat_id "
+            f"FROM memories {where}ORDER BY created_at DESC LIMIT ?"
+        )
+        params.append(limit)
+
         async with self._conn() as conn:
             await self._ensure_schema(conn)
-            rows = await conn.execute_fetchall(
-                "SELECT id, content, relevance, tags, created_at, agent_id "
-                "FROM memories ORDER BY created_at DESC LIMIT ?",
-                (limit,),
-            )
+            rows = await conn.execute_fetchall(sql, tuple(params))
         return [self._row_to_entry(row) for row in rows]
 
     def _row_to_entry(self, row) -> MemoryEntry:
+        # `channel` y `chat_id` pueden no existir en filas de DBs pre-migración;
+        # SQLite Row no implementa .get(), así que probamos con KeyError-guard.
+        try:
+            channel = row["channel"]
+        except (KeyError, IndexError):
+            channel = None
+        try:
+            chat_id = row["chat_id"]
+        except (KeyError, IndexError):
+            chat_id = None
         return MemoryEntry(
             id=row["id"],
             content=row["content"],
@@ -187,4 +240,6 @@ class SQLiteMemoryRepository(IMemoryRepository):
             tags=json.loads(row["tags"]),
             created_at=datetime.fromisoformat(row["created_at"]),
             agent_id=row["agent_id"],
+            channel=channel,
+            chat_id=chat_id,
         )

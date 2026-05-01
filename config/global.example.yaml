@@ -150,10 +150,17 @@ memory:
   digest_size: 14             # Nº de recuerdos más recientes volcados al digest markdown
                               # tras cada /consolidate. Orden: created_at DESC.
 
-  digest_filename: "mem/last_memories.md"
-                              # Fichero markdown leído por el prompt builder en cada
-                              # turno, relativo a ~/.inaki/. Si se pone absoluto, se
-                              # usa tal cual.
+  digest_filename: "mem/digest_{channel}_{chat_id}.md"
+                              # Template del fichero markdown del digest, relativo a
+                              # ~/.inaki/. Los placeholders {channel} y {chat_id} se
+                              # sustituyen por scope en cada consolidación: cada
+                              # conversación produce su propio digest aislado, evitando
+                              # que recuerdos de un grupo se filtren a otro.
+                              # Sanitización: caracteres fuera de [a-zA-Z0-9_-] se
+                              # reemplazan por "_"; valores vacíos → "default".
+                              # Ejemplos de archivos generados:
+                              #   ~/.inaki/mem/digest_telegram_-1001234567.md
+                              #   ~/.inaki/mem/digest_cli_default.md
 
   min_relevance_score: 0.5    # Umbral mínimo (0.0-1.0) para persistir un recuerdo
                               # extraído por el LLM.
@@ -161,8 +168,10 @@ memory:
   schedule: "0 3 * * *"       # Cron para la consolidación global nocturna
                               # (una sola tarea que itera todos los agentes).
 
-  delay_seconds: 2            # Pausa (segundos) entre agente y agente durante
-                              # la consolidación global. Evita rate-limits.
+  delay_seconds: 2            # Pausa (segundos) entre llamadas al LLM extractor.
+                              # Aplica TANTO entre agentes como entre scopes
+                              # (channel, chat_id) dentro del mismo agente. Evita
+                              # rate-limits del proveedor LLM remoto.
 
   keep_last_messages: 0       # Mensajes a preservar por agente tras una
                               # consolidación exitosa. 0 = usar fallback (84).

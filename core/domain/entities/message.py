@@ -19,3 +19,8 @@ class Message(BaseModel):
     # nunca se persisten en historial).
     tool_calls: list[dict] | None = None  # assistant message con tool calls
     tool_call_id: str | None = None  # tool result vinculado a un tool call
+    # Scope del mensaje cuando viene del historial. None en working_messages del
+    # tool loop o en mensajes que aún no se persistieron. Permite agrupar por
+    # conversación al consolidar memoria sin necesidad de un nuevo entity.
+    channel: str | None = None
+    chat_id: str | None = None

@@ -395,7 +395,14 @@ async def test_get_recent_called_with_configured_digest_size(
 
     await use_case.execute()
 
-    mock_memory.get_recent.assert_called_once_with(memory_config.digest_size)
+    # `messages_in_history` mete mensajes sin channel/chat_id → scope (None, None).
+    # `get_recent` debe llamarse con el digest_size configurado y filtros por scope.
+    mock_memory.get_recent.assert_called_once_with(
+        memory_config.digest_size,
+        agent_id="test",
+        channel=None,
+        chat_id=None,
+    )
 
 
 # SC-09, FR-05, AC-04 (c)
@@ -453,3 +460,201 @@ async def test_parent_directory_created_for_digest(
 
     assert nested_path.parent.exists()
     assert nested_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — scoping por (channel, chat_id)
+# ---------------------------------------------------------------------------
+
+
+async def test_consolidation_groups_by_channel_and_chat_id(
+    use_case, mock_llm, mock_memory, mock_history
+):
+    """Mensajes de scopes distintos deben extraerse por separado (1 LLM call por scope)."""
+    mock_history.load_uninfused.return_value = [
+        Message(
+            role=Role.USER, content="hola en grupo A", channel="telegram", chat_id="-1001"
+        ),
+        Message(role=Role.ASSISTANT, content="ack A", channel="telegram", chat_id="-1001"),
+        Message(
+            role=Role.USER, content="hola en grupo B", channel="telegram", chat_id="-1002"
+        ),
+        Message(role=Role.USER, content="hola en CLI", channel="cli", chat_id=""),
+    ]
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        '[{"content": "fact", "relevance": 0.9, "tags": []}]'
+    )
+
+    await use_case.execute()
+
+    # 3 scopes → 3 LLM calls → 3 stored entries
+    assert mock_llm.complete.call_count == 3
+    assert mock_memory.store.call_count == 3
+
+    # Cada MemoryEntry persistido lleva el scope de su grupo de origen.
+    scopes_persisted = {
+        (call.args[0].channel, call.args[0].chat_id)
+        for call in mock_memory.store.call_args_list
+    }
+    assert scopes_persisted == {("telegram", "-1001"), ("telegram", "-1002"), ("cli", "")}
+
+
+async def test_consolidation_isolates_messages_per_scope_in_extractor_prompt(
+    use_case, mock_llm, mock_memory, mock_history
+):
+    """Cada llamada al LLM debe ver SOLO los mensajes de su scope — no debe haber mezcla."""
+    mock_history.load_uninfused.return_value = [
+        Message(role=Role.USER, content="grupo A privado", channel="telegram", chat_id="100"),
+        Message(role=Role.USER, content="grupo B privado", channel="telegram", chat_id="200"),
+    ]
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
+
+    await use_case.execute()
+
+    assert mock_llm.complete.call_count == 2
+    prompts = [call.kwargs["system_prompt"] for call in mock_llm.complete.call_args_list]
+    assert any("grupo A privado" in p and "grupo B privado" not in p for p in prompts), (
+        "El scope (telegram, 100) no debe ver mensajes del scope (telegram, 200)"
+    )
+    assert any("grupo B privado" in p and "grupo A privado" not in p for p in prompts), (
+        "El scope (telegram, 200) no debe ver mensajes del scope (telegram, 100)"
+    )
+
+
+async def test_consolidation_sleeps_between_scopes_with_delay(
+    mock_llm, mock_memory, mock_embedder, mock_history, memory_config
+):
+    """Con delay_seconds > 0, espera entre scopes (no antes del primero, no después del último)."""
+    mock_history.load_uninfused.return_value = [
+        Message(role=Role.USER, content="A", channel="telegram", chat_id="1"),
+        Message(role=Role.USER, content="B", channel="telegram", chat_id="2"),
+        Message(role=Role.USER, content="C", channel="telegram", chat_id="3"),
+    ]
+    mock_memory.get_recent.return_value = []
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
+
+    uc = ConsolidateMemoryUseCase(
+        llm=mock_llm,
+        memory=mock_memory,
+        embedder=mock_embedder,
+        history=mock_history,
+        agent_id="test",
+        memory_config=memory_config,
+        delay_seconds=2,
+    )
+
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(s):
+        sleep_calls.append(s)
+
+    with patch("core.use_cases.consolidate_memory.asyncio.sleep", side_effect=fake_sleep):
+        await uc.execute()
+
+    # 3 scopes → 2 sleeps (entre el 1° y 2°, y entre 2° y 3°)
+    assert sleep_calls == [2, 2]
+
+
+async def test_consolidation_does_not_sleep_with_zero_delay(
+    mock_llm, mock_memory, mock_embedder, mock_history, memory_config
+):
+    """delay_seconds=0 (default) → no se llama a asyncio.sleep entre scopes."""
+    mock_history.load_uninfused.return_value = [
+        Message(role=Role.USER, content="A", channel="telegram", chat_id="1"),
+        Message(role=Role.USER, content="B", channel="telegram", chat_id="2"),
+    ]
+    mock_memory.get_recent.return_value = []
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
+
+    uc = ConsolidateMemoryUseCase(
+        llm=mock_llm,
+        memory=mock_memory,
+        embedder=mock_embedder,
+        history=mock_history,
+        agent_id="test",
+        memory_config=memory_config,
+        delay_seconds=0,
+    )
+
+    with patch("core.use_cases.consolidate_memory.asyncio.sleep") as mock_sleep:
+        await uc.execute()
+
+    mock_sleep.assert_not_called()
+
+
+async def test_digest_written_per_scope_to_distinct_files(
+    mock_llm, mock_memory, mock_embedder, mock_history, tmp_path
+):
+    """Cada scope debe producir su propio archivo de digest, sanitizado."""
+    cfg = MemoryConfig(
+        db_filename=":memory:",
+        digest_size=3,
+        digest_filename=str(tmp_path / "mem" / "digest_{channel}_{chat_id}.md"),
+        min_relevance_score=0.5,
+        keep_last_messages=20,
+    )
+    mock_history.load_uninfused.return_value = [
+        Message(role=Role.USER, content="msg telegram", channel="telegram", chat_id="-1001"),
+        Message(role=Role.USER, content="msg cli", channel="cli", chat_id=""),
+    ]
+
+    def fake_get_recent(limit, agent_id=None, channel=None, chat_id=None):
+        return [
+            _make_entry(
+                f"recuerdo de ({channel},{chat_id})",
+                [],
+                datetime(2026, 4, 1, tzinfo=timezone.utc),
+            )
+        ]
+
+    mock_memory.get_recent.side_effect = fake_get_recent
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
+
+    uc = ConsolidateMemoryUseCase(
+        llm=mock_llm,
+        memory=mock_memory,
+        embedder=mock_embedder,
+        history=mock_history,
+        agent_id="test",
+        memory_config=cfg,
+    )
+    await uc.execute()
+
+    # Sanitización: chat_id "-1001" → "-1001" (válido), chat_id "" → "default".
+    digest_telegram = tmp_path / "mem" / "digest_telegram_-1001.md"
+    digest_cli = tmp_path / "mem" / "digest_cli_default.md"
+    assert digest_telegram.exists()
+    assert digest_cli.exists()
+    assert "(telegram,-1001)" in digest_telegram.read_text()
+    assert "(cli,)" in digest_cli.read_text()
+
+
+async def test_consolidation_aborts_when_one_scope_fails_no_trim_no_mark(
+    mock_llm, mock_memory, mock_embedder, mock_history, memory_config
+):
+    """Si UN scope falla en el extractor, se aborta sin marcar infused ni truncar."""
+    mock_history.load_uninfused.return_value = [
+        Message(role=Role.USER, content="A", channel="telegram", chat_id="1"),
+        Message(role=Role.USER, content="B", channel="telegram", chat_id="2"),
+    ]
+    mock_memory.get_recent.return_value = []
+    # Primer scope OK, segundo scope falla.
+    mock_llm.complete.side_effect = [
+        LLMResponse.of_text("[]"),
+        Exception("LLM 503"),
+    ]
+
+    uc = ConsolidateMemoryUseCase(
+        llm=mock_llm,
+        memory=mock_memory,
+        embedder=mock_embedder,
+        history=mock_history,
+        agent_id="test",
+        memory_config=memory_config,
+    )
+
+    with pytest.raises(ConsolidationError):
+        await uc.execute()
+
+    mock_history.mark_infused.assert_not_called()
+    mock_history.trim.assert_not_called()

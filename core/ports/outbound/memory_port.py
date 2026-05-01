@@ -36,4 +36,16 @@ class IMemoryRepository(ABC):
         ...
 
     @abstractmethod
-    async def get_recent(self, limit: int = 10) -> list[MemoryEntry]: ...
+    async def get_recent(
+        self,
+        limit: int = 10,
+        agent_id: str | None = None,
+        channel: str | None = None,
+        chat_id: str | None = None,
+    ) -> list[MemoryEntry]:
+        """
+        Devuelve los `limit` recuerdos más recientes, opcionalmente filtrados por
+        ``(agent_id, channel, chat_id)``. Cada filtro es opcional e
+        independiente; ``None`` significa "sin filtro por ese campo".
+        """
+        ...

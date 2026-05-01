@@ -206,9 +206,14 @@ class RunAgentUseCase:
         except (FileNotFoundError, OSError):
             return ""
 
-    def _read_digest(self) -> str:
-        """Lee el digest markdown. Retorna '' si no existe o falla la lectura."""
-        path = Path(self._cfg.memory.digest_filename)
+    def _read_digest(self, channel: str | None = None, chat_id: str | None = None) -> str:
+        """
+        Lee el digest markdown del scope ``(channel, chat_id)``. Retorna ``''``
+        si no existe o falla la lectura. ``None`` o cadena vacía en cualquier
+        componente del scope se sanitizan a ``"default"`` (ver
+        ``MemoryConfig.resolved_digest_path``).
+        """
+        path = self._cfg.memory.resolved_digest_path(channel, chat_id)
         try:
             return path.read_text(encoding="utf-8")
         except FileNotFoundError:
@@ -345,7 +350,7 @@ class RunAgentUseCase:
                 )
                 return ""
 
-        digest_text = self._read_digest()
+        digest_text = self._read_digest(channel=channel, chat_id=chat_id)
         all_skills = await self._skills.list_all()
         all_schemas = self._tools.get_schemas()
         skills_routing_active = len(all_skills) > self._cfg.skills.semantic_routing_min_skills
@@ -617,12 +622,20 @@ class RunAgentUseCase:
         except OSError as exc:
             logger.warning("No se pudo escribir photo-debug Phase 2: %s", exc)
 
-    async def inspect(self, user_input: str) -> InspectResult:
+    async def inspect(
+        self,
+        user_input: str,
+        channel: str = "",
+        chat_id: str = "",
+    ) -> InspectResult:
         """
         Corre el pipeline RAG completo sin llamar al LLM ni persistir historial.
         Útil para debuggear qué ve el LLM en cada turno.
+
+        ``channel``/``chat_id`` permiten inspeccionar el digest del scope
+        correspondiente. Defaults vacíos → digest del scope ``default``.
         """
-        digest_text = self._read_digest()
+        digest_text = self._read_digest(channel=channel, chat_id=chat_id)
         all_skills = await self._skills.list_all()
         all_schemas = self._tools.get_schemas()
         skills_routing_active = len(all_skills) > self._cfg.skills.semantic_routing_min_skills

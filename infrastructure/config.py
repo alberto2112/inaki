@@ -19,6 +19,7 @@ Regla de secrets: si el agente no define un secret, hereda del global.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -74,6 +75,24 @@ def _resolve_runtime_path(v: Any) -> Any:
 
 
 RuntimePath = Annotated[str, BeforeValidator(_resolve_runtime_path)]
+
+
+_DIGEST_SCOPE_SANITIZER = re.compile(r"[^a-zA-Z0-9_-]")
+
+
+def sanitize_digest_scope(value: str | None) -> str:
+    """
+    Normaliza un valor de ``channel`` o ``chat_id`` para usarlo como segmento
+    de un nombre de archivo del digest.
+
+    - ``None`` o cadena vacía → ``"default"``.
+    - Cualquier carácter fuera de ``[a-zA-Z0-9_-]`` se reemplaza por ``_``
+      (cubre IDs negativos de Telegram, dos puntos, espacios, etc.).
+    """
+    if not value:
+        return "default"
+    sanitized = _DIGEST_SCOPE_SANITIZER.sub("_", value)
+    return sanitized or "default"
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +249,11 @@ class MemoryConfig(BaseModel):
     db_filename: RuntimePath = "data/inaki.db"  # relativo a ~/.inaki/
     default_top_k: int = 5
     digest_size: int = 14
-    digest_filename: RuntimePath = "mem/last_memories.md"  # relativo a ~/.inaki/
+    # Template del digest markdown — admite los placeholders ``{channel}`` y
+    # ``{chat_id}``, que se sustituyen sanitizados en ``resolved_digest_path``.
+    # El digest se aísla por (channel, chat_id) para que conversaciones distintas
+    # del mismo agente no mezclen recuerdos.
+    digest_filename: RuntimePath = "mem/digest_{channel}_{chat_id}.md"  # relativo a ~/.inaki/
     min_relevance_score: float = 0.5
     schedule: str = "0 3 * * *"
     delay_seconds: int = 2
@@ -249,6 +272,25 @@ class MemoryConfig(BaseModel):
     Override opcional del LLM usado SOLO para la consolidación de memoria.
     Si es ``None``, consolidación reusa el LLM del agente.
     """
+
+    def resolved_digest_path(self, channel: str | None, chat_id: str | None) -> Path:
+        """
+        Devuelve la ruta absoluta del digest markdown para el scope
+        ``(channel, chat_id)``.
+
+        Aplica ``sanitize_digest_scope`` a ambos componentes y formatea el
+        template ``digest_filename``. Si el template no contiene los
+        placeholders ``{channel}`` y ``{chat_id}`` (por config legacy), se
+        devuelve la misma ruta para todos los scopes — comportamiento de
+        compatibilidad temporal; recomendado migrar a un template per-scope.
+        """
+        ch = sanitize_digest_scope(channel)
+        cid = sanitize_digest_scope(chat_id)
+        # ``digest_filename`` ya viene resuelto a absoluto por ``RuntimePath``.
+        # Llaves no-{channel}/{chat_id} en el path harían fallar str.format,
+        # pero el resolver solo concatena segmentos; los placeholders sobreviven.
+        formatted = self.digest_filename.format(channel=ch, chat_id=cid)
+        return Path(formatted)
 
     def resolved_keep_last_messages(self) -> int:
         """

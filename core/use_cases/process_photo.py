@@ -81,6 +81,7 @@ class ProcessPhotoUseCase:
         chat_type: str,
         analysis_only: bool = False,
         scene_prompt: str | None = None,
+        sender_name: str | None = None,
     ) -> ProcessPhotoResult:
         """Procesa una foto entrante y devuelve contexto para el agente.
 
@@ -139,6 +140,7 @@ class ProcessPhotoUseCase:
             scene_description=scene_description,
             es_privado=es_privado,
             analysis_only=analysis_only,
+            sender_name=sender_name,
         )
 
         # 8. Persistir metadata (incluye ignoradas para auditoría)
@@ -300,13 +302,17 @@ class ProcessPhotoUseCase:
         scene_description: str | None,
         es_privado: bool,
         analysis_only: bool = False,
+        sender_name: str | None = None,
     ) -> str:
         """Construye el texto contextual en español para el agente.
 
         Lista unificada de caras ordenada por idx (igual que la imagen anotada)
         para que el agente nunca confunda qué número corresponde a qué persona.
         """
-        secciones: list[str] = ["📷 Foto recibida."]
+        encabezado = (
+            f"📷 Foto recibida de {sender_name}." if sender_name else "📷 Foto recibida."
+        )
+        secciones: list[str] = [encabezado]
 
         visibles = [fm for fm in face_matches if fm.categoria != "ignorada"]
         visibles.sort(key=lambda fm: self._idx_de_face_ref(fm.face_ref))

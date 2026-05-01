@@ -208,3 +208,45 @@ async def test_agent_send_no_output_channel_stores_output(
     success_logs = [r for r in rows if r["status"] == "success"]
     assert len(success_logs) == 1
     assert success_logs[0]["output"] == "agent output"
+
+
+# ---------------------------------------------------------------------------
+# AgentSend with output_channel → llm_dispatcher receives channel/chat_id
+# parseados del target. Así execute() persiste el intercambio en el bucket
+# del canal destino y el agente conserva contexto cuando el usuario itera.
+# ---------------------------------------------------------------------------
+
+
+@freeze_time("2025-06-01 12:00:00")
+async def test_agent_send_with_output_channel_propaga_bucket(
+    service: SchedulerService,
+    repo: SQLiteSchedulerRepo,
+    dispatch: MagicMock,
+) -> None:
+    dispatch.llm_dispatcher.dispatch = AsyncMock(return_value="síntesis del día")
+    dispatch.channel_sender.send_message = AsyncMock(
+        return_value=MagicMock(original_target="telegram:12345", resolved_target="telegram:12345")
+    )
+    dispatch.channel_sender.build_intermediate_sink = MagicMock(return_value=None)
+
+    task = ScheduledTask(
+        id=0,
+        name="daily-synth",
+        task_kind=TaskKind.ONESHOT,
+        trigger_type=TriggerType.AGENT_SEND,
+        trigger_payload=AgentSendPayload(
+            agent_id="general",
+            task="generá la síntesis diaria",
+            output_channel="telegram:12345",
+        ),
+        schedule="2025-06-01T10:00:00+00:00",
+        next_run=datetime(2025, 6, 1, 10, 0, 0, tzinfo=timezone.utc),
+    )
+    await repo.save_task(task)
+
+    await service._run_once()
+
+    dispatch.llm_dispatcher.dispatch.assert_awaited_once()
+    kwargs = dispatch.llm_dispatcher.dispatch.call_args.kwargs
+    assert kwargs["channel"] == "telegram"
+    assert kwargs["chat_id"] == "12345"

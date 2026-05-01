@@ -826,7 +826,7 @@ class TelegramBot:
         """Callback invocado por el adapter por cada ``BroadcastMessage`` válido.
 
         En el flujo unificado, un broadcast se trata como un mensaje más entrante
-        al chat: se persiste con prefijo ``<agent_id> dijo: ...`` y se programa
+        al chat: se persiste con prefijo ``<agent_id> said: ...`` y se programa
         un flush task. Si ya hay uno corriendo, el broadcast se acumula en el
         historial del chat y será visto por ese flush cuando despierte.
 

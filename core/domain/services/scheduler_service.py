@@ -228,16 +228,30 @@ class SchedulerService:
             # al mismo canal en VIVO — antes de ejecutar cada tool. Así el
             # destinatario ve el progreso del agente tal y como sucede,
             # no solo el reply final.
+            #
+            # Además, propagamos el (channel, chat_id) parseados del target
+            # a execute() para que el intercambio (user prompt + assistant
+            # response) se persista en el bucket del canal destino — si no,
+            # quedaría aislado en el bucket default y el usuario perdería
+            # el contexto al iterar sobre la respuesta.
             live_sink = None
+            channel = ""
+            chat_id = ""
             if payload.output_channel:
                 live_sink = self._dispatch.channel_sender.build_intermediate_sink(
                     payload.output_channel
                 )
+                _ch, _sep, _cid = payload.output_channel.partition(":")
+                if _sep:
+                    channel = _ch
+                    chat_id = _cid
             result = await self._dispatch.llm_dispatcher.dispatch(
                 payload.agent_id,
                 payload.task,
                 payload.tools_override,
                 intermediate_sink=live_sink,
+                channel=channel,
+                chat_id=chat_id,
             )
             if payload.output_channel:
                 dr = await self._dispatch.channel_sender.send_message(

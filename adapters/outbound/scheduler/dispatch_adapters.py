@@ -96,6 +96,8 @@ class LLMDispatcherAdapter:
         prompt: str | None = None,
         tools_override: list[dict] | None = None,
         intermediate_sink: IIntermediateSink | None = None,
+        channel: str = "",
+        chat_id: str = "",
     ) -> str:
         agent = self._agents.get(agent_id)
         if agent is None:
@@ -104,6 +106,8 @@ class LLMDispatcherAdapter:
             prompt or "",
             tools_override=tools_override,
             intermediate_sink=intermediate_sink,
+            channel=channel,
+            chat_id=chat_id,
         )
 
 

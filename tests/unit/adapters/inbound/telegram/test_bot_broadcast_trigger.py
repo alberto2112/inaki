@@ -163,7 +163,7 @@ async def test_on_broadcast_persiste_en_historial_y_programa_flush(
 
     mock_container.run_agent.record_user_message.assert_awaited_once()
     call = mock_container.run_agent.record_user_message.await_args
-    assert "anacleto dijo:" in call.args[0]
+    assert "anacleto said:" in call.args[0]
     assert "comentario sobre el clima" in call.args[0]
     assert call.kwargs.get("channel") == "telegram"
     assert call.kwargs.get("chat_id") == "-100123"

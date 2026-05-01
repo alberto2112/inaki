@@ -176,7 +176,7 @@ async def test_broadcast_trigger_dispara_pipeline_del_otro_bot(par_bots):
     # B persistió el broadcast con prefijo
     bot_b._container.run_agent.record_user_message.assert_awaited()
     record_args = bot_b._container.run_agent.record_user_message.await_args
-    assert "anacleto dijo:" in record_args.args[0]
+    assert "anacleto said:" in record_args.args[0]
     assert "che inaki, qué hora es?" in record_args.args[0]
     assert record_args.kwargs.get("channel") == "telegram"
     assert record_args.kwargs.get("chat_id") == CHAT_ID

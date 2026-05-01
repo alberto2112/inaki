@@ -12,4 +12,6 @@ class ILLMDispatcher(Protocol):
         prompt: str | None = None,
         tools_override: list[dict] | None = None,
         intermediate_sink: IIntermediateSink | None = None,
+        channel: str = "",
+        chat_id: str = "",
     ) -> str: ...

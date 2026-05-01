@@ -204,7 +204,7 @@ def test_wire_delegation_registers_tool_when_enabled(tmp_path) -> None:
 
     get_container_mock: Callable[[str], AgentContainer | None] = MagicMock(return_value=None)
 
-    container.wire_delegation(get_agent_container=get_container_mock)
+    container.wire_delegation(get_agent_container=get_container_mock, sub_agent_ids=allowed_targets)
 
     # run_agent_one_shot MUST be a RunAgentOneShotUseCase instance
     assert hasattr(container, "run_agent_one_shot"), "run_agent_one_shot must be set"
@@ -224,8 +224,8 @@ def test_wire_delegation_registers_tool_when_enabled(tmp_path) -> None:
     assert delegate_tool._max_iterations_per_sub == 7
     assert delegate_tool._timeout_seconds == 30
 
-    # Task 6.1: get_container_mock IS called during wiring to build the discovery section
-    # (once per target in allowed_targets). All return None here → no section set.
+    # get_container_mock IS called during wiring to build the discovery section
+    # (once per sub_agent_id). All return None here → no section set.
     get_container_mock.assert_called_once_with("specialist-agent")
     # All targets returned None → no extra sections set on run_agent
     container.run_agent.set_extra_system_sections.assert_not_called()
@@ -245,18 +245,18 @@ def test_wire_delegation_idempotent(tmp_path) -> None:
     agent_cfg = _make_agent_config(
         agent_id="coordinator",
         delegation_enabled=True,
-        allowed_targets=[],
     )
     global_cfg = _make_global_config()
     container = _build_minimal_container(agent_cfg, global_cfg, tmp_path)
 
     get_container_mock: Callable[[str], AgentContainer | None] = MagicMock(return_value=None)
+    sub_agents = ["worker"]
 
-    container.wire_delegation(get_agent_container=get_container_mock)
+    container.wire_delegation(get_agent_container=get_container_mock, sub_agent_ids=sub_agents)
     use_case_first_call = container.run_agent_one_shot
 
     # Second call — must be no-op
-    container.wire_delegation(get_agent_container=get_container_mock)
+    container.wire_delegation(get_agent_container=get_container_mock, sub_agent_ids=sub_agents)
     use_case_second_call = container.run_agent_one_shot
 
     # Same instance
@@ -307,11 +307,16 @@ def test_app_container_two_phase_init(tmp_path) -> None:
     }
 
     # Simulate Phase 2 (the same logic AppContainer uses)
+    # Solo agent-a es regular con delegation enabled; B y C no tienen sub-agentes
+    sub_agent_ids = ["agent-b"]  # simulando que agent-b está en sub-agents/
+
     def _get_agent_container(agent_id: str) -> AgentContainer | None:
         return agents.get(agent_id)
 
-    for container in agents.values():
-        container.wire_delegation(_get_agent_container)
+    for agent_id, container in agents.items():
+        # Solo los agentes regulares con delegation.enabled reciben sub_agent_ids
+        ids = sub_agent_ids if agent_id == "agent-a" else []
+        container.wire_delegation(_get_agent_container, sub_agent_ids=ids)
 
     # A MUST have the delegate tool wired
     assert "delegate" in container_a._tools._tools, (
@@ -379,7 +384,7 @@ def test_wire_delegation_closure_late_binding(tmp_path) -> None:
         return agents.get(agent_id)
 
     # Wire only after both containers are in the dict
-    container_a.wire_delegation(_get_agent_container)
+    container_a.wire_delegation(_get_agent_container, sub_agent_ids=["late-b"])
 
     # The delegate tool in container_a holds the closure we passed
     delegate_tool: DelegateTool = container_a._tools._tools["delegate"]
@@ -470,7 +475,7 @@ def test_discovery_section_present_when_enabled(tmp_path) -> None:
     def _get_container(agent_id: str) -> AgentContainer | None:
         return {"agent-b": agent_b}.get(agent_id)
 
-    parent.wire_delegation(_get_container)
+    parent.wire_delegation(_get_container, sub_agent_ids=["agent-b"])
 
     # set_extra_system_sections MUST have been called
     parent.run_agent.set_extra_system_sections.assert_called_once()
@@ -511,14 +516,15 @@ def test_discovery_section_filtered_by_allowlist(tmp_path) -> None:
 
     registry = {"agent-a": agent_a, "agent-b": agent_b, "agent-c": agent_c}
 
-    parent.wire_delegation(registry.get)
+    # Solo agent-b es sub-agente — la sección solo debe mostrar agent-b
+    parent.wire_delegation(registry.get, sub_agent_ids=["agent-b"])
 
     parent.run_agent.set_extra_system_sections.assert_called_once()
     section = parent.run_agent.set_extra_system_sections.call_args[0][0][0]
 
     assert "agent-b" in section
-    assert "agent-a" not in section, "agent-a must NOT appear (not in allow-list)"
-    assert "agent-c" not in section, "agent-c must NOT appear (not in allow-list)"
+    assert "agent-a" not in section, "agent-a must NOT appear (not a sub-agent)"
+    assert "agent-c" not in section, "agent-c must NOT appear (not a sub-agent)"
 
 
 # ---------------------------------------------------------------------------
@@ -603,7 +609,7 @@ def test_discovery_section_unknown_targets_skipped(tmp_path) -> None:
         return {"agent-b": agent_b}.get(agent_id)
 
     # Must not raise even though "ghost" doesn't exist
-    parent.wire_delegation(_get_container)
+    parent.wire_delegation(_get_container, sub_agent_ids=["agent-b", "ghost"])
 
     parent.run_agent.set_extra_system_sections.assert_called_once()
     section = parent.run_agent.set_extra_system_sections.call_args[0][0][0]
@@ -632,7 +638,7 @@ def test_discovery_section_all_targets_unknown(tmp_path) -> None:
     parent = _build_minimal_container(parent_cfg, global_cfg, tmp_path)
 
     # All return None
-    parent.wire_delegation(lambda _: None)
+    parent.wire_delegation(lambda _: None, sub_agent_ids=["ghost"])
 
     parent.run_agent.set_extra_system_sections.assert_not_called()
 
@@ -661,7 +667,7 @@ def test_discovery_section_mixed_targets(tmp_path) -> None:
 
     registry = {"agent-b": agent_b, "agent-c": agent_c}
 
-    parent.wire_delegation(registry.get)
+    parent.wire_delegation(registry.get, sub_agent_ids=["agent-b", "ghost", "agent-c"])
 
     parent.run_agent.set_extra_system_sections.assert_called_once()
     section = parent.run_agent.set_extra_system_sections.call_args[0][0][0]
@@ -723,8 +729,8 @@ def test_wire_delegation_idempotent_with_discovery(tmp_path) -> None:
     def _get_container(agent_id: str) -> AgentContainer | None:
         return {"agent-b": agent_b}.get(agent_id)
 
-    parent.wire_delegation(_get_container)
-    parent.wire_delegation(_get_container)  # second call — must be no-op
+    parent.wire_delegation(_get_container, sub_agent_ids=["agent-b"])
+    parent.wire_delegation(_get_container, sub_agent_ids=["agent-b"])  # second call — must be no-op
 
     # set_extra_system_sections called exactly ONCE (idempotency guard)
     assert parent.run_agent.set_extra_system_sections.call_count == 1, (

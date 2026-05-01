@@ -140,20 +140,21 @@ class AgentContainer:
             agent_config=cfg,
         )
 
-        # LLM de consolidación: reusa `self._llm` o instancia uno dedicado
-        # si `memory.llm` define algún override. La validación cruzada
-        # (provider cambiado sin api_key) ocurre en `_resolve_memory_llm`
-        # → fail-fast al arranque.
-        llm_consolidator = self._resolve_memory_llm(cfg, self._llm)
-
-        self.consolidate_memory = ConsolidateMemoryUseCase(
-            llm=llm_consolidator,
-            memory=self._memory,
-            embedder=self._embedder,
-            history=self._history,
-            agent_id=cfg.id,
-            memory_config=cfg.memory,
-        )
+        # LLM de consolidación: solo se instancia cuando `memory.enabled` es true.
+        # Si no, no tiene sentido resolver el provider (no se va a usar) y además
+        # ahorra el log de "LLM de consolidación dedicado" para sub-agentes one-shot.
+        # AppContainer ya filtra por memory.enabled cuando arma enabled_consolidators.
+        self.consolidate_memory: ConsolidateMemoryUseCase | None = None
+        if cfg.memory.enabled:
+            llm_consolidator = self._resolve_memory_llm(cfg, self._llm)
+            self.consolidate_memory = ConsolidateMemoryUseCase(
+                llm=llm_consolidator,
+                memory=self._memory,
+                embedder=self._embedder,
+                history=self._history,
+                agent_id=cfg.id,
+                memory_config=cfg.memory,
+            )
 
     @staticmethod
     def _resolve_memory_llm(cfg: AgentConfig, base_llm):
@@ -442,6 +443,7 @@ class AgentContainer:
     def wire_delegation(
         self,
         get_agent_container: Callable[[str], "AgentContainer | None"],
+        sub_agent_ids: list[str] | None = None,
     ) -> None:
         """
         Phase-2 wiring: registers the delegate tool when delegation is enabled.
@@ -451,6 +453,7 @@ class AgentContainer:
 
         No-op when:
         - delegation.enabled is False (REQ-DG-1: tool never registered → never in schemas)
+        - sub_agent_ids is empty (nada para delegar)
         - called a second time (idempotency guard)
         """
         if not self.agent_config.delegation.enabled:
@@ -463,12 +466,22 @@ class AgentContainer:
             )
             return
 
+        targets = sub_agent_ids or []
+
+        if not targets:
+            self._delegation_wired = True
+            logger.debug(
+                "AgentContainer '%s': wire_delegation no-op (sin sub-agentes configurados)",
+                self.agent_config.id,
+            )
+            return
+
         from adapters.outbound.tools.delegate_tool import DelegateTool
 
         # Build and register the delegate tool.
         # (run_agent_one_shot is already set in __init__ — no construction here.)
         delegate_tool = DelegateTool(
-            allowed_targets=self.agent_config.delegation.allowed_targets,
+            allowed_targets=targets,
             get_agent_container=get_agent_container,
             max_iterations_per_sub=self._global_config.delegation.max_iterations_per_sub,
             timeout_seconds=self._global_config.delegation.timeout_seconds,
@@ -478,23 +491,15 @@ class AgentContainer:
         self._delegation_wired = True
 
         # -----------------------------------------------------------------------
-        # Task 6.1 — Build agent-discovery section and inject into RunAgentUseCase.
+        # Build agent-discovery section and inject into RunAgentUseCase.
         #
-        # Enumerate target agents filtered by allowed_targets, then call
-        # self.run_agent.set_extra_system_sections() so that execute() passes the
-        # section via extra_sections when building the system prompt.
+        # Enumera los sub-agentes disponibles y construye la sección que el LLM
+        # recibirá en el system prompt para saber cuándo y cómo delegar.
         #
-        # Rules:
-        # - allowed_targets == [] → all targets from get_agent_container are unknown
-        #   at wiring time (closure resolves at call time, not here).  We resolve
-        #   them NOW from the closure to build the discovery section eagerly.
-        # - If a target_id resolves to None → skip silently (log at debug level).
-        # - If no targets can be resolved → do NOT set extra sections (empty header
-        #   must not appear).
         # - The section is PARENT-SIDE ONLY. RunAgentOneShotUseCase (child path)
         #   is NEVER passed extra_sections — it has no _extra_system_sections attr.
         # -----------------------------------------------------------------------
-        discovery_section = self._build_discovery_section(get_agent_container)
+        discovery_section = self._build_discovery_section(get_agent_container, targets)
         if discovery_section:
             self.run_agent.set_extra_system_sections([discovery_section])
             logger.debug(
@@ -503,9 +508,9 @@ class AgentContainer:
             )
 
         logger.info(
-            "AgentContainer '%s': delegation wired (allowed_targets=%s)",
+            "AgentContainer '%s': delegation wired (sub_agents=%s)",
             self.agent_config.id,
-            self.agent_config.delegation.allowed_targets or "<all>",
+            targets,
         )
 
     def wire_scheduler(self, schedule_task_uc: ScheduleTaskUseCase, user_timezone: str) -> None:
@@ -677,15 +682,16 @@ class AgentContainer:
     def _build_discovery_section(
         self,
         get_agent_container: Callable[[str], "AgentContainer | None"],
+        sub_agent_ids: list[str] | None = None,
     ) -> str:
         """
         Build a human-readable section listing available delegation targets.
 
         Returns an empty string when:
-        - allowed_targets is empty (no targets configured)
-        - all configured targets resolve to None (unknown agents)
+        - sub_agent_ids is empty (sin sub-agentes)
+        - todos los IDs resuelven a None (containers no encontrados)
 
-        Format (REQ-DG-7 / task 6.1):
+        Format:
 
             # Available agents for delegation
 
@@ -702,10 +708,9 @@ class AgentContainer:
             - **<id>** (<name>) — <description>.
               Tools: <tool1>, <tool2>, ...
         """
-        target_ids = self.agent_config.delegation.allowed_targets
+        target_ids = sub_agent_ids or []
 
         if not target_ids:
-            # No explicit allow-list → no discovery section (cannot enumerate without targets)
             return ""
 
         lines: list[str] = []
@@ -898,12 +903,18 @@ class AppContainer:
 
         # Phase 2: wire delegation AFTER all containers are built so that the
         # get_agent_container closure can resolve any sibling (two-phase init).
+        # Solo los agentes regulares reciben el delegate tool; los sub-agentes son
+        # el destino de la delegación (not the source) y se ejecutan one-shot.
         def _get_agent_container(agent_id: str) -> "AgentContainer | None":
             return self.agents.get(agent_id)
 
+        sub_agent_ids = [cfg.id for cfg in registry.list_sub_agents()]
+
         for agent_id, container in self.agents.items():
+            if registry.is_sub_agent(agent_id):
+                continue
             try:
-                container.wire_delegation(_get_agent_container)
+                container.wire_delegation(_get_agent_container, sub_agent_ids)
             except Exception as exc:
                 logger.error("Error en wire_delegation para agente '%s': %s", agent_id, exc)
 
@@ -945,8 +956,11 @@ class AppContainer:
         )
 
         # Phase 3: wire scheduler tool into each agent now that schedule_task_uc is ready.
+        # Sub-agentes excluidos: se ejecutan one-shot y no programan tareas directamente.
         user_timezone = global_config.user.timezone
         for agent_id, container in self.agents.items():
+            if registry.is_sub_agent(agent_id):
+                continue
             try:
                 container.wire_scheduler(self.schedule_task_uc, user_timezone)
             except Exception as exc:
@@ -959,7 +973,7 @@ class AppContainer:
         # y se almacena en el container. El lifecycle (start/stop) se gestiona en
         # AppContainer.startup() / shutdown().
         self._broadcast_adapters: list[object] = []  # TcpBroadcastAdapter instances
-        for agent_cfg in registry.list_all():
+        for agent_cfg in registry.list_regular():
             try:
                 self._wire_broadcast_for_agent(agent_cfg)
             except Exception as exc:
@@ -1000,6 +1014,8 @@ class AppContainer:
                 logger.error("Error inicializando photos singletons: %s", exc)
 
         for agent_id, container in self.agents.items():
+            if registry.is_sub_agent(agent_id):
+                continue
             try:
                 container.wire_photos(
                     self._vision_adapter,

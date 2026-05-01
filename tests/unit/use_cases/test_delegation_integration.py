@@ -210,6 +210,9 @@ def _wire_both(
     Build the minimal two-container harness: create the get_agent_container
     closure and call wire_delegation on both containers.
 
+    El padre recibe al hijo como sub-agente disponible.
+    El hijo es llamado one-shot y no necesita delegation wiring.
+
     Returns the closure for use in assertions.
     """
     containers = {
@@ -220,8 +223,8 @@ def _wire_both(
     def _get_agent_container(agent_id: str) -> AgentContainer | None:
         return containers.get(agent_id)
 
-    parent.wire_delegation(_get_agent_container)
-    child.wire_delegation(_get_agent_container)
+    parent.wire_delegation(_get_agent_container, sub_agent_ids=[child.agent_config.id])
+    child.wire_delegation(_get_agent_container)  # no-op: child no delega
 
     return _get_agent_container
 
@@ -454,13 +457,13 @@ async def test_failure_unknown_agent():
     # Only build the parent container. "ghost" is NOT in the container registry.
     parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
 
-    # Wire manually: closure only has "parent", not "ghost"
+    # Wire manually: closure only has "parent", not "ghost". Ghost es el sub-agente.
     containers = {"parent": parent_container}
 
     def _get_container(agent_id: str) -> AgentContainer | None:
         return containers.get(agent_id)
 
-    parent_container.wire_delegation(_get_container)
+    parent_container.wire_delegation(_get_container, sub_agent_ids=["ghost"])
 
     dr = await _run_delegation_and_extract_result(parent_container)
 
@@ -731,11 +734,10 @@ async def test_failure_modes_canonical_reason_strings(scenario: str, expected_re
         child_llm = _make_scripted_llm([])
         parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
         child_container = _build_container(child_cfg, global_cfg, child_llm)
-        # Wire with only parent — "child" resolves to None from the closure
+        # Wire with only parent — "child" es el sub-agente pero resuelve a None
         containers_dict = {"parent": parent_container}
-        parent_container.wire_delegation(containers_dict.get)
-        # child also needs wire_delegation called on it to satisfy the child cfg
-        # but parent's closure won't find child (unknown_agent scenario)
+        parent_container.wire_delegation(containers_dict.get, sub_agent_ids=["child"])
+        # child no está en containers_dict → closure retorna None → unknown_agent
 
     elif scenario in ("result_parse_error_no_block", "result_parse_error_invalid_json"):
         child_response = (
@@ -803,17 +805,15 @@ async def test_req_dg9_child_schemas_exclude_delegate_even_when_child_has_delega
     """
     Task 7.3 / REQ-DG-9 dedicated test.
 
-    Setup: BOTH parent and child have delegation.enabled=True.
-    Child config: delegation.enabled=True, allowed_targets=[] (recursion would be
-    structurally possible if the schema filter didn't exist).
-
-    After wire_both, the child has a "delegate" tool registered in its ToolRegistry.
-    But when the parent delegates to the child, RunAgentOneShotUseCase MUST filter
-    out "delegate" from the schemas passed to the child's run_tool_loop call.
+    Con el nuevo modelo, los sub-agentes NO reciben el tool 'delegate' en el wiring
+    (wire_delegation es no-op para el child porque no se pasan sub_agent_ids).
+    REQ-DG-9 se satisface en dos capas: (1) no hay tool en el registry del hijo,
+    (2) RunAgentOneShotUseCase filtra 'delegate' aunque llegara por otra vía.
 
     This test asserts:
-    5. The schemas list captured from the child LLM call does NOT contain "delegate".
-    6. The parent's own schemas list DOES contain "delegate" (filter is one-shot-specific).
+    5. Child registry does NOT have 'delegate' (nueva garantía por wiring).
+    5b. El LLM del hijo no recibe 'delegate' en los schemas (doble garantía).
+    6. El parent SÍ tiene 'delegate' en sus schemas (solo en el conversational path).
     """
     global_cfg = _make_global_config(max_iterations_per_sub=10, timeout_seconds=60)
 
@@ -825,8 +825,8 @@ async def test_req_dg9_child_schemas_exclude_delegate_even_when_child_has_delega
     )
     child_cfg = _make_agent_config(
         agent_id="child",
-        delegation_enabled=True,  # <-- the twist: child also has delegation enabled
-        allowed_targets=[],  # no further targets
+        delegation_enabled=True,
+        allowed_targets=[],
         description="Sub-agent with delegation enabled",
     )
 
@@ -849,13 +849,14 @@ async def test_req_dg9_child_schemas_exclude_delegate_even_when_child_has_delega
     child_container = _build_container(child_cfg, global_cfg, child_llm)
     _wire_both(parent_container, child_container)
 
-    # Verify the child DOES have "delegate" in its ToolRegistry after wiring
-    assert "delegate" in child_container._tools._tools, (
-        "Precondition: child must have 'delegate' tool in its registry after wire_delegation "
-        "(since delegation.enabled=True for child)"
+    # Assertion 5 (nueva garantía): el hijo NO tiene 'delegate' en su registry
+    # porque wire_delegation es no-op para sub-agentes (no sub_agent_ids pasados).
+    assert "delegate" not in child_container._tools._tools, (
+        "REQ-DG-9: child must NOT have 'delegate' tool in its registry "
+        "(sub-agents never get the delegate tool wired)"
     )
 
-    # Verify the parent ALSO has "delegate" in its ToolRegistry (sanity)
+    # Precondición: el parent sí tiene 'delegate'
     assert "delegate" in parent_container._tools._tools, (
         "Precondition: parent must have 'delegate' tool in its registry"
     )
@@ -863,7 +864,7 @@ async def test_req_dg9_child_schemas_exclude_delegate_even_when_child_has_delega
     # Execute the full delegation chain
     result = await parent_container.run_agent.execute("Do something complex")
 
-    # Assertion 5: child LLM was called with schemas that do NOT include "delegate"
+    # Assertion 5b: child LLM fue llamado sin 'delegate' en los schemas
     assert child_llm.complete.call_count == 1, (
         f"Child LLM must be called exactly once. Called: {child_llm.complete.call_count}"
     )
@@ -878,8 +879,7 @@ async def test_req_dg9_child_schemas_exclude_delegate_even_when_child_has_delega
         "Child must still have at least one non-delegate schema (dummy_tool)"
     )
 
-    # Assertion 6: Parent's own LLM call DID receive "delegate" in schemas,
-    # confirming the filter is specific to the one-shot path, not a global side effect.
+    # Assertion 6: Parent's own LLM call DID receive "delegate" in schemas
     parent_first_call_kwargs = parent_llm.complete.call_args_list[0].kwargs
     parent_schemas = parent_first_call_kwargs.get("tools") or []
     parent_schema_names = [s.get("function", {}).get("name") for s in parent_schemas]
@@ -998,10 +998,9 @@ async def test_child_with_delegation_disabled_can_be_delegation_target(tmp_path)
     def _get_agent_container(agent_id: str) -> AgentContainer | None:
         return containers.get(agent_id)
 
-    # Wire both: parent gets delegate tool + discovery section;
-    # worker is a no-op for wire_delegation (enabled=False), but run_agent_one_shot
-    # is already on worker_container (set by _build_container mirroring __init__).
-    parent_container.wire_delegation(_get_agent_container)
+    # Wire both: parent recibe worker como sub-agente;
+    # worker es no-op (enabled=False), pero run_agent_one_shot ya está en el container.
+    parent_container.wire_delegation(_get_agent_container, sub_agent_ids=["worker"])
     worker_container.wire_delegation(_get_agent_container)
 
     # Assertion 3: worker has run_agent_one_shot (set unconditionally)

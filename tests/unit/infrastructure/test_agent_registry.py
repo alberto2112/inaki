@@ -142,6 +142,143 @@ def test_registry_permite_un_solo_agente_con_telegram(tmp_path: Path) -> None:
     assert len(registry.agents_with_channel("telegram")) == 1
 
 
+def test_sub_agents_loaded_from_sub_agents_subdir(tmp_path: Path) -> None:
+    """Sub-agentes en agents/sub-agents/ se cargan y se distinguen de los regulares."""
+    agents_dir = tmp_path / "agents"
+    _write_agent(agents_dir, "principal")
+    sub_dir = agents_dir / "sub-agents"
+    _write_agent(sub_dir, "worker", name="Worker")
+
+    registry = AgentRegistry(agents_dir, _GLOBAL_RAW)
+
+    assert {a.id for a in registry.list_all()} == {"principal", "worker"}
+    assert [a.id for a in registry.list_regular()] == ["principal"]
+    assert [a.id for a in registry.list_sub_agents()] == ["worker"]
+    assert not registry.is_sub_agent("principal")
+    assert registry.is_sub_agent("worker")
+
+
+def test_sub_agents_excluded_from_agents_with_channel(tmp_path: Path) -> None:
+    """Sub-agentes con channels declarados no aparecen en agents_with_channel."""
+    agents_dir = tmp_path / "agents"
+    _write_agent_with_channels(
+        agents_dir, "principal", '  telegram:\n    token: "TOKEN-MAIN"\n'
+    )
+    sub_dir = agents_dir / "sub-agents"
+    # Sub-agente con channels: debe ser ignorado para canales
+    _write_agent_with_channels(
+        sub_dir, "worker", '  telegram:\n    token: "TOKEN-WORKER"\n'
+    )
+
+    registry = AgentRegistry(agents_dir, _GLOBAL_RAW)
+
+    assert len(registry.agents_with_channel("telegram")) == 1
+    assert registry.agents_with_channel("telegram")[0].id == "principal"
+
+
+def test_sub_agents_dont_trigger_channel_uniqueness_validation(tmp_path: Path) -> None:
+    """Dos sub-agentes con el mismo token NO levantan ConfigError (no tienen canales)."""
+    agents_dir = tmp_path / "agents"
+    sub_dir = agents_dir / "sub-agents"
+    _write_agent_with_channels(sub_dir, "worker_a", '  telegram:\n    token: "SAME-TOKEN"\n')
+    _write_agent_with_channels(sub_dir, "worker_b", '  telegram:\n    token: "SAME-TOKEN"\n')
+
+    # No debe lanzar — la validación de unicidad solo aplica a agentes regulares
+    registry = AgentRegistry(agents_dir, _GLOBAL_RAW)
+
+    assert {a.id for a in registry.list_sub_agents()} == {"worker_a", "worker_b"}
+
+
+def test_registry_empty_sub_agents_dir_is_fine(tmp_path: Path) -> None:
+    """Si no existe el directorio sub-agents/, se carga normalmente sin error."""
+    agents_dir = tmp_path / "agents"
+    _write_agent(agents_dir, "principal")
+
+    registry = AgentRegistry(agents_dir, _GLOBAL_RAW)
+
+    assert [a.id for a in registry.list_all()] == ["principal"]
+    assert registry.list_sub_agents() == []
+
+
+def _write_sub_agent_with_memory(
+    sub_dir: Path, agent_id: str, memory_block: str | None
+) -> None:
+    """Escribe un sub-agente con bloque memory: opcional."""
+    sub_dir.mkdir(parents=True, exist_ok=True)
+    body = (
+        f'id: {agent_id}\n'
+        f'name: "{agent_id}"\n'
+        'description: "sub agente"\n'
+        'system_prompt: "soy un test"\n'
+    )
+    if memory_block is not None:
+        body += memory_block
+    (sub_dir / f"{agent_id}.yaml").write_text(body, encoding="utf-8")
+
+
+def test_sub_agent_memory_default_false_when_not_specified(tmp_path: Path) -> None:
+    """Sub-agente sin bloque memory: → memory.enabled debe ser false (default override)."""
+    agents_dir = tmp_path / "agents"
+    sub_dir = agents_dir / "sub-agents"
+    global_raw = {**_GLOBAL_RAW, "memory": {"db_filename": "data/inaki.db", "enabled": True}}
+
+    _write_sub_agent_with_memory(sub_dir, "worker", memory_block=None)
+
+    registry = AgentRegistry(agents_dir, global_raw)
+
+    worker = registry.get("worker")
+    assert worker.memory.enabled is False, (
+        "memory.enabled debe forzarse a false cuando el sub-agente no lo especifica"
+    )
+
+
+def test_sub_agent_memory_enabled_explicit_true_is_respected(tmp_path: Path) -> None:
+    """Sub-agente con memory.enabled: true explícito → se respeta, no se pisa."""
+    agents_dir = tmp_path / "agents"
+    sub_dir = agents_dir / "sub-agents"
+    global_raw = {**_GLOBAL_RAW, "memory": {"db_filename": "data/inaki.db", "enabled": False}}
+
+    _write_sub_agent_with_memory(
+        sub_dir, "stateful_worker", memory_block="memory:\n  enabled: true\n"
+    )
+
+    registry = AgentRegistry(agents_dir, global_raw)
+
+    worker = registry.get("stateful_worker")
+    assert worker.memory.enabled is True, (
+        "memory.enabled: true explícito en el sub-agente debe respetarse"
+    )
+
+
+def test_sub_agent_memory_enabled_explicit_false_is_respected(tmp_path: Path) -> None:
+    """Sub-agente con memory.enabled: false explícito → se respeta (no es no-op)."""
+    agents_dir = tmp_path / "agents"
+    sub_dir = agents_dir / "sub-agents"
+    global_raw = {**_GLOBAL_RAW, "memory": {"db_filename": "data/inaki.db", "enabled": True}}
+
+    _write_sub_agent_with_memory(
+        sub_dir, "worker", memory_block="memory:\n  enabled: false\n"
+    )
+
+    registry = AgentRegistry(agents_dir, global_raw)
+
+    assert registry.get("worker").memory.enabled is False
+
+
+def test_regular_agent_memory_default_inherited_from_global(tmp_path: Path) -> None:
+    """Agente regular SIN memory.enabled hereda del global (no se fuerza a false)."""
+    agents_dir = tmp_path / "agents"
+    global_raw = {**_GLOBAL_RAW, "memory": {"db_filename": "data/inaki.db", "enabled": True}}
+
+    _write_agent(agents_dir, "principal")  # sin bloque memory
+
+    registry = AgentRegistry(agents_dir, global_raw)
+
+    assert registry.get("principal").memory.enabled is True, (
+        "agentes regulares heredan memory.enabled del global — solo sub-agentes son default-false"
+    )
+
+
 def test_registry_skips_secrets_and_examples(tmp_path: Path) -> None:
     agents_dir = tmp_path / "agents"
     _write_agent(agents_dir, "real")

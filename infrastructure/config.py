@@ -1202,11 +1202,16 @@ def load_agent_config(
 class AgentRegistry:
     """
     Escanea el directorio de agentes al arrancar y construye el registro.
+
+    - ``agents_dir/*.yaml``             → agentes regulares (instanciados al inicio, con canales)
+    - ``agents_dir/sub-agents/*.yaml``  → sub-agentes (solo para delegación, sin canales)
+
     Los agentes con config inválida se omiten con WARNING.
     """
 
     def __init__(self, agents_dir: Path, global_raw: dict) -> None:
         self._agents: dict[str, AgentConfig] = {}
+        self._sub_agent_ids: set[str] = set()
 
         if not agents_dir.exists():
             logger.warning("Directorio de agentes no encontrado: %s", agents_dir)
@@ -1221,11 +1226,42 @@ class AgentRegistry:
                 self._agents[agent_id] = cfg
                 logger.debug("Agente '%s' cargado: %s", agent_id, cfg.name)
 
+        sub_agents_dir = agents_dir / "sub-agents"
+        if sub_agents_dir.exists():
+            for yaml_file in sorted(sub_agents_dir.glob("*.yaml")):
+                if ".secrets" in yaml_file.name or ".example" in yaml_file.name:
+                    continue
+                agent_id = yaml_file.stem
+
+                # Detectar si memory.enabled está explícitamente seteado en el YAML
+                # del sub-agente. Si no, se fuerza a false (sub-agentes son one-shot
+                # por defecto y no deben persistir nada en memoria).
+                raw = _load_yaml_safe(yaml_file)
+                memory_block = raw.get("memory")
+                memory_enabled_explicit = (
+                    isinstance(memory_block, dict) and "enabled" in memory_block
+                )
+
+                cfg = load_agent_config(agent_id, sub_agents_dir, global_raw)
+                if cfg is not None:
+                    if not memory_enabled_explicit and cfg.memory.enabled:
+                        cfg = cfg.model_copy(
+                            update={"memory": cfg.memory.model_copy(update={"enabled": False})}
+                        )
+                    self._agents[agent_id] = cfg
+                    self._sub_agent_ids.add(agent_id)
+                    logger.debug("Sub-agente '%s' cargado: %s", agent_id, cfg.name)
+
+        regular_count = len(self._agents) - len(self._sub_agent_ids)
         logger.info(
-            "AgentRegistry: %d agente(s) cargado(s): %s", len(self._agents), list(self._agents)
+            "AgentRegistry: %d agente(s) + %d sub-agente(s) cargado(s): %s",
+            regular_count,
+            len(self._sub_agent_ids),
+            list(self._agents),
         )
 
-        _validate_channel_uniqueness(self._agents)
+        regular_agents = {k: v for k, v in self._agents.items() if k not in self._sub_agent_ids}
+        _validate_channel_uniqueness(regular_agents)
 
     def get(self, agent_id: str) -> AgentConfig:
         if agent_id not in self._agents:
@@ -1236,11 +1272,24 @@ class AgentRegistry:
             )
         return self._agents[agent_id]
 
+    def is_sub_agent(self, agent_id: str) -> bool:
+        return agent_id in self._sub_agent_ids
+
     def list_all(self) -> list[AgentConfig]:
         return list(self._agents.values())
 
+    def list_regular(self) -> list[AgentConfig]:
+        return [cfg for id, cfg in self._agents.items() if id not in self._sub_agent_ids]
+
+    def list_sub_agents(self) -> list[AgentConfig]:
+        return [cfg for id, cfg in self._agents.items() if id in self._sub_agent_ids]
+
     def agents_with_channel(self, channel_type: str) -> list[AgentConfig]:
-        return [a for a in self._agents.values() if channel_type in a.channels]
+        return [
+            a
+            for id, a in self._agents.items()
+            if id not in self._sub_agent_ids and channel_type in a.channels
+        ]
 
 
 def _validate_channel_uniqueness(agents: dict[str, AgentConfig]) -> None:

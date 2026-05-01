@@ -750,6 +750,10 @@ class PhotosConfig(BaseModel):
     enrollment_chats: Literal["private", "none"] = "private"
     """Tipos de chat donde el agente ofrecerá registrar caras nuevas.
     'private' = solo chats privados. 'none' = el agente nunca ofrece enrolar."""
+    debug: bool = False
+    """Si True, escribe /tmp/inaki.photo-debug.<timestamp>.log con el resultado del
+    procesamiento y el prompt completo enviado al LLM. Útil para diagnosticar
+    comportamientos extraños en grupos."""
     faces: FacesConfig = FacesConfig()
     scene: SceneConfig = SceneConfig()
     dedup: DedupConfig = DedupConfig()

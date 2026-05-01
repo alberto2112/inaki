@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Protocol
 
 import numpy as np
@@ -151,15 +152,84 @@ class ProcessPhotoUseCase:
                 chat_id=chat_id,
             )
 
+        debug_path: str | None = None
+        if self._config.debug:
+            debug_path = self._write_debug_phase1(
+                image_bytes=image_bytes,
+                detections=detections,
+                face_matches=face_matches,
+                scene_description=scene_description,
+                text_context=text_context,
+                chat_type=chat_type,
+                channel=channel,
+                chat_id=chat_id,
+                agent_id=agent_id,
+            )
+
         return ProcessPhotoResult(
             text_context=text_context,
             annotated_image=annotated_image,
             should_skip_run_agent=False,
+            debug_path=debug_path,
         )
 
     # ------------------------------------------------------------------
     # Helpers privados
     # ------------------------------------------------------------------
+
+    def _write_debug_phase1(
+        self,
+        *,
+        image_bytes: bytes,
+        detections: list,
+        face_matches: list,
+        scene_description: str | None,
+        text_context: str,
+        chat_type: str,
+        channel: str,
+        chat_id: str,
+        agent_id: str,
+    ) -> str:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        path = f"/tmp/inaki.photo-debug.{ts}.log"
+        lines: list[str] = [
+            "=== IÑAKI PHOTO DEBUG ===",
+            f"Timestamp: {datetime.now().isoformat()}",
+            f"Agent: {agent_id}",
+            f"Chat: channel={channel}, chat_id={chat_id}, chat_type={chat_type}",
+            f"Config: enabled={self._config.enabled}, enrollment_chats={self._config.enrollment_chats}",
+            "",
+            "--- Fase 1: ProcessPhotoUseCase ---",
+            f"Imagen: {len(image_bytes)} bytes",
+            f"Detecciones InsightFace: {len(detections)}",
+        ]
+        if face_matches:
+            lines.append("Face matches:")
+            for fm in face_matches:
+                top = ""
+                if fm.candidates:
+                    persona, score = fm.candidates[0]
+                    nombre = self._formatear_nombre(persona)
+                    top = f" top={nombre} ({score:.3f})"
+                lines.append(f"  {fm.face_ref}  status={fm.status.value}{top}  categoria={fm.categoria!r}")
+        else:
+            lines.append("Face matches: (ninguno)")
+        lines += [
+            "",
+            "--- Descripción de escena ---",
+            scene_description if scene_description is not None else "(scene describer no configurado o falló)",
+            "",
+            "--- text_context (salida de Phase 1, user_input del agente) ---",
+            text_context,
+            "",
+        ]
+        try:
+            Path(path).write_text("\n".join(lines), encoding="utf-8")
+            logger.debug("photo-debug Phase 1 escrito en %s", path)
+        except OSError as exc:
+            logger.warning("No se pudo escribir photo-debug Phase 1: %s", exc)
+            return ""
+        return path
 
     async def _construir_face_matches(
         self,

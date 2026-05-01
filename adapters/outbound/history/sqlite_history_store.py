@@ -138,6 +138,21 @@ class SQLiteHistoryStore(IHistoryStore):
             await conn.commit()
             return cursor.lastrowid
 
+    async def update_content(
+        self,
+        agent_id: str,
+        message_id: int,
+        new_content: str,
+    ) -> bool:
+        async with self._conn() as conn:
+            await self._ensure_schema(conn)
+            cursor = await conn.execute(
+                "UPDATE history SET content = ? WHERE agent_id = ? AND id = ?",
+                (new_content, agent_id, message_id),
+            )
+            await conn.commit()
+            return (cursor.rowcount or 0) > 0
+
     async def load(
         self,
         agent_id: str,

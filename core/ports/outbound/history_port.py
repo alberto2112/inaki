@@ -31,6 +31,33 @@ class IHistoryStore(ABC):
         ...
 
     @abstractmethod
+    async def update_content(
+        self,
+        agent_id: str,
+        message_id: int,
+        new_content: str,
+    ) -> bool:
+        """Reemplaza el ``content`` de un mensaje existente del historial.
+
+        Pensado para flujos donde un mensaje se persiste primero como placeholder
+        (p. ej. ``__PHOTO__`` con un ``history_id`` reservado para asociar metadata
+        de caras) y luego se enriquece con el contenido real una vez que el
+        procesamiento asíncrono termina. Mantiene el ``id``, el ``created_at`` y
+        el orden cronológico intactos — solo cambia el texto.
+
+        Args:
+            agent_id: Identificador del agente propietario (defensa en profundidad
+                para evitar updates cross-agente).
+            message_id: ID autoincremental del row a actualizar.
+            new_content: Nuevo contenido a setear.
+
+        Returns:
+            ``True`` si se actualizó alguna fila, ``False`` si no se encontró el
+            mensaje (por agent_id mismatch o id inexistente).
+        """
+        ...
+
+    @abstractmethod
     async def load(
         self,
         agent_id: str,

@@ -128,3 +128,4 @@ class ProcessPhotoResult:
     text_context: str
     annotated_image: bytes | None = None
     should_skip_run_agent: bool = False
+    debug_path: str | None = None

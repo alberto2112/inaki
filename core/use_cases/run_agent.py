@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from datetime import datetime
 from core.domain.entities.message import Message, Role
 from core.domain.entities.skill import Skill
 from core.domain.errors import ToolLoopMaxIterationsError
@@ -164,6 +165,8 @@ class RunAgentUseCase:
         # Timezone del usuario para resolver {{TIMEZONE}}/{{DATETIME}}/etc. en el system prompt.
         # None → fallback a TZ local del sistema. Se puede inyectar via wire_user_timezone().
         self._user_timezone: str | None = None
+        # Ruta del archivo de debug de foto. Si está seteado, execute() escribe Phase 2 y lo limpia.
+        self._photo_debug_path: str | None = None
 
     def wire_user_timezone(self, tz: str | None) -> None:
         """Inyecta la timezone del usuario para la interpolación de variables en el system prompt."""
@@ -176,6 +179,15 @@ class RunAgentUseCase:
             name=self._cfg.name,
             description=self._cfg.description,
         )
+
+    def set_photo_debug_path(self, path: str | None) -> None:
+        """Registra la ruta del archivo de debug de foto para el próximo execute().
+
+        Llamado por el adapter de Telegram antes de invocar _run_pipeline cuando
+        photos.debug=True. execute() escribe Phase 2 (historial + system prompt +
+        mensajes al LLM) y limpia la ruta después de escribir.
+        """
+        self._photo_debug_path = path
 
     def set_extra_system_sections(self, sections: list[str]) -> None:
         """
@@ -239,6 +251,19 @@ class RunAgentUseCase:
         msg = Message(role=Role.USER, content=content)
         row_id = await self._history.append(self._cfg.id, msg, channel=channel, chat_id=chat_id)
         return row_id or 0
+
+    async def update_message_content(
+        self,
+        message_id: int,
+        new_content: str,
+    ) -> bool:
+        """Reemplaza el contenido de un mensaje persistido manteniendo su ``id`` y ``created_at``.
+
+        Usado por el handler de fotos para enriquecer el placeholder ``__PHOTO__`` con
+        el ``text_context`` final del descriptor de escena, evitando un segundo mensaje
+        ``role=user`` consecutivo en el historial.
+        """
+        return await self._history.update_content(self._cfg.id, message_id, new_content)
 
     async def record_assistant_message(
         self,
@@ -468,6 +493,19 @@ class RunAgentUseCase:
             # consecutivos mismo-rol para que el LLM reciba alternación limpia.
             messages = _coalesce_consecutive_same_role(history)
 
+        if self._photo_debug_path:
+            self._write_debug_phase2(
+                debug_path=self._photo_debug_path,
+                user_input=user_input,
+                channel=channel,
+                chat_id=chat_id,
+                history=history,
+                messages=messages,
+                extra_sections=extra_sections_snapshot,
+                system_prompt=system_prompt,
+            )
+            self._photo_debug_path = None
+
         try:
             response = await run_tool_loop(
                 llm=self._llm,
@@ -525,6 +563,59 @@ class RunAgentUseCase:
         mensajes de ese (channel, chat_id) y preserva ``agent_state``.
         """
         await self._history.clear(self._cfg.id, channel=channel, chat_id=chat_id)
+
+    @staticmethod
+    def _write_debug_phase2(
+        *,
+        debug_path: str,
+        user_input: str | None,
+        channel: str,
+        chat_id: str,
+        history: list,
+        messages: list,
+        extra_sections: list[str],
+        system_prompt: str,
+    ) -> None:
+        lines: list[str] = [
+            "",
+            "--- Fase 2: RunAgentUseCase.execute() ---",
+            f"Timestamp: {datetime.now().isoformat()}",
+            f"channel={channel!r}  chat_id={chat_id!r}",
+            f"user_input (photo text_context): {user_input!r}",
+            "",
+            f"Historial cargado ({len(history)} mensajes para channel={channel!r}, chat_id={chat_id!r}):",
+        ]
+        for i, msg in enumerate(history, 1):
+            content_preview = (msg.content or "")[:300].replace("\n", "\\n")
+            lines.append(f"  [{i}] role={msg.role.value}  content={content_preview!r}")
+        lines += [
+            "",
+            f"Mensajes enviados al LLM ({len(messages)} en total, historial + user_input):",
+        ]
+        for i, msg in enumerate(messages, 1):
+            content_preview = (msg.content or "")[:300].replace("\n", "\\n")
+            lines.append(f"  [{i}] role={msg.role.value}  content={content_preview!r}")
+        lines += [
+            "",
+            f"Extra sections inyectadas ({len(extra_sections)}):",
+        ]
+        for i, sec in enumerate(extra_sections, 1):
+            lines.append(f"  [{i}] {sec[:500]!r}")
+        if not extra_sections:
+            lines.append("  (ninguna)")
+        lines += [
+            "",
+            "--- System Prompt ---",
+            system_prompt,
+            "--- Fin System Prompt ---",
+            "",
+        ]
+        try:
+            with open(debug_path, "a", encoding="utf-8") as fh:
+                fh.write("\n".join(lines))
+            logger.debug("photo-debug Phase 2 escrito en %s", debug_path)
+        except OSError as exc:
+            logger.warning("No se pudo escribir photo-debug Phase 2: %s", exc)
 
     async def inspect(self, user_input: str) -> InspectResult:
         """

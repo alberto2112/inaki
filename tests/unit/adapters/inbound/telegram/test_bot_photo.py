@@ -66,7 +66,9 @@ def mock_container(mock_process_photo) -> MagicMock:
     container.run_agent.execute = AsyncMock(return_value="Respuesta del agente")
     container.run_agent.record_photo_message = AsyncMock(return_value=42)
     container.run_agent.record_assistant_message = AsyncMock()
+    container.run_agent.update_message_content = AsyncMock(return_value=True)
     container.run_agent.set_extra_system_sections = MagicMock()
+    container.run_agent.set_photo_debug_path = MagicMock()
     container.process_photo = mock_process_photo
     container.set_channel_context = MagicMock()
     return container
@@ -166,6 +168,45 @@ async def test_feature_disabled_process_photo_none(agent_cfg) -> None:
     assert "no está habilitad" in reply_text.lower()
 
 
+async def test_feature_disabled_en_grupo_silencio_total(agent_cfg) -> None:
+    """En grupos sin process_photo wired: no responder, return silencioso.
+
+    Evita que cada bot del grupo sin la feature inunde el chat con el aviso
+    cada vez que llega una foto.
+    """
+    container = MagicMock()
+    container.run_agent = MagicMock()
+    container.run_agent.record_photo_message = AsyncMock(return_value=0)
+    container.process_photo = None
+    container.set_channel_context = MagicMock()
+
+    bot = _build_bot(agent_cfg, container)
+    update = _mk_update(chat_type="group")
+    context = MagicMock()
+
+    await bot._handle_photo_message(update, context)
+
+    container.run_agent.record_photo_message.assert_not_called()
+    update.message.reply_text.assert_not_called()
+
+
+async def test_should_skip_run_agent_en_grupo_silencio_total(agent_cfg, mock_container) -> None:
+    """En grupos con photos.enabled=False en runtime: return silencioso, sin aviso al chat."""
+    mock_container.process_photo.execute.return_value = ProcessPhotoResult(
+        text_context="",
+        annotated_image=None,
+        should_skip_run_agent=True,
+    )
+    bot = _build_bot(agent_cfg, mock_container)
+    update = _mk_update(chat_type="group")
+    context = MagicMock()
+
+    await bot._handle_photo_message(update, context)
+
+    mock_container.run_agent.execute.assert_not_called()
+    update.message.reply_text.assert_not_called()
+
+
 async def test_happy_path_private_chat_pipeline_corrido(agent_cfg, mock_container) -> None:
     bot = _build_bot(agent_cfg, mock_container)
     update = _mk_update(chat_type="private")
@@ -174,15 +215,21 @@ async def test_happy_path_private_chat_pipeline_corrido(agent_cfg, mock_containe
     await bot._handle_photo_message(update, context)
 
     mock_container.run_agent.record_photo_message.assert_awaited_once_with(
-        "[foto recibida]", channel="telegram", chat_id=str(update.effective_chat.id)
+        "__PHOTO__", channel="telegram", chat_id=str(update.effective_chat.id)
     )
     mock_container.process_photo.execute.assert_awaited_once()
     call_kwargs = mock_container.process_photo.execute.await_args.kwargs
     assert call_kwargs["history_id"] == 42
     assert call_kwargs["chat_type"] == "private"
 
-    # Pipeline del agente debe haberse corrido con el text_context.
+    # El placeholder debe haberse enriquecido vía update_message_content (Opción C):
+    # el text_context reemplaza al __PHOTO__ en el row 42, y luego el pipeline corre
+    # en modo history-derived (sin user_input explícito).
+    mock_container.run_agent.update_message_content.assert_awaited_once()
+    update_args = mock_container.run_agent.update_message_content.await_args.args
+    assert update_args[0] == 42  # history_id
     mock_container.run_agent.execute.assert_awaited_once()
+    assert mock_container.run_agent.execute.await_args.args[0] is None
 
 
 async def test_group_chat_pipeline_corrido_con_chat_type_group(
@@ -276,31 +323,31 @@ def test_bot_registra_handler_photo(agent_cfg, mock_container) -> None:
 
 
 async def test_caption_se_adjunta_al_contexto_del_llm(agent_cfg, mock_container) -> None:
-    """Si la foto viene con caption, éste debe aparecer en el user_input del pipeline."""
+    """Si la foto viene con caption, éste debe aparecer en el contenido enriquecido del placeholder."""
     bot = _build_bot(agent_cfg, mock_container)
     update = _mk_update(caption="ese es mi gato durmiendo")
     context = MagicMock()
 
     await bot._handle_photo_message(update, context)
 
-    mock_container.run_agent.execute.assert_awaited_once()
-    # user_input es el primer argumento posicional de execute()
-    user_input = mock_container.run_agent.execute.await_args.args[0]
-    assert "ese es mi gato durmiendo" in user_input
-    assert "Descripción del usuario:" in user_input
+    # El contenido enriquecido se persiste vía update_message_content (segundo arg posicional).
+    mock_container.run_agent.update_message_content.assert_awaited_once()
+    enriched_content = mock_container.run_agent.update_message_content.await_args.args[1]
+    assert "ese es mi gato durmiendo" in enriched_content
+    assert "Descripción del usuario:" in enriched_content
 
 
 async def test_sin_caption_no_agrega_seccion_descripcion(agent_cfg, mock_container) -> None:
-    """Sin caption el user_input es solo el text_context del use case."""
+    """Sin caption el contenido enriquecido es solo el text_context del use case."""
     bot = _build_bot(agent_cfg, mock_container)
     update = _mk_update(caption=None)
     context = MagicMock()
 
     await bot._handle_photo_message(update, context)
 
-    mock_container.run_agent.execute.assert_awaited_once()
-    user_input = mock_container.run_agent.execute.await_args.args[0]
-    assert "Descripción del usuario:" not in user_input
+    mock_container.run_agent.update_message_content.assert_awaited_once()
+    enriched_content = mock_container.run_agent.update_message_content.await_args.args[1]
+    assert "Descripción del usuario:" not in enriched_content
 
 
 async def test_caption_incluido_en_historial(agent_cfg, mock_container) -> None:

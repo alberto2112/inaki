@@ -372,11 +372,15 @@ class TelegramBot:
         chat_id = str(update.effective_chat.id)
 
         # Feature check: si photos no está wired, avisar y salir.
+        # En grupos hacemos return silencioso para no inundar el chat con el aviso
+        # cada vez que llega una foto: el usuario sabe qué bot tiene fotos activadas
+        # y los demás simplemente no participan.
         process_photo_uc = getattr(self._container, "process_photo", None)
         if process_photo_uc is None:
-            await update.message.reply_text(
-                "La función de reconocimiento visual no está habilitada."
-            )
+            if chat_type not in _TIPOS_GRUPO:
+                await update.message.reply_text(
+                    "La función de reconocimiento visual no está habilitada."
+                )
             return
 
         # Extraer bytes de la foto.
@@ -401,9 +405,9 @@ class TelegramBot:
         if scene_prompt:
             history_content = f"__PHOTO__ !{scene_prompt}"
         elif caption:
-            history_content = f"[foto recibida] {caption}"
+            history_content = f"__PHOTO__ {caption}"
         else:
-            history_content = "[foto recibida]"
+            history_content = "__PHOTO__"
         history_id = await self._container.run_agent.record_photo_message(
             history_content,
             channel="telegram",
@@ -434,11 +438,13 @@ class TelegramBot:
             await update.message.reply_photo(result.annotated_image)
 
         # Si el use case pide saltar el agente (photos.enabled=False en runtime),
-        # responder con aviso y terminar.
+        # responder con aviso solo en privado. En grupos return silencioso para no
+        # ensuciar el chat — los bots sin la feature simplemente no participan.
         if result.should_skip_run_agent:
-            await update.message.reply_text(
-                "La función de reconocimiento visual no está habilitada."
-            )
+            if chat_type not in _TIPOS_GRUPO:
+                await update.message.reply_text(
+                    "La función de reconocimiento visual no está habilitada."
+                )
             return
 
         # Modo transcripción/extracción ("!"): el resultado del descriptor va directo
@@ -454,12 +460,24 @@ class TelegramBot:
             await self._set_reaction(update, "✅")
             return
 
-        # Reinyectar el texto contextual como user_input en el pipeline del agente.
-        # Si el usuario adjuntó una descripción a la foto, la agregamos al contexto.
-        user_input = result.text_context
+        # Enriquecer el placeholder __PHOTO__ persistido al inicio con el text_context final.
+        # Esto evita un segundo mensaje role=user consecutivo en el historial: en lugar de
+        # ver "__PHOTO__" + "📷 Foto recibida...", el LLM ve UN solo mensaje enriquecido.
+        # El history_id no cambia → face_ref sigue válido y el orden cronológico se preserva.
+        enriched_content = result.text_context
         if caption:
-            user_input = f"{result.text_context}\n\nDescripción del usuario: {caption}"
-        await self._run_pipeline(update, user_input, chat_type=chat_type)
+            enriched_content = f"{result.text_context}\n\nDescripción del usuario: {caption}"
+        await self._container.run_agent.update_message_content(history_id, enriched_content)
+
+        # Si photos.debug está activo, registrar la ruta del archivo de debug en run_agent
+        # para que Phase 2 (historial + system prompt + mensajes al LLM) se agregue al archivo.
+        if result.debug_path:
+            self._container.run_agent.set_photo_debug_path(result.debug_path)
+
+        # Modo history-derived: la query del turno se deriva del trailing role=user
+        # (que ahora es el placeholder enriquecido). NO pasamos user_input para evitar
+        # que ``execute()`` agregue un mensaje extra encima del que ya actualizamos.
+        await self._run_pipeline(update, None, chat_type=chat_type)
 
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_allowed(update.effective_user.id):
@@ -677,7 +695,7 @@ class TelegramBot:
     async def _run_pipeline(
         self,
         update: Update,
-        user_input: str,
+        user_input: str | None,
         chat_type: str = "private",
         extra_sections: list[str] | None = None,
     ) -> None:
@@ -690,6 +708,9 @@ class TelegramBot:
         Args:
             update: Update de Telegram.
             user_input: Texto ya formateado para el LLM (con prefijo de usuario si es grupo).
+                Si es ``None``, ``run_agent.execute`` deriva la query del trailing batch
+                ``role=user`` del historial (modo history-derived). Usado por el handler
+                de fotos cuando el placeholder ya fue enriquecido vía ``update_message_content``.
             chat_type: Tipo de chat (``"private"``, ``"group"``, ``"supergroup"``, ``"channel"``).
             extra_sections: Secciones adicionales del system prompt (broadcast context,
                 instrucción __SKIP__, etc.). Se pasan via ``set_extra_system_sections`` ANTES
@@ -715,7 +736,13 @@ class TelegramBot:
                 user_id=str(update.effective_user.id),
             )
         )
-        live_sink = TelegramLiveIntermediateSink(bot=self, chat_id=chat_id)
+        # En grupos NO usamos intermediate_sink: los intermedios del LLM (texto que
+        # acompaña tool_calls) se emitirían directo al chat vía sink y NO se incluirían
+        # en el ``response`` final → el broadcast saldría con texto vacío/residual y
+        # los otros bots del grupo no verían la respuesta. Alineado con _run_group_pipeline.
+        live_sink: TelegramLiveIntermediateSink | None = (
+            None if es_grupo else TelegramLiveIntermediateSink(bot=self, chat_id=chat_id)
+        )
         try:
             response = await self._container.run_agent.execute(
                 user_input,

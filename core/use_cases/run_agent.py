@@ -20,11 +20,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from core.domain.entities.message import Message, Role
 from core.domain.entities.skill import Skill
 from core.domain.errors import ToolLoopMaxIterationsError
 from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
+from core.domain.services.prepend_timestamps import prepend_timestamps
 from core.domain.services.sticky_selector import apply_sticky
 from core.domain.value_objects.agent_context import AgentContext
 from core.domain.value_objects.agent_info import AgentInfoDTO
@@ -491,12 +492,23 @@ class RunAgentUseCase:
 
         user_msg: Message | None = None
         if user_input is not None:
-            user_msg = Message(role=Role.USER, content=user_input)
+            # Seteamos el timestamp acá (en lugar de delegarlo al adapter de
+            # historial al persistir) para que ``prepend_timestamps`` también
+            # alcance al user_msg del turno actual cuando el canal lo pida.
+            user_msg = Message(
+                role=Role.USER,
+                content=user_input,
+                timestamp=datetime.now(timezone.utc),
+            )
             messages: list[Message] = history + [user_msg]
         else:
             # Los mensajes ya están en el historial individualmente. Coalescer
             # consecutivos mismo-rol para que el LLM reciba alternación limpia.
             messages = _coalesce_consecutive_same_role(history)
+
+        tg_cfg = self._cfg.channels.get("telegram", {}) or {}
+        if channel == "telegram" and tg_cfg.get("add_llm_timestamp", False):
+            messages = prepend_timestamps(messages)
 
         if self._photo_debug_path:
             self._write_debug_phase2(

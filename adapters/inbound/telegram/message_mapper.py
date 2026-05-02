@@ -109,17 +109,23 @@ def extract_sender_name(message) -> str:
 
 
 def format_group_message(message) -> str:
-    """Formatea un mensaje de grupo con marca de tiempo y prefijo del remitente.
+    """Formatea un mensaje de grupo con prefijo del remitente.
 
-    El formato resultante es ``"(YYYY-MM-DD HH:MM:SS TZ) username said: texto"``.
-    La marca de tiempo usa ``message.date`` (UTC) convertida a timezone local del sistema.
-    Si ``message.date`` no está disponible, se omite el prefijo de timestamp.
+    El formato resultante es ``"username said: texto"``. El sender DEBE
+    embeberse en el ``content`` porque el role ``user`` del protocolo OpenAI no
+    carga identidad — sin él, el LLM no sabe quién habló en un grupo.
+
+    La marca de tiempo se inyecta aparte en ``RunAgentUseCase`` cuando el flag
+    ``channels.telegram.add_llm_timestamp`` está activo, leyendo el
+    ``Message.timestamp`` persistido en la DB. Mantener acá un timestamp
+    embebido duplicaría el dato y obligaría a parsearlo en cualquier
+    re-procesamiento del historial.
 
     Args:
-        message: Objeto ``telegram.Message`` con los campos ``from_user`` y ``date`` poblados.
+        message: Objeto ``telegram.Message`` con el campo ``from_user`` poblado.
 
     Returns:
-        String con formato ``"(<timestamp>) <remitente> said: <texto>"``.
+        String con formato ``"<remitente> said: <texto>"``.
     """
     location = getattr(message, "location", None)
     if location and not getattr(location, "live_period", None):
@@ -128,12 +134,6 @@ def format_group_message(message) -> str:
         texto = (message.text or "").strip()
 
     remitente = extract_sender_name(message)
-
-    date = getattr(message, "date", None)
-    if date is not None:
-        ts = date.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-        return f"({ts}) {remitente} said: {texto}"
-
     return f"{remitente} said: {texto}"
 
 

@@ -355,7 +355,7 @@ class ChatHistoryConfig(BaseModel):
     db_filename: RuntimePath = "data/history.db"  # relativo a ~/.inaki/
     max_messages: int = 0  # 0 = sin límite; N = últimos N mensajes al LLM
     merge_chats: bool = False  # False = aislar historial por (channel, chat_id);
-                               # True = compartir todo el historial del agente entre canales/chats
+    # True = compartir todo el historial del agente entre canales/chats
 
 
 class ChannelFallbackConfig(BaseModel):
@@ -633,6 +633,13 @@ class TelegramChannelConfig(BaseModel):
 
     voice_enabled: bool = True
     """Si True, el bot acepta mensajes de voz y los transcribe."""
+
+    add_llm_timestamp: bool = False
+    """Si True, ``RunAgentUseCase`` antepone ``[YYYY-MM-DD HH:MM:SS TZ] `` al
+    ``content`` de cada mensaje USER/ASSISTANT (privados y grupos) antes de
+    armar el prompt para el LLM. Default ``False`` para mantener
+    compatibilidad. El timestamp sale del ``Message.timestamp`` ya persistido
+    en la DB; no se duplica en el ``content`` almacenado."""
 
     broadcast: BroadcastConfig | None = None
     """Config del canal de broadcast entre instancias. None = broadcast inactivo."""

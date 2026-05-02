@@ -6,7 +6,6 @@ Verifica que el código de producción usa duck-typing con getattr (lo hace).
 
 from __future__ import annotations
 
-import re
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -144,17 +143,16 @@ def test_format_group_message_username_tiene_prioridad_sobre_first_name():
     assert resultado == "mi_user said: test"
 
 
-def test_format_group_message_con_timestamp():
-    """Con date presente, incluye prefijo de timestamp en timezone local."""
+def test_format_group_message_ignora_date():
+    """``date`` ya no se usa: el timestamp se inyecta en el use case, no acá."""
     dt = datetime(2026, 4, 12, 19, 32, 5, tzinfo=timezone.utc)
     msg = _message(text="hola", from_user=_user(username="alberto"), date=dt)
     resultado = format_group_message(msg)
-    # El formato es "(YYYY-MM-DD HH:MM:SS TZ) username said: texto"
-    assert re.match(r"^\(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \S+\) alberto said: hola$", resultado)
+    assert resultado == "alberto said: hola"
 
 
-def test_format_group_message_sin_date_no_tiene_timestamp():
-    """Sin date (None), el resultado no incluye prefijo de timestamp."""
+def test_format_group_message_sin_date():
+    """Sin date (None), el resultado tampoco lleva prefijo de timestamp."""
     msg = _message(text="hola", from_user=_user(username="alberto"), date=None)
     resultado = format_group_message(msg)
     assert resultado == "alberto said: hola"
@@ -302,7 +300,9 @@ def test_es_reply_a_sin_reply():
 
 
 def test_es_reply_a_reply_sin_from_user():
-    msg = SimpleNamespace(text="hola", entities=None, reply_to_message=SimpleNamespace(from_user=None))
+    msg = SimpleNamespace(
+        text="hola", entities=None, reply_to_message=SimpleNamespace(from_user=None)
+    )
     assert es_reply_a(msg, "mi_bot") is False
 
 

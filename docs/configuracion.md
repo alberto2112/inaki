@@ -552,6 +552,10 @@ channels:
     debug: false
     voice_enabled: true              # Acepta voz/audio/video_note (default: true)
                                      # Requiere bloque [transcription] resuelto
+    add_llm_timestamp: false         # Antepone "[YYYY-MM-DD HH:MM:SS TZ] " al
+                                     # content de cada mensaje USER/ASSISTANT
+                                     # cuando se arma el prompt para el LLM
+                                     # (privados + grupos). Default: false.
   rest:
     host: "0.0.0.0"
     port: 6498                       # Cada agente tiene su propio puerto

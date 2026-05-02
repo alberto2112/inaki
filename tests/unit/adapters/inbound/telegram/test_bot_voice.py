@@ -283,8 +283,13 @@ def test_bot_registra_handlers_voice_audio_video_note(agent_cfg, mock_container)
     )
 
 
-def test_voice_enabled_false_no_registra_handlers_de_voz(mock_container) -> None:
-    """Spec R1: si `voice_enabled=False`, los handlers de voz NO deben registrarse."""
+def test_voice_enabled_false_registra_handlers_para_persistencia(mock_container) -> None:
+    """Los handlers de voz se registran SIEMPRE: ``voice_enabled`` controla solo
+    si transcribir, NO si persistir el ``file_id`` en ``telegram_files.db``.
+
+    Esto permite que ``download_from_telegram`` recupere audios incluso si la
+    transcripción está deshabilitada en la config.
+    """
     cfg = _mk_agent_cfg(voice_enabled=False, allowed_user_ids=[12345])
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
@@ -299,9 +304,9 @@ def test_voice_enabled_false_no_registra_handlers_de_voz(mock_container) -> None
         for h in registered
         if hasattr(h, "callback") and h.callback == bot._handle_voice_message
     ]
-    assert voice_handler_callbacks == [], (
-        f"Con voice_enabled=False no debería registrarse ningún handler de voz; "
-        f"se encontraron {len(voice_handler_callbacks)}"
+    # 3 filtros: VOICE, AUDIO, VIDEO_NOTE — todos apuntan al mismo callback.
+    assert len(voice_handler_callbacks) == 3, (
+        f"Esperaba 3 handlers de voz registrados, encontrados {len(voice_handler_callbacks)}"
     )
 
 

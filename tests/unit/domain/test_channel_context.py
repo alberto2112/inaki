@@ -103,3 +103,33 @@ def test_user_id_solo_tabs_lanza_error() -> None:
 def test_ambos_campos_vacios_lanza_error() -> None:
     with pytest.raises(ValidationError):
         ChannelContext(channel_type="", user_id="")
+
+
+# ---------------------------------------------------------------------------
+# chat_id opcional
+# ---------------------------------------------------------------------------
+
+
+def test_chat_id_opcional_default_none() -> None:
+    ctx = ChannelContext(channel_type="cli", user_id="local")
+    assert ctx.chat_id is None
+
+
+def test_chat_id_explicito_se_preserva() -> None:
+    ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-1001234")
+    assert ctx.chat_id == "-1001234"
+
+
+def test_chat_id_no_afecta_routing_key() -> None:
+    ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-99")
+    assert ctx.routing_key == "telegram:42"
+
+
+def test_chat_id_vacio_lanza_error() -> None:
+    with pytest.raises(ValidationError):
+        ChannelContext(channel_type="telegram", user_id="42", chat_id="")
+
+
+def test_chat_id_solo_espacios_lanza_error() -> None:
+    with pytest.raises(ValidationError):
+        ChannelContext(channel_type="telegram", user_id="42", chat_id="   ")

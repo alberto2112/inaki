@@ -80,11 +80,22 @@ class AgentContainer:
         # Idempotency guard for wire_photos
         self._photos_wired: bool = False
 
+        # Idempotency guard for wire_telegram_tools
+        self._telegram_tools_wired: bool = False
+
         # ScheduleTaskUseCase — wired en fase 3 por AppContainer. None hasta entonces.
         self.schedule_task: ScheduleTaskUseCase | None = None
 
         # ProcessPhotoUseCase — wired en fase 5 por AppContainer. None si photos no habilitado.
         self.process_photo = None
+
+        # IFileRecordRepo — wired en fase 7 si el agente tiene canal Telegram.
+        # El bot lo lee defensivamente para persistir file_id de cada media entrante.
+        self.telegram_file_repo: object | None = None
+        # IFileDownloader — wired en fase 7. El bot lo usa para pre-descargar
+        # media que llegue con caption (entrega un path concreto al LLM en el
+        # user_input, sin depender del RAG de tools).
+        self.telegram_file_downloader: object | None = None
 
         # Broadcast adapter — wired en fase 4 por AppContainer. None si el agente no
         # tiene ningún canal telegram con bloque broadcast:.
@@ -555,6 +566,80 @@ class AgentContainer:
         self.schedule_task = schedule_task_uc
         self._scheduler_wired = True
         logger.info("AgentContainer '%s': scheduler tool registrada", self.agent_config.id)
+
+    def wire_telegram_tools(
+        self,
+        get_telegram_bot: Callable[[], object | None],
+        telegram_file_repo,
+    ) -> None:
+        """Phase-7 wiring: registra tools que dependen del bot de Telegram + repo.
+
+        Se llama por agente con ``channels.telegram.token`` configurado.
+        ``get_telegram_bot`` resuelve el bot de ESTE agente en runtime.
+        ``telegram_file_repo`` es el singleton compartido por todos los agentes
+        (cada record lleva ``agent_id`` para aislar). Idempotente.
+        """
+        if self._telegram_tools_wired:
+            return
+
+        tg_cfg = self.agent_config.channels.get("telegram")
+        if tg_cfg is None or not tg_cfg.get("token"):
+            self._telegram_tools_wired = True
+            return
+        if telegram_file_repo is None:
+            logger.warning(
+                "AgentContainer '%s': telegram_file_repo es None — tools no registradas",
+                self.agent_config.id,
+            )
+            self._telegram_tools_wired = True
+            return
+
+        from pathlib import Path
+
+        from adapters.outbound.file_transport.telegram_file_downloader import (
+            TelegramFileDownloader,
+        )
+        from adapters.outbound.file_transport.telegram_file_sender import (
+            TelegramFileSender,
+        )
+        from adapters.outbound.tools.download_from_telegram_tool import (
+            DownloadFromTelegramTool,
+        )
+        from adapters.outbound.tools.send_to_telegram_tool import SendToTelegramTool
+
+        ws_cfg = self.agent_config.workspace
+        workspace_path = Path(ws_cfg.path).expanduser().resolve()
+
+        # Exponer el repo en el container para que el bot pueda persistir
+        # file_id de los media entrantes.
+        self.telegram_file_repo = telegram_file_repo
+
+        sender = TelegramFileSender(get_telegram_bot=get_telegram_bot)
+        downloader = TelegramFileDownloader(get_telegram_bot=get_telegram_bot)
+        self.telegram_file_downloader = downloader
+
+        self._tools.register(
+            SendToTelegramTool(
+                sender=sender,
+                workspace=workspace_path,
+                containment=ws_cfg.containment,
+                get_channel_context=self.get_channel_context,
+            )
+        )
+        self._tools.register(
+            DownloadFromTelegramTool(
+                repo=telegram_file_repo,
+                downloader=downloader,
+                workspace=workspace_path,
+                agent_id=self.agent_config.id,
+                get_channel_context=self.get_channel_context,
+            )
+        )
+        self._telegram_tools_wired = True
+        logger.info(
+            "AgentContainer '%s': send_to_telegram + download_from_telegram registradas",
+            self.agent_config.id,
+        )
 
     def wire_photos(
         self,
@@ -1045,6 +1130,42 @@ class AppContainer:
             except Exception as exc:
                 logger.error("Error en wire_photos para agente '%s': %s", agent_id, exc)
 
+        # Phase 7: wire telegram tools (send_to_telegram + download_from_telegram).
+        # El repo telegram_files es singleton compartido (cada record lleva agent_id).
+        # DB en la misma carpeta que history.db / faces.db.
+        self._telegram_file_repo = None
+        if any(
+            (cfg.channels.get("telegram", {}) or {}).get("token")
+            for cfg in registry.list_regular()
+        ):
+            from pathlib import Path
+
+            from adapters.outbound.file_repo.sqlite_telegram_file_repo import (
+                SqliteTelegramFileRepo,
+            )
+
+            first_agent = next(iter(self.agents.values()), None)
+            if first_agent is not None:
+                history_path = Path(first_agent.agent_config.chat_history.db_filename)
+                files_db_path = str(history_path.parent / "telegram_files.db")
+            else:
+                files_db_path = "~/.inaki/data/telegram_files.db"
+            self._telegram_file_repo = SqliteTelegramFileRepo(files_db_path)
+            logger.info("telegram_files.db inicializado: %s", files_db_path)
+
+        for agent_id, container in self.agents.items():
+            if registry.is_sub_agent(agent_id):
+                continue
+            try:
+                container.wire_telegram_tools(
+                    lambda aid=agent_id: self._get_telegram_bot_for(aid),
+                    self._telegram_file_repo,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Error en wire_telegram_tools para agente '%s': %s", agent_id, exc
+                )
+
         # Phase 6: wire memory extractor sub-agents.
         # Si memory.llm.agent_id apunta a un sub-agente, le pasamos su
         # run_agent_one_shot al ConsolidateMemoryUseCase. Si el agent_id
@@ -1212,6 +1333,15 @@ class AppContainer:
         if not self._telegram_bots:
             return None
         return next(iter(self._telegram_bots.values()))
+
+    def _get_telegram_bot_for(self, agent_id: str) -> object | None:
+        """Devuelve el bot de Telegram registrado para ``agent_id`` o ``None``.
+
+        Lo consume :meth:`AgentContainer.wire_telegram_tools` (resolución
+        perezosa: el bot puede no estar registrado al llamarse, pero sí al
+        ejecutarse la tool).
+        """
+        return self._telegram_bots.get(agent_id)
 
     def _on_scheduler_mutation(self) -> None:
         self.scheduler_service.invalidate()

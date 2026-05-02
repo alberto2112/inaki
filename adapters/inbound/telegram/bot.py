@@ -32,6 +32,7 @@ from adapters.outbound.intermediate_sinks.telegram_live import TelegramLiveInter
 from core.domain.entities.task import ScheduledTask
 from core.domain.errors import TaskNotFoundError, TranscriptionError
 from core.domain.value_objects.channel_context import ChannelContext
+from core.domain.value_objects.telegram_file import FileContentType, TelegramFileRecord
 from core.ports.outbound.broadcast_port import BroadcastEmitter, BroadcastMessage, BroadcastReceiver
 from infrastructure.config import AgentConfig
 from infrastructure.container import AgentContainer
@@ -65,6 +66,25 @@ def _format_history_prefix(msg: BroadcastMessage) -> str:
 # y se procesan todos juntos en un único turno. Module-level para override en tests.
 GROUP_RESPONSE_DELAY_MIN_SEC = 7.0
 GROUP_RESPONSE_DELAY_MAX_SEC = 21.0
+
+
+_DEFAULT_EXT_BY_TYPE: dict[str, str] = {
+    "photo": ".jpg",
+    "audio": ".ogg",
+    "video": ".mp4",
+    "file": ".bin",
+}
+
+
+def _extension_for(content_type: str, mime_type: str | None) -> str:
+    """Adivina la extensión apropiada para un media. Replica la lógica de la tool download_from_telegram."""
+    import mimetypes
+
+    if mime_type:
+        ext = mimetypes.guess_extension(mime_type)
+        if ext:
+            return ext
+    return _DEFAULT_EXT_BY_TYPE.get(content_type, ".bin")
 
 
 class TelegramBot:
@@ -170,14 +190,20 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("ratelimit", self._cmd_ratelimit))
         self._app.add_handler(CommandHandler("reload", self._cmd_reload))
         # Handlers de voz ANTES del de texto (el dispatcher de python-telegram-bot
-        # evalúa handlers en orden de registro). Sólo se registran si el feature
-        # flag está activo; con voice_enabled=False no se engancha ningún filtro.
-        if self._voice_enabled:
-            self._app.add_handler(MessageHandler(filters.VOICE, self._handle_voice_message))
-            self._app.add_handler(MessageHandler(filters.AUDIO, self._handle_voice_message))
-            self._app.add_handler(MessageHandler(filters.VIDEO_NOTE, self._handle_voice_message))
+        # evalúa handlers en orden de registro). SIEMPRE registrados: el flag
+        # ``voice_enabled`` controla si transcribir, no si persistir el file_id.
+        self._app.add_handler(MessageHandler(filters.VOICE, self._handle_voice_message))
+        self._app.add_handler(MessageHandler(filters.AUDIO, self._handle_voice_message))
+        self._app.add_handler(MessageHandler(filters.VIDEO_NOTE, self._handle_voice_message))
         # Handler de fotos — antes del de texto para que PHOTO tenga prioridad.
         self._app.add_handler(MessageHandler(filters.PHOTO, self._handle_photo_message))
+        # Documentos y videos: handlers MUDOS — sólo persisten file_id para que
+        # el LLM pueda recuperarlos vía download_from_telegram. No responden ni
+        # transcriben. Coherente con cómo se manejaban hoy los álbumes.
+        self._app.add_handler(MessageHandler(filters.VIDEO, self._handle_silent_media))
+        self._app.add_handler(
+            MessageHandler(filters.Document.ALL, self._handle_silent_media)
+        )
         self._app.add_handler(MessageHandler(filters.LOCATION, self._handle_message))
         self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
 
@@ -546,8 +572,41 @@ class TelegramBot:
             )
             return
 
-        # Album guard — PRIMERO: descarta silenciosamente álbumes (media_group_id seteado).
+        # Álbumes: persisten file_id (sin face/scene). Si el mensaje trae
+        # caption (típicamente solo la primera foto del grupo), se trata como
+        # input del usuario y dispara pipeline UNA vez con __ALBUM__. Sin
+        # caption queda persistido para download_from_telegram(content_type='album').
         if getattr(update.message, "media_group_id", None) is not None:
+            await self._persist_incoming_file(update)
+            caption = (getattr(update.message, "caption", None) or "").strip()
+            if not caption:
+                return
+
+            # Pre-descargar la foto que trajo el caption. Las demás del álbum
+            # quedan disponibles via download_from_telegram(content_type='album').
+            meta_album = self._extract_file_metadata(update.message)
+            ubicacion_album = ""
+            if meta_album is not None:
+                _ct_a, payload_a, mime_a = meta_album
+                local_path_a = await self._pre_download_media(
+                    file_id=payload_a.file_id,
+                    file_unique_id=payload_a.file_unique_id,
+                    content_type="photo",
+                    mime_type=mime_a,
+                )
+                if local_path_a is not None:
+                    ubicacion_album = (
+                        f" (first photo at {local_path_a}; "
+                        "use download_from_telegram(content_type='album') for the rest)"
+                    )
+
+            user_input = f"__ALBUM__{ubicacion_album}\n\n{caption}"
+            chat_type_album = update.effective_chat.type
+            if chat_type_album in _TIPOS_GRUPO:
+                await self._handle_group_message(update, user_input, chat_type_album)
+            else:
+                await self._set_reaction(update, "👀")
+                await self._run_pipeline(update, user_input, chat_type=chat_type_album)
             return
 
         chat_type = update.effective_chat.type
@@ -595,6 +654,9 @@ class TelegramBot:
             channel="telegram",
             chat_id=chat_id,
         )
+
+        # Persistir file_id en telegram_files.db (best-effort).
+        await self._persist_incoming_file(update, history_id=history_id)
 
         try:
             result = await process_photo_uc.execute(
@@ -814,6 +876,179 @@ class TelegramBot:
         await asyncio.sleep(delay)
         await self._run_group_pipeline(chat_id_str, chat_type)
 
+    def _extract_file_metadata(
+        self, message
+    ) -> tuple[FileContentType, object, str | None] | None:
+        """Detecta el media payload de un Message y devuelve (content_type, payload, mime).
+
+        ``payload`` es el objeto de telegram (PhotoSize, Voice, Audio, Video,
+        VideoNote o Document) — desde ahí se leen ``file_id``, ``file_unique_id``
+        y ``file_size``. Devuelve ``None`` si no hay media reconocible.
+        """
+        if message.photo:
+            return "photo", message.photo[-1], "image/jpeg"
+        if getattr(message, "voice", None):
+            return "audio", message.voice, getattr(message.voice, "mime_type", None) or "audio/ogg"
+        if getattr(message, "audio", None):
+            return "audio", message.audio, getattr(message.audio, "mime_type", None)
+        if getattr(message, "video", None):
+            return "video", message.video, getattr(message.video, "mime_type", None) or "video/mp4"
+        if getattr(message, "video_note", None):
+            return "video", message.video_note, "video/mp4"
+        if getattr(message, "document", None):
+            return "file", message.document, getattr(message.document, "mime_type", None)
+        return None
+
+    async def _pre_download_media(
+        self,
+        *,
+        file_id: str,
+        file_unique_id: str,
+        content_type: FileContentType,
+        mime_type: str | None,
+    ) -> "Path | None":
+        """Descarga el media a ``<workspace>/telegram/<file_unique_id>.<ext>`` (idempotente).
+
+        Devuelve el path local o ``None`` si no hay downloader o falla la
+        descarga. El path queda absoluto y es idéntico al que devolvería
+        ``download_from_telegram``: cache key = ``file_unique_id``.
+
+        Best-effort: cualquier excepción se loggea y devuelve None.
+        """
+        from pathlib import Path
+
+        downloader = getattr(self._container, "telegram_file_downloader", None)
+        if downloader is None:
+            return None
+
+        ws_cfg = self._agent_cfg.workspace
+        workspace = Path(ws_cfg.path).expanduser().resolve()
+        download_dir = workspace / "telegram"
+
+        ext = _extension_for(content_type, mime_type)
+        dest = download_dir / f"{file_unique_id}{ext}"
+
+        if dest.exists():
+            return dest
+
+        try:
+            await downloader.download(file_id=file_id, dest=dest)
+            return dest
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "No pude pre-descargar media (agent=%s, file_unique_id=%s): %s",
+                self._agent_cfg.id,
+                file_unique_id,
+                exc,
+            )
+            return None
+
+    async def _persist_incoming_file(
+        self,
+        update: Update,
+        *,
+        history_id: int | None = None,
+    ) -> None:
+        """Guarda metadata del media en ``telegram_files.db`` (best-effort).
+
+        No lanza: si el repo no está disponible o la persistencia falla, se
+        loggea y se continúa — la feature no debe romper el flujo principal.
+        """
+        repo = getattr(self._container, "telegram_file_repo", None)
+        if repo is None:
+            return
+        message = update.message
+        if message is None:
+            return
+        meta = self._extract_file_metadata(message)
+        if meta is None:
+            return
+        content_type, payload, mime_type = meta
+
+        try:
+            from datetime import datetime, timezone
+
+            received = (
+                message.date.astimezone(timezone.utc)
+                if getattr(message, "date", None) is not None
+                else datetime.now(timezone.utc)
+            )
+            caption = (getattr(message, "caption", None) or None)
+            if caption is not None:
+                caption = caption.strip() or None
+
+            record = TelegramFileRecord(
+                agent_id=self._agent_cfg.id,
+                channel="telegram",
+                chat_id=str(update.effective_chat.id),
+                content_type=content_type,
+                file_id=payload.file_id,
+                file_unique_id=payload.file_unique_id,
+                media_group_id=getattr(message, "media_group_id", None),
+                caption=caption,
+                history_id=history_id,
+                mime_type=mime_type,
+                received_at=received,
+            )
+            await repo.save(record)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "No se pudo persistir telegram_file (agent=%s, content_type=%s): %s",
+                self._agent_cfg.id,
+                content_type,
+                exc,
+            )
+
+    async def _handle_silent_media(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handler para video/document.
+
+        - Persiste el ``file_id`` SIEMPRE en ``telegram_files.db``.
+        - Si el media trae caption, lo trata como un mensaje del usuario:
+          inyecta ``__FILE__/__VIDEO__ <name>\\n\\n<caption>`` y dispara el
+          pipeline (privado o grupo según corresponda).
+        - Sin caption: queda persistido para que el LLM lo recupere después
+          con ``download_from_telegram``, pero NO genera respuesta.
+        """
+        if not self._is_allowed(update.effective_user.id):
+            return
+
+        await self._persist_incoming_file(update)
+
+        message = update.message
+        if message is None:
+            return
+        caption = (getattr(message, "caption", None) or "").strip()
+        if not caption:
+            return  # silencioso: archivo "depositado" sin instrucción
+
+        meta = self._extract_file_metadata(message)
+        if meta is None:
+            return
+        content_type, payload, mime_type = meta
+        prefix = "__VIDEO__" if content_type == "video" else "__FILE__"
+        filename = getattr(payload, "file_name", None) or "<unnamed>"
+
+        # Pre-descargar al workspace para entregar un path concreto al LLM —
+        # evita depender del RAG de tools y de que el LLM elija
+        # ``download_from_telegram``.
+        local_path = await self._pre_download_media(
+            file_id=payload.file_id,
+            file_unique_id=payload.file_unique_id,
+            content_type=content_type,
+            mime_type=mime_type,
+        )
+        ubicacion = f" at {local_path}" if local_path is not None else ""
+        user_input = f"{prefix} {filename}{ubicacion}\n\n{caption}"
+
+        chat_type = message.chat.type if message.chat else "private"
+        if chat_type in _TIPOS_GRUPO:
+            await self._handle_group_message(update, user_input, chat_type)
+        else:
+            await self._set_reaction(update, "👀")
+            await self._run_pipeline(update, user_input, chat_type=chat_type)
+
     async def _handle_voice_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -829,8 +1064,13 @@ class TelegramBot:
             )
             return
 
+        # Persistir file_id SIEMPRE, antes de cualquier check de feature o tamaño:
+        # el LLM debe poder recuperar el media aunque la transcripción esté
+        # apagada o el audio sea demasiado grande para procesar.
+        await self._persist_incoming_file(update)
+
         if not self._voice_enabled:
-            # Feature flag apagado: silencio total, ni reacción ni reply.
+            # Transcripción deshabilitada: ya persistimos, salimos sin reply.
             return
 
         payload = await extract_audio_payload(update.message)
@@ -959,6 +1199,7 @@ class TelegramBot:
             ChannelContext(
                 channel_type="telegram",
                 user_id=str(update.effective_user.id),
+                chat_id=str(chat_id),
             )
         )
         # En grupos NO usamos intermediate_sink: los intermedios del LLM (texto que
@@ -1184,7 +1425,11 @@ class TelegramBot:
 
         self._container.run_agent.set_extra_system_sections([s for s in secciones if s])
         self._container.set_channel_context(
-            ChannelContext(channel_type="telegram", user_id=self._agent_cfg.id)
+            ChannelContext(
+                channel_type="telegram",
+                user_id=self._agent_cfg.id,
+                chat_id=chat_id_str,
+            )
         )
         try:
             response = await self._container.run_agent.execute(
@@ -1321,6 +1566,48 @@ class TelegramBot:
         scheduler. Delega en el bot interno de `python-telegram-bot`.
         """
         await self._app.bot.send_message(chat_id=chat_id, text=text)
+
+    async def send_photo(
+        self,
+        chat_id: int,
+        photo: object,
+        caption: str | None = None,
+    ) -> None:
+        """Envía una foto a un chat. ``photo`` puede ser URL, path local o file-like."""
+        await self._app.bot.send_photo(chat_id=chat_id, photo=photo, caption=caption)
+
+    async def send_audio(
+        self,
+        chat_id: int,
+        audio: object,
+        caption: str | None = None,
+    ) -> None:
+        await self._app.bot.send_audio(chat_id=chat_id, audio=audio, caption=caption)
+
+    async def send_video(
+        self,
+        chat_id: int,
+        video: object,
+        caption: str | None = None,
+    ) -> None:
+        await self._app.bot.send_video(chat_id=chat_id, video=video, caption=caption)
+
+    async def send_document(
+        self,
+        chat_id: int,
+        document: object,
+        caption: str | None = None,
+    ) -> None:
+        await self._app.bot.send_document(
+            chat_id=chat_id, document=document, caption=caption
+        )
+
+    async def send_media_group(
+        self,
+        chat_id: int,
+        media: list,
+    ) -> None:
+        await self._app.bot.send_media_group(chat_id=chat_id, media=media)
 
     def run_polling(self) -> None:
         """Inicia el bot en modo polling (bloqueante)."""

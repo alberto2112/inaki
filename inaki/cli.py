@@ -9,6 +9,7 @@ Modos de uso:
   inaki consolidate                        → consolida TODOS los agentes habilitados (con delay)
   inaki consolidate --agent dev            → consolida solo el agente indicado
   inaki daemon                             → servicio systemd (todos los canales de todos los agentes)
+  inaki reload                             → reinicia el daemon (cierra canales, recarga config y vuelve a levantar)
   inaki --config /etc/inaki/config daemon  → daemon con config custom
   inaki --remote http://raspi.local:6497   → conectarse a un daemon remoto (env: INAKI_REMOTE)
   inaki --remote URL --remote-key KEY chat → conectarse a daemon remoto con auth key explícita
@@ -75,8 +76,13 @@ def _bootstrap(config_dir: Path, agents_dir: Path):
     return global_config, registry
 
 
-def _run_daemon(global_config, registry) -> None:
-    """Arranca todos los canales en modo servicio systemd."""
+def _run_daemon(config_dir: Path, agents_dir: Path, global_config, registry) -> None:
+    """Arranca todos los canales en modo servicio systemd.
+
+    Recibe paths + el bootstrap inicial ya hecho. El primer arranque usa el initial
+    (sin re-leer config), y cada reload re-invoca ``_bootstrap`` desde cero leyendo
+    el contenido actual de ``config_dir`` / ``agents_dir``.
+    """
     import logging
     from infrastructure.container import AppContainer
     from adapters.inbound.daemon.runner import run_daemon
@@ -84,8 +90,13 @@ def _run_daemon(global_config, registry) -> None:
     logger = logging.getLogger(__name__)
     logger.info("Iniciando Iñaki en modo daemon")
 
-    app_container = AppContainer(global_config, registry)
-    asyncio.run(run_daemon(app_container, registry))
+    initial_container = AppContainer(global_config, registry)
+
+    def bootstrap_fn():
+        gc, reg = _bootstrap(config_dir, agents_dir)
+        return AppContainer(gc, reg), reg
+
+    asyncio.run(run_daemon(bootstrap_fn, initial=(initial_container, registry)))
 
 
 def _run_cli(client, agent_id: str) -> None:
@@ -296,7 +307,7 @@ def daemon(
     config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
     config_dir, agents_dir = _resolve_dirs(config_dir_override)
     global_config, registry = _bootstrap(config_dir, agents_dir)
-    _run_daemon(global_config, registry)
+    _run_daemon(config_dir, agents_dir, global_config, registry)
 
 
 @app.command()
@@ -327,6 +338,23 @@ def inspect(
 
     result = _handle_daemon_errors(lambda: client.inspect(agent_id, message))
     print(json.dumps(result, indent=2, ensure_ascii=False))
+
+
+@app.command()
+def reload(
+    ctx: typer.Context,
+) -> None:
+    """Reinicia el daemon: cierra todos los channels, recarga config y vuelve a levantar."""
+    config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
+    remote_url: Optional[str] = ctx.obj.get("remote_url") if ctx.obj else None
+    remote_key: Optional[str] = ctx.obj.get("remote_key") if ctx.obj else None
+    config_dir, _ = _resolve_dirs(config_dir_override)
+
+    client, _ = _build_daemon_client(config_dir, remote_url, remote_key)
+    _require_daemon(client)
+
+    _handle_daemon_errors(lambda: client.daemon_reload())
+    print("Daemon reiniciando...")
 
 
 @app.command()

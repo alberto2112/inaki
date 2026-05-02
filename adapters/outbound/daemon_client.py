@@ -72,6 +72,29 @@ class DaemonClient:
             return False
 
     # ------------------------------------------------------------------
+    # daemon_reload — POST /admin/reload (cierra y reabre todos los canales)
+    # ------------------------------------------------------------------
+
+    def daemon_reload(self) -> dict[str, Any]:
+        """Solicita un reload completo del daemon.
+
+        El admin server responde 200 inmediatamente y el reload ocurre en background.
+        Como parte del reload el propio admin server se reinicia, así que es esperable
+        que conexiones persistentes se rompan poco después de recibir el 200.
+
+        Raises:
+            DaemonNotRunningError: si el daemon no es alcanzable.
+            DaemonAuthError: si la autenticación falla (401/403).
+            DaemonClientError: para otros errores HTTP del daemon.
+        """
+        return self._post(
+            "/admin/reload",
+            json={},
+            timeout=_DEFAULT_TIMEOUT,
+            error_map={401: DaemonAuthError, 403: DaemonAuthError},
+        )
+
+    # ------------------------------------------------------------------
     # inspect
     # ------------------------------------------------------------------
 

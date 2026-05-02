@@ -202,8 +202,12 @@ async def test_handle_silent_media_persiste_metadata_correcta():
     assert record.mime_type == "application/pdf"
 
 
-async def test_album_con_caption_dispara_pipeline_en_privado():
+async def test_album_con_caption_dispara_pipeline_en_privado(monkeypatch):
+    import adapters.inbound.telegram.bot as bot_mod
+    monkeypatch.setattr(bot_mod, "ALBUM_GATHER_DELAY_SEC", 0.0)
+
     bot, container, repo = _make_bot()
+    repo.query_recent.return_value = []  # álbum vacío en repo
     update = _photo_update(media_group_id="grupo-1")
     update.message.chat = MagicMock(type="private")
     update.message.caption = "mandá esto a juan"
@@ -230,6 +234,70 @@ async def test_album_sin_caption_solo_persiste_y_no_dispara_pipeline():
 
     repo.save.assert_awaited_once()
     bot._run_pipeline.assert_not_awaited()
+
+
+async def test_album_con_caption_recopila_todas_las_fotos_persistidas(
+    monkeypatch, tmp_path
+):
+    """El handler espera, lee TODAS las fotos del media_group_id y las descarga."""
+    import adapters.inbound.telegram.bot as bot_mod
+    from core.domain.value_objects.telegram_file import TelegramFileRecord
+
+    monkeypatch.setattr(bot_mod, "ALBUM_GATHER_DELAY_SEC", 0.0)
+
+    bot, container, repo = _make_bot(tmp_path=tmp_path)
+
+    # Simulamos que en el repo ya están las 3 fotos del álbum (incluyendo la
+    # que disparó este handler). El handler las junta todas.
+    base = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    records = []
+    for i in range(3):
+        records.append(TelegramFileRecord(
+            agent_id="test-agent",
+            channel="telegram",
+            chat_id="-100",
+            content_type="photo",
+            file_id=f"ID-{i}",
+            file_unique_id=f"uniq-{i}",
+            media_group_id="mgrupo-X",
+            mime_type="image/jpeg",
+            received_at=base,
+        ))
+    # query_recent puede devolver también miembros de OTROS álbumes — el
+    # handler debe filtrar por media_group_id.
+    records.append(TelegramFileRecord(
+        agent_id="test-agent", channel="telegram", chat_id="-100",
+        content_type="photo", file_id="OTRA", file_unique_id="otra-uniq",
+        media_group_id="otro-grupo", mime_type="image/jpeg",
+        received_at=base,
+    ))
+    repo.query_recent.return_value = records
+
+    async def _fake_download(*, file_id, dest):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"x")
+
+    fake_dl = MagicMock()
+    fake_dl.download = AsyncMock(side_effect=_fake_download)
+    container.telegram_file_downloader = fake_dl
+
+    update = _photo_update(media_group_id="mgrupo-X")
+    update.message.chat = MagicMock(type="private")
+    update.message.caption = "mandá el álbum"
+    bot._run_pipeline = AsyncMock()
+    bot._set_reaction = AsyncMock()
+
+    await bot._handle_photo_message(update, MagicMock())
+
+    bot._run_pipeline.assert_awaited_once()
+    args, kwargs = bot._run_pipeline.call_args
+    user_input = args[1] if len(args) > 1 else kwargs.get("user_input")
+    # 3 paths del álbum correcto (otro-grupo filtrado)
+    assert "(3 photos)" in user_input
+    for i in range(3):
+        assert f"uniq-{i}.jpg" in user_input
+    assert "otra-uniq" not in user_input
+    assert "mandá el álbum" in user_input
 
 
 async def test_silent_media_user_no_autorizado_no_persiste():

@@ -67,6 +67,13 @@ def _format_history_prefix(msg: BroadcastMessage) -> str:
 GROUP_RESPONSE_DELAY_MIN_SEC = 7.0
 GROUP_RESPONSE_DELAY_MAX_SEC = 21.0
 
+# Ventana de espera para reunir todas las fotos de un álbum antes de disparar
+# el pipeline. Telegram entrega los miembros de un álbum como mensajes
+# separados en sucesión rápida (100-500ms entre cada uno). El handler que
+# recibe el caption duerme esta cantidad para que los demás miembros lleguen
+# y se persistan, y luego junta TODOS los paths para el LLM.
+ALBUM_GATHER_DELAY_SEC = 2.0
+
 
 _DEFAULT_EXT_BY_TYPE: dict[str, str] = {
     "photo": ".jpg",
@@ -577,28 +584,26 @@ class TelegramBot:
         # input del usuario y dispara pipeline UNA vez con __ALBUM__. Sin
         # caption queda persistido para download_from_telegram(content_type='album').
         if getattr(update.message, "media_group_id", None) is not None:
+            media_group_id = update.message.media_group_id
             await self._persist_incoming_file(update)
             caption = (getattr(update.message, "caption", None) or "").strip()
             if not caption:
                 return
 
-            # Pre-descargar la foto que trajo el caption. Las demás del álbum
-            # quedan disponibles via download_from_telegram(content_type='album').
-            meta_album = self._extract_file_metadata(update.message)
-            ubicacion_album = ""
-            if meta_album is not None:
-                _ct_a, payload_a, mime_a = meta_album
-                local_path_a = await self._pre_download_media(
-                    file_id=payload_a.file_id,
-                    file_unique_id=payload_a.file_unique_id,
-                    content_type="photo",
-                    mime_type=mime_a,
-                )
-                if local_path_a is not None:
-                    ubicacion_album = (
-                        f" (first photo at {local_path_a}; "
-                        "use download_from_telegram(content_type='album') for the rest)"
-                    )
+            # Race condition de Telegram: las demás fotos del álbum aún no han
+            # llegado en este momento. Esperamos un poco para que se persistan
+            # y después juntamos TODAS las del media_group_id desde la DB.
+            await asyncio.sleep(ALBUM_GATHER_DELAY_SEC)
+
+            chat_id_str = str(update.effective_chat.id)
+            paths_album = await self._gather_album_paths(
+                media_group_id=media_group_id, chat_id=chat_id_str
+            )
+            if paths_album:
+                paths_str = "\n".join(f"- {p}" for p in paths_album)
+                ubicacion_album = f" ({len(paths_album)} photos):\n{paths_str}"
+            else:
+                ubicacion_album = ""
 
             user_input = f"__ALBUM__{ubicacion_album}\n\n{caption}"
             chat_type_album = update.effective_chat.type
@@ -898,6 +903,56 @@ class TelegramBot:
         if getattr(message, "document", None):
             return "file", message.document, getattr(message.document, "mime_type", None)
         return None
+
+    async def _gather_album_paths(
+        self, *, media_group_id: str, chat_id: str
+    ) -> list["Path"]:
+        """Junta y pre-descarga TODAS las fotos persistidas para un media_group_id.
+
+        Llamar DESPUÉS de esperar la ventana ``ALBUM_GATHER_DELAY_SEC`` para
+        que las demás fotos del álbum hayan sido persistidas por sus handlers.
+
+        Devuelve los paths absolutos en orden de recepción (received_at ASC,
+        coherente con la query del repo). Best-effort: si el repo o el
+        downloader no están, devuelve lista vacía.
+        """
+        repo = getattr(self._container, "telegram_file_repo", None)
+        if repo is None:
+            return []
+
+        try:
+            # 100 cubre cualquier álbum razonable (Telegram limita a 10
+            # miembros por álbum; dejamos margen para múltiples álbumes
+            # recientes y filtramos por media_group_id).
+            records = await repo.query_recent(
+                agent_id=self._agent_cfg.id,
+                channel="telegram",
+                chat_id=chat_id,
+                content_type="album",
+                count=100,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "No pude leer álbum del repo (agent=%s, mgid=%s): %s",
+                self._agent_cfg.id,
+                media_group_id,
+                exc,
+            )
+            return []
+
+        paths: list[Path] = []
+        for record in records:
+            if record.media_group_id != media_group_id:
+                continue
+            local_path = await self._pre_download_media(
+                file_id=record.file_id,
+                file_unique_id=record.file_unique_id,
+                content_type="photo",
+                mime_type=record.mime_type,
+            )
+            if local_path is not None:
+                paths.append(local_path)
+        return paths
 
     async def _pre_download_media(
         self,

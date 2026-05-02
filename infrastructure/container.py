@@ -602,10 +602,12 @@ class AgentContainer:
         from adapters.outbound.file_transport.telegram_file_sender import (
             TelegramFileSender,
         )
-        from adapters.outbound.tools.download_from_telegram_tool import (
+        from adapters.inbound.telegram.tools.download_from_telegram_tool import (
             DownloadFromTelegramTool,
         )
-        from adapters.outbound.tools.send_to_telegram_tool import SendToTelegramTool
+        from adapters.inbound.telegram.tools.send_to_telegram_tool import (
+            SendToTelegramTool,
+        )
 
         ws_cfg = self.agent_config.workspace
         workspace_path = Path(ws_cfg.path).expanduser().resolve()

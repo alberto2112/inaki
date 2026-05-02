@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from adapters.outbound.tools.download_from_telegram_tool import (
+from adapters.inbound.telegram.tools.download_from_telegram_tool import (
     DownloadFromTelegramTool,
 )
 from core.domain.value_objects.channel_context import ChannelContext

@@ -711,11 +711,13 @@ class TelegramBot:
         """Maneja mensajes de chats grupales según el behavior configurado.
 
         Flujo:
-        1. Filtros: allowed_chat_ids, behavior, destinatario explícito, mention check,
-           rate limiter (autonomous).
+        1. Filtros: allowed_chat_ids, behavior, destinatario explícito, mention check.
         2. Persistir el mensaje en el historial via ``record_user_message``.
         3. Reaccionar 👀 (confirma al usuario que lo leíste).
-        4. Programar un flush task si no hay uno corriendo. Mensajes que lleguen
+        4. Rate limiter (solo en autonomous): si el sender es humano, resetea el
+           limitador primero. Si hay breach, se sale sin programar respuesta pero
+           el mensaje ya quedó guardado y reaccionado.
+        5. Programar un flush task si no hay uno corriendo. Mensajes que lleguen
            dentro de la ventana de delay se acumulan en el historial y se procesan
            todos juntos en un único turno cuando el delay vence.
         """
@@ -755,7 +757,19 @@ class TelegramBot:
             if not dirigido_a(update.message, self._bot_username):
                 return
 
+        contenido_grupo = format_group_message(update.message)
+        await self._container.run_agent.record_user_message(
+            contenido_grupo,
+            channel="telegram",
+            chat_id=chat_id_str,
+        )
+        await self._set_group_reaction(update, "👀")
+
         if behavior == "autonomous" and self._rate_limiter is not None:
+            sender = update.message.from_user
+            if sender and not sender.is_bot:
+                self._rate_limiter.reset(self._agent_cfg.id, chat_id_str)
+
             breach = self._rate_limiter.check_and_increment(
                 self._agent_cfg.id,
                 chat_id_str,
@@ -769,14 +783,6 @@ class TelegramBot:
                     breach.counter,
                 )
                 return
-
-        contenido_grupo = format_group_message(update.message)
-        await self._container.run_agent.record_user_message(
-            contenido_grupo,
-            channel="telegram",
-            chat_id=chat_id_str,
-        )
-        await self._set_group_reaction(update, "👀")
 
         self._schedule_group_flush(chat_id_str, chat_type)
 

@@ -53,6 +53,7 @@ from core.use_cases.run_agent import RunAgentUseCase
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from core.use_cases.schedule_task import ScheduleTaskUseCase
 from infrastructure.config import AgentConfig, AgentRegistry, GlobalConfig, TelegramChannelConfig
+from infrastructure.daemon_reloader import DaemonReloader
 from infrastructure.factories.embedding_factory import EmbeddingProviderFactory
 from infrastructure.factories.llm_factory import LLMProviderFactory
 from infrastructure.factories.transcription_factory import TranscriptionProviderFactory
@@ -907,6 +908,10 @@ class AppContainer:
 
         # Registro de bots de Telegram — el daemon runner los registra al arrancar
         self._telegram_bots: dict[str, object] = {}
+
+        # Coordinador de reload del daemon — lo consumen el admin REST y el bot de Telegram
+        # para señalar al runner que debe reiniciar todos los channels.
+        self.reloader = DaemonReloader()
 
         # Phase 1: build all AgentContainers (existing loop, unchanged)
         for agent_cfg in registry.list_all():

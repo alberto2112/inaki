@@ -12,6 +12,7 @@ from adapters.inbound.rest.admin.schemas import (
     AgentsResponse,
     ConsolidateRequest,
     ConsolidateResponse,
+    DaemonReloadResponse,
     HealthResponse,
     InspectRequest,
     SchedulerReloadResponse,
@@ -55,6 +56,24 @@ async def scheduler_reload(request: Request) -> SchedulerReloadResponse:
     scheduler_service = request.app.state.app_container.scheduler_service
     await scheduler_service.invalidate()
     return SchedulerReloadResponse()
+
+
+@router.post(
+    "/admin/reload",
+    response_model=DaemonReloadResponse,
+    dependencies=[Depends(check_admin_auth)],
+)
+async def daemon_reload(request: Request) -> DaemonReloadResponse:
+    """Reinicia el daemon in-place: cierra todos los canales, recarga config y vuelve a levantar.
+
+    Endpoint asíncrono — devuelve 200 inmediatamente y el reload ocurre en background.
+    El cliente HTTP que llama (CLI, Telegram bot) puede perder la conexión cuando el
+    admin server se reinicie; eso es esperado.
+    """
+    reloader = request.app.state.app_container.reloader
+    reloader.request_reload()
+    logger.info("Reload solicitado vía POST /admin/reload")
+    return DaemonReloadResponse()
 
 
 @router.post("/inspect", dependencies=[Depends(check_admin_auth)])

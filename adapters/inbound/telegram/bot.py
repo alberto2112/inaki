@@ -75,12 +75,17 @@ class TelegramBot:
         broadcast_emitter: BroadcastEmitter | None = None,
         broadcast_receiver: BroadcastReceiver | None = None,
         rate_limiter=None,
+        reloader=None,
     ) -> None:
         self._agent_cfg = agent_cfg
         self._container = container
         self._broadcast_emitter = broadcast_emitter
         self._broadcast_receiver = broadcast_receiver
         self._rate_limiter = rate_limiter
+        # DaemonReloader compartido — lo inyecta el daemon runner al levantar el bot.
+        # Permite que el handler /reload cierre y reabra todos los canales del daemon.
+        # Opcional: en tests o arranques sueltos puede ser None y /reload responde sin efecto.
+        self._reloader = reloader
 
         tg_cfg = agent_cfg.channels.get("telegram", {})
         self._token: str = tg_cfg.get("token", "")
@@ -163,6 +168,7 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("scheduler", self._cmd_scheduler))
         self._app.add_handler(CommandHandler("chatid", self._cmd_chatid))
         self._app.add_handler(CommandHandler("ratelimit", self._cmd_ratelimit))
+        self._app.add_handler(CommandHandler("reload", self._cmd_reload))
         # Handlers de voz ANTES del de texto (el dispatcher de python-telegram-bot
         # evalúa handlers en orden de registro). Sólo se registran si el feature
         # flag está activo; con voice_enabled=False no se engancha ningún filtro.
@@ -233,6 +239,7 @@ class TelegramBot:
             "/scheduler enable <id> — Habilitar una tarea\n"
             "/scheduler disable <id> — Deshabilitar una tarea\n"
             "/ratelimit — Mostrar/ajustar el rate limiter del broadcast en runtime\n"
+            "/reload — Reiniciar el daemon (cierra y vuelve a levantar todos los canales)\n"
             "/start — Presentación\n"
             "/help — Este mensaje"
         )
@@ -282,6 +289,31 @@ class TelegramBot:
         except Exception as exc:
             logger.exception("Error en /clear_all Telegram para '%s'", self._agent_cfg.id)
             await update.message.reply_text(f"Error: {exc}")
+
+    async def _cmd_reload(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Reinicia el daemon: cierra todos los channels, recarga config y vuelve a levantar.
+
+        Equivalente a ``inaki reload`` o ``POST /admin/reload``. El bot que recibió el
+        comando se va a apagar como parte del reload — el reply se envía ANTES de señalar
+        al runner para que el usuario tenga feedback antes del corte.
+        """
+        if not self._is_allowed(update.effective_user.id):
+            return
+        if self._reloader is None:
+            await update.message.reply_text(
+                "Reload no disponible — el bot no fue arrancado con DaemonReloader inyectado."
+            )
+            return
+        await update.message.reply_text("Reiniciando daemon...")
+        logger.info(
+            "Reload solicitado vía /reload Telegram",
+            extra={
+                "agent_id": self._agent_cfg.id,
+                "user_id": update.effective_user.id,
+                "chat_id": update.effective_chat.id,
+            },
+        )
+        self._reloader.request_reload()
 
     async def _cmd_ratelimit(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """`/ratelimit [count [window] | reset]` — override en runtime del rate limiter.
@@ -1260,6 +1292,7 @@ class TelegramBot:
             BotCommand("scheduler", "Gestionar tareas programadas (list/show/enable/disable)"),
             BotCommand("chatid", "Obtener el ID del chat actual (útil para configurar grupos)"),
             BotCommand("ratelimit", "Ver/ajustar el rate limiter del broadcast en runtime"),
+            BotCommand("reload", "Reiniciar el daemon (cierra y vuelve a levantar todos los canales)"),
         ]
         try:
             await self._app.bot.set_my_commands(commands)

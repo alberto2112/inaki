@@ -15,6 +15,12 @@ class SchedulerReloadResponse(BaseModel):
     reloaded: bool = True
 
 
+class DaemonReloadResponse(BaseModel):
+    """Respuesta de POST /admin/reload — el daemon va a cerrar canales y volver a levantar."""
+
+    reloading: bool = True
+
+
 class InspectRequest(BaseModel):
     agent_id: str
     mensaje: str

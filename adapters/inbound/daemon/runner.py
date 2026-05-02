@@ -2,10 +2,15 @@
 Daemon runner — arranca todos los canales de todos los agentes en un único event loop.
 
 Se ejecuta como servicio systemd. Levanta en paralelo:
+  - Un admin server FastAPI/uvicorn (puerto global)
   - Un servidor FastAPI/uvicorn por cada agente con canal 'rest'
   - Un bot Telegram por cada agente con canal 'telegram'
 
 Maneja SIGTERM/SIGINT para shutdown gracioso (systemd KillMode=process).
+También soporta reload in-place: cuando alguien señaliza ``app_container.reloader``
+(vía ``inaki reload``, ``POST /admin/reload`` o ``/reload`` en Telegram), el runner
+cierra todos los canales, ejecuta ``app_container.shutdown()``, re-bootstrappea config
+y vuelve a levantar todo.
 """
 
 from __future__ import annotations
@@ -13,8 +18,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+from typing import Callable
 
 logger = logging.getLogger(__name__)
+
+
+# Tipo del factory que produce un (AppContainer, AgentRegistry) en cada iteración
+# del loop de reload. Se invoca al primer arranque y otra vez por cada reload.
+BootstrapFn = Callable[[], tuple[object, object]]
 
 
 async def _run_admin_server(app_container, admin_cfg, servers: list) -> None:
@@ -76,6 +87,7 @@ async def _run_telegram_bot(agent_cfg, container, app_container=None) -> None:
     # Leer adapters de broadcast del container (wired en Phase 4 de AppContainer).
     broadcast_adapter = getattr(container, "broadcast_adapter", None)
     rate_limiter = getattr(container, "broadcast_rate_limiter", None)
+    reloader = getattr(app_container, "reloader", None) if app_container else None
 
     try:
         bot = TelegramBot(
@@ -84,6 +96,7 @@ async def _run_telegram_bot(agent_cfg, container, app_container=None) -> None:
             broadcast_emitter=broadcast_adapter,
             broadcast_receiver=broadcast_adapter,
             rate_limiter=rate_limiter,
+            reloader=reloader,
         )
     except ValueError as exc:
         logger.warning("Telegram bot no iniciado para '%s': %s", agent_cfg.id, exc)
@@ -118,25 +131,13 @@ async def _run_telegram_bot(agent_cfg, container, app_container=None) -> None:
             await bot._app.stop()
 
 
-async def run_daemon(app_container, registry) -> None:
+def _build_channel_tasks(
+    app_container, registry
+) -> tuple[list[asyncio.Task], list]:
+    """Construye las tasks de admin/REST/Telegram para una iteración del runner.
+
+    Se llama una vez por arranque y otra vez por cada reload.
     """
-    Arranca todos los canales de todos los agentes en paralelo.
-    Cancela graciosamente cuando recibe SIGTERM o SIGINT.
-    """
-    # TODO: implementar handler de channel_send para daemon (dispatch handler para tareas sin conversación activa)
-    # Scheduler startup
-    await app_container.startup()
-
-    shutdown_event = asyncio.Event()
-
-    def _handle_signal(*_):
-        logger.info("Señal de apagado recibida — iniciando shutdown gracioso")
-        shutdown_event.set()
-
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, _handle_signal)
-
     tasks: list[asyncio.Task] = []
     uvicorn_servers: list = []
 
@@ -187,26 +188,17 @@ async def run_daemon(app_container, registry) -> None:
         )
         tasks.append(task)
 
-    if not tasks:
-        logger.warning(
-            "No hay canales configurados (ningún agente tiene 'rest' ni 'telegram'). "
-            "El daemon no tiene nada que hacer."
-        )
-        return
+    return tasks, uvicorn_servers
 
-    logger.info(
-        "Daemon iniciado: %d tarea(s) activa(s): %s",
-        len(tasks),
-        [t.get_name() for t in tasks],
-    )
 
-    # Esperar shutdown o que alguna tarea falle
-    shutdown_task = asyncio.create_task(shutdown_event.wait(), name="shutdown")
-    done, pending = await asyncio.wait(
-        [*tasks, shutdown_task],
-        return_when=asyncio.FIRST_COMPLETED,
-    )
-
+async def _shutdown_iteration(
+    tasks: list[asyncio.Task],
+    pending: set[asyncio.Task],
+    done: set[asyncio.Task],
+    uvicorn_servers: list,
+    app_container,
+) -> None:
+    """Cierra una iteración del runner: uvicorn graceful, cancel Telegram, app_container.shutdown."""
     # Shutdown gracioso de uvicorn: should_exit = True deja que uvicorn
     # haga su propio teardown del lifespan en lugar de recibir un
     # CancelledError en mitad de starlette.routing.lifespan.
@@ -223,14 +215,91 @@ async def run_daemon(app_container, registry) -> None:
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
 
-    # Reportar si alguna tarea falló antes del shutdown
+    # Reportar si alguna tarea falló antes del shutdown (excluye señales internas)
+    _internal_names = {"shutdown", "reload"}
     for task in done:
-        if task.get_name() != "shutdown" and not task.cancelled():
+        if task.get_name() not in _internal_names and not task.cancelled():
             exc = task.exception()
             if exc:
                 logger.error("Tarea '%s' falló con: %s", task.get_name(), exc)
 
     # Scheduler shutdown
     await app_container.shutdown()
+
+
+async def run_daemon(
+    bootstrap_fn: BootstrapFn,
+    initial: tuple[object, object] | None = None,
+) -> None:
+    """
+    Arranca todos los canales de todos los agentes en paralelo. Loop de reload-aware:
+    cuando ``app_container.reloader`` se dispara, cierra todo, re-bootstrappea config y
+    vuelve a levantar el ciclo. Termina solo ante SIGTERM/SIGINT o si no hay canales.
+
+    Args:
+        bootstrap_fn: factory que produce ``(AppContainer, AgentRegistry)``. Se invoca en
+            cada reload (NO en la primera iter si ``initial`` está presente).
+        initial: tupla pre-construida ``(AppContainer, AgentRegistry)`` para usar en la
+            primera iter. Permite que el caller valide config antes de entrar al runner
+            sin pagar el costo del bootstrap dos veces.
+    """
+    shutdown_event = asyncio.Event()
+
+    def _handle_signal(*_):
+        logger.info("Señal de apagado recibida — iniciando shutdown gracioso")
+        shutdown_event.set()
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, _handle_signal)
+
+    iteration = 0
+    while True:
+        iteration += 1
+        if iteration == 1 and initial is not None:
+            app_container, registry = initial
+        else:
+            if iteration > 1:
+                logger.info("Daemon recargando — re-bootstrap (iter %d)", iteration)
+            try:
+                app_container, registry = bootstrap_fn()
+            except Exception as exc:
+                logger.exception("Bootstrap falló en iter %d: %s", iteration, exc)
+                return
+
+        await app_container.startup()
+        tasks, uvicorn_servers = _build_channel_tasks(app_container, registry)
+
+        if not tasks:
+            logger.warning(
+                "No hay canales configurados (ningún agente tiene 'rest' ni 'telegram'). "
+                "El daemon no tiene nada que hacer."
+            )
+            await app_container.shutdown()
+            return
+
+        logger.info(
+            "Daemon iniciado: %d tarea(s) activa(s): %s",
+            len(tasks),
+            [t.get_name() for t in tasks],
+        )
+
+        shutdown_task = asyncio.create_task(shutdown_event.wait(), name="shutdown")
+        reload_task = asyncio.create_task(
+            app_container.reloader.wait_for_reload(), name="reload"
+        )
+
+        done, pending = await asyncio.wait(
+            [*tasks, shutdown_task, reload_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        await _shutdown_iteration(tasks, pending, done, uvicorn_servers, app_container)
+
+        if app_container.reloader.was_triggered() and not shutdown_event.is_set():
+            logger.info("Reload solicitado — recargando config y canales")
+            continue
+
+        break
 
     logger.info("Daemon apagado limpiamente.")

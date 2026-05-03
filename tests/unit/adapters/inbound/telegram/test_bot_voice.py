@@ -167,6 +167,44 @@ async def test_happy_path_transcribe_y_pipeline(agent_cfg, mock_container) -> No
     assert "✅" in reactions_sent
 
 
+async def test_audio_en_grupo_se_prefija_con_sender(agent_cfg, mock_container) -> None:
+    """En grupos, la transcripción se inyecta al pipeline con formato
+    ``"{sender} (audio): {texto}"`` — mismo formato que `_format_history_prefix`
+    aplica a los broadcasts entrantes, así el bot originante y los demás bots ven
+    la misma estructura."""
+    bot = _build_bot(agent_cfg, mock_container)
+    voice = _mk_voice(bytes_result=b"audio-bytes", file_size=500)
+    update = _mk_update(voice=voice)
+    update.message.chat.type = "supergroup"
+    update.message.from_user.username = "alberto"
+    context = MagicMock()
+
+    mock_container.transcription.transcribe.return_value = "cuánto es 5+5"
+
+    await bot._handle_voice_message(update, context)
+
+    pipe_call = mock_container.run_agent.execute.await_args
+    assert pipe_call.args[0] == "alberto (audio): cuánto es 5+5"
+
+
+async def test_audio_en_privado_no_se_prefija(agent_cfg, mock_container) -> None:
+    """En privado, la transcripción se inyecta cruda — no hay otros remitentes
+    que requieran identificar al sender."""
+    bot = _build_bot(agent_cfg, mock_container)
+    voice = _mk_voice(bytes_result=b"audio-bytes", file_size=500)
+    update = _mk_update(voice=voice)
+    update.message.chat.type = "private"
+    update.message.from_user.username = "alberto"
+    context = MagicMock()
+
+    mock_container.transcription.transcribe.return_value = "hola mundo"
+
+    await bot._handle_voice_message(update, context)
+
+    pipe_call = mock_container.run_agent.execute.await_args
+    assert pipe_call.args[0] == "hola mundo"
+
+
 async def test_audio_demasiado_grande_no_llama_provider(agent_cfg, mock_container) -> None:
     agent_cfg.transcription.max_audio_mb = 1  # 1 MB
     bot = _build_bot(agent_cfg, mock_container)

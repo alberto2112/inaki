@@ -1174,6 +1174,7 @@ class TelegramBot:
             return
 
         chat_type = update.message.chat.type if update.message else "private"
+        sender = extract_sender_name(update.message)
 
         # Emitir el evento user_input_voice si el flag está activo. Solo aplica
         # a chats grupales — en privado no hay otros agentes que reciban el evento.
@@ -1183,11 +1184,19 @@ class TelegramBot:
                     event_type="user_input_voice",
                     chat_id=str(update.effective_chat.id),
                     content=transcribed,
-                    sender=extract_sender_name(update.message),
+                    sender=sender,
                 )
             )
 
-        await self._run_pipeline(update, transcribed, chat_type=chat_type)
+        # En grupos, el bot originante persiste el audio con el mismo formato que
+        # `_format_history_prefix` aplica a los broadcasts entrantes — así los
+        # demás bots y este ven la misma estructura `{sender} (audio): {texto}`.
+        # En privado se pasa la transcripción cruda (no hay otros remitentes).
+        if chat_type in _TIPOS_GRUPO:
+            user_input = f"{sender} (audio): {transcribed}"
+        else:
+            user_input = transcribed
+        await self._run_pipeline(update, user_input, chat_type=chat_type)
 
     async def _set_reaction(self, update: Update, emoji: str) -> None:
         """Envía una reacción al mensaje si `reactions` está activo. Silencia fallos.

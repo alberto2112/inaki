@@ -58,7 +58,7 @@ async def test_cmd_clear_llama_clear_history_api_publica(bot, mock_container) ->
 
     # Verificar que la API pública fue llamada
     mock_container.run_agent.clear_history.assert_awaited_once()
-    update.message.reply_text.assert_awaited_once_with("Historial limpiado.")
+    update.message.reply_text.assert_awaited_once_with("Historial de este chat limpiado.")
 
 
 async def test_cmd_clear_no_accede_a_historial_privado(bot, mock_container) -> None:

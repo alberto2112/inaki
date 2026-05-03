@@ -184,13 +184,19 @@ def _require_daemon(client) -> None:
         raise typer.Exit(code=1)
 
 
-def _run_task(client, agent_id: str, task: str) -> None:
+def _run_task(
+    client,
+    agent_id: str,
+    task: str,
+    channel: Optional[str] = None,
+    chat_id: Optional[str] = None,
+) -> None:
     """Ejecuta una tarea oneshot y vuelca el resultado a stdout."""
     from rich.console import Console
 
     spinner = Console(stderr=True)
     with spinner.status("Ejecutando...", spinner="dots"):
-        turn_result = client.task_turn(agent_id, task)
+        turn_result = client.task_turn(agent_id, task, channel=channel, chat_id=chat_id)
     for intermediate in turn_result.intermediates:
         print(intermediate)
     print(turn_result.reply)
@@ -202,13 +208,28 @@ def _invoke_task(
     remote_key: Optional[str],
     agent: Optional[str],
     task: str,
+    channel: Optional[str] = None,
+    chat_id: Optional[str] = None,
 ) -> None:
-    """Conecta al daemon, ejecuta la tarea y sale."""
+    """Conecta al daemon, ejecuta la tarea y sale.
+
+    Si ``channel`` y ``chat_id`` se pasan, el daemon carga el historial de ese
+    scope. Both-or-none: si solo viene uno, el daemon responde 422.
+    """
+    if (channel is None) != (chat_id is None):
+        print(
+            "--channel y --chat-id deben usarse juntos (o ninguno).",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=2)
+
     config_dir, _ = _resolve_dirs(config_dir_override)
     client, global_config = _build_daemon_client(config_dir, remote_url, remote_key)
     _require_daemon(client)
     agent_id = agent or global_config.app.default_agent
-    _handle_daemon_errors(lambda: _run_task(client, agent_id, task))
+    _handle_daemon_errors(
+        lambda: _run_task(client, agent_id, task, channel=channel, chat_id=chat_id)
+    )
 
 
 def _invoke_default_chat(
@@ -254,6 +275,25 @@ def _root(
         metavar="TASK",
         help="Ejecuta una tarea oneshot y devuelve el resultado por stdout (sin persistir historial).",
     ),
+    channel: Optional[str] = typer.Option(
+        None,
+        "--channel",
+        metavar="CHANNEL",
+        help=(
+            "Canal del scope de historial a cargar para --task (ej. 'telegram'). "
+            "Both-or-none con --chat-id."
+        ),
+    ),
+    chat_id: Optional[str] = typer.Option(
+        None,
+        "--chat-id",
+        metavar="CHAT_ID",
+        help=(
+            "ID del chat dentro del canal (ej. id de grupo de Telegram). "
+            "Para IDs negativos usar la forma `--chat-id=-1001582404077` (con '='), "
+            "porque Click confunde el '-' inicial con una flag corta."
+        ),
+    ),
 ) -> None:
     """Iñaki — asistente personal agentico."""
     ctx.ensure_object(dict)
@@ -262,7 +302,7 @@ def _root(
     ctx.obj["remote_key"] = remote_key
     if ctx.invoked_subcommand is None:
         if task:
-            _invoke_task(config, remote, remote_key, None, task)
+            _invoke_task(config, remote, remote_key, None, task, channel=channel, chat_id=chat_id)
         else:
             _invoke_default_chat(config, remote, remote_key)
 
@@ -282,6 +322,25 @@ def chat(
         metavar="TASK",
         help="Ejecuta una tarea oneshot y devuelve el resultado por stdout (sin persistir historial).",
     ),
+    channel: Optional[str] = typer.Option(
+        None,
+        "--channel",
+        metavar="CHANNEL",
+        help=(
+            "Canal del scope de historial a cargar para --task (ej. 'telegram'). "
+            "Both-or-none con --chat-id."
+        ),
+    ),
+    chat_id: Optional[str] = typer.Option(
+        None,
+        "--chat-id",
+        metavar="CHAT_ID",
+        help=(
+            "ID del chat dentro del canal (ej. id de grupo de Telegram). "
+            "Para IDs negativos usar la forma `--chat-id=-1001582404077` (con '='), "
+            "porque Click confunde el '-' inicial con una flag corta."
+        ),
+    ),
 ) -> None:
     """Chat interactivo con un agente via daemon HTTP."""
     config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
@@ -294,7 +353,15 @@ def chat(
     agent_id = agent or global_config.app.default_agent
 
     if task:
-        _handle_daemon_errors(lambda: _run_task(client, agent_id, task))
+        if (channel is None) != (chat_id is None):
+            print(
+                "--channel y --chat-id deben usarse juntos (o ninguno).",
+                file=sys.stderr,
+            )
+            raise typer.Exit(code=2)
+        _handle_daemon_errors(
+            lambda: _run_task(client, agent_id, task, channel=channel, chat_id=chat_id)
+        )
     else:
         _run_cli(client, agent_id)
 
@@ -379,5 +446,3 @@ def consolidate(
 
     result = _handle_daemon_errors(lambda: client.consolidate(agent))
     print(json.dumps(result, indent=2, ensure_ascii=False))
-
-

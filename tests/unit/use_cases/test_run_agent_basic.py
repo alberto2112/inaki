@@ -59,7 +59,7 @@ async def test_execute_loads_history_before_calling_llm(use_case, mock_history, 
     mock_history.load.return_value = existing
     await use_case.execute("nuevo mensaje")
 
-    mock_history.load.assert_called_once_with("test")
+    mock_history.load.assert_called_once_with("test", channel="", chat_id="")
     # El LLM recibe el historial cargado + el nuevo mensaje
     call_args = mock_llm.complete.call_args
     messages_passed = call_args.args[0]

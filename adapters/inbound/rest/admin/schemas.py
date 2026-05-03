@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class HealthResponse(BaseModel):
@@ -74,7 +74,30 @@ class TaskTurnRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     agent_id: str = Field(..., description="ID del agente al que se envía la tarea")
-    message: str = Field(..., min_length=1, description="Tarea a ejecutar (oneshot, sin persistencia)")
+    message: str = Field(
+        ..., min_length=1, description="Tarea a ejecutar (oneshot, sin persistencia)"
+    )
+    channel: str | None = Field(
+        None,
+        description=(
+            "Canal de origen del scope a cargar (ej. 'telegram', 'cli'). "
+            "Debe acompañarse de chat_id. Si se omite, se usa el scope vacío legacy."
+        ),
+    )
+    chat_id: str | None = Field(
+        None,
+        description=(
+            "Identificador del chat dentro del canal (ej. id de grupo de Telegram). "
+            "Debe acompañarse de channel."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_scope_pair(self) -> "TaskTurnRequest":
+        # both-or-none: channel y chat_id deben venir juntos o no venir
+        if (self.channel is None) != (self.chat_id is None):
+            raise ValueError("channel y chat_id deben enviarse juntos o ambos omitirse")
+        return self
 
 
 class TaskTurnResponse(BaseModel):

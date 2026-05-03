@@ -31,6 +31,7 @@ import typer
 from adapters.inbound.cli.knowledge_cli import knowledge_app
 from adapters.inbound.cli.scheduler_cli import scheduler_app
 from adapters.inbound.cli.setup_cli import setup_app
+from inaki import __version__
 
 app = typer.Typer(
     name="inaki",
@@ -38,6 +39,12 @@ app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
 )
+def _version_callback(value: bool) -> None:
+    if value:
+        print(f"inaki {__version__}")
+        raise typer.Exit()
+
+
 app.add_typer(scheduler_app, name="scheduler", help="Manage scheduled tasks")
 app.add_typer(knowledge_app, name="knowledge", help="Manage document knowledge sources")
 app.add_typer(setup_app, name="setup", help="Configuración del sistema (TUI offline)")
@@ -248,6 +255,14 @@ def _invoke_default_chat(
 @app.callback()
 def _root(
     ctx: typer.Context,
+    version: Optional[bool] = typer.Option(
+        None,
+        "--version",
+        "-V",
+        callback=_version_callback,
+        is_eager=True,
+        help="Muestra la versión y sale.",
+    ),
     config: Optional[Path] = typer.Option(
         None,
         "--config",

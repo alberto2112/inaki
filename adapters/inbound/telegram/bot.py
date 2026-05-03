@@ -1403,9 +1403,14 @@ class TelegramBot:
         """Callback invocado por el adapter por cada ``BroadcastMessage`` válido.
 
         En el flujo unificado, un broadcast se trata como un mensaje más entrante
-        al chat: se persiste con prefijo ``<agent_id> said: ...`` y se programa
-        un flush task. Si ya hay uno corriendo, el broadcast se acumula en el
-        historial del chat y será visto por ese flush cuando despierte.
+        al chat: se persiste SIEMPRE con prefijo ``<agent_id> said: ...`` y luego
+        se decide si programar un flush task. Si el rate limiter hace breach, el
+        broadcast queda guardado en historial pero NO se programa respuesta —
+        cuando despierte el flush activo (o llegue un trigger posterior), el
+        batch acumulado va a ser leído íntegro.
+
+        Mismo orden que ``_handle_group_message`` para mensajes humanos: persistir
+        primero, rate-limitar solo el flush.
 
         Silencioso y defensivo: cualquier excepción queda aquí.
         """
@@ -1419,9 +1424,19 @@ class TelegramBot:
                 preview,
             )
 
+            contenido = _format_history_prefix(msg)
+            await self._container.run_agent.record_user_message(
+                contenido,
+                channel="telegram",
+                chat_id=msg.chat_id,
+            )
+
             # Rate limiter por (agent_id, chat_id) — evita tormentas bot-to-bot.
-            # La decisión fina de responder o __SKIP__ la toma el LLM al flushear.
-            if self._rate_limiter is not None:
+            # Solo aplica a ``assistant_response`` (único event_type que puede
+            # producir loops entre bots). Los ``user_input_*`` vienen del humano
+            # y no deben consumir el contador ni gatillar breach.
+            # Gobierna SOLO el flush: el broadcast ya quedó persistido arriba.
+            if self._rate_limiter is not None and msg.event_type == "assistant_response":
                 breach = self._rate_limiter.check_and_increment(
                     self._agent_cfg.id,
                     msg.chat_id,
@@ -1436,12 +1451,6 @@ class TelegramBot:
                     )
                     return
 
-            contenido = _format_history_prefix(msg)
-            await self._container.run_agent.record_user_message(
-                contenido,
-                channel="telegram",
-                chat_id=msg.chat_id,
-            )
             self._schedule_group_flush(msg.chat_id, "supergroup")
         except Exception:
             logger.exception(

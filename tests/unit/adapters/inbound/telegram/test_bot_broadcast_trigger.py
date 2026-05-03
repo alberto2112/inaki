@@ -4,7 +4,8 @@ Cubre el flujo unificado post-refactor:
   - subscribe_broadcast_trigger solo registra en modo autonomous con receiver.
   - _on_broadcast_received persiste el broadcast en el historial vía
     ``record_user_message`` y programa un flush task.
-  - Rate limiter sigue siendo el gate de entrada — si breach → no se persiste.
+  - Rate limiter gobierna SOLO el flush — el broadcast SIEMPRE se persiste,
+    aunque haya breach (mismo contrato que ``_handle_group_message``).
   - El response al broadcast vive ahora en ``_run_group_pipeline`` (flush),
     no en un método dedicado.
 """
@@ -202,10 +203,16 @@ async def test_on_broadcast_no_invoca_llm_directamente(
             pass
 
 
-async def test_on_broadcast_respeta_rate_limiter(
+async def test_on_broadcast_assistant_response_respeta_rate_limiter(
     agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter
 ):
-    """Si rate limiter hace breach → no persiste ni programa flush."""
+    """assistant_response con breach → persiste igual pero NO programa flush.
+
+    El broadcast queda en historial para que el próximo flush lo vea — evita
+    perder eventos cuando el bot está en delay y la ventana se agotó. El
+    rate limiter solo aplica a ``assistant_response`` porque es el único
+    event_type que puede generar tormentas bot-to-bot.
+    """
     rl = MagicMock()
     rl.check_and_increment = MagicMock(return_value=MagicMock(counter=6))
     bot = _build_bot(
@@ -217,9 +224,81 @@ async def test_on_broadcast_respeta_rate_limiter(
     )
     await bot._on_broadcast_received(_msg("cualquier cosa"))
 
-    mock_container.run_agent.record_user_message.assert_not_awaited()
+    mock_container.run_agent.record_user_message.assert_awaited_once()
     assert bot._pending_tasks == {}
     rl.check_and_increment.assert_called_once_with("inaki", "-100123", 5)
+
+
+async def test_on_broadcast_user_input_voice_no_consume_rate_limiter(
+    agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter
+):
+    """user_input_voice viene del humano → no debe consumir el contador del rate limiter.
+
+    Aunque el rate limiter esté saturado por respuestas previas de otro bot,
+    una transcripción humana siempre debe persistirse Y programar flush.
+    """
+    rl = MagicMock()
+    rl.check_and_increment = MagicMock(return_value=MagicMock(counter=99))
+    bot = _build_bot(
+        agent_cfg_autonomous,
+        mock_container,
+        receiver=mock_receiver,
+        emitter=mock_emitter,
+        rate_limiter=rl,
+    )
+    msg = BroadcastMessage(
+        timestamp=time.time(),
+        agent_id="inaki",
+        chat_id="-100123",
+        event_type="user_input_voice",
+        content="qué hora es",
+        sender="alberto",
+    )
+    await bot._on_broadcast_received(msg)
+
+    mock_container.run_agent.record_user_message.assert_awaited_once()
+    assert "-100123" in bot._pending_tasks
+    rl.check_and_increment.assert_not_called()
+
+    bot._pending_tasks["-100123"].cancel()
+    try:
+        await bot._pending_tasks["-100123"]
+    except (asyncio.CancelledError, BaseException):
+        pass
+
+
+async def test_on_broadcast_user_input_photo_no_consume_rate_limiter(
+    agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter
+):
+    """user_input_photo viene del humano → no debe consumir el contador del rate limiter."""
+    rl = MagicMock()
+    rl.check_and_increment = MagicMock(return_value=MagicMock(counter=99))
+    bot = _build_bot(
+        agent_cfg_autonomous,
+        mock_container,
+        receiver=mock_receiver,
+        emitter=mock_emitter,
+        rate_limiter=rl,
+    )
+    msg = BroadcastMessage(
+        timestamp=time.time(),
+        agent_id="inaki",
+        chat_id="-100123",
+        event_type="user_input_photo",
+        content="alberto sonriendo",
+        sender="alberto",
+    )
+    await bot._on_broadcast_received(msg)
+
+    mock_container.run_agent.record_user_message.assert_awaited_once()
+    assert "-100123" in bot._pending_tasks
+    rl.check_and_increment.assert_not_called()
+
+    bot._pending_tasks["-100123"].cancel()
+    try:
+        await bot._pending_tasks["-100123"]
+    except (asyncio.CancelledError, BaseException):
+        pass
 
 
 async def test_on_broadcast_es_idempotente_si_hay_flush_activo(

@@ -151,8 +151,20 @@ class DaemonClient:
     # task_turn — oneshot ephemeral: carga historial, no persiste
     # ------------------------------------------------------------------
 
-    def task_turn(self, agent_id: str, mensaje: str) -> ChatTurnResult:
+    def task_turn(
+        self,
+        agent_id: str,
+        mensaje: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+    ) -> ChatTurnResult:
         """Ejecuta una tarea oneshot al daemon (ephemeral=True en el servidor).
+
+        Args:
+            agent_id: ID del agente al que dirigir la tarea.
+            mensaje: Texto de la tarea a ejecutar.
+            channel: Canal del scope a cargar (ej. "telegram"). Both-or-none con chat_id.
+            chat_id: ID del chat dentro del canal. Both-or-none con channel.
 
         Raises:
             DaemonNotRunningError: si el daemon no es alcanzable.
@@ -161,9 +173,15 @@ class DaemonClient:
             DaemonAuthError: si la autenticación falla (HTTP 401/403).
             DaemonClientError: para otros errores HTTP del daemon.
         """
+        body: dict[str, str | None] = {
+            "agent_id": agent_id,
+            "message": mensaje,
+            "channel": channel,
+            "chat_id": chat_id,
+        }
         data = self._post(
             "/admin/chat/task",
-            json={"agent_id": agent_id, "message": mensaje},
+            json=body,
             timeout=self._chat_timeout,
             error_map=self._CHAT_ERROR_MAP,
             agent_id=agent_id,

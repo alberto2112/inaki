@@ -11,6 +11,15 @@ Escenarios cubiertos (spec admin-chat/spec.md):
     - message vacío → 422
     - run_agent.execute() lanza excepción → 500
 
+  POST /admin/chat/task (oneshot ephemeral):
+    - Happy path sin scope → execute(ephemeral=True), sin channel/chat_id
+    - Con channel + chat_id → execute recibe scope propagado
+    - chat_id sin channel → 422 (Pydantic validator both-or-none)
+    - channel sin chat_id → 422 (PR1: both-or-none)
+    - Sin auth → 401
+    - agent_id inválido → 404
+    - message vacío → 422
+
   Diseño §A3 — ChannelContext:
     - set_channel_context("cli", session_id) se llama y se resetea a None (try/finally)
     - set_channel_context se llama incluso si execute() falla (finally garantiza reset)
@@ -298,6 +307,85 @@ async def test_get_history_vacia_tras_delete(chat_app, mock_run_agent) -> None:
     assert del_resp.status_code == 204
     assert get_resp.status_code == 200
     assert get_resp.json()["messages"] == []
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/chat/task — oneshot ephemeral con scope opcional (channel/chat_id)
+# ---------------------------------------------------------------------------
+
+
+TASK_BODY = {
+    "agent_id": "dev",
+    "message": "generá un saludo",
+}
+
+
+async def test_post_task_happy_path_sin_scope(chat_app, mock_run_agent) -> None:
+    """POST /task sin channel/chat_id → 200 y execute() recibe ephemeral=True sin scope explícito."""
+    async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as ac:
+        resp = await ac.post("/admin/chat/task", json=TASK_BODY, headers=VALID_KEY)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["agent_id"] == "dev"
+    mock_run_agent.execute.assert_awaited_once()
+    call_kwargs = mock_run_agent.execute.call_args.kwargs
+    assert call_kwargs.get("ephemeral") is True
+    # Sin scope → execute no recibe channel/chat_id (o los recibe como string vacío default)
+    assert call_kwargs.get("channel", "") == ""
+    assert call_kwargs.get("chat_id", "") == ""
+
+
+async def test_post_task_con_scope_completo(chat_app, mock_run_agent) -> None:
+    """POST /task con channel + chat_id → execute() los recibe propagados."""
+    body = {**TASK_BODY, "channel": "telegram", "chat_id": "-1001582404077"}
+    async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as ac:
+        resp = await ac.post("/admin/chat/task", json=body, headers=VALID_KEY)
+    assert resp.status_code == 200
+    call_kwargs = mock_run_agent.execute.call_args.kwargs
+    assert call_kwargs["channel"] == "telegram"
+    assert call_kwargs["chat_id"] == "-1001582404077"
+    assert call_kwargs["ephemeral"] is True
+
+
+async def test_post_task_chat_id_sin_channel_falla_422(chat_app, mock_run_agent) -> None:
+    """POST /task con chat_id pero sin channel → 422 (Pydantic validator). NO invoca execute."""
+    body = {**TASK_BODY, "chat_id": "-1001582404077"}
+    async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as ac:
+        resp = await ac.post("/admin/chat/task", json=body, headers=VALID_KEY)
+    assert resp.status_code == 422
+    mock_run_agent.execute.assert_not_called()
+
+
+async def test_post_task_channel_sin_chat_id_falla_422(chat_app, mock_run_agent) -> None:
+    """POST /task con channel pero sin chat_id → 422 (PR1: both-or-none). NO invoca execute."""
+    body = {**TASK_BODY, "channel": "telegram"}
+    async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as ac:
+        resp = await ac.post("/admin/chat/task", json=body, headers=VALID_KEY)
+    assert resp.status_code == 422
+    mock_run_agent.execute.assert_not_called()
+
+
+async def test_post_task_sin_auth_401(chat_app) -> None:
+    """POST /task sin X-Admin-Key → 401."""
+    async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as ac:
+        resp = await ac.post("/admin/chat/task", json=TASK_BODY)
+    assert resp.status_code == 401
+
+
+async def test_post_task_agente_invalido_404(chat_app) -> None:
+    """POST /task con agent_id inexistente → 404."""
+    body = {**TASK_BODY, "agent_id": "ghost"}
+    async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as ac:
+        resp = await ac.post("/admin/chat/task", json=body, headers=VALID_KEY)
+    assert resp.status_code == 404
+
+
+async def test_post_task_message_vacio_422(chat_app) -> None:
+    """POST /task con message vacío → 422."""
+    body = {**TASK_BODY, "message": ""}
+    async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as ac:
+        resp = await ac.post("/admin/chat/task", json=body, headers=VALID_KEY)
+    assert resp.status_code == 422
 
 
 # ---------------------------------------------------------------------------

@@ -142,9 +142,17 @@ async def chat_task(body: TaskTurnRequest, request: Request) -> TaskTurnResponse
     agent_container = _resolver_agente(request, body.agent_id)
     sink = BufferingIntermediateSink()
 
+    # Si vienen channel + chat_id (validados both-or-none por el schema), se propagan
+    # al execute para cargar el historial del scope correcto. Si no vienen, defaults
+    # del use case (channel="" / chat_id="") preservan el comportamiento legacy.
+    scope_kwargs: dict[str, str] = {}
+    if body.channel is not None and body.chat_id is not None:
+        scope_kwargs["channel"] = body.channel
+        scope_kwargs["chat_id"] = body.chat_id
+
     try:
         reply = await agent_container.run_agent.execute(
-            body.message, intermediate_sink=sink, ephemeral=True
+            body.message, intermediate_sink=sink, ephemeral=True, **scope_kwargs
         )
     except Exception as exc:
         duration_ms = int((time.monotonic() - t0) * 1000)

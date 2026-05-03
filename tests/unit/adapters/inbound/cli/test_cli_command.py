@@ -147,3 +147,87 @@ def test_chat_daemon_inalcanzable_imprime_mensaje_accionable() -> None:
 
     output = result.output + (result.stdout if hasattr(result, "stdout") else "")
     assert "daemon" in output.lower() or "inaki daemon" in output.lower()
+
+
+# ---------------------------------------------------------------------------
+# --task con scope opcional (--channel + --chat-id)
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_task_client() -> MagicMock:
+    """Mock de DaemonClient para flujo --task: health OK + task_turn devuelve ChatTurnResult."""
+    from core.domain.value_objects.chat_turn_result import ChatTurnResult
+
+    client = MagicMock()
+    client.health.return_value = True
+    client.task_turn.return_value = ChatTurnResult(reply="resultado")
+    return client
+
+
+def test_task_sin_scope_invoca_task_turn_sin_channel_chat_id() -> None:
+    """`inaki --task "x"` invoca task_turn(agent_id, "x") sin channel/chat_id."""
+    from inaki.cli import app
+
+    runner = CliRunner()
+    mock_client = _make_mock_task_client()
+    mock_global_config = MagicMock()
+    mock_global_config.app.default_agent = "dev"
+
+    with patch("inaki.cli._build_daemon_client", return_value=(mock_client, mock_global_config)):
+        result = runner.invoke(app, ["--task", "hola"])
+
+    assert result.exit_code == 0
+    mock_client.task_turn.assert_called_once()
+    args, kwargs = mock_client.task_turn.call_args
+    # Acepta firma posicional o por kwargs
+    todos = {**dict(zip(("agent_id", "mensaje"), args)), **kwargs}
+    assert todos["agent_id"] == "dev"
+    assert todos["mensaje"] == "hola"
+    assert todos.get("channel") is None
+    assert todos.get("chat_id") is None
+
+
+def test_task_con_channel_y_chat_id_invoca_task_turn_con_scope() -> None:
+    """`inaki --task "x" --channel=telegram --chat-id=-1001...` propaga scope a task_turn."""
+    from inaki.cli import app
+
+    runner = CliRunner()
+    mock_client = _make_mock_task_client()
+    mock_global_config = MagicMock()
+    mock_global_config.app.default_agent = "anacleto"
+
+    with patch("inaki.cli._build_daemon_client", return_value=(mock_client, mock_global_config)):
+        result = runner.invoke(
+            app,
+            [
+                "--task",
+                "saludo del miércoles",
+                "--channel=telegram",
+                "--chat-id=-1001582404077",
+            ],
+        )
+
+    assert result.exit_code == 0
+    args, kwargs = mock_client.task_turn.call_args
+    todos = {**dict(zip(("agent_id", "mensaje"), args)), **kwargs}
+    assert todos["channel"] == "telegram"
+    assert todos["chat_id"] == "-1001582404077"
+
+
+def test_task_chat_id_negativo_con_forma_igual_no_se_interpreta_como_flag() -> None:
+    """El chat_id negativo (Telegram grupos) NO debe ser interpretado como flag por Click cuando se usa la forma `--chat-id=-1001...`."""
+    from inaki.cli import app
+
+    runner = CliRunner()
+    mock_client = _make_mock_task_client()
+    mock_global_config = MagicMock()
+    mock_global_config.app.default_agent = "dev"
+
+    with patch("inaki.cli._build_daemon_client", return_value=(mock_client, mock_global_config)):
+        result = runner.invoke(
+            app,
+            ["--task", "x", "--channel=telegram", "--chat-id=-1001582404077"],
+        )
+
+    # No exit code de error de parsing (Click tira 2 cuando confunde con flag desconocida)
+    assert result.exit_code == 0, f"Click confundió el chat_id negativo: {result.output}"

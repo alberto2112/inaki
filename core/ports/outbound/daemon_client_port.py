@@ -41,8 +41,20 @@ class IDaemonClient(Protocol):
         """
         ...
 
-    def task_turn(self, agent_id: str, mensaje: str) -> ChatTurnResult:
+    def task_turn(
+        self,
+        agent_id: str,
+        mensaje: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+    ) -> ChatTurnResult:
         """Ejecuta una tarea oneshot: carga historial para contexto pero no persiste el turno.
+
+        Args:
+            agent_id: ID del agente al que dirigir la tarea.
+            mensaje: Texto de la tarea a ejecutar.
+            channel: Canal del scope a cargar (ej. "telegram"). Both-or-none con chat_id.
+            chat_id: ID del chat dentro del canal. Both-or-none con channel.
 
         Raises:
             DaemonNotRunningError: si el daemon no es alcanzable.

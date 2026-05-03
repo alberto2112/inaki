@@ -181,6 +181,70 @@ def test_chat_turn_5xx_raises_client_error(client: DaemonClient) -> None:
 
 
 # ---------------------------------------------------------------------------
+# task_turn — oneshot ephemeral con scope opcional
+# ---------------------------------------------------------------------------
+
+
+def test_task_turn_serializa_body_minimo(client: DaemonClient) -> None:
+    """task_turn sin scope envía body con solo agent_id y message (sin channel/chat_id)."""
+    with patch("httpx.post") as mock_post:
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {"reply": "ok", "agent_id": "dev"}
+        mock_post.return_value = mock_resp
+        client.task_turn("dev", "tarea")
+
+    _, kwargs = mock_post.call_args
+    body = kwargs["json"]
+    assert body["agent_id"] == "dev"
+    assert body["message"] == "tarea"
+    # Sin scope: las claves channel/chat_id no se envían (o se envían como None)
+    assert body.get("channel") is None
+    assert body.get("chat_id") is None
+
+
+def test_task_turn_serializa_scope_completo(client: DaemonClient) -> None:
+    """task_turn con channel + chat_id envía ambos en el body JSON."""
+    with patch("httpx.post") as mock_post:
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {"reply": "ok", "agent_id": "dev"}
+        mock_post.return_value = mock_resp
+        client.task_turn("dev", "tarea", channel="telegram", chat_id="-1001582404077")
+
+    _, kwargs = mock_post.call_args
+    body = kwargs["json"]
+    assert body["channel"] == "telegram"
+    assert body["chat_id"] == "-1001582404077"
+
+
+def test_task_turn_url_correcta(client: DaemonClient) -> None:
+    """task_turn hace POST a /admin/chat/task."""
+    with patch("httpx.post") as mock_post:
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {"reply": "ok", "agent_id": "dev"}
+        mock_post.return_value = mock_resp
+        client.task_turn("dev", "tarea")
+
+    args, _ = mock_post.call_args
+    assert args[0].endswith("/admin/chat/task")
+
+
+def test_task_turn_parsea_reply_e_intermediates(client: DaemonClient) -> None:
+    """task_turn retorna reply + intermediates del JSON de respuesta."""
+    with patch("httpx.post") as mock_post:
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {
+            "reply": "Buenos días, panda",
+            "agent_id": "anacleto",
+            "intermediates": ["pensando..."],
+        }
+        mock_post.return_value = mock_resp
+        result = client.task_turn("anacleto", "saludo del miércoles")
+
+    assert result.reply == "Buenos días, panda"
+    assert result.intermediates == ["pensando..."]
+
+
+# ---------------------------------------------------------------------------
 # chat_history (tarea 6.3)
 # ---------------------------------------------------------------------------
 

@@ -56,12 +56,14 @@ class DownloadFromTelegramTool(ITool):
     name = "download_from_telegram"
     description = (
         "Download recent media (photos, albums, audios, videos, files) sent by "
-        "the user in the CURRENT Telegram chat to the agent's workspace, then "
-        "return the local paths. "
+        "the user in a Telegram chat to the agent's workspace, then return the "
+        "local paths. By default targets the CURRENT chat (from turn context). "
         "Required: 'content_type' (one of 'photo', 'album', 'audio', 'video', "
         "'file'). "
         "Optional: 'count' (default 5), 'since' / 'until' (ISO 8601 datetimes; "
-        "without offset they are interpreted as UTC). "
+        "without offset they are interpreted as UTC), 'chat_id' (target a "
+        "different Telegram chat than the current one; if omitted, the chat from "
+        "the turn context is used). "
         "Without 'since' the tool returns the latest 'count' files unfiltered. "
         "Files are cached by Telegram's stable 'file_unique_id': repeated "
         "downloads of the same file are no-ops. "
@@ -93,6 +95,13 @@ class DownloadFromTelegramTool(ITool):
                 "description": (
                     "ISO 8601 datetime; without offset assumed UTC. Ignored if "
                     "'since' is not provided."
+                ),
+            },
+            "chat_id": {
+                "type": "string",
+                "description": (
+                    "Target Telegram chat id. If omitted, the chat from the "
+                    "current turn context is used."
                 ),
             },
         },
@@ -135,27 +144,40 @@ class DownloadFromTelegramTool(ITool):
         except ValueError as exc:
             return self._fail(str(exc), retryable=False)
 
-        ctx = self._get_channel_context()
-        if ctx is None:
-            return self._fail(
-                "download_from_telegram solo funciona dentro de una conversación activa.",
-                retryable=False,
-            )
-        if ctx.channel_type != "telegram":
-            return self._fail(
-                f"download_from_telegram no soporta el canal '{ctx.channel_type}'.",
-                retryable=False,
-            )
-        if not ctx.chat_id:
-            return self._fail(
-                "no hay chat_id en el contexto del turno — no puedo descargar.",
-                retryable=False,
-            )
+        chat_id_param = kwargs.get("chat_id")
+        chat_id_explicit = (
+            str(chat_id_param).strip()
+            if chat_id_param is not None and str(chat_id_param).strip()
+            else None
+        )
+
+        if chat_id_explicit is not None:
+            chat_id = chat_id_explicit
+        else:
+            ctx = self._get_channel_context()
+            if ctx is None:
+                return self._fail(
+                    "download_from_telegram requiere 'chat_id' o una conversación activa.",
+                    retryable=False,
+                )
+            if ctx.channel_type != "telegram":
+                return self._fail(
+                    f"download_from_telegram no soporta el canal '{ctx.channel_type}' "
+                    "sin 'chat_id' explícito.",
+                    retryable=False,
+                )
+            if not ctx.chat_id:
+                return self._fail(
+                    "no hay chat_id en el contexto del turno — pasalo explícito o "
+                    "ejecutá dentro de un chat de Telegram.",
+                    retryable=False,
+                )
+            chat_id = ctx.chat_id
 
         records = await self._repo.query_recent(
             agent_id=self._agent_id,
             channel="telegram",
-            chat_id=ctx.chat_id,
+            chat_id=chat_id,
             content_type=content_type,  # type: ignore[arg-type]
             count=count,
             since=since,

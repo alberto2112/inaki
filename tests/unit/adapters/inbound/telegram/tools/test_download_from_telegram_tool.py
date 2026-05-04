@@ -295,6 +295,52 @@ async def test_pasa_chat_id_y_agent_id_al_repo(repo, downloader, workspace):
     assert kwargs["count"] == 3
 
 
+async def test_chat_id_explicito_tiene_prioridad_sobre_contexto(repo, downloader, workspace):
+    repo.query_recent.return_value = []
+    ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100")
+    tool = _make_tool(repo=repo, downloader=downloader, workspace=workspace, ctx=ctx)
+
+    await tool.execute(content_type="photo", chat_id="-999")
+
+    kwargs = repo.query_recent.call_args.kwargs
+    assert kwargs["chat_id"] == "-999"
+
+
+async def test_chat_id_explicito_funciona_sin_contexto(repo, downloader, workspace):
+    repo.query_recent.return_value = []
+    tool = _make_tool(repo=repo, downloader=downloader, workspace=workspace, ctx=None)
+
+    result = await tool.execute(content_type="photo", chat_id="-777")
+
+    assert result.success is True
+    kwargs = repo.query_recent.call_args.kwargs
+    assert kwargs["chat_id"] == "-777"
+    assert kwargs["channel"] == "telegram"
+
+
+async def test_chat_id_explicito_funciona_en_canal_no_telegram(repo, downloader, workspace):
+    repo.query_recent.return_value = []
+    ctx = ChannelContext(channel_type="cli", user_id="local")
+    tool = _make_tool(repo=repo, downloader=downloader, workspace=workspace, ctx=ctx)
+
+    result = await tool.execute(content_type="photo", chat_id="-555")
+
+    assert result.success is True
+    kwargs = repo.query_recent.call_args.kwargs
+    assert kwargs["chat_id"] == "-555"
+
+
+async def test_chat_id_vacio_cae_al_contexto(repo, downloader, workspace):
+    repo.query_recent.return_value = []
+    ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100")
+    tool = _make_tool(repo=repo, downloader=downloader, workspace=workspace, ctx=ctx)
+
+    await tool.execute(content_type="photo", chat_id="   ")
+
+    kwargs = repo.query_recent.call_args.kwargs
+    assert kwargs["chat_id"] == "-100"
+
+
 async def test_error_de_descarga_es_retryable(repo, workspace):
     repo.query_recent.return_value = [_record()]
     downloader = _FakeDownloader()

@@ -483,6 +483,8 @@ class RunAgentUseCase:
             skills=retrieved_skills,
             timezone=self._user_timezone,
             workspace_root=_workspace_absolute_path(self._cfg),
+            channel=channel or None,
+            chat_id=chat_id or None,
             knowledge_chunks=knowledge_chunks,
         )
         system_prompt = context.build_system_prompt(
@@ -722,6 +724,8 @@ class RunAgentUseCase:
             skills=retrieved_skills,
             timezone=self._user_timezone,
             workspace_root=_workspace_absolute_path(self._cfg),
+            channel=channel or None,
+            chat_id=chat_id or None,
             knowledge_chunks=knowledge_chunks,
         )
         system_prompt = context.build_system_prompt(self._cfg.system_prompt)

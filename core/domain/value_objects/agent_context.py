@@ -10,7 +10,10 @@ from core.domain.entities.skill import Skill
 from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
 
 _VAR_RE = re.compile(
-    r"\{\{(WORKSPACE|TIMEZONE|DATETIME|DATE|TIME|WEEKDAY_NUMBER|WEEKDAY)(?:\[([A-Z]{2})\])?\}\}",
+    r"\{\{("
+    r"WORKSPACE|TIMEZONE|DATETIME|DATE|TIME|WEEKDAY_NUMBER|WEEKDAY"
+    r"|CHANNEL\.NAME|CHANNEL\.CHATID|CHANNEL"
+    r")(?:\[([A-Z]{2})\])?\}\}",
     re.IGNORECASE,
 )
 
@@ -21,7 +24,13 @@ _WEEKDAY_NAMES: dict[str, list[str]] = {
 }
 
 
-def _resolve_vars(text: str, tz_name: str | None, workspace_root: str | None) -> str:
+def _resolve_vars(
+    text: str,
+    tz_name: str | None,
+    workspace_root: str | None,
+    channel: str | None = None,
+    chat_id: str | None = None,
+) -> str:
     """Reemplaza variables dinámicas en el prompt con valores reales en runtime."""
     if not _VAR_RE.search(text):
         return text
@@ -42,6 +51,11 @@ def _resolve_vars(text: str, tz_name: str | None, workspace_root: str | None) ->
         flag = (m.group(2) or "").upper()
         if token == "WORKSPACE":
             return workspace_root if workspace_root else m.group(0)
+        # {{CHANNEL}} es alias de {{CHANNEL.NAME}}.
+        if token in ("CHANNEL", "CHANNEL.NAME"):
+            return channel if channel else m.group(0)
+        if token == "CHANNEL.CHATID":
+            return chat_id if chat_id else m.group(0)
         if token == "TIMEZONE":
             return tz_display
         if token == "DATETIME":
@@ -69,6 +83,9 @@ class AgentContext(BaseModel):
     timezone: str | None = None
     # Raíz absoluta del workspace (misma resolución que las tools de FS). None → {{WORKSPACE}} intacto.
     workspace_root: str | None = None
+    # Canal y chat_id del turno actual. Vacío/None → {{CHANNEL.*}} intacto (mismo criterio que WORKSPACE).
+    channel: str | None = None
+    chat_id: str | None = None
     # Fragmentos de conocimiento recuperados por KnowledgeOrchestrator para este turno.
     knowledge_chunks: list[KnowledgeChunk] = []
 
@@ -112,4 +129,10 @@ class AgentContext(BaseModel):
             for section in extra_sections:
                 sections.append(section)
 
-        return _resolve_vars("\n".join(sections), self.timezone, self.workspace_root)
+        return _resolve_vars(
+            "\n".join(sections),
+            self.timezone,
+            self.workspace_root,
+            self.channel,
+            self.chat_id,
+        )

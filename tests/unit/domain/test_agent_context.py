@@ -312,3 +312,52 @@ def test_new_vars_all_replaced(var: str) -> None:
     ctx = AgentContext(agent_id="test", timezone="UTC")
     result = ctx.build_system_prompt(var)
     assert var not in result
+
+
+# ---- {{CHANNEL}} / {{CHANNEL.NAME}} / {{CHANNEL.CHATID}} ----
+
+
+def test_channel_name_replaces_token() -> None:
+    ctx = AgentContext(agent_id="test", channel="telegram", chat_id="123")
+    assert ctx.build_system_prompt("Canal: {{CHANNEL.NAME}}") == "Canal: telegram"
+
+
+def test_channel_alias_resolves_to_channel_name() -> None:
+    ctx = AgentContext(agent_id="test", channel="telegram", chat_id="123")
+    assert ctx.build_system_prompt("Canal: {{CHANNEL}}") == "Canal: telegram"
+
+
+def test_channel_chatid_replaces_token() -> None:
+    ctx = AgentContext(agent_id="test", channel="telegram", chat_id="-100456")
+    assert ctx.build_system_prompt("Chat: {{CHANNEL.CHATID}}") == "Chat: -100456"
+
+
+def test_channel_tokens_case_insensitive() -> None:
+    ctx = AgentContext(agent_id="test", channel="cli", chat_id="local")
+    result = ctx.build_system_prompt("{{channel}} / {{Channel.Name}} / {{channel.chatid}}")
+    assert result == "cli / cli / local"
+
+
+def test_channel_tokens_passthrough_when_missing() -> None:
+    ctx = AgentContext(agent_id="test")
+    prompt = "{{CHANNEL}} y {{CHANNEL.NAME}} y {{CHANNEL.CHATID}}"
+    assert ctx.build_system_prompt(prompt) == prompt
+
+
+def test_channel_chatid_passthrough_when_only_channel_set() -> None:
+    ctx = AgentContext(agent_id="test", channel="telegram")
+    result = ctx.build_system_prompt("{{CHANNEL.NAME}}:{{CHANNEL.CHATID}}")
+    assert result == "telegram:{{CHANNEL.CHATID}}"
+
+
+def test_channel_tokens_in_extra_sections() -> None:
+    ctx = AgentContext(agent_id="test", channel="telegram", chat_id="42")
+    result = ctx.build_system_prompt(BASE_PROMPT, extra_sections=["\n[{{CHANNEL}}#{{CHANNEL.CHATID}}]"])
+    assert "[telegram#42]" in result
+
+
+def test_empty_string_channel_treated_as_missing() -> None:
+    # AgentContext recibe "" → debe comportarse como si no estuviera seteado
+    ctx = AgentContext(agent_id="test", channel="", chat_id="")
+    prompt = "{{CHANNEL}}/{{CHANNEL.CHATID}}"
+    assert ctx.build_system_prompt(prompt) == prompt

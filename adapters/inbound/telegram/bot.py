@@ -673,7 +673,6 @@ class TelegramBot:
                 chat_type=chat_type,
                 analysis_only=bool(caption),
                 scene_prompt=scene_prompt,
-                sender_name=extract_sender_name(update.message),
             )
         except Exception as exc:
             logger.exception(
@@ -722,12 +721,17 @@ class TelegramBot:
             return
 
         # Enriquecer el placeholder __PHOTO__ persistido al inicio con el text_context final.
-        # Esto evita un segundo mensaje role=user consecutivo en el historial: en lugar de
-        # ver "__PHOTO__" + "📷 Foto recibida...", el LLM ve UN solo mensaje enriquecido.
+        # Esto evita un segundo mensaje role=user consecutivo en el historial.
         # El history_id no cambia → face_ref sigue válido y el orden cronológico se preserva.
+        # En grupos antepone el prefijo "{sender} (foto): ..." para mantener simetría con
+        # los audios (`{sender} (audio): ...`) y con `_format_history_prefix` aplicado a
+        # los broadcasts entrantes — así originante y receptores ven la misma estructura.
         enriched_content = result.text_context
         if caption:
             enriched_content = f"{result.text_context}\n\nDescripción del usuario: {caption}"
+        if chat_type in _TIPOS_GRUPO:
+            sender = extract_sender_name(update.message)
+            enriched_content = f"{sender} (foto): {enriched_content}"
         await self._container.run_agent.update_message_content(history_id, enriched_content)
 
         # Emitir user_input_photo (solo grupos) ANTES de correr el pipeline, para que

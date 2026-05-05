@@ -52,7 +52,7 @@ def agent_cfg() -> MagicMock:
 def mock_process_photo() -> AsyncMock:
     uc = AsyncMock()
     uc.execute.return_value = ProcessPhotoResult(
-        text_context="📷 Foto recibida.",
+        text_context="Descripción de la escena:\nuna foto de prueba.",
         annotated_image=None,
         should_skip_run_agent=False,
     )
@@ -350,6 +350,50 @@ async def test_sin_caption_no_agrega_seccion_descripcion(agent_cfg, mock_contain
     assert "Descripción del usuario:" not in enriched_content
 
 
+async def test_privado_no_antepone_prefijo_sender(agent_cfg, mock_container) -> None:
+    """En chat privado el contenido enriquecido NO lleva prefijo `{sender} (foto): `."""
+    bot = _build_bot(agent_cfg, mock_container)
+    update = _mk_update(chat_type="private")
+    update.message.from_user = MagicMock(username="alberto", first_name="Alberto")
+    context = MagicMock()
+
+    await bot._handle_photo_message(update, context)
+
+    enriched_content = mock_container.run_agent.update_message_content.await_args.args[1]
+    assert "(foto):" not in enriched_content
+    assert not enriched_content.startswith("alberto")
+
+
+async def test_grupo_antepone_prefijo_sender_foto(agent_cfg, mock_container) -> None:
+    """En grupo el contenido enriquecido arranca con `{sender} (foto): ` (mismo patrón que audio)."""
+    bot = _build_bot(agent_cfg, mock_container)
+    update = _mk_update(chat_type="group")
+    update.message.from_user = MagicMock(username="alberto", first_name="Alberto")
+    context = MagicMock()
+
+    await bot._handle_photo_message(update, context)
+
+    enriched_content = mock_container.run_agent.update_message_content.await_args.args[1]
+    assert enriched_content.startswith("alberto (foto): ")
+    # El text_context del use case sigue formando el cuerpo del mensaje.
+    assert "una foto de prueba" in enriched_content
+
+
+async def test_grupo_con_caption_prefijo_envuelve_caption(agent_cfg, mock_container) -> None:
+    """En grupo con caption, el prefijo `{sender} (foto): ` envuelve text_context + caption."""
+    bot = _build_bot(agent_cfg, mock_container)
+    update = _mk_update(chat_type="group", caption="ese es mi gato")
+    update.message.from_user = MagicMock(username="alberto", first_name="Alberto")
+    context = MagicMock()
+
+    await bot._handle_photo_message(update, context)
+
+    enriched_content = mock_container.run_agent.update_message_content.await_args.args[1]
+    assert enriched_content.startswith("alberto (foto): ")
+    assert "ese es mi gato" in enriched_content
+    assert "Descripción del usuario:" in enriched_content
+
+
 async def test_caption_incluido_en_historial(agent_cfg, mock_container) -> None:
     """El caption debe quedar registrado en el historial junto con '[foto recibida]'."""
     bot = _build_bot(agent_cfg, mock_container)
@@ -511,7 +555,10 @@ async def test_handle_photo_grupo_dispara_emit_event_user_input_photo(mock_conta
     photo_call = photo_calls[0]
     assert photo_call.kwargs["chat_id"] == "99"
     assert photo_call.kwargs["sender"] == "alberto"
-    assert "📷 Foto recibida" in photo_call.kwargs["content"]
+    # El content del broadcast es el text_context crudo (sin prefijo de sender):
+    # los receptores aplican `_format_history_prefix` que antepone "{sender} (foto): ".
+    assert "una foto de prueba" in photo_call.kwargs["content"]
+    assert not photo_call.kwargs["content"].startswith("alberto (foto):")
 
 
 async def test_handle_photo_modo_bang_emite_user_input_photo_sin_assistant_response():

@@ -73,6 +73,12 @@ async def run_tool_loop(
     tripped: set[str] = set()
     last_text: str = ""
 
+    # Indicador "Thinking..." una sola vez por turno cuando el provider activa
+    # thinking mode. Es feedback efímero para el canal — no persiste en DB,
+    # no se broadcastea. Si el sink es Null (CLI sin streaming) no se ve.
+    if llm.thinking_active:
+        await sink.emit("Thinking...")
+
     for iteration in range(max_iterations):
         response = await llm.complete(
             working_messages,
@@ -99,6 +105,7 @@ async def run_tool_loop(
                 role=Role.ASSISTANT,
                 content=response.text,
                 tool_calls=response.tool_calls,
+                thinking=response.thinking,
             )
         )
 

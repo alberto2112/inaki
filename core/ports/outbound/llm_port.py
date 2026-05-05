@@ -5,6 +5,16 @@ from core.domain.value_objects.llm_response import LLMResponse
 
 
 class ILLMProvider(ABC):
+    @property
+    def thinking_active(self) -> bool:
+        """¿Este provider va a producir reasoning_content en el turno actual?
+
+        Default ``False``. Providers con thinking mode (DeepSeek V4 con
+        ``reasoning_effort`` set, o-series, etc.) override según su config.
+        Lo usa el tool loop para emitir "Thinking..." al canal una vez por turno.
+        """
+        return False
+
     @abstractmethod
     async def complete(
         self,

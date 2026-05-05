@@ -45,13 +45,17 @@ class BaseLLMProvider(ILLMProvider):
             if m.role == Role.ASSISTANT and m.tool_calls:
                 # OpenAI-compatible: un mismo mensaje assistant puede tener
                 # content textual Y tool_calls. Si no hubo texto, pasamos None.
-                result.append(
-                    {
-                        "role": "assistant",
-                        "content": m.content if m.content else None,
-                        "tool_calls": m.tool_calls,
-                    }
-                )
+                # ``reasoning_content`` se inyecta solo cuando el message tiene
+                # thinking (transitorio del tool loop). Providers que no
+                # entienden el campo lo ignoran silenciosamente.
+                entry: dict = {
+                    "role": "assistant",
+                    "content": m.content if m.content else None,
+                    "tool_calls": m.tool_calls,
+                }
+                if m.thinking:
+                    entry["reasoning_content"] = m.thinking
+                result.append(entry)
             elif m.role == Role.TOOL:
                 result.append(
                     {

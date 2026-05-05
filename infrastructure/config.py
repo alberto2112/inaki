@@ -179,6 +179,21 @@ class ResolvedLLMConfig(BaseModel):
     api_key: str | None = None
     base_url: str | None = None
 
+    @property
+    def thinking_active(self) -> bool:
+        """¿Hay que activar thinking mode en este turno?
+
+        Reglas:
+          - ``None`` o cadena vacía → desactivado (default).
+          - ``"low"`` → desactivado. DeepSeek mapea internamente ``low → high``,
+            así que "low" no aporta granularidad real; lo tratamos como off.
+          - Cualquier otro valor (``"medium"``, ``"high"``, ``"max"``, futuros) → activo.
+        """
+        if self.reasoning_effort is None:
+            return False
+        normalized = self.reasoning_effort.strip().lower()
+        return normalized not in ("", "low")
+
 
 class ResolvedEmbeddingConfig(BaseModel):
     """EmbeddingConfig + credenciales resueltas del registry."""

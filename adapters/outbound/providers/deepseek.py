@@ -30,22 +30,44 @@ class DeepSeekProvider(BaseLLMProvider):
             "Content-Type": "application/json",
         }
 
+    @property
+    def thinking_active(self) -> bool:
+        return self._cfg.thinking_active
+
+    def _build_payload(
+        self,
+        messages: list[Message],
+        system_prompt: str,
+        tools: list[dict] | None,
+    ) -> dict:
+        """Arma el payload de chat/completions con thinking-aware sampling.
+
+        Cuando ``thinking_active``, DeepSeek rechaza ``temperature``, ``top_p``,
+        ``presence_penalty`` y ``frequency_penalty`` — los omitimos.
+        """
+        payload: dict = {
+            "model": self._cfg.model,
+            "messages": self._build_messages(messages, system_prompt),
+            "max_tokens": self._cfg.max_tokens,
+        }
+        if self._cfg.thinking_active:
+            payload["thinking"] = {"type": "enabled"}
+            payload["reasoning_effort"] = self._cfg.reasoning_effort
+        else:
+            payload["temperature"] = self._cfg.temperature
+            payload["thinking"] = {"type": "disabled"}
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+        return payload
+
     async def complete(
         self,
         messages: list[Message],
         system_prompt: str,
         tools: list[dict] | None = None,
     ) -> LLMResponse:
-        payload: dict = {
-            "model": self._cfg.model,
-            "messages": self._build_messages(messages, system_prompt),
-            "temperature": self._cfg.temperature,
-            "max_tokens": self._cfg.max_tokens,
-            "thinking": {"type": "disabled"},
-        }
-        if tools:
-            payload["tools"] = tools
-            payload["tool_choice"] = "auto"
+        payload = self._build_payload(messages, system_prompt, tools)
 
         try:
             async with httpx.AsyncClient(timeout=60) as client:
@@ -66,11 +88,13 @@ class DeepSeekProvider(BaseLLMProvider):
         message = choice["message"]
         content = message.get("content") or ""
         tool_calls = message.get("tool_calls") or []
+        reasoning = message.get("reasoning_content") or None
         logger.info("%s", self._format_response_log("DeepSeek", content, tool_calls))
 
         return LLMResponse(
             text_blocks=[content] if content else [],
             tool_calls=tool_calls,
+            thinking=reasoning,
             raw=json.dumps(message, ensure_ascii=False),
         )
 

@@ -293,6 +293,7 @@ class RunAgentUseCase:
         channel: str = "",
         chat_id: str = "",
         ephemeral: bool = False,
+        skip_marker: str | None = None,
     ) -> str:
         """Ejecuta un turno del agente.
 
@@ -318,6 +319,11 @@ class RunAgentUseCase:
             ephemeral: si True, carga el historial para contexto pero NO persiste
                 el turno ni actualiza el estado sticky. Usado por ``--task``.
                 Solo aplica cuando ``user_input`` es provisto.
+            skip_marker: si la respuesta del LLM (tras strip) coincide exactamente
+                con este string, NO se persiste el turno (ni user_msg ni assistant
+                ni state). Útil para markers como ``__SKIP__`` que indican
+                "no aportar nada en este turno" en flujos broadcast/autonomous.
+                Default ``None`` → siempre se persiste (comportamiento actual).
         """
         agent_id = self._cfg.id
 
@@ -543,7 +549,9 @@ class RunAgentUseCase:
                 "iteraciones de tools sin obtener una respuesta final."
             )
 
-        if not ephemeral:
+        skip_persist = skip_marker is not None and response.strip() == skip_marker
+
+        if not ephemeral and not skip_persist:
             if state_dirty:
                 await self._history.save_state(
                     agent_id,

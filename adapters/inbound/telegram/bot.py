@@ -1282,10 +1282,14 @@ class TelegramBot:
                 intermediate_sink=live_sink,
                 channel="telegram",
                 chat_id=str(chat_id),
+                skip_marker=(
+                    "__SKIP__" if (self._behavior == "autonomous" and es_grupo) else None
+                ),
             )
 
             # Verificar marcador __SKIP__ — solo aplica en modo autónomo en grupos.
             # La respuesta contiene SOLO el marcador → no enviar nada ni emitir broadcast.
+            # El use case ya descartó la persistencia gracias a skip_marker.
             if self._behavior == "autonomous" and es_grupo and response.strip() == "__SKIP__":
                 logger.debug(
                     "autonomous_skip detectado (agent=%s, chat_id=%s)",
@@ -1510,6 +1514,7 @@ class TelegramBot:
             response = await self._container.run_agent.execute(
                 channel="telegram",
                 chat_id=chat_id_str,
+                skip_marker="__SKIP__" if self._behavior == "autonomous" else None,
             )
 
             if not response:
@@ -1517,6 +1522,8 @@ class TelegramBot:
                 # Puede pasar si otro flush concurrente ya consumió el batch.
                 return
 
+            # Marcador __SKIP__ — solo aplica en modo autónomo. La persistencia
+            # ya se descartó arriba vía skip_marker.
             if self._behavior == "autonomous" and response.strip() == "__SKIP__":
                 logger.debug(
                     "autonomous_skip detectado (agent=%s, chat_id=%s)",

@@ -162,10 +162,9 @@ async def test_happy_path_transcribe_y_pipeline(agent_cfg, mock_container) -> No
     # Reply final enviado.
     update.message.reply_text.assert_awaited()
     # Reacción 🔊 al inicio (transcribiendo) y ✅ al final (reactions=True).
-    # 🔊 → 👀 y ✅ → 👍 (mapeo a whitelist Telegram, ver _resolve_reaction).
-    reactions_sent = [c.args[0].emoji for c in update.message.set_reaction.await_args_list]
-    assert "👀" in reactions_sent
-    assert "👍" in reactions_sent
+    reactions_sent = [c.args[0] for c in update.message.set_reaction.await_args_list]
+    assert "🔊" in reactions_sent
+    assert "✅" in reactions_sent
 
 
 async def test_audio_en_grupo_se_prefija_con_sender(agent_cfg, mock_container) -> None:
@@ -220,9 +219,8 @@ async def test_audio_demasiado_grande_no_llama_provider(agent_cfg, mock_containe
     mock_container.run_agent.execute.assert_not_called()
     # Debe haber respondido al usuario con el error.
     update.message.reply_text.assert_awaited()
-    # ❌ se mapea a 👎 (válido en whitelist de Telegram, ver _resolve_reaction).
-    reactions_sent = [c.args[0].emoji for c in update.message.set_reaction.await_args_list]
-    assert "👎" in reactions_sent
+    reactions_sent = [c.args[0] for c in update.message.set_reaction.await_args_list]
+    assert "❌" in reactions_sent
 
 
 async def test_provider_raises_transcription_error(agent_cfg, mock_container) -> None:
@@ -237,9 +235,8 @@ async def test_provider_raises_transcription_error(agent_cfg, mock_container) ->
     mock_container.run_agent.execute.assert_not_called()
     # Debe haber replied con el error.
     update.message.reply_text.assert_awaited()
-    # ❌ se mapea a 👎 (válido en whitelist de Telegram, ver _resolve_reaction).
-    reactions_sent = [c.args[0].emoji for c in update.message.set_reaction.await_args_list]
-    assert "👎" in reactions_sent
+    reactions_sent = [c.args[0] for c in update.message.set_reaction.await_args_list]
+    assert "❌" in reactions_sent
 
 
 async def test_audio_no_presente_noop(agent_cfg, mock_container) -> None:

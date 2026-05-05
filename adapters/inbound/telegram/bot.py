@@ -14,8 +14,8 @@ import logging
 import random
 import time
 
-from telegram import BotCommand, ReactionTypeEmoji, Update
-from telegram.constants import ParseMode, ReactionEmoji
+from telegram import BotCommand, Update
+from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 from adapters.inbound.telegram.message_mapper import (
@@ -41,40 +41,6 @@ logger = logging.getLogger(__name__)
 
 # Tipos de chat que Telegram considera "grupos" (no privados).
 _TIPOS_GRUPO = {"group", "supergroup", "channel"}
-
-
-# Telegram solo acepta como reacción de bot un set cerrado de ~73 emojis
-# estándar (ver ``telegram.constants.ReactionEmoji``). Los strings fuera de
-# ese set son interpretados por python-telegram-bot como ``custom_emoji_id``
-# y rechazados con HTTP 400. Acá mapeamos los emojis que usamos
-# semánticamente en el código a equivalentes válidos del whitelist.
-_REACTION_EMOJI_FALLBACK = {
-    "❌": "👎",  # error → thumbs down
-    "✅": "👍",  # ok → thumbs up
-    "👁": "👀",  # ojo (audio start) → ojos (válido en whitelist)
-    "🔊": "👀",  # altavoz (audio output) → ojos (proxy de "te estoy atendiendo")
-}
-_VALID_REACTION_EMOJIS: set[str] = set(ReactionEmoji)
-
-
-def _resolve_reaction(emoji: str) -> ReactionTypeEmoji | None:
-    """Mapea un emoji a un ``ReactionTypeEmoji`` válido para Telegram.
-
-    Devuelve ``None`` cuando el emoji no está en ``ReactionEmoji`` y tampoco
-    tiene un fallback configurado — en ese caso el caller silencia la reacción
-    en lugar de mandar algo que Telegram va a rechazar.
-
-    Pasamos ``ReactionTypeEmoji`` explícito (en vez de string suelto) para
-    evitar el auto-wrapping de python-telegram-bot, que cae a
-    ``ReactionTypeCustomEmoji`` cuando el string no está en el whitelist —
-    causa raíz del bug HTTP 400 ``setMessageReaction``.
-    """
-    if emoji in _VALID_REACTION_EMOJIS:
-        return ReactionTypeEmoji(emoji=emoji)
-    fallback = _REACTION_EMOJI_FALLBACK.get(emoji)
-    if fallback and fallback in _VALID_REACTION_EMOJIS:
-        return ReactionTypeEmoji(emoji=fallback)
-    return None
 
 
 def _format_history_prefix(msg: BroadcastMessage) -> str:
@@ -1244,11 +1210,8 @@ class TelegramBot:
         """
         if not self._reactions:
             return
-        reaction = _resolve_reaction(emoji)
-        if reaction is None:
-            return
         try:
-            await update.message.set_reaction(reaction)
+            await update.message.set_reaction(emoji)
         except Exception:
             pass  # Reacciones opcionales — no deben bloquear el handler.
 
@@ -1257,11 +1220,8 @@ class TelegramBot:
         si está seteado, hereda de ``channels.telegram.reactions`` si no."""
         if not self._group_reactions:
             return
-        reaction = _resolve_reaction(emoji)
-        if reaction is None:
-            return
         try:
-            await update.message.set_reaction(reaction)
+            await update.message.set_reaction(emoji)
         except Exception:
             pass
 

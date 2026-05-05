@@ -22,7 +22,10 @@ from core.domain.entities.message import Message, Role
 from infrastructure.config import ResolvedLLMConfig
 
 
-def _cfg(reasoning_effort: str | None) -> ResolvedLLMConfig:
+def _cfg(
+    reasoning_effort: str | None,
+    timeout_seconds: int = 60,
+) -> ResolvedLLMConfig:
     return ResolvedLLMConfig(
         provider="deepseek",
         model="deepseek-v4-pro",
@@ -30,6 +33,7 @@ def _cfg(reasoning_effort: str | None) -> ResolvedLLMConfig:
         max_tokens=1024,
         api_key="sk-test",
         reasoning_effort=reasoning_effort,
+        timeout_seconds=timeout_seconds,
     )
 
 
@@ -152,3 +156,57 @@ async def test_complete_empty_string_reasoning_content_treated_as_none() -> None
         result = await provider.complete([Message(role=Role.USER, content="hi")], "sys")
 
     assert result.thinking is None
+
+
+# ---------------------------------------------------------------------------
+# Timeout configurable + formato de error #1a / #1b
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_complete_uses_configured_timeout_in_httpx_client() -> None:
+    """``ResolvedLLMConfig.timeout_seconds`` se cablea al ``httpx.AsyncClient``."""
+    provider = DeepSeekProvider(_cfg(None, timeout_seconds=180))
+
+    fake_resp = MagicMock()
+    fake_resp.json.return_value = {
+        "choices": [{"message": {"content": "x", "tool_calls": None}}]
+    }
+    fake_resp.raise_for_status = MagicMock()
+    fake_client = AsyncMock()
+    fake_client.__aenter__.return_value = fake_client
+    fake_client.__aexit__.return_value = None
+    fake_client.post.return_value = fake_resp
+
+    with patch(
+        "adapters.outbound.providers.deepseek.httpx.AsyncClient", return_value=fake_client
+    ) as ctor:
+        await provider.complete([Message(role=Role.USER, content="hi")], "sys")
+
+    ctor.assert_called_once_with(timeout=180)
+
+
+@pytest.mark.asyncio
+async def test_http_error_message_includes_exception_type_and_timeout() -> None:
+    """``ReadTimeout`` y otras ``httpx.HTTPError`` tienen ``__str__`` vacío. El
+    ``LLMError`` debe incluir el tipo de excepción y el timeout configurado para
+    que el operador pueda diagnosticar sin tirar de los logs raw de httpx."""
+    import httpx
+
+    from core.domain.errors import LLMError
+
+    provider = DeepSeekProvider(_cfg(None, timeout_seconds=120))
+
+    fake_client = AsyncMock()
+    fake_client.__aenter__.return_value = fake_client
+    fake_client.__aexit__.return_value = None
+    fake_client.post.side_effect = httpx.ReadTimeout("")
+
+    with patch("adapters.outbound.providers.deepseek.httpx.AsyncClient", return_value=fake_client):
+        with pytest.raises(LLMError) as exc_info:
+            await provider.complete([Message(role=Role.USER, content="hi")], "sys")
+
+    msg = str(exc_info.value)
+    assert "ReadTimeout" in msg
+    assert "timeout=120s" in msg
+    assert "DeepSeek HTTP error" in msg

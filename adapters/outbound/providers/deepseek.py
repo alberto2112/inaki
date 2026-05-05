@@ -70,7 +70,7 @@ class DeepSeekProvider(BaseLLMProvider):
         payload = self._build_payload(messages, system_prompt, tools)
 
         try:
-            async with httpx.AsyncClient(timeout=60) as client:
+            async with httpx.AsyncClient(timeout=self._cfg.timeout_seconds) as client:
                 resp = await client.post(
                     f"{self._base_url}/chat/completions",
                     headers=self._headers,
@@ -82,7 +82,13 @@ class DeepSeekProvider(BaseLLMProvider):
             body = exc.response.text[:500]
             raise LLMError(f"DeepSeek HTTP {exc.response.status_code}: {body}") from exc
         except httpx.HTTPError as exc:
-            raise LLMError(f"DeepSeek HTTP error: {exc}") from exc
+            # Muchas excepciones de httpx (ReadTimeout, ConnectTimeout, RemoteProtocolError)
+            # tienen __str__ vacío. Incluimos el tipo para que el mensaje sea
+            # accionable en logs y en el canal del usuario.
+            detail = str(exc) or repr(exc)
+            raise LLMError(
+                f"DeepSeek HTTP error ({type(exc).__name__}, timeout={self._cfg.timeout_seconds}s): {detail}"
+            ) from exc
 
         choice = data["choices"][0]
         message = choice["message"]
@@ -112,7 +118,7 @@ class DeepSeekProvider(BaseLLMProvider):
             "thinking": {"type": "disabled"},
         }
         try:
-            async with httpx.AsyncClient(timeout=120) as client:
+            async with httpx.AsyncClient(timeout=self._cfg.timeout_seconds) as client:
                 async with client.stream(
                     "POST",
                     f"{self._base_url}/chat/completions",
@@ -138,4 +144,7 @@ class DeepSeekProvider(BaseLLMProvider):
             body = exc.response.text[:500]
             raise LLMError(f"DeepSeek HTTP {exc.response.status_code}: {body}") from exc
         except httpx.HTTPError as exc:
-            raise LLMError(f"DeepSeek stream error: {exc}") from exc
+            detail = str(exc) or repr(exc)
+            raise LLMError(
+                f"DeepSeek stream error ({type(exc).__name__}, timeout={self._cfg.timeout_seconds}s): {detail}"
+            ) from exc

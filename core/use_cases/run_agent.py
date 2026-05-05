@@ -525,6 +525,16 @@ class RunAgentUseCase:
             )
             self._photo_debug_path = None
 
+        # Persistir el user_msg ANTES del LLM call. Si el provider tira
+        # (timeout, 4xx, 5xx, etc.) la pregunta del usuario queda guardada y
+        # el próximo turno la puede ver. Antes la persistencia ocurría DESPUÉS
+        # del LLM y cualquier error del provider hacía que el mensaje del
+        # usuario se perdiera silenciosamente. En el flujo history-derived
+        # (user_input=None) el mensaje ya fue persistido vía record_user_message,
+        # así que no hay double-persist.
+        if not ephemeral and user_msg is not None:
+            await self._history.append(agent_id, user_msg, channel=channel, chat_id=chat_id)
+
         try:
             response = await run_tool_loop(
                 llm=self._llm,
@@ -552,11 +562,6 @@ class RunAgentUseCase:
                         sticky_tools=new_sticky_tools,
                     ),
                 )
-            # En modo history-derived (caller_provided_input=False) los mensajes
-            # del usuario ya fueron persistidos vía record_user_message. Solo
-            # falta la respuesta del assistant.
-            if user_msg is not None:
-                await self._history.append(agent_id, user_msg, channel=channel, chat_id=chat_id)
             await self._history.append(
                 agent_id,
                 Message(role=Role.ASSISTANT, content=response),

@@ -82,6 +82,46 @@ async def test_execute_does_not_call_memory_search(use_case, mock_memory):
     mock_memory.search.assert_not_called()
 
 
+async def test_execute_persists_user_msg_before_llm_call_so_errors_dont_lose_input(
+    use_case, mock_llm, mock_history
+):
+    """Si el LLM tira (timeout, 4xx, etc.), el user_msg debe quedar en el historial.
+
+    Antes la persistencia del user_msg ocurría DESPUÉS del LLM call. Cualquier
+    excepción del provider hacía que la pregunta del usuario se perdiera. Ahora
+    la persistencia del user_msg precede al LLM call: el assistant message NO
+    se persiste en el path de error, pero el user_msg sí.
+    """
+    from core.domain.errors import LLMError
+
+    mock_llm.complete.side_effect = LLMError("DeepSeek HTTP error: ReadTimeout")
+
+    with pytest.raises(LLMError):
+        await use_case.execute("¿qué hora es?")
+
+    # El user_msg está persistido. El assistant NO (porque el LLM falló).
+    appended_messages = [call.args[1] for call in mock_history.append.call_args_list]
+    assert len(appended_messages) == 1, (
+        f"Esperaba solo el user_msg persistido, vinieron: {appended_messages}"
+    )
+    assert appended_messages[0].role == Role.USER
+    assert appended_messages[0].content == "¿qué hora es?"
+
+
+async def test_execute_does_not_persist_user_msg_when_ephemeral(
+    use_case, mock_llm, mock_history
+):
+    """En modo ephemeral nada se persiste, ni siquiera con error del LLM."""
+    from core.domain.errors import LLMError
+
+    mock_llm.complete.side_effect = LLMError("boom")
+
+    with pytest.raises(LLMError):
+        await use_case.execute("hola", ephemeral=True)
+
+    mock_history.append.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # Nuevos tests — Phase 4 (memory-digest-markdown)
 # ---------------------------------------------------------------------------

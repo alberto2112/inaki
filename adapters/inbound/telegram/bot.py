@@ -644,7 +644,7 @@ class TelegramBot:
             scene_prompt = None
             caption = caption_raw
 
-        await self._set_reaction(update, "👁")
+        await self._set_reaction(update, "👀")
 
         # Persistir en el historial y obtener el history_id.
         # Si el usuario adjuntó una descripción, la incluimos en el registro.
@@ -679,7 +679,7 @@ class TelegramBot:
                 "Error procesando foto Telegram para '%s'", self._agent_cfg.id
             )
             await update.message.reply_text(f"Error al procesar la foto: {exc}")
-            await self._set_reaction(update, "❌")
+            await self._set_reaction(update, "👎")
             return
 
         # Enviar imagen anotada si existe (cara desconocida en chat privado).
@@ -717,7 +717,6 @@ class TelegramBot:
                         sender=extract_sender_name(update.message),
                     )
                 )
-            await self._set_reaction(update, "✅")
             return
 
         # Enriquecer el placeholder __PHOTO__ persistido al inicio con el text_context final.
@@ -1149,14 +1148,14 @@ class TelegramBot:
                 effective_size,
                 max_bytes,
             )
-            await self._set_reaction(update, "❌")
+            await self._set_reaction(update, "👎")
             await update.message.reply_text(
                 f"El audio es demasiado grande ({effective_size // (1024 * 1024)} MB). "
                 f"Máximo permitido: {max_mb} MB."
             )
             return
 
-        await self._set_reaction(update, "🔊")
+        await self._set_reaction(update, "👀")
 
         # Transcribir — errores del provider se reportan al usuario pero NO
         # corren el pipeline (sin texto no hay nada que ejecutar).
@@ -1169,12 +1168,12 @@ class TelegramBot:
         except TranscriptionError as exc:
             logger.warning("Transcripción fallida para agente '%s': %s", self._agent_cfg.id, exc)
             await update.message.reply_text(f"No pude transcribir el audio: {exc}")
-            await self._set_reaction(update, "❌")
+            await self._set_reaction(update, "👎")
             return
 
         if not transcribed or not transcribed.strip():
             await update.message.reply_text("La transcripción vino vacía.")
-            await self._set_reaction(update, "❌")
+            await self._set_reaction(update, "👎")
             return
 
         chat_type = update.message.chat.type if update.message else "private"
@@ -1296,7 +1295,6 @@ class TelegramBot:
                 return
 
             await update.message.reply_text(format_response(response), parse_mode=ParseMode.HTML)
-            await self._set_reaction(update, "✅")
 
             # Emitir broadcast DESPUÉS del reply, solo para grupos, fire-and-forget.
             # Gated por broadcast.emit.assistant_response (default true).
@@ -1312,7 +1310,7 @@ class TelegramBot:
         except Exception as exc:
             logger.exception("Error procesando mensaje Telegram para '%s'", self._agent_cfg.id)
             await update.message.reply_text(f"Error: {exc}")
-            await self._set_reaction(update, "❌")
+            await self._set_reaction(update, "👎")
         finally:
             self._container.set_channel_context(None)
             # Limpiar extra_sections después del turno para no contaminar el siguiente.

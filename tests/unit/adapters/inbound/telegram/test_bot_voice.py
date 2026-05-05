@@ -161,10 +161,12 @@ async def test_happy_path_transcribe_y_pipeline(agent_cfg, mock_container) -> No
     assert pipe_call.args[0] == "hola mundo"
     # Reply final enviado.
     update.message.reply_text.assert_awaited()
-    # Reacción 🔊 al inicio (transcribiendo) y ✅ al final (reactions=True).
+    # En el happy path solo se reacciona con 👀 al recibir el audio.
+    # Las reacciones intermedias (🔊 transcribiendo) y final (✅ ok) se eliminaron:
+    # - 🔊 era redundante (pisaba al 👀 anterior).
+    # - ✅ era ruido — el usuario ve la respuesta del bot, no necesita un emoji ok.
     reactions_sent = [c.args[0] for c in update.message.set_reaction.await_args_list]
-    assert "🔊" in reactions_sent
-    assert "✅" in reactions_sent
+    assert reactions_sent == ["👀"]
 
 
 async def test_audio_en_grupo_se_prefija_con_sender(agent_cfg, mock_container) -> None:
@@ -219,8 +221,9 @@ async def test_audio_demasiado_grande_no_llama_provider(agent_cfg, mock_containe
     mock_container.run_agent.execute.assert_not_called()
     # Debe haber respondido al usuario con el error.
     update.message.reply_text.assert_awaited()
+    # 👎 es la reacción negativa válida en el whitelist de Telegram (❌ no lo era).
     reactions_sent = [c.args[0] for c in update.message.set_reaction.await_args_list]
-    assert "❌" in reactions_sent
+    assert "👎" in reactions_sent
 
 
 async def test_provider_raises_transcription_error(agent_cfg, mock_container) -> None:
@@ -235,8 +238,9 @@ async def test_provider_raises_transcription_error(agent_cfg, mock_container) ->
     mock_container.run_agent.execute.assert_not_called()
     # Debe haber replied con el error.
     update.message.reply_text.assert_awaited()
+    # 👎 es la reacción negativa válida en el whitelist de Telegram (❌ no lo era).
     reactions_sent = [c.args[0] for c in update.message.set_reaction.await_args_list]
-    assert "❌" in reactions_sent
+    assert "👎" in reactions_sent
 
 
 async def test_audio_no_presente_noop(agent_cfg, mock_container) -> None:

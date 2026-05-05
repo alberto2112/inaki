@@ -298,8 +298,9 @@ async def test_error_en_use_case_reply_error_y_reaccion_x(agent_cfg, mock_contai
     update.message.reply_text.assert_awaited()
     reply = update.message.reply_text.await_args.args[0]
     assert "Error" in reply or "error" in reply
+    # 👎 es la reacción negativa válida en el whitelist de Telegram (❌ no lo era).
     reactions_sent = [c.args[0] for c in update.message.set_reaction.await_args_list]
-    assert "❌" in reactions_sent
+    assert "👎" in reactions_sent
 
 
 def test_bot_registra_handler_photo(agent_cfg, mock_container) -> None:

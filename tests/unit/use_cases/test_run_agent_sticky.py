@@ -516,7 +516,7 @@ async def test_tools_override_bypasses_tools_sticky_but_skills_still_apply(
 # ---------------------------------------------------------------------------
 
 
-async def test_save_state_called_before_message_append(
+async def test_persistence_order_user_msg_then_state_then_assistant(
     mock_llm,
     mock_memory,
     mock_embedder,
@@ -525,8 +525,15 @@ async def test_save_state_called_before_message_append(
     mock_tools,
 ):
     """
-    Contrato de orden: save_state debe ejecutarse ANTES de history.append, para
-    que el state de este turno esté persistido antes de que los mensajes lo estén.
+    Contrato de orden post-fix de pérdida de user_msg en errores LLM:
+
+      1. ``append(user_msg)`` PRIMERO — preemptivo, para que la pregunta del
+         usuario sobreviva si el LLM tira (timeout, 4xx, etc.).
+      2. ``save_state`` después del tool loop exitoso — refleja la sticky
+         selection efectiva de este turno.
+      3. ``append(assistant)`` al final — encierra el turno completo.
+
+    Si el LLM falla, solo (1) corre; (2) y (3) quedan en silencio.
     """
     s = Skill(id="s1", name="s1", description="d")
     mock_skills.list_all.return_value = [s]
@@ -549,5 +556,5 @@ async def test_save_state_called_before_message_append(
     )
     await uc.execute("hola")
 
-    # save_state primero, luego los dos append
-    assert call_order == ["save_state", "append", "append"]
+    # user_msg → save_state → assistant
+    assert call_order == ["append", "save_state", "append"]

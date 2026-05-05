@@ -53,6 +53,9 @@ def agent_config() -> AgentConfig:
 def mock_llm() -> AsyncMock:
     llm = AsyncMock()
     llm.complete.return_value = LLMResponse.of_text("Respuesta de test")
+    # AsyncMock auto-genera atributos truthy: forzamos el default explícito
+    # para que el tool loop no emita "Thinking..." en tests que no lo esperan.
+    llm.thinking_active = False
     return llm
 
 

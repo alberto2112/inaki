@@ -135,12 +135,32 @@ class ProviderConfig(BaseModel):
     base_url: str | None = None
 
 
+_LLM_TIMEOUT_FALLBACK = 60
+
+
 class LLMConfig(BaseModel):
     provider: str = "openrouter"
     model: str = "anthropic/claude-3-5-haiku"
     temperature: float = 0.7
     max_tokens: int = 2048
     reasoning_effort: str | None = None
+    timeout_seconds: int = _LLM_TIMEOUT_FALLBACK
+    """Timeout HTTP del request al provider, en segundos.
+
+    Default ``60``. Recomendado subirlo (180-300) cuando se usa thinking mode
+    sobre queries complejas, donde el modelo puede tardar mucho más en
+    responder. Valores no-int, ``<= 0`` o no parseables se sanitizan al
+    fallback de 60s para no fallar el bootstrap por config mal definida.
+    """
+
+    @field_validator("timeout_seconds", mode="before")
+    @classmethod
+    def _coerce_timeout(cls, v: object) -> int:
+        try:
+            n = int(v)  # type: ignore[arg-type]
+            return n if n > 0 else _LLM_TIMEOUT_FALLBACK
+        except (TypeError, ValueError):
+            return _LLM_TIMEOUT_FALLBACK
 
 
 class EmbeddingConfig(BaseModel):
@@ -176,8 +196,24 @@ class ResolvedLLMConfig(BaseModel):
     temperature: float
     max_tokens: int
     reasoning_effort: str | None = None
+    timeout_seconds: int = _LLM_TIMEOUT_FALLBACK
     api_key: str | None = None
     base_url: str | None = None
+
+    @property
+    def thinking_active(self) -> bool:
+        """¿Hay que activar thinking mode en este turno?
+
+        Reglas:
+          - ``None`` o cadena vacía → desactivado (default).
+          - ``"low"`` → desactivado. DeepSeek mapea internamente ``low → high``,
+            así que "low" no aporta granularidad real; lo tratamos como off.
+          - Cualquier otro valor (``"medium"``, ``"high"``, ``"max"``, futuros) → activo.
+        """
+        if self.reasoning_effort is None:
+            return False
+        normalized = self.reasoning_effort.strip().lower()
+        return normalized not in ("", "low")
 
 
 class ResolvedEmbeddingConfig(BaseModel):
@@ -240,6 +276,7 @@ class MemoryLLMOverride(BaseModel):
     temperature: float | None = None
     max_tokens: int | None = None
     reasoning_effort: str | None = None
+    timeout_seconds: int | None = None
     agent_id: str | None = None
 
 
@@ -344,6 +381,7 @@ class MemoryConfig(BaseModel):
             temperature=merged.temperature,
             max_tokens=merged.max_tokens,
             reasoning_effort=merged.reasoning_effort,
+            timeout_seconds=merged.timeout_seconds,
             api_key=provider_cfg.api_key,
             base_url=provider_cfg.base_url,
         )

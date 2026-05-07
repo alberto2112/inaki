@@ -77,7 +77,10 @@ def _create_lightweight_uc(
     from core.use_cases.schedule_task import ScheduleTaskUseCase
 
     global_config, _ = load_global_config(config_dir)
-    repo = SQLiteSchedulerRepo(global_config.scheduler.db_filename)
+    repo = SQLiteSchedulerRepo(
+        global_config.scheduler.db_filename,
+        user_timezone=global_config.user.timezone,
+    )
     uc = ScheduleTaskUseCase(repo=repo, on_mutation=lambda: None)
     return uc, global_config
 

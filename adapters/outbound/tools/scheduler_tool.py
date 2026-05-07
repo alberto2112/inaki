@@ -181,13 +181,18 @@ class SchedulerTool(ITool):
             "schedule": {
                 "type": "string",
                 "description": (
-                    "When to run the task. Two formats supported: "
+                    "When to run the task. Three formats: "
                     "(1) Relative offset: '+Xd', '+Xh', '+Xm', or combinations like '+2d3h30m' — "
                     "converted to an absolute UTC datetime from now. "
                     "(2) ISO 8601 absolute datetime: '2026-04-12T14:00:00-03:00' or "
                     "'2026-04-12T14:00:00Z'. "
-                    "For recurring tasks, use a cron expression (e.g. '0 8 * * *') — "
-                    "relative offsets (+) are NOT valid for recurring tasks."
+                    "If you OMIT the timezone offset (e.g. '2026-04-12T14:00:00'), the time is "
+                    "interpreted in the USER'S configured timezone — prefer this form when the "
+                    "user says a local time. "
+                    "(3) For recurring tasks, a cron expression (e.g. '0 8 * * *'). Cron "
+                    "expressions are evaluated in the USER'S configured timezone (with DST), "
+                    "so '0 8 * * *' means 08:00 user-local every day. "
+                    "Relative offsets (+) are NOT valid for recurring tasks."
                 ),
             },
             "executions_remaining": {

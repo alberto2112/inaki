@@ -75,9 +75,7 @@ async def test_envia_album(sender, workspace):
     ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100")
     tool = _make_tool(sender, workspace, ctx=ctx)
 
-    result = await tool.execute(
-        content_type="album", filename=[f1.name, f2.name], caption="grupo"
-    )
+    result = await tool.execute(content_type="album", filename=[f1.name, f2.name], caption="grupo")
 
     assert result.success is True
     payload = json.loads(result.output)

@@ -39,6 +39,8 @@ app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
 )
+
+
 def _version_callback(value: bool) -> None:
     if value:
         print(f"inaki {__version__}")

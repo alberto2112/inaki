@@ -80,7 +80,8 @@ class _EditProviderModal(ModalScreen[dict[str, str | bool] | None]):
             yield Label(titulo, classes="titulo")
 
             yield Label(
-                "key  [dim](nombre del provider)[/dim]" + ("  [dim]— no editable[/dim]" if self._edit_mode else ""),
+                "key  [dim](nombre del provider)[/dim]"
+                + ("  [dim]— no editable[/dim]" if self._edit_mode else ""),
                 classes="campo-label",
             )
             inp_key = Input(value=self._key, id="input_key", disabled=self._edit_mode)
@@ -101,8 +102,7 @@ class _EditProviderModal(ModalScreen[dict[str, str | bool] | None]):
             yield inp_key2
 
             yield Label(
-                "[bold]ctrl+s[/bold] [dim]guardar[/dim]   "
-                "[bold]esc[/bold] [dim]cancelar[/dim]",
+                "[bold]ctrl+s[/bold] [dim]guardar[/dim]   [bold]esc[/bold] [dim]cancelar[/dim]",
                 classes="footer",
             )
 
@@ -113,9 +113,7 @@ class _EditProviderModal(ModalScreen[dict[str, str | bool] | None]):
             self.query_one("#input_key", Input).focus()
 
     def action_commit(self) -> None:
-        key = (
-            self._key if self._edit_mode else self.query_one("#input_key", Input).value.strip()
-        )
+        key = self._key if self._edit_mode else self.query_one("#input_key", Input).value.strip()
         if not key:
             self.app.notify("la key no puede estar vacía", severity="warning", timeout=2)
             return
@@ -260,9 +258,7 @@ class ProvidersPage(BasePage):
         else:
             for provider in providers:
                 api_key_indicator = "✓" if provider.tiene_api_key else "—"
-                value_str = (
-                    f"{provider.type or '—'}  ·  api_key: {api_key_indicator}"
-                )
+                value_str = f"{provider.type or '—'}  ·  api_key: {api_key_indicator}"
                 field = Field(
                     label=provider.key,
                     value=value_str,

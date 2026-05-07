@@ -150,9 +150,11 @@ async def test_extension_default_si_mime_desconocido(repo, downloader, workspace
 
 
 async def test_devuelve_received_at_con_z(repo, downloader, workspace):
-    repo.query_recent.return_value = [_record(
-        received_at=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
-    )]
+    repo.query_recent.return_value = [
+        _record(
+            received_at=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
+        )
+    ]
     ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100")
     tool = _make_tool(repo=repo, downloader=downloader, workspace=workspace, ctx=ctx)
 

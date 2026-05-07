@@ -38,12 +38,8 @@ def _sin_delay(monkeypatch):
     El flush task arranca apenas se programa porque el ``asyncio.sleep(0)`` no
     bloquea el loop más allá del próximo tick.
     """
-    monkeypatch.setattr(
-        "adapters.inbound.telegram.bot.GROUP_RESPONSE_DELAY_MIN_SEC", 0.0
-    )
-    monkeypatch.setattr(
-        "adapters.inbound.telegram.bot.GROUP_RESPONSE_DELAY_MAX_SEC", 0.0
-    )
+    monkeypatch.setattr("adapters.inbound.telegram.bot.GROUP_RESPONSE_DELAY_MIN_SEC", 0.0)
+    monkeypatch.setattr("adapters.inbound.telegram.bot.GROUP_RESPONSE_DELAY_MAX_SEC", 0.0)
 
 
 def _agent_cfg(agent_id: str, bot_username: str) -> MagicMock:

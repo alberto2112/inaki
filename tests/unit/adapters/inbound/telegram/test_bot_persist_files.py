@@ -14,7 +14,6 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
-
 from adapters.inbound.telegram.bot import TelegramBot
 from core.domain.value_objects.telegram_file import TelegramFileRecord
 
@@ -203,6 +202,7 @@ async def test_handle_silent_media_persiste_metadata_correcta():
 
 async def test_album_con_caption_dispara_pipeline_en_privado(monkeypatch):
     import adapters.inbound.telegram.bot as bot_mod
+
     monkeypatch.setattr(bot_mod, "ALBUM_GATHER_DELAY_SEC", 0.0)
 
     bot, container, repo = _make_bot()
@@ -235,9 +235,7 @@ async def test_album_sin_caption_solo_persiste_y_no_dispara_pipeline():
     bot._run_pipeline.assert_not_awaited()
 
 
-async def test_album_con_caption_recopila_todas_las_fotos_persistidas(
-    monkeypatch, tmp_path
-):
+async def test_album_con_caption_recopila_todas_las_fotos_persistidas(monkeypatch, tmp_path):
     """El handler espera, lee TODAS las fotos del media_group_id y las descarga."""
     import adapters.inbound.telegram.bot as bot_mod
     from core.domain.value_objects.telegram_file import TelegramFileRecord
@@ -251,25 +249,34 @@ async def test_album_con_caption_recopila_todas_las_fotos_persistidas(
     base = datetime(2026, 5, 1, tzinfo=timezone.utc)
     records = []
     for i in range(3):
-        records.append(TelegramFileRecord(
+        records.append(
+            TelegramFileRecord(
+                agent_id="test-agent",
+                channel="telegram",
+                chat_id="-100",
+                content_type="photo",
+                file_id=f"ID-{i}",
+                file_unique_id=f"uniq-{i}",
+                media_group_id="mgrupo-X",
+                mime_type="image/jpeg",
+                received_at=base,
+            )
+        )
+    # query_recent puede devolver también miembros de OTROS álbumes — el
+    # handler debe filtrar por media_group_id.
+    records.append(
+        TelegramFileRecord(
             agent_id="test-agent",
             channel="telegram",
             chat_id="-100",
             content_type="photo",
-            file_id=f"ID-{i}",
-            file_unique_id=f"uniq-{i}",
-            media_group_id="mgrupo-X",
+            file_id="OTRA",
+            file_unique_id="otra-uniq",
+            media_group_id="otro-grupo",
             mime_type="image/jpeg",
             received_at=base,
-        ))
-    # query_recent puede devolver también miembros de OTROS álbumes — el
-    # handler debe filtrar por media_group_id.
-    records.append(TelegramFileRecord(
-        agent_id="test-agent", channel="telegram", chat_id="-100",
-        content_type="photo", file_id="OTRA", file_unique_id="otra-uniq",
-        media_group_id="otro-grupo", mime_type="image/jpeg",
-        received_at=base,
-    ))
+        )
+    )
     repo.query_recent.return_value = records
 
     async def _fake_download(*, file_id, dest):

@@ -52,7 +52,5 @@ class TelegramFileRecord(BaseModel, frozen=True):
     @classmethod
     def _debe_ser_utc(cls, v: datetime) -> datetime:
         if v.tzinfo is None:
-            raise ValueError(
-                "received_at debe ser timezone-aware en UTC; recibí naive datetime"
-            )
+            raise ValueError("received_at debe ser timezone-aware en UTC; recibí naive datetime")
         return v

@@ -232,9 +232,7 @@ async def test_happy_path_private_chat_pipeline_corrido(agent_cfg, mock_containe
     assert mock_container.run_agent.execute.await_args.args[0] is None
 
 
-async def test_group_chat_pipeline_corrido_con_chat_type_group(
-    agent_cfg, mock_container
-) -> None:
+async def test_group_chat_pipeline_corrido_con_chat_type_group(agent_cfg, mock_container) -> None:
     bot = _build_bot(agent_cfg, mock_container)
     update = _mk_update(chat_type="group")
     context = MagicMock()
@@ -474,11 +472,13 @@ def test_photo_handler_registrado_antes_que_texto(agent_cfg, mock_container) -> 
 
     registered = [c.args[0] for c in mock_app.add_handler.call_args_list]
     text_indices = [
-        i for i, h in enumerate(registered)
+        i
+        for i, h in enumerate(registered)
         if hasattr(h, "callback") and h.callback == bot._handle_message
     ]
     photo_indices = [
-        i for i, h in enumerate(registered)
+        i
+        for i, h in enumerate(registered)
         if hasattr(h, "callback") and h.callback == bot._handle_photo_message
     ]
     assert photo_indices, "No se registró el handler de foto"
@@ -542,11 +542,13 @@ async def test_handle_photo_grupo_dispara_emit_event_user_input_photo(mock_conta
     await bot._handle_photo_message(update, context)
     # Dar chance a las tareas async pendientes (asyncio.ensure_future)
     import asyncio
+
     await asyncio.sleep(0)
 
     # Buscar la llamada con event_type="user_input_photo"
     photo_calls = [
-        c for c in bot._emit_event.await_args_list
+        c
+        for c in bot._emit_event.await_args_list
         if c.kwargs.get("event_type") == "user_input_photo"
     ]
     assert len(photo_calls) == 1, (
@@ -597,6 +599,7 @@ async def test_handle_photo_modo_bang_emite_user_input_photo_sin_assistant_respo
 
     await bot._handle_photo_message(update, context)
     import asyncio
+
     await asyncio.sleep(0)
 
     # Pipeline NO se dispara en modo `!` — assistant_response NO se emite
@@ -606,11 +609,13 @@ async def test_handle_photo_modo_bang_emite_user_input_photo_sin_assistant_respo
 
     # Solo user_input_photo emitido — no assistant_response
     photo_calls = [
-        c for c in bot._emit_event.await_args_list
+        c
+        for c in bot._emit_event.await_args_list
         if c.kwargs.get("event_type") == "user_input_photo"
     ]
     assistant_calls = [
-        c for c in bot._emit_event.await_args_list
+        c
+        for c in bot._emit_event.await_args_list
         if c.kwargs.get("event_type") == "assistant_response"
     ]
     assert len(photo_calls) == 1

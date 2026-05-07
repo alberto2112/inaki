@@ -90,9 +90,7 @@ class AgentDetailPage(BasePage):
             try:
                 from core.ports.config_repository import LayerName
 
-                current = self._container.repo.read_layer(
-                    LayerName.AGENT, agent_id=self._agent_id
-                )
+                current = self._container.repo.read_layer(LayerName.AGENT, agent_id=self._agent_id)
             except Exception as exc:
                 error_msg = f"{type(exc).__name__}: {exc}"
 
@@ -126,9 +124,7 @@ class AgentDetailPage(BasePage):
         section_name, field_name = self._field_section.get(id(field), ("", field.label))
 
         # Determinar la capa: secrets para campos secret, sino AGENT
-        layer = (
-            LayerName.AGENT_SECRETS if field.kind == "secret" else LayerName.AGENT
-        )
+        layer = LayerName.AGENT_SECRETS if field.kind == "secret" else LayerName.AGENT
 
         # build_cambios respeta:
         #   - root fields (id/name/description/system_prompt) → flat {field: value}

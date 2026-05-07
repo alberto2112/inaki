@@ -323,8 +323,7 @@ class SQLiteMemoryRepository(IMemoryRepository):
             if sets:
                 params.append(memory_id)
                 cursor = await conn.execute(
-                    f"UPDATE memories SET {', '.join(sets)} "
-                    "WHERE id = ? AND deleted = 0",
+                    f"UPDATE memories SET {', '.join(sets)} WHERE id = ? AND deleted = 0",
                     tuple(params),
                 )
                 if cursor.rowcount == 0:
@@ -357,7 +356,9 @@ class SQLiteMemoryRepository(IMemoryRepository):
 
         if row is None:
             return None
-        logger.info("Memoria actualizada: %s (campos=%s)", memory_id, [s.split(" =")[0] for s in sets])
+        logger.info(
+            "Memoria actualizada: %s (campos=%s)", memory_id, [s.split(" =")[0] for s in sets]
+        )
         return self._row_to_entry(row)
 
     def _row_to_entry(self, row) -> MemoryEntry:

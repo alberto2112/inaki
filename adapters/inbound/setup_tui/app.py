@@ -80,8 +80,7 @@ class WelcomeModal(ModalScreen[None]):
                 classes="body",
             )
             yield Label(
-                "[bold]enter[/bold] [dim]continuar[/dim]   "
-                "[bold]esc[/bold] [dim]cerrar[/dim]",
+                "[bold]enter[/bold] [dim]continuar[/dim]   [bold]esc[/bold] [dim]cerrar[/dim]",
                 classes="footer",
             )
 

@@ -62,9 +62,7 @@ def test_elimina_api_key_de_secrets_cuando_se_pide() -> None:
     uc.execute("groq", borrar_api_key=True)
 
     escritura_secrets = next(
-        c[0][1]
-        for c in repo.write_layer.call_args_list
-        if c[0][0] == LayerName.GLOBAL_SECRETS
+        c[0][1] for c in repo.write_layer.call_args_list if c[0][0] == LayerName.GLOBAL_SECRETS
     )
     assert "groq" not in escritura_secrets["providers"]
     assert "openai" in escritura_secrets["providers"]

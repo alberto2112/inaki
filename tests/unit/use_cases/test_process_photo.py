@@ -127,9 +127,7 @@ async def test_disabled_devuelve_skip_y_no_llama_a_nada():
 async def test_no_faces_devuelve_solo_descripcion_de_escena():
     uc, mocks = _build_use_case()
     mocks["vision"].detect_and_embed.return_value = []
-    mocks["scene_describer"].describe_image.return_value = (
-        "Un paisaje al atardecer."
-    )
+    mocks["scene_describer"].describe_image.return_value = "Un paisaje al atardecer."
 
     resultado = await uc.execute(
         image_bytes=b"\xff\xd8\xff",
@@ -156,13 +154,9 @@ async def test_no_faces_devuelve_solo_descripcion_de_escena():
 
 async def test_single_match_privado_menciona_persona_y_no_anota():
     uc, mocks = _build_use_case()
-    alberto = Person(
-        nombre="Alberto", apellido="Hernández", relacion="dueño", embeddings_count=3
-    )
+    alberto = Person(nombre="Alberto", apellido="Hernández", relacion="dueño", embeddings_count=3)
     mocks["vision"].detect_and_embed.return_value = [_detection()]
-    mocks["face_registry"].find_matches.return_value = [
-        _candidate_match(alberto, 0.91)
-    ]
+    mocks["face_registry"].find_matches.return_value = [_candidate_match(alberto, 0.91)]
 
     resultado = await uc.execute(
         image_bytes=b"\xff\xd8\xff",
@@ -252,9 +246,7 @@ async def test_unknown_en_grupo_no_anota_pero_describe_escena():
 
 async def test_ignored_se_filtra_silenciosamente_pero_persiste_metadata():
     uc, mocks = _build_use_case()
-    ignorada = Person(
-        nombre=None, categoria="ignorada", embeddings_count=1
-    )
+    ignorada = Person(nombre=None, categoria="ignorada", embeddings_count=1)
     mocks["vision"].detect_and_embed.return_value = [_detection()]
     mocks["face_registry"].find_matches.return_value = [
         _candidate_match(ignorada, 0.92)  # Match alto

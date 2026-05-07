@@ -52,42 +52,32 @@ async def test_send_audio_llama_send_audio(fake_bot, tmp_path):
 
 
 async def test_send_video_llama_send_video(fake_bot, tmp_path):
-    await _sender(fake_bot).send(
-        chat_id="42", content_type="video", source=_file(tmp_path)
-    )
+    await _sender(fake_bot).send(chat_id="42", content_type="video", source=_file(tmp_path))
     fake_bot.send_video.assert_awaited_once()
 
 
 async def test_send_file_llama_send_document(fake_bot, tmp_path):
-    await _sender(fake_bot).send(
-        chat_id="42", content_type="file", source=_file(tmp_path)
-    )
+    await _sender(fake_bot).send(chat_id="42", content_type="file", source=_file(tmp_path))
     fake_bot.send_document.assert_awaited_once()
 
 
 async def test_send_archivo_inexistente(fake_bot, tmp_path):
     sender = _sender(fake_bot)
     with pytest.raises(FileNotFoundError):
-        await sender.send(
-            chat_id="42", content_type="photo", source=tmp_path / "no.jpg"
-        )
+        await sender.send(chat_id="42", content_type="photo", source=tmp_path / "no.jpg")
     fake_bot.send_photo.assert_not_awaited()
 
 
 async def test_send_chat_id_no_entero(fake_bot, tmp_path):
     sender = _sender(fake_bot)
     with pytest.raises(ValueError, match="entero"):
-        await sender.send(
-            chat_id="abc", content_type="photo", source=_file(tmp_path)
-        )
+        await sender.send(chat_id="abc", content_type="photo", source=_file(tmp_path))
 
 
 async def test_send_sin_bot(tmp_path):
     sender = TelegramFileSender(get_telegram_bot=lambda: None)
     with pytest.raises(RuntimeError, match="bot"):
-        await sender.send(
-            chat_id="42", content_type="photo", source=_file(tmp_path)
-        )
+        await sender.send(chat_id="42", content_type="photo", source=_file(tmp_path))
 
 
 async def test_send_cierra_handle_aunque_falle(fake_bot, tmp_path):
@@ -107,9 +97,7 @@ async def test_send_cierra_handle_aunque_falle(fake_bot, tmp_path):
 
 async def test_send_album_un_solo_archivo_delega_a_send(fake_bot, tmp_path):
     sender = _sender(fake_bot)
-    await sender.send_album(
-        chat_id="42", sources=[_file(tmp_path, "a.jpg")], caption="ola"
-    )
+    await sender.send_album(chat_id="42", sources=[_file(tmp_path, "a.jpg")], caption="ola")
     fake_bot.send_photo.assert_awaited_once()
     fake_bot.send_media_group.assert_not_awaited()
 
@@ -142,7 +130,5 @@ async def test_send_album_archivo_inexistente(fake_bot, tmp_path):
     sender = _sender(fake_bot)
     a = _file(tmp_path, "a.jpg")
     with pytest.raises(FileNotFoundError):
-        await sender.send_album(
-            chat_id="42", sources=[a, tmp_path / "no.jpg"]
-        )
+        await sender.send_album(chat_id="42", sources=[a, tmp_path / "no.jpg"])
     fake_bot.send_media_group.assert_not_awaited()

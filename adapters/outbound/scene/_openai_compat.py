@@ -100,16 +100,12 @@ async def describir_imagen_openai_compat(
             f"{nombre_proveedor} HTTP {exc.response.status_code}: {cuerpo}"
         ) from exc
     except httpx.HTTPError as exc:
-        raise SceneDescriptionError(
-            f"Error de conexión con {nombre_proveedor}: {exc}"
-        ) from exc
+        raise SceneDescriptionError(f"Error de conexión con {nombre_proveedor}: {exc}") from exc
 
     try:
         texto = datos["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
-        raise SceneDescriptionError(
-            f"Respuesta de {nombre_proveedor} inesperada: {datos}"
-        ) from exc
+        raise SceneDescriptionError(f"Respuesta de {nombre_proveedor} inesperada: {datos}") from exc
 
     logger.info("%s escena descrita: %d chars", nombre_proveedor, len(texto))
     return texto

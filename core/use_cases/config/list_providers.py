@@ -64,9 +64,7 @@ class ListProvidersUseCase:
             entrada_base = providers_base.get(key) or {}
             entrada_secrets = providers_secrets.get(key) or {}
 
-            tiene_api_key = bool(
-                entrada_base.get("api_key") or entrada_secrets.get("api_key")
-            )
+            tiene_api_key = bool(entrada_base.get("api_key") or entrada_secrets.get("api_key"))
             tipo = entrada_base.get("type") or entrada_secrets.get("type")
             base_url = entrada_base.get("base_url") or entrada_secrets.get("base_url")
 

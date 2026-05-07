@@ -55,8 +55,9 @@ def test_pasa_agent_id_al_repo(repo: MagicMock) -> None:
     _, kwargs = repo.write_layer.call_args
     positional = repo.write_layer.call_args[0]
     # agent_id se pasa como keyword
-    assert repo.write_layer.call_args.kwargs.get("agent_id") == "mi-agente" or \
-           (len(positional) >= 3 and positional[2] == "mi-agente")
+    assert repo.write_layer.call_args.kwargs.get("agent_id") == "mi-agente" or (
+        len(positional) >= 3 and positional[2] == "mi-agente"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -66,9 +67,7 @@ def test_pasa_agent_id_al_repo(repo: MagicMock) -> None:
 
 def test_tristado_inherit_elimina_clave(repo: MagicMock) -> None:
     """INHERIT → la clave debe estar AUSENTE del YAML resultante."""
-    repo.read_layer.return_value = {
-        "memory": {"llm": {"model": "valor-viejo"}}
-    }
+    repo.read_layer.return_value = {"memory": {"llm": {"model": "valor-viejo"}}}
     uc = UpdateAgentLayerUseCase(repo)
     uc.execute(
         "dev",
@@ -84,7 +83,11 @@ def test_tristado_override_valor_escribe_valor(repo: MagicMock) -> None:
     uc = UpdateAgentLayerUseCase(repo)
     uc.execute(
         "dev",
-        {"memory": {"llm": {"model": CampoTriestado(TristadoValor.OVERRIDE_VALOR, "claude-haiku")}}},
+        {
+            "memory": {
+                "llm": {"model": CampoTriestado(TristadoValor.OVERRIDE_VALOR, "claude-haiku")}
+            }
+        },
     )
 
     datos = repo.write_layer.call_args[0][1]
@@ -107,9 +110,7 @@ def test_tristado_override_null_escribe_null(repo: MagicMock) -> None:
 
 def test_tristado_inherit_no_elimina_otros_campos(repo: MagicMock) -> None:
     """INHERIT en un campo no afecta a los otros campos del mismo sub-dict."""
-    repo.read_layer.return_value = {
-        "memory": {"llm": {"model": "viejo", "temperature": 0.5}}
-    }
+    repo.read_layer.return_value = {"memory": {"llm": {"model": "viejo", "temperature": 0.5}}}
     uc = UpdateAgentLayerUseCase(repo)
     uc.execute(
         "dev",

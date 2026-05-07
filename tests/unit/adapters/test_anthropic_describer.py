@@ -85,9 +85,7 @@ async def test_describe_image_envia_payload_correcto() -> None:
     """Valida estructura del body: model, max_tokens, messages con imagen base64 y texto."""
     import json
 
-    route = respx.post(ENDPOINT).mock(
-        return_value=httpx.Response(200, json=_fake_response())
-    )
+    route = respx.post(ENDPOINT).mock(return_value=httpx.Response(200, json=_fake_response()))
     adapter = _adapter()
 
     result = await adapter.describe_image(FAKE_IMAGE, prompt="¿Qué ves?")
@@ -126,9 +124,7 @@ async def test_describe_image_envia_payload_correcto() -> None:
 @respx.mock
 async def test_describe_image_headers_correctos() -> None:
     """Valida headers: x-api-key, anthropic-version, content-type."""
-    respx.post(ENDPOINT).mock(
-        return_value=httpx.Response(200, json=_fake_response("escena"))
-    )
+    respx.post(ENDPOINT).mock(return_value=httpx.Response(200, json=_fake_response("escena")))
     adapter = _adapter()
 
     await adapter.describe_image(FAKE_IMAGE)
@@ -142,9 +138,7 @@ async def test_describe_image_headers_correctos() -> None:
 @respx.mock
 async def test_describe_image_retorna_texto_de_respuesta() -> None:
     texto_esperado = "Tres personas caminando por un parque soleado."
-    respx.post(ENDPOINT).mock(
-        return_value=httpx.Response(200, json=_fake_response(texto_esperado))
-    )
+    respx.post(ENDPOINT).mock(return_value=httpx.Response(200, json=_fake_response(texto_esperado)))
     adapter = _adapter()
 
     result = await adapter.describe_image(FAKE_IMAGE)
@@ -213,9 +207,7 @@ async def test_prompt_argumento_tiene_prioridad_sobre_template() -> None:
     """El prompt pasado como argumento gana sobre el prompt_template del constructor."""
     import json
 
-    respx.post(ENDPOINT).mock(
-        return_value=httpx.Response(200, json=_fake_response())
-    )
+    respx.post(ENDPOINT).mock(return_value=httpx.Response(200, json=_fake_response()))
     adapter = _adapter(prompt_template="Template: describí la imagen.")
 
     await adapter.describe_image(FAKE_IMAGE, prompt="Argumento: ¿qué hay acá?")
@@ -230,9 +222,7 @@ async def test_prompt_template_se_usa_si_no_hay_argumento() -> None:
     """Si no hay prompt argumento, usa el prompt_template del constructor."""
     import json
 
-    respx.post(ENDPOINT).mock(
-        return_value=httpx.Response(200, json=_fake_response())
-    )
+    respx.post(ENDPOINT).mock(return_value=httpx.Response(200, json=_fake_response()))
     adapter = _adapter(prompt_template="Template: describí la imagen.")
 
     await adapter.describe_image(FAKE_IMAGE)
@@ -247,9 +237,7 @@ async def test_prompt_default_en_espanol_cuando_no_hay_nada() -> None:
     """Sin prompt argumento ni template, usa el prompt default en español."""
     import json
 
-    respx.post(ENDPOINT).mock(
-        return_value=httpx.Response(200, json=_fake_response())
-    )
+    respx.post(ENDPOINT).mock(return_value=httpx.Response(200, json=_fake_response()))
     adapter = _adapter()  # sin prompt_template
 
     await adapter.describe_image(FAKE_IMAGE)

@@ -55,8 +55,7 @@ class SendToTelegramTool(ITool):
             },
             "filename": {
                 "description": (
-                    "Local path under the workspace, OR (for 'album') an array "
-                    "of paths."
+                    "Local path under the workspace, OR (for 'album') an array of paths."
                 ),
                 "oneOf": [
                     {"type": "string"},
@@ -87,8 +86,7 @@ class SendToTelegramTool(ITool):
         content_type = str(kwargs.get("content_type") or "").strip().lower()
         if content_type not in _TIPOS_VALIDOS:
             return self._fail(
-                f"content_type inválido: {content_type!r}. "
-                f"Válidos: {sorted(_TIPOS_VALIDOS)}",
+                f"content_type inválido: {content_type!r}. Válidos: {sorted(_TIPOS_VALIDOS)}",
                 retryable=False,
             )
 
@@ -121,9 +119,7 @@ class SendToTelegramTool(ITool):
 
         try:
             if content_type == "album":
-                await self._sender.send_album(
-                    chat_id=ctx.chat_id, sources=paths, caption=caption
-                )
+                await self._sender.send_album(chat_id=ctx.chat_id, sources=paths, caption=caption)
             else:
                 await self._sender.send(
                     chat_id=ctx.chat_id,
@@ -153,9 +149,7 @@ class SendToTelegramTool(ITool):
             success=True,
         )
 
-    def _resolver_paths(
-        self, filename_raw: object, content_type: str
-    ) -> list[Path]:
+    def _resolver_paths(self, filename_raw: object, content_type: str) -> list[Path]:
         if content_type == "album":
             if not isinstance(filename_raw, list) or not filename_raw:
                 raise ValueError(

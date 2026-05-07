@@ -73,8 +73,7 @@ class _CreateAgentModal(ModalScreen[dict[str, str] | None]):
                 id="input_system",
             )
             yield Label(
-                "[bold]ctrl+s[/bold] [dim]guardar[/dim]   "
-                "[bold]esc[/bold] [dim]cancelar[/dim]",
+                "[bold]ctrl+s[/bold] [dim]guardar[/dim]   [bold]esc[/bold] [dim]cancelar[/dim]",
                 classes="footer",
             )
 
@@ -137,8 +136,7 @@ class _CloneAgentModal(ModalScreen[str | None]):
             )
             yield Input(placeholder="nuevo-id", id="input_nuevo_id")
             yield Label(
-                "[bold]enter[/bold] [dim]clonar[/dim]   "
-                "[bold]esc[/bold] [dim]cancelar[/dim]",
+                "[bold]enter[/bold] [dim]clonar[/dim]   [bold]esc[/bold] [dim]cancelar[/dim]",
                 classes="footer",
             )
 
@@ -329,7 +327,9 @@ class AgentsPage(BasePage):
         if agent_id == "(sin agentes)":
             return
 
-        self.app.push_screen(_CloneAgentModal(agent_id), lambda nuevo_id: self._after_clone(agent_id, nuevo_id))
+        self.app.push_screen(
+            _CloneAgentModal(agent_id), lambda nuevo_id: self._after_clone(agent_id, nuevo_id)
+        )
 
     def _after_clone(self, origen_id: str, nuevo_id: str | None) -> None:
         if nuevo_id is None or self._container is None:

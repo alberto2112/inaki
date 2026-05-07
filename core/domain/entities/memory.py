@@ -11,6 +11,12 @@ class MemoryEntry(BaseModel):
     tags: list[str] = []
     created_at: datetime = Field(default_factory=datetime.utcnow)
     agent_id: str | None = None  # None = recuerdo global compartido
-    channel: str | None = None  # canal de origen (ej: "telegram", "cli"); None = pre-migración / global
-    chat_id: str | None = None  # identificador del chat dentro del canal; None = pre-migración / global
-    deleted: bool = False  # soft-delete flag — entries con deleted=True no participan en search/get_recent
+    channel: str | None = (
+        None  # canal de origen (ej: "telegram", "cli"); None = pre-migración / global
+    )
+    chat_id: str | None = (
+        None  # identificador del chat dentro del canal; None = pre-migración / global
+    )
+    deleted: bool = (
+        False  # soft-delete flag — entries con deleted=True no participan en search/get_recent
+    )

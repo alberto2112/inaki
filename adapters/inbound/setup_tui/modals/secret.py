@@ -47,8 +47,7 @@ class EditSecretModal(ModalScreen[str | None]):
             inp.select_on_focus = False
             yield inp
             yield Label(
-                "[bold]enter[/bold] [dim]guardar[/dim]   "
-                "[bold]esc[/bold] [dim]cancelar[/dim]",
+                "[bold]enter[/bold] [dim]guardar[/dim]   [bold]esc[/bold] [dim]cancelar[/dim]",
                 classes="footer",
             )
 

@@ -115,9 +115,7 @@ async def test_subscribe_broadcast_trigger_registra_en_autonomous(
     mock_receiver.subscribe.assert_awaited_once_with(bot._on_broadcast_received)
 
 
-async def test_subscribe_broadcast_trigger_sin_receiver_noop(
-    agent_cfg_autonomous, mock_container
-):
+async def test_subscribe_broadcast_trigger_sin_receiver_noop(agent_cfg_autonomous, mock_container):
     """Sin receiver no hace nada (no explota)."""
     bot = _build_bot(agent_cfg_autonomous, mock_container, receiver=None)
     await bot.subscribe_broadcast_trigger()  # no raises

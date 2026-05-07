@@ -115,16 +115,12 @@ class AnthropicSceneDescriberAdapter(ISceneDescriberPort):
                 f"Anthropic HTTP {exc.response.status_code}: {cuerpo}"
             ) from exc
         except httpx.HTTPError as exc:
-            raise SceneDescriptionError(
-                f"Error de conexión con Anthropic: {exc}"
-            ) from exc
+            raise SceneDescriptionError(f"Error de conexión con Anthropic: {exc}") from exc
 
         try:
             texto = datos["content"][0]["text"]
         except (KeyError, IndexError, TypeError) as exc:
-            raise SceneDescriptionError(
-                f"Respuesta de Anthropic inesperada: {datos}"
-            ) from exc
+            raise SceneDescriptionError(f"Respuesta de Anthropic inesperada: {datos}") from exc
 
         logger.info("Anthropic escena descrita: %d chars", len(texto))
         return texto

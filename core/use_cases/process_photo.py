@@ -115,13 +115,9 @@ class ProcessPhotoUseCase:
         face_matches = await self._construir_face_matches(detections, history_id)
 
         # 4. Filtrar y categorizar para output
-        es_privado = (
-            chat_type == "private" and self._config.enrollment_chats == "private"
-        )
+        es_privado = chat_type == "private" and self._config.enrollment_chats == "private"
         desconocidas = [
-            fm
-            for fm in face_matches
-            if fm.status in (MatchStatus.UNKNOWN, MatchStatus.AMBIGUOUS)
+            fm for fm in face_matches if fm.status in (MatchStatus.UNKNOWN, MatchStatus.AMBIGUOUS)
         ]
 
         # 5. Imagen anotada (solo en chat privado con caras desconocidas/ambiguas,
@@ -211,13 +207,17 @@ class ProcessPhotoUseCase:
                     persona, score = fm.candidates[0]
                     nombre = self._formatear_nombre(persona)
                     top = f" top={nombre} ({score:.3f})"
-                lines.append(f"  {fm.face_ref}  status={fm.status.value}{top}  categoria={fm.categoria!r}")
+                lines.append(
+                    f"  {fm.face_ref}  status={fm.status.value}{top}  categoria={fm.categoria!r}"
+                )
         else:
             lines.append("Face matches: (ninguno)")
         lines += [
             "",
             "--- Descripción de escena ---",
-            scene_description if scene_description is not None else "(scene describer no configurado o falló)",
+            scene_description
+            if scene_description is not None
+            else "(scene describer no configurado o falló)",
             "",
             "--- text_context (salida de Phase 1, user_input del agente) ---",
             text_context,
@@ -250,9 +250,7 @@ class ProcessPhotoUseCase:
             face_ref = f"{history_id}#{idx}"
             embedding_np = np.asarray(detection.embedding, dtype=np.float32)
 
-            candidatos_raw = await self._face_registry.find_matches(
-                embedding=embedding_np, k=3
-            )
+            candidatos_raw = await self._face_registry.find_matches(embedding=embedding_np, k=3)
             candidatos: list[tuple[Person, float]] = []
             for fm in candidatos_raw:
                 if fm.candidates:
@@ -323,7 +321,9 @@ class ProcessPhotoUseCase:
                 if fm.status == MatchStatus.MATCHED and fm.candidates:
                     top_persona, top_score = fm.candidates[0]
                     nombre = self._formatear_nombre(top_persona)
-                    lineas.append(f"- Cara [{idx_str}]: {nombre} — reconocida (similitud {top_score:.2f})")
+                    lineas.append(
+                        f"- Cara [{idx_str}]: {nombre} — reconocida (similitud {top_score:.2f})"
+                    )
                 elif fm.status == MatchStatus.AMBIGUOUS and fm.candidates:
                     top_persona, top_score = fm.candidates[0]
                     nombre = self._formatear_nombre(top_persona)
@@ -333,7 +333,9 @@ class ProcessPhotoUseCase:
                             f" — face_ref: {fm.face_ref}. Podés usar add_photo_to_person para reforzar."
                         )
                     else:
-                        lineas.append(f"- Cara [{idx_str}]: posible match {nombre} (similitud {top_score:.2f}, no confirmado)")
+                        lineas.append(
+                            f"- Cara [{idx_str}]: posible match {nombre} (similitud {top_score:.2f}, no confirmado)"
+                        )
                 else:
                     if es_privado and not analysis_only:
                         lineas.append(f"- Cara [{idx_str}]: desconocida — face_ref: {fm.face_ref}")
@@ -341,7 +343,9 @@ class ProcessPhotoUseCase:
                         lineas.append(f"- Cara [{idx_str}]: desconocida")
 
             if hay_no_identificadas and not es_privado:
-                lineas.append("(El registro de nuevas personas solo está disponible en chat privado.)")
+                lineas.append(
+                    "(El registro de nuevas personas solo está disponible en chat privado.)"
+                )
             elif hay_no_identificadas and es_privado and not analysis_only:
                 lineas.append("Las caras no identificadas están numeradas en la imagen anotada.")
 
@@ -403,8 +407,7 @@ class ProcessPhotoUseCase:
         if not detections:
             return b""
         arrays = {
-            str(idx): np.asarray(d.embedding, dtype=np.float32)
-            for idx, d in enumerate(detections)
+            str(idx): np.asarray(d.embedding, dtype=np.float32) for idx, d in enumerate(detections)
         }
         buffer = io.BytesIO()
         np.savez_compressed(buffer, **arrays)

@@ -65,16 +65,14 @@ def test_registry_empty_when_agents_dir_missing(tmp_path: Path) -> None:
     assert registry.list_all() == []
 
 
-def _write_agent_with_channels(
-    agents_dir: Path, agent_id: str, channels_block: str
-) -> None:
+def _write_agent_with_channels(agents_dir: Path, agent_id: str, channels_block: str) -> None:
     agents_dir.mkdir(parents=True, exist_ok=True)
     header = (
-        f'id: {agent_id}\n'
+        f"id: {agent_id}\n"
         f'name: "{agent_id}"\n'
         'description: "agente de prueba"\n'
         'system_prompt: "soy un test"\n'
-        'channels:\n'
+        "channels:\n"
     )
     (agents_dir / f"{agent_id}.yaml").write_text(
         header + channels_block,
@@ -116,12 +114,8 @@ def test_registry_rechaza_rest_host_port_duplicado(tmp_path: Path) -> None:
 def test_registry_permite_rest_mismo_host_puertos_distintos(tmp_path: Path) -> None:
     """Same host, different ports → no conflict."""
     agents_dir = tmp_path / "agents"
-    _write_agent_with_channels(
-        agents_dir, "a", '  rest:\n    host: "0.0.0.0"\n    port: 6498\n'
-    )
-    _write_agent_with_channels(
-        agents_dir, "b", '  rest:\n    host: "0.0.0.0"\n    port: 6499\n'
-    )
+    _write_agent_with_channels(agents_dir, "a", '  rest:\n    host: "0.0.0.0"\n    port: 6498\n')
+    _write_agent_with_channels(agents_dir, "b", '  rest:\n    host: "0.0.0.0"\n    port: 6499\n')
 
     registry = AgentRegistry(agents_dir, _GLOBAL_RAW)
 
@@ -131,9 +125,7 @@ def test_registry_permite_rest_mismo_host_puertos_distintos(tmp_path: Path) -> N
 def test_registry_permite_un_solo_agente_con_telegram(tmp_path: Path) -> None:
     """Happy path: solo el agente principal declara channels.telegram."""
     agents_dir = tmp_path / "agents"
-    _write_agent_with_channels(
-        agents_dir, "principal", '  telegram:\n    token: "UNIQUE-TOKEN"\n'
-    )
+    _write_agent_with_channels(agents_dir, "principal", '  telegram:\n    token: "UNIQUE-TOKEN"\n')
     _write_agent(agents_dir, "subagente")  # sin channels
 
     registry = AgentRegistry(agents_dir, _GLOBAL_RAW)
@@ -161,14 +153,10 @@ def test_sub_agents_loaded_from_sub_agents_subdir(tmp_path: Path) -> None:
 def test_sub_agents_excluded_from_agents_with_channel(tmp_path: Path) -> None:
     """Sub-agentes con channels declarados no aparecen en agents_with_channel."""
     agents_dir = tmp_path / "agents"
-    _write_agent_with_channels(
-        agents_dir, "principal", '  telegram:\n    token: "TOKEN-MAIN"\n'
-    )
+    _write_agent_with_channels(agents_dir, "principal", '  telegram:\n    token: "TOKEN-MAIN"\n')
     sub_dir = agents_dir / "sub-agents"
     # Sub-agente con channels: debe ser ignorado para canales
-    _write_agent_with_channels(
-        sub_dir, "worker", '  telegram:\n    token: "TOKEN-WORKER"\n'
-    )
+    _write_agent_with_channels(sub_dir, "worker", '  telegram:\n    token: "TOKEN-WORKER"\n')
 
     registry = AgentRegistry(agents_dir, _GLOBAL_RAW)
 
@@ -200,13 +188,11 @@ def test_registry_empty_sub_agents_dir_is_fine(tmp_path: Path) -> None:
     assert registry.list_sub_agents() == []
 
 
-def _write_sub_agent_with_memory(
-    sub_dir: Path, agent_id: str, memory_block: str | None
-) -> None:
+def _write_sub_agent_with_memory(sub_dir: Path, agent_id: str, memory_block: str | None) -> None:
     """Escribe un sub-agente con bloque memory: opcional."""
     sub_dir.mkdir(parents=True, exist_ok=True)
     body = (
-        f'id: {agent_id}\n'
+        f"id: {agent_id}\n"
         f'name: "{agent_id}"\n'
         'description: "sub agente"\n'
         'system_prompt: "soy un test"\n'
@@ -256,9 +242,7 @@ def test_sub_agent_memory_enabled_explicit_false_is_respected(tmp_path: Path) ->
     sub_dir = agents_dir / "sub-agents"
     global_raw = {**_GLOBAL_RAW, "memory": {"db_filename": "data/inaki.db", "enabled": True}}
 
-    _write_sub_agent_with_memory(
-        sub_dir, "worker", memory_block="memory:\n  enabled: false\n"
-    )
+    _write_sub_agent_with_memory(sub_dir, "worker", memory_block="memory:\n  enabled: false\n")
 
     registry = AgentRegistry(agents_dir, global_raw)
 

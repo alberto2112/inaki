@@ -352,9 +352,7 @@ async def test_merge_persons(registry):
         source_face_ref="201#0",
     )
 
-    target_actualizado = await registry.merge_persons(
-        source_id=source.id, target_id=target.id
-    )
+    target_actualizado = await registry.merge_persons(source_id=source.id, target_id=target.id)
 
     # Source debe haber sido eliminado
     assert await registry.get_person(source.id) is None

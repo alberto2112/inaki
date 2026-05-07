@@ -707,9 +707,7 @@ class AgentContainer:
                 photos_cfg.scene.provider,
             )
         except Exception as exc:
-            logger.error(
-                "Error en wire_photos para agente '%s': %s", self.agent_config.id, exc
-            )
+            logger.error("Error en wire_photos para agente '%s': %s", self.agent_config.id, exc)
             self._photos_wired = True
 
     def _build_scene_describer(self, photos_cfg):
@@ -734,17 +732,22 @@ class AgentContainer:
             from adapters.outbound.scene.anthropic_describer import (
                 AnthropicSceneDescriberAdapter,
             )
+
             return AnthropicSceneDescriberAdapter(api_key, model, prompt)
         elif provider == "openai":
             from adapters.outbound.scene.openai_describer import (
                 OpenAISceneDescriberAdapter,
             )
+
             return OpenAISceneDescriberAdapter(api_key, model, prompt)
         elif provider == "groq":
             from adapters.outbound.scene.groq_describer import GroqSceneDescriberAdapter
+
             return GroqSceneDescriberAdapter(api_key, model, prompt)
         else:
-            raise IñakiError(f"Scene provider desconocido: '{provider}'. Válidos: anthropic, openai, groq")
+            raise IñakiError(
+                f"Scene provider desconocido: '{provider}'. Válidos: anthropic, openai, groq"
+            )
 
     def _register_face_tools(self, face_registry, metadata_repo, photos_cfg) -> None:
         """Registra las 8 face tools en el registry del agente."""
@@ -1138,8 +1141,7 @@ class AppContainer:
         # DB en la misma carpeta que history.db / faces.db.
         self._telegram_file_repo = None
         if any(
-            (cfg.channels.get("telegram", {}) or {}).get("token")
-            for cfg in registry.list_regular()
+            (cfg.channels.get("telegram", {}) or {}).get("token") for cfg in registry.list_regular()
         ):
             from pathlib import Path
 
@@ -1165,9 +1167,7 @@ class AppContainer:
                     self._telegram_file_repo,
                 )
             except Exception as exc:
-                logger.error(
-                    "Error en wire_telegram_tools para agente '%s': %s", agent_id, exc
-                )
+                logger.error("Error en wire_telegram_tools para agente '%s': %s", agent_id, exc)
 
         # Phase 6: wire memory extractor sub-agents.
         # Si memory.llm.agent_id apunta a un sub-agente, le pasamos su
@@ -1439,11 +1439,7 @@ class AppContainer:
 
         # Elegir el primer agente que tiene photos wired.
         agent_id = next(
-            (
-                aid
-                for aid, container in self.agents.items()
-                if container.process_photo is not None
-            ),
+            (aid for aid, container in self.agents.items() if container.process_photo is not None),
             None,
         )
         if agent_id is None:

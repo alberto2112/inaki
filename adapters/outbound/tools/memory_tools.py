@@ -278,10 +278,7 @@ class UpdateMemoryTool(ITool):
         if content_raw is None and tags_raw is None and relevance_raw is None:
             return ToolResult(
                 tool_name=self.name,
-                output=(
-                    "At least one of 'content', 'tags' or 'relevance' must be "
-                    "provided."
-                ),
+                output=("At least one of 'content', 'tags' or 'relevance' must be provided."),
                 success=False,
                 error="no fields to update",
                 retryable=False,

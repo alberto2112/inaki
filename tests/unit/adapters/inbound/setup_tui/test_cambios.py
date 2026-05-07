@@ -18,15 +18,11 @@ class TestBuildCambiosSeccionPlana:
     """Sección sin punto → un solo nivel de anidación."""
 
     def test_app_name(self) -> None:
-        result = build_cambios(
-            "APP", "name", "Iñaki", section_to_yaml=_MAPPING
-        )
+        result = build_cambios("APP", "name", "Iñaki", section_to_yaml=_MAPPING)
         assert result == {"app": {"name": "Iñaki"}}
 
     def test_memory_default_top_k(self) -> None:
-        result = build_cambios(
-            "MEMORY", "default_top_k", 7, section_to_yaml=_MAPPING
-        )
+        result = build_cambios("MEMORY", "default_top_k", 7, section_to_yaml=_MAPPING)
         assert result == {"memory": {"default_top_k": 7}}
 
 
@@ -34,16 +30,12 @@ class TestBuildCambiosSeccionAnidada:
     """Sección con punto (PADRE.HIJO) → dos niveles de anidación."""
 
     def test_memory_llm_provider(self) -> None:
-        result = build_cambios(
-            "MEMORY.LLM", "provider", "groq", section_to_yaml=_MAPPING
-        )
+        result = build_cambios("MEMORY.LLM", "provider", "groq", section_to_yaml=_MAPPING)
         assert result == {"memory": {"llm": {"provider": "groq"}}}
 
     def test_memory_llm_value_none(self) -> None:
         """Override null se persiste correctamente como None anidado."""
-        result = build_cambios(
-            "MEMORY.LLM", "max_tokens", None, section_to_yaml=_MAPPING
-        )
+        result = build_cambios("MEMORY.LLM", "max_tokens", None, section_to_yaml=_MAPPING)
         assert result == {"memory": {"llm": {"max_tokens": None}}}
 
     def test_scheduler_channel_fallback(self) -> None:
@@ -84,7 +76,5 @@ class TestBuildCambiosSeccionDesconocida:
     """Si la sección no está en el mapping, se cae al lowercase del nombre."""
 
     def test_unknown_section_lowercased(self) -> None:
-        result = build_cambios(
-            "DESCONOCIDA", "campo", "valor", section_to_yaml={}
-        )
+        result = build_cambios("DESCONOCIDA", "campo", "valor", section_to_yaml={})
         assert result == {"desconocida": {"campo": "valor"}}

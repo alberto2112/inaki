@@ -121,9 +121,7 @@ def test_build_input_assistant_with_tool_calls_and_text() -> None:
 
 
 def test_build_input_tool_message() -> None:
-    messages = [
-        Message(role=Role.TOOL, content='{"result": 42}', tool_call_id="call_xyz")
-    ]
+    messages = [Message(role=Role.TOOL, content='{"result": 42}', tool_call_id="call_xyz")]
     result = OpenAIResponsesProvider._build_input(messages)
     assert result == [
         {
@@ -418,7 +416,9 @@ async def test_complete_wraps_http_error_as_llm_error(monkeypatch):
 
         def raise_for_status(self):
             raise httpx.HTTPStatusError(
-                "404", request=httpx.Request("POST", "x"), response=self  # type: ignore[arg-type]
+                "404",
+                request=httpx.Request("POST", "x"),
+                response=self,  # type: ignore[arg-type]
             )
 
         def json(self):
@@ -457,9 +457,7 @@ def test_init_raises_without_api_key() -> None:
 async def test_stream_raises_not_implemented() -> None:
     provider = OpenAIResponsesProvider(_cfg())
     with pytest.raises(LLMError, match="no está implementado"):
-        async for _ in provider.stream(
-            [Message(role=Role.USER, content="x")], "sys"
-        ):
+        async for _ in provider.stream([Message(role=Role.USER, content="x")], "sys"):
             pass
 
 
@@ -476,7 +474,4 @@ def test_provider_name_and_factory_discovery() -> None:
     LLMProviderFactory._load()
 
     assert "openai_responses" in LLMProviderFactory._registry
-    assert (
-        LLMProviderFactory._registry["openai_responses"].__name__
-        == "OpenAIResponsesProvider"
-    )
+    assert LLMProviderFactory._registry["openai_responses"].__name__ == "OpenAIResponsesProvider"

@@ -352,7 +352,9 @@ def test_channel_chatid_passthrough_when_only_channel_set() -> None:
 
 def test_channel_tokens_in_extra_sections() -> None:
     ctx = AgentContext(agent_id="test", channel="telegram", chat_id="42")
-    result = ctx.build_system_prompt(BASE_PROMPT, extra_sections=["\n[{{CHANNEL}}#{{CHANNEL.CHATID}}]"])
+    result = ctx.build_system_prompt(
+        BASE_PROMPT, extra_sections=["\n[{{CHANNEL}}#{{CHANNEL.CHATID}}]"]
+    )
     assert "[telegram#42]" in result
 
 

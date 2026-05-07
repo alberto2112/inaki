@@ -126,8 +126,7 @@ class DownloadFromTelegramTool(ITool):
         content_type = str(kwargs.get("content_type") or "").strip().lower()
         if content_type not in _TIPOS_VALIDOS:
             return self._fail(
-                f"content_type inválido: {content_type!r}. "
-                f"Válidos: {sorted(_TIPOS_VALIDOS)}",
+                f"content_type inválido: {content_type!r}. Válidos: {sorted(_TIPOS_VALIDOS)}",
                 retryable=False,
             )
 

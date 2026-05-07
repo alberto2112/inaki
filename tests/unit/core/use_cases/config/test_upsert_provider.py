@@ -44,9 +44,7 @@ def test_api_key_en_secrets_tiene_valor_correcto(repo: MagicMock) -> None:
     uc.execute("openai", api_key="sk-openai-key")
 
     escritura_secrets = next(
-        c[0][1]
-        for c in repo.write_layer.call_args_list
-        if c[0][0] == LayerName.GLOBAL_SECRETS
+        c[0][1] for c in repo.write_layer.call_args_list if c[0][0] == LayerName.GLOBAL_SECRETS
     )
     assert escritura_secrets["providers"]["openai"]["api_key"] == "sk-openai-key"
 
@@ -66,9 +64,7 @@ def test_type_y_base_url_van_a_global(repo: MagicMock) -> None:
     uc.execute("groq", type="groq", base_url="https://custom.groq.com")
 
     escritura_global = next(
-        c[0][1]
-        for c in repo.write_layer.call_args_list
-        if c[0][0] == LayerName.GLOBAL
+        c[0][1] for c in repo.write_layer.call_args_list if c[0][0] == LayerName.GLOBAL
     )
     entrada = escritura_global["providers"]["groq"]
     assert entrada["type"] == "groq"
@@ -86,9 +82,7 @@ def test_api_key_existente_no_se_copia_a_global(repo: MagicMock) -> None:
     uc.execute("groq", type="groq-v2")
 
     escritura_global = next(
-        c[0][1]
-        for c in repo.write_layer.call_args_list
-        if c[0][0] == LayerName.GLOBAL
+        c[0][1] for c in repo.write_layer.call_args_list if c[0][0] == LayerName.GLOBAL
     )
     assert "api_key" not in escritura_global["providers"]["groq"]
 
@@ -98,9 +92,7 @@ def test_upsert_preserva_campos_no_modificados(repo: MagicMock) -> None:
     import copy
 
     datos = {
-        LayerName.GLOBAL: {
-            "providers": {"groq": {"type": "groq", "base_url": "https://old.url"}}
-        }
+        LayerName.GLOBAL: {"providers": {"groq": {"type": "groq", "base_url": "https://old.url"}}}
     }
     repo.read_layer.side_effect = lambda layer, **_: copy.deepcopy(datos.get(layer, {}))
 
@@ -109,8 +101,6 @@ def test_upsert_preserva_campos_no_modificados(repo: MagicMock) -> None:
     uc.execute("groq", type="groq-new")
 
     escritura_global = next(
-        c[0][1]
-        for c in repo.write_layer.call_args_list
-        if c[0][0] == LayerName.GLOBAL
+        c[0][1] for c in repo.write_layer.call_args_list if c[0][0] == LayerName.GLOBAL
     )
     assert escritura_global["providers"]["groq"]["base_url"] == "https://old.url"

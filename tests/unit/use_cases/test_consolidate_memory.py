@@ -472,13 +472,9 @@ async def test_consolidation_groups_by_channel_and_chat_id(
 ):
     """Mensajes de scopes distintos deben extraerse por separado (1 LLM call por scope)."""
     mock_history.load_uninfused.return_value = [
-        Message(
-            role=Role.USER, content="hola en grupo A", channel="telegram", chat_id="-1001"
-        ),
+        Message(role=Role.USER, content="hola en grupo A", channel="telegram", chat_id="-1001"),
         Message(role=Role.ASSISTANT, content="ack A", channel="telegram", chat_id="-1001"),
-        Message(
-            role=Role.USER, content="hola en grupo B", channel="telegram", chat_id="-1002"
-        ),
+        Message(role=Role.USER, content="hola en grupo B", channel="telegram", chat_id="-1002"),
         Message(role=Role.USER, content="hola en CLI", channel="cli", chat_id=""),
     ]
     mock_llm.complete.return_value = LLMResponse.of_text(
@@ -493,8 +489,7 @@ async def test_consolidation_groups_by_channel_and_chat_id(
 
     # Cada MemoryEntry persistido lleva el scope de su grupo de origen.
     scopes_persisted = {
-        (call.args[0].channel, call.args[0].chat_id)
-        for call in mock_memory.store.call_args_list
+        (call.args[0].channel, call.args[0].chat_id) for call in mock_memory.store.call_args_list
     }
     assert scopes_persisted == {("telegram", "-1001"), ("telegram", "-1002"), ("cli", "")}
 

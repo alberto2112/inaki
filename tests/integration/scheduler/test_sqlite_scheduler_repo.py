@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -158,6 +159,61 @@ async def test_save_task_computes_next_run_for_oneshot_from_iso(repo: SQLiteSche
     roundtrip = await repo.get_task(saved.id)
     assert roundtrip is not None
     assert roundtrip.next_run == datetime.fromisoformat(iso_schedule)
+
+
+async def test_recurrent_cron_evaluated_in_user_timezone(tmp_path: Path) -> None:
+    """
+    Cron expressions se evalúan en `user_timezone`, no en UTC. `0 6 * * *`
+    debe significar "6:00 hora del usuario" — para Europe/Madrid en verano
+    (CEST = UTC+2) eso es 4:00 UTC, en invierno (CET = UTC+1) es 5:00 UTC.
+    croniter sobre datetime tz-aware respeta DST automáticamente.
+    """
+    repo = SQLiteSchedulerRepo(str(tmp_path / "test.db"), user_timezone="Europe/Madrid")
+    await repo.ensure_schema()
+
+    task = ScheduledTask(
+        id=0,
+        name="6am madrid",
+        task_kind=TaskKind.RECURRENT,
+        trigger_type=TriggerType.CONSOLIDATE_MEMORY,
+        trigger_payload=ConsolidateMemoryPayload(),
+        schedule="0 6 * * *",
+    )
+
+    saved = await repo.save_task(task)
+
+    assert saved.next_run is not None
+    # next_run se persiste en UTC; al convertir de vuelta a Madrid debe dar 06:00.
+    next_in_madrid = saved.next_run.astimezone(ZoneInfo("Europe/Madrid"))
+    assert next_in_madrid.hour == 6, (
+        f"Cron '0 6 * * *' debe ejecutarse a las 6:00 hora local Madrid, "
+        f"pero next_run en Madrid es {next_in_madrid.isoformat()}"
+    )
+    assert next_in_madrid.minute == 0
+
+
+async def test_recurrent_cron_invalid_timezone_falls_back_to_utc(tmp_path: Path) -> None:
+    """
+    Timezone inválida en el constructor → fallback a UTC con warning. La task
+    sigue funcionando (cron evaluado como antes), pero el operador queda
+    avisado vía log.
+    """
+    repo = SQLiteSchedulerRepo(str(tmp_path / "test.db"), user_timezone="Fake/Timezone")
+    await repo.ensure_schema()
+
+    task = ScheduledTask(
+        id=0,
+        name="fallback",
+        task_kind=TaskKind.RECURRENT,
+        trigger_type=TriggerType.CONSOLIDATE_MEMORY,
+        trigger_payload=ConsolidateMemoryPayload(),
+        schedule="0 6 * * *",
+    )
+
+    saved = await repo.save_task(task)
+    assert saved.next_run is not None
+    # En UTC fallback, 06:00 cron → 06:00 UTC.
+    assert saved.next_run.hour == 6
 
 
 async def test_save_task_returned_task_carries_resolved_next_run(

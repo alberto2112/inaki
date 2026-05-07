@@ -1038,7 +1038,10 @@ class AppContainer:
 
         # Scheduler wiring
         scheduler_cfg = global_config.scheduler
-        self.scheduler_repo = SQLiteSchedulerRepo(scheduler_cfg.db_filename)
+        self.scheduler_repo = SQLiteSchedulerRepo(
+            scheduler_cfg.db_filename,
+            user_timezone=global_config.user.timezone,
+        )
         self.schedule_task_uc = ScheduleTaskUseCase(
             repo=self.scheduler_repo,
             on_mutation=self._on_scheduler_mutation,

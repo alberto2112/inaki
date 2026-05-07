@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncIterator
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import aiosqlite
 from croniter import croniter
@@ -75,8 +76,25 @@ def _deserialize_payload(raw: str) -> TriggerPayload:  # type: ignore[type-arg]
 
 
 class SQLiteSchedulerRepo:
-    def __init__(self, db_path: str) -> None:
+    def __init__(self, db_path: str, user_timezone: str = "UTC") -> None:
+        """
+        Args:
+            db_path: Ruta al archivo SQLite.
+            user_timezone: IANA timezone (ej. "Europe/Madrid"). Las expresiones
+                cron de tareas RECURRENT se evalúan en esta zona horaria, no en
+                UTC. Esto significa que `0 6 * * *` corre a las 6:00 hora del
+                usuario, respetando DST. Para ONESHOT no aplica (el schedule
+                ya viene como ISO 8601 con offset explícito).
+        """
         self._db_path = db_path
+        try:
+            self._cron_tz = ZoneInfo(user_timezone)
+        except ZoneInfoNotFoundError:
+            logger.warning(
+                "scheduler.repo: timezone '%s' inválido — fallback a UTC para evaluación de cron",
+                user_timezone,
+            )
+            self._cron_tz = ZoneInfo("UTC")
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
     @asynccontextmanager
@@ -462,8 +480,13 @@ class SQLiteSchedulerRepo:
         if task.next_run is not None:
             return task.next_run
         if task.task_kind == TaskKind.RECURRENT:
-            now = datetime.now(timezone.utc)
-            return datetime.fromtimestamp(croniter(task.schedule, now).get_next(), tz=timezone.utc)
+            # Cron se evalúa en la timezone del usuario (no en UTC) para que
+            # `0 6 * * *` signifique "6:00 hora local" siempre — croniter sobre
+            # un datetime tz-aware respeta DST automáticamente. El resultado se
+            # convierte a UTC para persistencia (loop del scheduler compara en UTC).
+            now_local = datetime.now(self._cron_tz)
+            next_local = croniter(task.schedule, now_local).get_next(datetime)
+            return next_local.astimezone(timezone.utc)
         if task.task_kind == TaskKind.ONESHOT:
             try:
                 dt = datetime.fromisoformat(task.schedule)

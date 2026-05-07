@@ -14,7 +14,6 @@ Cubre:
 
 from __future__ import annotations
 
-import struct
 from datetime import datetime, timezone
 
 import numpy as np

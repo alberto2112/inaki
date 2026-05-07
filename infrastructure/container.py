@@ -673,8 +673,6 @@ class AgentContainer:
             return
 
         try:
-            from pathlib import Path
-
             from adapters.outbound.history.sqlite_message_face_metadata_repo import (
                 SqliteMessageFaceMetadataRepo,
             )

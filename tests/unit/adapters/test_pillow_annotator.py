@@ -10,10 +10,9 @@ Cubre:
 from __future__ import annotations
 
 import io
-import re
 
 import pytest
-from PIL import Image, ImageDraw
+from PIL import Image
 
 from core.domain.entities.face import BBox, FaceMatch, MatchStatus, Person
 from adapters.outbound.imaging.pillow_annotator import PillowPhotoAnnotator
@@ -149,9 +148,6 @@ def test_pa04_matched_no_dibuja(anotador):
     resultado_sin_dibujo = anotador.draw_numbered(imagen_bytes, [cara_matched])
 
     # Con solo caras matched, la imagen no debería diferir (sin rectángulo)
-    img_orig = Image.open(io.BytesIO(imagen_bytes)).convert("RGB")
-    img_res = Image.open(io.BytesIO(resultado_sin_dibujo)).convert("RGB")
-    # Para ser precisos: verificar que resultado es bytes válido
     assert isinstance(resultado_sin_dibujo, bytes)
     img_check = Image.open(io.BytesIO(resultado_sin_dibujo))
     assert img_check.size == (200, 200)

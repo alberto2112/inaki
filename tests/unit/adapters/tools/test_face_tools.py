@@ -6,7 +6,6 @@ import io
 from unittest.mock import AsyncMock
 
 import numpy as np
-import pytest
 
 from adapters.outbound.tools.face_tools import (
     AddPhotoToPersonTool,

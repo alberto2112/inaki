@@ -628,7 +628,6 @@ class SqliteFaceRegistryAdapter(IFaceRegistryPort):
                     row = await cursor.fetchone()
                 if row is not None:
                     raw = bytes(row["embedding"])
-                    n = len(raw) // 4  # 4 bytes por float32
                     arr = np.frombuffer(raw, dtype=np.float32).copy()
                     vectores.append(arr)
 

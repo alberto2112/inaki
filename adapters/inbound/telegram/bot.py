@@ -13,6 +13,7 @@ import asyncio
 import logging
 import random
 import time
+from pathlib import Path
 
 from telegram import BotCommand, Update
 from telegram.constants import ParseMode
@@ -973,8 +974,6 @@ class TelegramBot:
 
         Best-effort: cualquier excepción se loggea y devuelve None.
         """
-        from pathlib import Path
-
         downloader = getattr(self._container, "telegram_file_downloader", None)
         if downloader is None:
             return None

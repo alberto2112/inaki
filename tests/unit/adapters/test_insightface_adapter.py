@@ -14,9 +14,7 @@ requerir la librería instalada en el entorno de test.
 from __future__ import annotations
 
 import sys
-import types
-from unittest.mock import MagicMock, patch, call
-import importlib
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest

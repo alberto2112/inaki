@@ -130,7 +130,7 @@ class SQLiteSchedulerRepo:
                     ),
                 )
                 await conn.commit()
-                return task.model_copy(update={"id": new_id})
+                return task.model_copy(update={"id": new_id, "next_run": resolved_next_run})
             else:
                 # Upsert by explicit id
                 await conn.execute(
@@ -177,7 +177,7 @@ class SQLiteSchedulerRepo:
                     ),
                 )
                 await conn.commit()
-                return task
+                return task.model_copy(update={"next_run": resolved_next_run})
 
     async def get_task(self, task_id: int) -> ScheduledTask | None:
         """Devuelve la tarea o None si no existe."""

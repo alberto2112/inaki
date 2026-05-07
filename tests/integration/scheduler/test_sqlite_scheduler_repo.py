@@ -160,6 +160,37 @@ async def test_save_task_computes_next_run_for_oneshot_from_iso(repo: SQLiteSche
     assert roundtrip.next_run == datetime.fromisoformat(iso_schedule)
 
 
+async def test_save_task_returned_task_carries_resolved_next_run(
+    repo: SQLiteSchedulerRepo,
+) -> None:
+    """
+    Regresión: save_task computaba next_run y lo persistía bien en SQL, pero
+    devolvía el ScheduledTask in-memory con next_run=None. El SchedulerTool
+    hacía `_echo_task(updated)` y reportaba `next_run_at: null` al LLM tras
+    un update invalidante (ScheduleTaskUseCase fuerza next_run=None para que
+    el repo recompute). El bug era de presentación, no de persistencia.
+    """
+    # Path INSERT (id=0)
+    task_new = ScheduledTask(
+        id=0,
+        name="insert path",
+        task_kind=TaskKind.RECURRENT,
+        trigger_type=TriggerType.CONSOLIDATE_MEMORY,
+        trigger_payload=ConsolidateMemoryPayload(),
+        schedule="0 3 * * *",
+    )
+    saved_new = await repo.save_task(task_new)
+    assert saved_new.next_run is not None, "save_task INSERT debe devolver next_run resuelto"
+
+    # Path UPSERT (id != 0) — simula el flujo update: next_run llega None tras
+    # ScheduleTaskUseCase.update_task con un campo invalidante.
+    task_update = saved_new.model_copy(update={"schedule": "0 6 * * *", "next_run": None})
+    saved_update = await repo.save_task(task_update)
+    assert saved_update.next_run is not None, (
+        "save_task UPSERT debe devolver next_run resuelto, no el None de entrada"
+    )
+
+
 async def test_save_task_preserves_explicit_next_run(repo: SQLiteSchedulerRepo) -> None:
     """
     Si el caller ya trae un `next_run` seteado, save_task NO debe recomputarlo.

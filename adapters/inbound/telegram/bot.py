@@ -13,6 +13,7 @@ import asyncio
 import logging
 import random
 import time
+from pathlib import Path
 
 from telegram import BotCommand, Update
 from telegram.constants import ParseMode
@@ -60,6 +61,7 @@ def _format_history_prefix(msg: BroadcastMessage) -> str:
         return f"{msg.sender} (foto): {msg.content}"
     # assistant_response (default)
     return f"{msg.agent_id} said: {msg.content}"
+
 
 # Delay aleatorio antes de flushar el buffer de grupo al LLM. Durante esta ventana,
 # nuevos mensajes (de Telegram o broadcasts de otros bots) se acumulan en el historial
@@ -138,9 +140,7 @@ class TelegramBot:
         # Las mutaciones en runtime (vía comando) NO se persisten — al reiniciar
         # el daemon se vuelven a leer estos valores.
         self._rate_limit_max_default: int = self._rate_limit_max
-        self._rate_limit_window_default: int = int(
-            broadcast_dict.get("rate_limiter_window", 30)
-        )
+        self._rate_limit_window_default: int = int(broadcast_dict.get("rate_limiter_window", 30))
 
         # Flags por event_type para emisión al canal de broadcast.
         # Defaults: solo assistant_response activo (backward-compat).
@@ -208,9 +208,7 @@ class TelegramBot:
         # el LLM pueda recuperarlos vía download_from_telegram. No responden ni
         # transcriben. Coherente con cómo se manejaban hoy los álbumes.
         self._app.add_handler(MessageHandler(filters.VIDEO, self._handle_silent_media))
-        self._app.add_handler(
-            MessageHandler(filters.Document.ALL, self._handle_silent_media)
-        )
+        self._app.add_handler(MessageHandler(filters.Document.ALL, self._handle_silent_media))
         self._app.add_handler(MessageHandler(filters.LOCATION, self._handle_message))
         self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
 
@@ -675,9 +673,7 @@ class TelegramBot:
                 scene_prompt=scene_prompt,
             )
         except Exception as exc:
-            logger.exception(
-                "Error procesando foto Telegram para '%s'", self._agent_cfg.id
-            )
+            logger.exception("Error procesando foto Telegram para '%s'", self._agent_cfg.id)
             await update.message.reply_text(f"Error al procesar la foto: {exc}")
             await self._set_reaction(update, "👎")
             return
@@ -884,9 +880,7 @@ class TelegramBot:
         await asyncio.sleep(delay)
         await self._run_group_pipeline(chat_id_str, chat_type)
 
-    def _extract_file_metadata(
-        self, message
-    ) -> tuple[FileContentType, object, str | None] | None:
+    def _extract_file_metadata(self, message) -> tuple[FileContentType, object, str | None] | None:
         """Detecta el media payload de un Message y devuelve (content_type, payload, mime).
 
         ``payload`` es el objeto de telegram (PhotoSize, Voice, Audio, Video,
@@ -907,9 +901,7 @@ class TelegramBot:
             return "file", message.document, getattr(message.document, "mime_type", None)
         return None
 
-    async def _gather_album_paths(
-        self, *, media_group_id: str, chat_id: str
-    ) -> list["Path"]:
+    async def _gather_album_paths(self, *, media_group_id: str, chat_id: str) -> list["Path"]:
         """Junta y pre-descarga TODAS las fotos persistidas para un media_group_id.
 
         Llamar DESPUÉS de esperar la ventana ``ALBUM_GATHER_DELAY_SEC`` para
@@ -973,8 +965,6 @@ class TelegramBot:
 
         Best-effort: cualquier excepción se loggea y devuelve None.
         """
-        from pathlib import Path
-
         downloader = getattr(self._container, "telegram_file_downloader", None)
         if downloader is None:
             return None
@@ -1031,7 +1021,7 @@ class TelegramBot:
                 if getattr(message, "date", None) is not None
                 else datetime.now(timezone.utc)
             )
-            caption = (getattr(message, "caption", None) or None)
+            caption = getattr(message, "caption", None) or None
             if caption is not None:
                 caption = caption.strip() or None
 
@@ -1282,9 +1272,7 @@ class TelegramBot:
                 intermediate_sink=live_sink,
                 channel="telegram",
                 chat_id=str(chat_id),
-                skip_marker=(
-                    "__SKIP__" if (self._behavior == "autonomous" and es_grupo) else None
-                ),
+                skip_marker=("__SKIP__" if (self._behavior == "autonomous" and es_grupo) else None),
             )
 
             # Verificar marcador __SKIP__ — solo aplica en modo autónomo en grupos.
@@ -1625,7 +1613,9 @@ class TelegramBot:
             BotCommand("scheduler", "Gestionar tareas programadas (list/show/enable/disable)"),
             BotCommand("chatid", "Obtener el ID del chat actual (útil para configurar grupos)"),
             BotCommand("ratelimit", "Ver/ajustar el rate limiter del broadcast en runtime"),
-            BotCommand("reload", "Reiniciar el daemon (cierra y vuelve a levantar todos los canales)"),
+            BotCommand(
+                "reload", "Reiniciar el daemon (cierra y vuelve a levantar todos los canales)"
+            ),
         ]
         try:
             await self._app.bot.set_my_commands(commands)
@@ -1680,9 +1670,7 @@ class TelegramBot:
         document: object,
         caption: str | None = None,
     ) -> None:
-        await self._app.bot.send_document(
-            chat_id=chat_id, document=document, caption=caption
-        )
+        await self._app.bot.send_document(chat_id=chat_id, document=document, caption=caption)
 
     async def send_media_group(
         self,

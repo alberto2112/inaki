@@ -83,7 +83,10 @@ def test_verificar_hmac_valid_roundtrip():
     message = "mensaje de prueba"
 
     digest = _firmar(auth, ts, agent_id, chat_id, "assistant_response", "", message)
-    assert _verificar_hmac(auth, ts, agent_id, chat_id, "assistant_response", "", message, digest) is True
+    assert (
+        _verificar_hmac(auth, ts, agent_id, chat_id, "assistant_response", "", message, digest)
+        is True
+    )
 
 
 def test_verificar_hmac_tampered_message():
@@ -91,7 +94,10 @@ def test_verificar_hmac_tampered_message():
     auth = "secreto"
     ts = 1704067200.0
     digest = _firmar(auth, ts, "ag", "ch", "assistant_response", "", "original")
-    assert _verificar_hmac(auth, ts, "ag", "ch", "assistant_response", "", "MODIFICADO", digest) is False
+    assert (
+        _verificar_hmac(auth, ts, "ag", "ch", "assistant_response", "", "MODIFICADO", digest)
+        is False
+    )
 
 
 def test_verificar_hmac_tampered_timestamp():
@@ -99,7 +105,9 @@ def test_verificar_hmac_tampered_timestamp():
     auth = "secreto"
     ts = 1704067200.0
     digest = _firmar(auth, ts, "ag", "ch", "assistant_response", "", "msg")
-    assert _verificar_hmac(auth, ts + 1, "ag", "ch", "assistant_response", "", "msg", digest) is False
+    assert (
+        _verificar_hmac(auth, ts + 1, "ag", "ch", "assistant_response", "", "msg", digest) is False
+    )
 
 
 def test_verificar_hmac_tampered_agent_id():
@@ -107,14 +115,20 @@ def test_verificar_hmac_tampered_agent_id():
     auth = "secreto"
     ts = 1704067200.0
     digest = _firmar(auth, ts, "original", "ch", "assistant_response", "", "msg")
-    assert _verificar_hmac(auth, ts, "atacante", "ch", "assistant_response", "", "msg", digest) is False
+    assert (
+        _verificar_hmac(auth, ts, "atacante", "ch", "assistant_response", "", "msg", digest)
+        is False
+    )
 
 
 def test_verificar_hmac_wrong_auth():
     """_verificar_hmac retorna False si se usa una clave diferente."""
     ts = 1704067200.0
     digest = _firmar("clave_correcta", ts, "ag", "ch", "assistant_response", "", "msg")
-    assert _verificar_hmac("clave_incorrecta", ts, "ag", "ch", "assistant_response", "", "msg", digest) is False
+    assert (
+        _verificar_hmac("clave_incorrecta", ts, "ag", "ch", "assistant_response", "", "msg", digest)
+        is False
+    )
 
 
 # ---------------------------------------------------------------------------

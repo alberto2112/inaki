@@ -63,8 +63,11 @@ async def test_save_y_query_recent_devuelve_records(repo: SqliteTelegramFileRepo
     await repo.save(_record(file_id="B", received_at=base + timedelta(minutes=1)))
 
     out = await repo.query_recent(
-        agent_id="test", channel="telegram", chat_id="-100",
-        content_type="photo", count=5,
+        agent_id="test",
+        channel="telegram",
+        chat_id="-100",
+        content_type="photo",
+        count=5,
     )
 
     assert [r.file_id for r in out] == ["B", "A"]
@@ -76,8 +79,11 @@ async def test_query_respeta_count(repo: SqliteTelegramFileRepo):
         await repo.save(_record(file_id=f"f{i}", received_at=base + timedelta(minutes=i)))
 
     out = await repo.query_recent(
-        agent_id="test", channel="telegram", chat_id="-100",
-        content_type="photo", count=2,
+        agent_id="test",
+        channel="telegram",
+        chat_id="-100",
+        content_type="photo",
+        count=2,
     )
 
     assert len(out) == 2
@@ -98,8 +104,11 @@ async def test_query_aisla_por_agent_id(repo: SqliteTelegramFileRepo):
     await repo.save(other)
 
     out = await repo.query_recent(
-        agent_id="test", channel="telegram", chat_id="-100",
-        content_type="photo", count=10,
+        agent_id="test",
+        channel="telegram",
+        chat_id="-100",
+        content_type="photo",
+        count=10,
     )
     assert [r.file_id for r in out] == ["A"]
 
@@ -109,8 +118,11 @@ async def test_query_aisla_por_chat(repo: SqliteTelegramFileRepo):
     await repo.save(_record(file_id="B", chat_id="-200"))
 
     out = await repo.query_recent(
-        agent_id="test", channel="telegram", chat_id="-100",
-        content_type="photo", count=10,
+        agent_id="test",
+        channel="telegram",
+        chat_id="-100",
+        content_type="photo",
+        count=10,
     )
     assert [r.file_id for r in out] == ["A"]
 
@@ -126,8 +138,11 @@ async def test_query_filtra_por_since(repo: SqliteTelegramFileRepo):
     await repo.save(_record(file_id="late", received_at=base + timedelta(hours=2)))
 
     out = await repo.query_recent(
-        agent_id="test", channel="telegram", chat_id="-100",
-        content_type="photo", count=10,
+        agent_id="test",
+        channel="telegram",
+        chat_id="-100",
+        content_type="photo",
+        count=10,
         since=base + timedelta(hours=1),
     )
     assert [r.file_id for r in out] == ["late"]
@@ -140,8 +155,11 @@ async def test_query_filtra_por_rango(repo: SqliteTelegramFileRepo):
     await repo.save(_record(file_id="C", received_at=base + timedelta(hours=2)))
 
     out = await repo.query_recent(
-        agent_id="test", channel="telegram", chat_id="-100",
-        content_type="photo", count=10,
+        agent_id="test",
+        channel="telegram",
+        chat_id="-100",
+        content_type="photo",
+        count=10,
         since=base + timedelta(minutes=30),
         until=base + timedelta(hours=1, minutes=30),
     )
@@ -151,8 +169,11 @@ async def test_query_filtra_por_rango(repo: SqliteTelegramFileRepo):
 async def test_query_rechaza_naive_datetime(repo: SqliteTelegramFileRepo):
     with pytest.raises(ValueError, match="timezone-aware"):
         await repo.query_recent(
-            agent_id="test", channel="telegram", chat_id="-100",
-            content_type="photo", count=5,
+            agent_id="test",
+            channel="telegram",
+            chat_id="-100",
+            content_type="photo",
+            count=5,
             since=datetime(2026, 5, 1),  # naive
         )
 
@@ -165,14 +186,20 @@ async def test_query_rechaza_naive_datetime(repo: SqliteTelegramFileRepo):
 async def test_query_photo_excluye_miembros_de_album(repo: SqliteTelegramFileRepo):
     base = datetime(2026, 5, 1, tzinfo=timezone.utc)
     await repo.save(_record(file_id="solo", received_at=base))
-    await repo.save(_record(
-        file_id="album1", media_group_id="grupo-1",
-        received_at=base + timedelta(minutes=1),
-    ))
+    await repo.save(
+        _record(
+            file_id="album1",
+            media_group_id="grupo-1",
+            received_at=base + timedelta(minutes=1),
+        )
+    )
 
     out = await repo.query_recent(
-        agent_id="test", channel="telegram", chat_id="-100",
-        content_type="photo", count=10,
+        agent_id="test",
+        channel="telegram",
+        chat_id="-100",
+        content_type="photo",
+        count=10,
     )
     assert [r.file_id for r in out] == ["solo"]
 
@@ -185,15 +212,20 @@ async def test_query_photo_excluye_miembros_de_album(repo: SqliteTelegramFileRep
 async def test_query_album_devuelve_grupo_completo(repo: SqliteTelegramFileRepo):
     base = datetime(2026, 5, 1, tzinfo=timezone.utc)
     for i in range(3):
-        await repo.save(_record(
-            file_id=f"a-{i}",
-            media_group_id="grupo-1",
-            received_at=base + timedelta(seconds=i),
-        ))
+        await repo.save(
+            _record(
+                file_id=f"a-{i}",
+                media_group_id="grupo-1",
+                received_at=base + timedelta(seconds=i),
+            )
+        )
 
     out = await repo.query_recent(
-        agent_id="test", channel="telegram", chat_id="-100",
-        content_type="album", count=10,
+        agent_id="test",
+        channel="telegram",
+        chat_id="-100",
+        content_type="album",
+        count=10,
     )
     assert [r.file_id for r in out] == ["a-0", "a-1", "a-2"]
     assert all(r.media_group_id == "grupo-1" for r in out)
@@ -202,15 +234,20 @@ async def test_query_album_devuelve_grupo_completo(repo: SqliteTelegramFileRepo)
 async def test_query_album_respeta_count_partial(repo: SqliteTelegramFileRepo):
     base = datetime(2026, 5, 1, tzinfo=timezone.utc)
     for i in range(4):
-        await repo.save(_record(
-            file_id=f"a-{i}",
-            media_group_id="grupo-1",
-            received_at=base + timedelta(seconds=i),
-        ))
+        await repo.save(
+            _record(
+                file_id=f"a-{i}",
+                media_group_id="grupo-1",
+                received_at=base + timedelta(seconds=i),
+            )
+        )
 
     out = await repo.query_recent(
-        agent_id="test", channel="telegram", chat_id="-100",
-        content_type="album", count=2,
+        agent_id="test",
+        channel="telegram",
+        chat_id="-100",
+        content_type="album",
+        count=2,
     )
     assert len(out) == 2
 
@@ -221,20 +258,29 @@ async def test_query_album_recorre_albums_por_recencia(
     base = datetime(2026, 5, 1, tzinfo=timezone.utc)
     # álbum viejo
     for i in range(2):
-        await repo.save(_record(
-            file_id=f"old-{i}", media_group_id="vieja",
-            received_at=base + timedelta(seconds=i),
-        ))
+        await repo.save(
+            _record(
+                file_id=f"old-{i}",
+                media_group_id="vieja",
+                received_at=base + timedelta(seconds=i),
+            )
+        )
     # álbum nuevo
     for i in range(3):
-        await repo.save(_record(
-            file_id=f"new-{i}", media_group_id="nueva",
-            received_at=base + timedelta(hours=1, seconds=i),
-        ))
+        await repo.save(
+            _record(
+                file_id=f"new-{i}",
+                media_group_id="nueva",
+                received_at=base + timedelta(hours=1, seconds=i),
+            )
+        )
 
     out = await repo.query_recent(
-        agent_id="test", channel="telegram", chat_id="-100",
-        content_type="album", count=10,
+        agent_id="test",
+        channel="telegram",
+        chat_id="-100",
+        content_type="album",
+        count=10,
     )
     # primero todos los del álbum más reciente, luego los del viejo
     file_ids = [r.file_id for r in out]
@@ -251,8 +297,11 @@ async def test_query_audio(repo: SqliteTelegramFileRepo):
     await repo.save(_record(file_id="pic", content_type="photo"))
 
     out = await repo.query_recent(
-        agent_id="test", channel="telegram", chat_id="-100",
-        content_type="audio", count=10,
+        agent_id="test",
+        channel="telegram",
+        chat_id="-100",
+        content_type="audio",
+        count=10,
     )
     assert [r.file_id for r in out] == ["aud"]
 
@@ -260,7 +309,10 @@ async def test_query_audio(repo: SqliteTelegramFileRepo):
 async def test_query_count_cero_devuelve_lista_vacia(repo: SqliteTelegramFileRepo):
     await repo.save(_record(file_id="A"))
     out = await repo.query_recent(
-        agent_id="test", channel="telegram", chat_id="-100",
-        content_type="photo", count=0,
+        agent_id="test",
+        channel="telegram",
+        chat_id="-100",
+        content_type="photo",
+        count=0,
     )
     assert out == []

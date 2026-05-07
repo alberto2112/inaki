@@ -37,9 +37,7 @@ logger = logging.getLogger(__name__)
 _FRESHNESS_WINDOW = 60.0
 
 
-_VALID_EVENT_TYPES = frozenset(
-    {"assistant_response", "user_input_voice", "user_input_photo"}
-)
+_VALID_EVENT_TYPES = frozenset({"assistant_response", "user_input_voice", "user_input_photo"})
 
 
 def _firmar(

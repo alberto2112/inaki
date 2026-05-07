@@ -131,8 +131,7 @@ class UnknownVisionProviderError(VisionError):
 
     def __init__(self, provider: str, disponibles: list[str]) -> None:
         super().__init__(
-            f"Proveedor de visión desconocido: '{provider}'. "
-            f"Disponibles: {disponibles}"
+            f"Proveedor de visión desconocido: '{provider}'. Disponibles: {disponibles}"
         )
         self.provider = provider
         self.disponibles = disponibles

@@ -102,9 +102,7 @@ def test_agent_secrets_pisa_agent() -> None:
             (LayerName.GLOBAL, None): {},
             (LayerName.GLOBAL_SECRETS, None): {},
             (LayerName.AGENT, "dev"): {"channels": {"telegram": {"token": "old-token"}}},
-            (LayerName.AGENT_SECRETS, "dev"): {
-                "channels": {"telegram": {"token": "secret-token"}}
-            },
+            (LayerName.AGENT_SECRETS, "dev"): {"channels": {"telegram": {"token": "secret-token"}}},
         }
     )
     uc = GetEffectiveConfigUseCase(repo)

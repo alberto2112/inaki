@@ -279,9 +279,7 @@ class SQLiteHistoryStore(IHistoryStore):
             else:
                 # Limpieza scoped por (channel, chat_id). NO se toca agent_state:
                 # los sticky skills/tools son per-agente, no per-chat.
-                filtros, params = _build_where_filters(
-                    agent_id, channel=channel, chat_id=chat_id
-                )
+                filtros, params = _build_where_filters(agent_id, channel=channel, chat_id=chat_id)
                 await conn.execute(f"DELETE FROM history WHERE {filtros}", params)
             await conn.commit()
 

@@ -128,7 +128,8 @@ async def _resolver_person(registry: IFaceRegistryPort, persona_ref: str) -> Per
     todas = await registry.list_persons(incluir_ignoradas=True)
     ref_lower = persona_ref.lower()
     candidatas = [
-        p for p in todas
+        p
+        for p in todas
         if (p.nombre or "").lower() == ref_lower
         or (p.apellido or "").lower() == ref_lower
         or f"{p.nombre or ''} {p.apellido or ''}".strip().lower() == ref_lower
@@ -425,11 +426,7 @@ class UpdatePersonMetadataTool(ITool):
                 retryable=False,
             )
 
-        campos = {
-            k: v
-            for k, v in kwargs.items()
-            if k != "person_id" and v is not None
-        }
+        campos = {k: v for k, v in kwargs.items() if k != "person_id" and v is not None}
         if not campos:
             return ToolResult(
                 tool_name=self.name,
@@ -768,9 +765,7 @@ class FindDuplicatePersonsTool(ITool):
         self._default_threshold = default_threshold
 
     async def execute(self, **kwargs: Any) -> ToolResult:
-        threshold = float(
-            kwargs.get("similarity_threshold", self._default_threshold)
-        )
+        threshold = float(kwargs.get("similarity_threshold", self._default_threshold))
 
         try:
             personas = await self._registry.list_persons(incluir_ignoradas=False)

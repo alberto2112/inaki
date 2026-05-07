@@ -19,7 +19,13 @@ def _msg(
     agent_id: str = "agente_a", chat_id: str = "chat_1", ts: float = 1000.0
 ) -> BroadcastMessage:
     """Crea un BroadcastMessage mínimo para tests."""
-    return BroadcastMessage(timestamp=ts, agent_id=agent_id, chat_id=chat_id, event_type="assistant_response", content="hola")
+    return BroadcastMessage(
+        timestamp=ts,
+        agent_id=agent_id,
+        chat_id=chat_id,
+        event_type="assistant_response",
+        content="hola",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +165,13 @@ def test_render_formato_seccion_markdown():
     buffer = BroadcastBuffer(ttl=3600.0, _now=lambda: ts + 1.0)
 
     buffer.append(
-        BroadcastMessage(timestamp=ts, agent_id="agente_x", chat_id="c", event_type="assistant_response", content="hola mundo")
+        BroadcastMessage(
+            timestamp=ts,
+            agent_id="agente_x",
+            chat_id="c",
+            event_type="assistant_response",
+            content="hola mundo",
+        )
     )
 
     result = buffer.render("c")
@@ -177,10 +189,22 @@ def test_render_multiple_mensajes_orden_cronologico():
     buffer = BroadcastBuffer(ttl=3600.0, _now=lambda: ts_base + 100.0)
 
     buffer.append(
-        BroadcastMessage(timestamp=ts_base + 10, agent_id="a1", chat_id="c", event_type="assistant_response", content="primero")
+        BroadcastMessage(
+            timestamp=ts_base + 10,
+            agent_id="a1",
+            chat_id="c",
+            event_type="assistant_response",
+            content="primero",
+        )
     )
     buffer.append(
-        BroadcastMessage(timestamp=ts_base + 20, agent_id="a2", chat_id="c", event_type="assistant_response", content="segundo")
+        BroadcastMessage(
+            timestamp=ts_base + 20,
+            agent_id="a2",
+            chat_id="c",
+            event_type="assistant_response",
+            content="segundo",
+        )
     )
 
     result = buffer.render("c")
@@ -197,7 +221,13 @@ def test_render_formato_linea_completa():
     buffer = BroadcastBuffer(ttl=3600.0, _now=lambda: ts + 1.0)
 
     buffer.append(
-        BroadcastMessage(timestamp=ts, agent_id="bot_dev", chat_id="grp", event_type="assistant_response", content="mensaje de test")
+        BroadcastMessage(
+            timestamp=ts,
+            agent_id="bot_dev",
+            chat_id="grp",
+            event_type="assistant_response",
+            content="mensaje de test",
+        )
     )
 
     result = buffer.render("grp")

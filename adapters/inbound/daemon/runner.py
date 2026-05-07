@@ -131,9 +131,7 @@ async def _run_telegram_bot(agent_cfg, container, app_container=None) -> None:
             await bot._app.stop()
 
 
-def _build_channel_tasks(
-    app_container, registry
-) -> tuple[list[asyncio.Task], list]:
+def _build_channel_tasks(app_container, registry) -> tuple[list[asyncio.Task], list]:
     """Construye las tasks de admin/REST/Telegram para una iteración del runner.
 
     Se llama una vez por arranque y otra vez por cada reload.
@@ -285,9 +283,7 @@ async def run_daemon(
         )
 
         shutdown_task = asyncio.create_task(shutdown_event.wait(), name="shutdown")
-        reload_task = asyncio.create_task(
-            app_container.reloader.wait_for_reload(), name="reload"
-        )
+        reload_task = asyncio.create_task(app_container.reloader.wait_for_reload(), name="reload")
 
         done, pending = await asyncio.wait(
             [*tasks, shutdown_task, reload_task],

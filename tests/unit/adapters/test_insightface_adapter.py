@@ -14,9 +14,7 @@ requerir la librería instalada en el entorno de test.
 from __future__ import annotations
 
 import sys
-import types
-from unittest.mock import MagicMock, patch, call
-import importlib
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -28,6 +26,7 @@ from core.domain.errors import VisionError
 # ---------------------------------------------------------------------------
 # Mock de insightface en sys.modules ANTES de importar el adaptador
 # ---------------------------------------------------------------------------
+
 
 def _make_insightface_mock() -> tuple[MagicMock, MagicMock]:
     """Crea mocks para el módulo insightface y FaceAnalysis.
@@ -56,6 +55,7 @@ def _fake_face(bbox_array, embedding_array, det_score: float = 0.95):
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def mock_insightface_module():
     """Inyecta el mock de insightface en sys.modules para todos los tests del módulo."""
@@ -82,6 +82,7 @@ def face_analysis_class(mock_insightface_module):
 def adaptador(mock_insightface_module):
     """Instancia el InsightFaceVisionAdapter con el módulo mockeado."""
     from adapters.outbound.vision.insightface_adapter import InsightFaceVisionAdapter
+
     return InsightFaceVisionAdapter(nombre_modelo="buffalo_sc")
 
 
@@ -89,10 +90,12 @@ def adaptador(mock_insightface_module):
 # Helpers de imagen
 # ---------------------------------------------------------------------------
 
+
 def _make_jpeg_bytes(ancho: int = 100, alto: int = 100) -> bytes:
     """Crea un JPEG mínimo usando PIL."""
     from PIL import Image
     import io
+
     img = Image.new("RGB", (ancho, alto), color="gray")
     buf = io.BytesIO()
     img.save(buf, format="JPEG")
@@ -116,9 +119,7 @@ def test_if01_lazy_load_no_llama_face_analysis_en_constructor(
     face_analysis_class.assert_not_called()
 
 
-async def test_if01_face_analysis_se_llama_en_detect_and_embed(
-    adaptador, face_analysis_class
-):
+async def test_if01_face_analysis_se_llama_en_detect_and_embed(adaptador, face_analysis_class):
     """IF-01 (parte 2): FaceAnalysis se instancia en la primera llamada a detect_and_embed."""
     # Configurar el mock para que prepare() no falle
     instancia_app = MagicMock()
@@ -132,9 +133,7 @@ async def test_if01_face_analysis_se_llama_en_detect_and_embed(
     assert face_analysis_class.call_count >= 1
 
 
-async def test_if02_detect_and_embed_devuelve_lista_face_detection(
-    adaptador, face_analysis_class
-):
+async def test_if02_detect_and_embed_devuelve_lista_face_detection(adaptador, face_analysis_class):
     """IF-02: detect_and_embed retorna lista de FaceDetection válidos."""
     bbox_np = np.array([10.0, 20.0, 110.0, 170.0], dtype=np.float32)
     embedding_np = np.random.default_rng(42).random(512).astype(np.float32)
@@ -205,6 +204,7 @@ async def test_if05_model_name_se_pasa_a_face_analysis(face_analysis_class):
 def test_if_provider_name_constant():
     """PROVIDER_NAME debe estar definido a nivel módulo."""
     from adapters.outbound.vision import insightface_adapter
+
     assert hasattr(insightface_adapter, "PROVIDER_NAME")
     assert insightface_adapter.PROVIDER_NAME == "insightface"
 

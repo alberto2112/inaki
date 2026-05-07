@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -45,5 +44,3 @@ async def test_falla_sin_bot(tmp_path):
     downloader = TelegramFileDownloader(get_telegram_bot=lambda: None)
     with pytest.raises(RuntimeError, match="bot"):
         await downloader.download(file_id="F", dest=tmp_path / "x.jpg")
-
-

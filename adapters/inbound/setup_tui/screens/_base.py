@@ -252,9 +252,7 @@ class BasePage(Screen):
             efectiva = container.get_effective_config.execute()
             cfg = GlobalConfig(**efectiva.datos)
             available_agents = container.list_agents.execute()
-            available_providers = [
-                p.key for p in container.list_providers.execute()
-            ]
+            available_providers = [p.key for p in container.list_providers.execute()]
             validate_global_config(cfg, available_agents, available_providers)
         except ReferenciaInvalidaError as exc:
             self.app.notify(

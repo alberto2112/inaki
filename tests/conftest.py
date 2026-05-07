@@ -6,9 +6,6 @@ from unittest.mock import AsyncMock, MagicMock
 from core.domain.entities.face import (
     BBox,
     FaceDetection,
-    FaceMatch,
-    MatchStatus,
-    MessageFaceMetadata,
     Person,
 )
 from core.domain.value_objects.conversation_state import ConversationState

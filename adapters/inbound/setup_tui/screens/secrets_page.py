@@ -90,9 +90,7 @@ class SecretsPage(BasePage):
     def compose_body(self) -> ComposeResult:
         if self._container is None:
             yield SectionHeader("SECRETS")
-            yield ConfigRow(
-                Field(label="(sin container)", value="no disponible", kind="scalar")
-            )
+            yield ConfigRow(Field(label="(sin container)", value="no disponible", kind="scalar"))
             return
 
         from textual.widgets import Label
@@ -184,7 +182,7 @@ class SecretsPage(BasePage):
                     layer=LayerName.GLOBAL_SECRETS,
                 )
             elif scope.startswith("agent/"):
-                agent_id = scope[len("agent/"):]
+                agent_id = scope[len("agent/") :]
                 self._container.update_agent_layer.execute(
                     agent_id=agent_id,
                     cambios=cambios,

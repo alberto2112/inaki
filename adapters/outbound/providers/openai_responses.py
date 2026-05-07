@@ -81,9 +81,7 @@ class OpenAIResponsesProvider(BaseLLMProvider):
                 data = resp.json()
         except httpx.HTTPStatusError as exc:
             body = exc.response.text[:500]
-            raise LLMError(
-                f"OpenAI Responses HTTP {exc.response.status_code}: {body}"
-            ) from exc
+            raise LLMError(f"OpenAI Responses HTTP {exc.response.status_code}: {body}") from exc
         except httpx.HTTPError as exc:
             raise LLMError(f"OpenAI Responses HTTP error: {exc}") from exc
 

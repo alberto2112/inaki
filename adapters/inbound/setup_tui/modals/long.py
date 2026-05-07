@@ -45,8 +45,7 @@ class EditLongModal(ModalScreen[str | None]):
             yield Label(f"editar  {self._field.label}", classes="titulo")
             yield TextArea(text=initial_value_for_input(self._field), id="editor")
             yield Label(
-                "[bold]ctrl+s[/bold] [dim]guardar[/dim]   "
-                "[bold]esc[/bold] [dim]cancelar[/dim]",
+                "[bold]ctrl+s[/bold] [dim]guardar[/dim]   [bold]esc[/bold] [dim]cancelar[/dim]",
                 classes="footer",
             )
 

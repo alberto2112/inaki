@@ -141,9 +141,7 @@ async def test_complete_empty_string_reasoning_content_treated_as_none() -> None
 
     fake_resp = MagicMock()
     fake_resp.json.return_value = {
-        "choices": [
-            {"message": {"content": "x", "reasoning_content": "", "tool_calls": None}}
-        ]
+        "choices": [{"message": {"content": "x", "reasoning_content": "", "tool_calls": None}}]
     }
     fake_resp.raise_for_status = MagicMock()
 
@@ -169,9 +167,7 @@ async def test_complete_uses_configured_timeout_in_httpx_client() -> None:
     provider = DeepSeekProvider(_cfg(None, timeout_seconds=180))
 
     fake_resp = MagicMock()
-    fake_resp.json.return_value = {
-        "choices": [{"message": {"content": "x", "tool_calls": None}}]
-    }
+    fake_resp.json.return_value = {"choices": [{"message": {"content": "x", "tool_calls": None}}]}
     fake_resp.raise_for_status = MagicMock()
     fake_client = AsyncMock()
     fake_client.__aenter__.return_value = fake_client

@@ -138,9 +138,7 @@ class YamlRepository:
             return {}
         return data  # type: ignore[return-value]
 
-    def write_layer(
-        self, layer: LayerName, data: dict, agent_id: str | None = None
-    ) -> None:
+    def write_layer(self, layer: LayerName, data: dict, agent_id: str | None = None) -> None:
         """
         Escribe ``data`` en la capa indicada preservando comentarios y orden.
 

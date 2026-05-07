@@ -108,9 +108,7 @@ async def test_execute_persists_user_msg_before_llm_call_so_errors_dont_lose_inp
     assert appended_messages[0].content == "¿qué hora es?"
 
 
-async def test_execute_does_not_persist_user_msg_when_ephemeral(
-    use_case, mock_llm, mock_history
-):
+async def test_execute_does_not_persist_user_msg_when_ephemeral(use_case, mock_llm, mock_history):
     """En modo ephemeral nada se persiste, ni siquiera con error del LLM."""
     from core.domain.errors import LLMError
 

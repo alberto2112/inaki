@@ -109,9 +109,7 @@ class GlobalPage(BasePage):
         section_name, field_name = self._field_section.get(id(field), ("", field.label))
 
         # Determinar la capa: secrets si el kind es "secret", sino GLOBAL
-        layer = (
-            LayerName.GLOBAL_SECRETS if field.kind == "secret" else LayerName.GLOBAL
-        )
+        layer = LayerName.GLOBAL_SECRETS if field.kind == "secret" else LayerName.GLOBAL
 
         # build_cambios respeta secciones anidadas: MEMORY.LLM → {memory: {llm: ...}}
         cambios = build_cambios(

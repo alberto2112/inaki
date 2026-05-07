@@ -48,9 +48,7 @@ def test_agente_inexistente_lanza_error(repo: MagicMock) -> None:
 
 def test_execute_secrets_elimina_si_existe(repo: MagicMock) -> None:
     """execute_secrets() llama a delete_layer(AGENT_SECRETS) si el archivo existe."""
-    repo.layer_exists.side_effect = lambda layer, agent_id=None: (
-        layer == LayerName.AGENT_SECRETS
-    )
+    repo.layer_exists.side_effect = lambda layer, agent_id=None: layer == LayerName.AGENT_SECRETS
 
     uc = DeleteAgentUseCase(repo)
     uc.execute_secrets("dev")

@@ -161,9 +161,7 @@ class SqliteFaceRegistryAdapter(IFaceRegistryPort):
         await conn.execute(_CREATE_PERSONS_INDEX)
         await conn.execute(_CREATE_PERSON_EMBEDDINGS)
         await conn.execute(_CREATE_PERSON_EMBEDDINGS_INDEX)
-        await conn.execute(
-            _CREATE_VEC_TABLE_TEMPLATE.format(dim=self._embedding_dim)
-        )
+        await conn.execute(_CREATE_VEC_TABLE_TEMPLATE.format(dim=self._embedding_dim))
         await conn.commit()
 
         # Verificar/guardar dimensión en schema_meta
@@ -179,9 +177,7 @@ class SqliteFaceRegistryAdapter(IFaceRegistryPort):
                 (str(self._embedding_dim),),
             )
             await conn.commit()
-            logger.info(
-                "faces.db inicializada: embedding_dim=%d", self._embedding_dim
-            )
+            logger.info("faces.db inicializada: embedding_dim=%d", self._embedding_dim)
         else:
             # Validar que coincide con lo guardado
             guardada = int(row["value"])
@@ -289,13 +285,9 @@ class SqliteFaceRegistryAdapter(IFaceRegistryPort):
             await self._init_db(conn)
 
             # Verificar que la persona existe
-            async with conn.execute(
-                "SELECT id FROM persons WHERE id = ?", (person_id,)
-            ) as cursor:
+            async with conn.execute("SELECT id FROM persons WHERE id = ?", (person_id,)) as cursor:
                 if await cursor.fetchone() is None:
-                    raise FaceRegistryError(
-                        f"Persona no encontrada: {person_id!r}"
-                    )
+                    raise FaceRegistryError(f"Persona no encontrada: {person_id!r}")
 
             # Insertar embedding
             await conn.execute(
@@ -346,9 +338,7 @@ class SqliteFaceRegistryAdapter(IFaceRegistryPort):
             await self._init_db(conn)
 
             # Verificar que hay embeddings en el registro
-            async with conn.execute(
-                "SELECT COUNT(*) as cnt FROM person_embeddings_vec"
-            ) as cursor:
+            async with conn.execute("SELECT COUNT(*) as cnt FROM person_embeddings_vec") as cursor:
                 row = await cursor.fetchone()
                 if row["cnt"] == 0:
                     return []
@@ -381,7 +371,7 @@ class SqliteFaceRegistryAdapter(IFaceRegistryPort):
             persona = _row_to_person(row)
             distancia = row["distance"]
             # score coseno: para vectores unitarios, dist_L2² = 2(1 - cosθ)
-            score = 1.0 - (distancia ** 2) / 2.0
+            score = 1.0 - (distancia**2) / 2.0
 
             face_match = FaceMatch(
                 face_ref="",  # Placeholder — el use case asigna el face_ref real
@@ -428,13 +418,9 @@ class SqliteFaceRegistryAdapter(IFaceRegistryPort):
             await self._init_db(conn)
 
             # Verificar que existe
-            async with conn.execute(
-                "SELECT id FROM persons WHERE id = ?", (person_id,)
-            ) as cursor:
+            async with conn.execute("SELECT id FROM persons WHERE id = ?", (person_id,)) as cursor:
                 if await cursor.fetchone() is None:
-                    raise FaceRegistryError(
-                        f"Persona no encontrada para borrar: {person_id!r}"
-                    )
+                    raise FaceRegistryError(f"Persona no encontrada para borrar: {person_id!r}")
 
             # Obtener todos los embedding_ids de esta persona para borrar de vec0
             embedding_ids = await conn.execute_fetchall(
@@ -477,13 +463,9 @@ class SqliteFaceRegistryAdapter(IFaceRegistryPort):
 
             # Verificar ambas personas existen
             for pid in (source_id, target_id):
-                async with conn.execute(
-                    "SELECT id FROM persons WHERE id = ?", (pid,)
-                ) as cursor:
+                async with conn.execute("SELECT id FROM persons WHERE id = ?", (pid,)) as cursor:
                     if await cursor.fetchone() is None:
-                        raise FaceRegistryError(
-                            f"Persona no encontrada para merge: {pid!r}"
-                        )
+                        raise FaceRegistryError(f"Persona no encontrada para merge: {pid!r}")
 
             # Re-asignar embeddings de source a target
             await conn.execute(
@@ -537,7 +519,12 @@ class SqliteFaceRegistryAdapter(IFaceRegistryPort):
     ) -> Person:
         """Actualiza campos de metadata de una persona."""
         campos_permitidos = {
-            "nombre", "apellido", "fecha_nacimiento", "relacion", "notes", "categoria"
+            "nombre",
+            "apellido",
+            "fecha_nacimiento",
+            "relacion",
+            "notes",
+            "categoria",
         }
         campos_a_actualizar = {k: v for k, v in fields.items() if k in campos_permitidos}
 
@@ -581,9 +568,7 @@ class SqliteFaceRegistryAdapter(IFaceRegistryPort):
         """Recupera una persona por su ID."""
         async with self._conn() as conn:
             await self._init_db(conn)
-            async with conn.execute(
-                "SELECT * FROM persons WHERE id = ?", (person_id,)
-            ) as cursor:
+            async with conn.execute("SELECT * FROM persons WHERE id = ?", (person_id,)) as cursor:
                 row = await cursor.fetchone()
 
         if row is None:
@@ -628,7 +613,6 @@ class SqliteFaceRegistryAdapter(IFaceRegistryPort):
                     row = await cursor.fetchone()
                 if row is not None:
                     raw = bytes(row["embedding"])
-                    n = len(raw) // 4  # 4 bytes por float32
                     arr = np.frombuffer(raw, dtype=np.float32).copy()
                     vectores.append(arr)
 

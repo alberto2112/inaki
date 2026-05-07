@@ -412,10 +412,11 @@ async def test_update_no_mutable_fields() -> None:
 
 @pytest.mark.asyncio
 async def test_update_relative_schedule_parsed() -> None:
-    """update with '+1h' schedule → schedule resolved to ISO string."""
+    """update with '+1h' schedule on a one_shot task → schedule resolved to ISO string."""
     tool, uc = _make_tool()
-    updated = _make_task(task_id=30, name="Task")
-    uc.update_task.return_value = updated
+    existing = _make_task(task_id=30, name="Task", task_kind=TaskKind.ONESHOT)
+    uc.get_task.return_value = existing
+    uc.update_task.return_value = existing
 
     result = await tool.execute(operation="update", task_id=30, schedule="+1h")
 
@@ -427,6 +428,51 @@ async def test_update_relative_schedule_parsed() -> None:
     # Must be a valid ISO datetime string, not the raw "+1h"
     assert sched != "+1h"
     assert "T" in sched  # ISO 8601 has a T separator
+
+
+@pytest.mark.asyncio
+async def test_update_recurring_cron_with_range_passes_through() -> None:
+    """update recurring task with cron range expression → schedule passed crudo al use case."""
+    tool, uc = _make_tool()
+    existing = _make_task(task_id=31, name="Cron Task", task_kind=TaskKind.RECURRENT)
+    uc.get_task.return_value = existing
+    uc.update_task.return_value = existing
+
+    result = await tool.execute(operation="update", task_id=31, schedule="0 7 6-10 5 *")
+
+    assert result.success is True, result.output
+    kwargs = uc.update_task.call_args[1]
+    # Para RECURRENT el cron se pasa tal cual (croniter lo evalúa en _resolve_next_run).
+    assert kwargs["schedule"] == "0 7 6-10 5 *"
+
+
+@pytest.mark.asyncio
+async def test_update_recurring_cron_with_list_passes_through() -> None:
+    """update recurring task with cron list expression → schedule passed crudo."""
+    tool, uc = _make_tool()
+    existing = _make_task(task_id=32, name="Cron List", task_kind=TaskKind.RECURRENT)
+    uc.get_task.return_value = existing
+    uc.update_task.return_value = existing
+
+    result = await tool.execute(operation="update", task_id=32, schedule="0 7 7,8,9,10 5 *")
+
+    assert result.success is True, result.output
+    kwargs = uc.update_task.call_args[1]
+    assert kwargs["schedule"] == "0 7 7,8,9,10 5 *"
+
+
+@pytest.mark.asyncio
+async def test_update_recurring_with_relative_schedule_is_error() -> None:
+    """update recurring task with '+5h' relative → error (cron required)."""
+    tool, uc = _make_tool()
+    existing = _make_task(task_id=33, name="Cron Task", task_kind=TaskKind.RECURRENT)
+    uc.get_task.return_value = existing
+
+    result = await tool.execute(operation="update", task_id=33, schedule="+5h")
+
+    assert result.success is False
+    assert "cron" in result.output.lower() or "recurring" in result.output.lower()
+    uc.update_task.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

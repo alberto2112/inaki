@@ -77,6 +77,7 @@ def _coerce_to_dict(value: Any) -> Any:
             pass
     return value
 
+
 # Truncación del output/error en la operación `logs` — protege el contexto
 # del LLM cuando el historial arrastra outputs grandes. `log_get` NO trunca:
 # es la puerta de "dame el detalle completo de este log".
@@ -308,9 +309,7 @@ class SchedulerTool(ITool):
                 trigger_payload_raw_original,
                 list(params.keys()),
             )
-            example = _PAYLOAD_EXAMPLE_BY_TRIGGER.get(
-                trigger_type_raw, '{"text": "..."}'
-            )
+            example = _PAYLOAD_EXAMPLE_BY_TRIGGER.get(trigger_type_raw, '{"text": "..."}')
             return self._error(
                 f"'trigger_payload' is REQUIRED for create and must be a JSON object. "
                 f"For trigger_type='{trigger_type_raw}' use: trigger_payload={example}. "
@@ -517,25 +516,6 @@ class SchedulerTool(ITool):
                     f"Must be one of: {', '.join(s.value for s in TaskStatus)}."
                 )
 
-        if "schedule" in params:
-            schedule_raw = str(params["schedule"]).strip()
-            if schedule_raw.startswith("+"):
-                try:
-                    dt = parse_schedule(schedule_raw, self._user_timezone)
-                    updates["schedule"] = dt.isoformat()
-                except ValueError as exc:
-                    return self._error(
-                        f"Invalid relative schedule '{schedule_raw}'. "
-                        f"Use format: +Xd, +Xh, +Xm or combinations. "
-                        f"Detail: {exc}"
-                    )
-            else:
-                try:
-                    dt = parse_schedule(schedule_raw, self._user_timezone)
-                    updates["schedule"] = dt.isoformat()
-                except ValueError as exc:
-                    return self._error(str(exc))
-
         if "trigger_payload" in params:
             payload_raw_original = params["trigger_payload"]
             payload_raw = _coerce_to_dict(payload_raw_original)
@@ -550,6 +530,48 @@ class SchedulerTool(ITool):
             # (handled below when we call update_task)
             updates["_trigger_payload_raw"] = payload_raw
 
+        # Las ramas `schedule` y `trigger_payload` necesitan la task existente
+        # (la primera para discriminar cron vs ISO según task_kind, la segunda
+        # para validar el payload contra el trigger_type). Se hace un único
+        # fetch lazy y se reusa.
+        existing: ScheduledTask | None = None
+        if "schedule" in params or "_trigger_payload_raw" in updates:
+            try:
+                existing = await self._uc.get_task(task_id)
+            except TaskNotFoundError as exc:
+                return self._error(str(exc))
+            except SchedulerError as exc:
+                return self._error(str(exc))
+
+        if "schedule" in params:
+            assert existing is not None  # garantizado por el fetch lazy de arriba
+            schedule_raw = str(params["schedule"]).strip()
+            is_recurring = existing.task_kind == TaskKind.RECURRENT
+            if schedule_raw.startswith("+"):
+                if is_recurring:
+                    return self._error(
+                        "Recurring tasks require a cron expression, not a relative time offset."
+                    )
+                try:
+                    dt = parse_schedule(schedule_raw, self._user_timezone)
+                    updates["schedule"] = dt.isoformat()
+                except ValueError as exc:
+                    return self._error(
+                        f"Invalid relative schedule '{schedule_raw}'. "
+                        f"Use format: +Xd, +Xh, +Xm or combinations. "
+                        f"Detail: {exc}"
+                    )
+            elif is_recurring:
+                # Cron expression — se pasa crudo al repo (croniter lo evalúa
+                # en _resolve_next_run y soporta rangos/listas/steps).
+                updates["schedule"] = schedule_raw
+            else:
+                try:
+                    dt = parse_schedule(schedule_raw, self._user_timezone)
+                    updates["schedule"] = dt.isoformat()
+                except ValueError as exc:
+                    return self._error(str(exc))
+
         if not {k for k in updates if not k.startswith("_")}:
             if "_trigger_payload_raw" not in updates:
                 return self._error(
@@ -560,13 +582,7 @@ class SchedulerTool(ITool):
         # If trigger_payload update requested, resolve it now
         if "_trigger_payload_raw" in updates:
             payload_raw = updates.pop("_trigger_payload_raw")
-            # Get current task to know the trigger_type
-            try:
-                existing = await self._uc.get_task(task_id)
-            except TaskNotFoundError as exc:
-                return self._error(str(exc))
-            except SchedulerError as exc:
-                return self._error(str(exc))
+            assert existing is not None  # garantizado por el fetch lazy de arriba
 
             trigger_type_str = existing.trigger_type.value
             if trigger_type_str not in _ALLOWED_TRIGGER_TYPES:

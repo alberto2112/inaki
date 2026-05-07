@@ -97,6 +97,7 @@ class LLMProviderFactory:
             temperature=llm_cfg.temperature,
             max_tokens=llm_cfg.max_tokens,
             reasoning_effort=llm_cfg.reasoning_effort,
+            timeout_seconds=llm_cfg.timeout_seconds,
             api_key=provider_cfg.api_key,
             base_url=provider_cfg.base_url,
         )

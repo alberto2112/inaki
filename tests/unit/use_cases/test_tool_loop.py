@@ -35,17 +35,22 @@ def _tool_call_response(tool_name: str, arguments: dict | None = None) -> LLMRes
     )
 
 
-def _make_llm(*responses: LLMResponse | str) -> AsyncMock:
+def _make_llm(*responses: LLMResponse | str, thinking_active: bool = False) -> AsyncMock:
     """LLM mock que devuelve las respuestas en orden.
 
     Acepta ``LLMResponse`` o ``str`` (los strings se envuelven con
     ``LLMResponse.of_text`` por conveniencia).
+
+    ``thinking_active`` se expone como atributo regular del mock (no
+    auto-generado por AsyncMock) para que el tool loop pueda decidir si
+    emitir "Thinking..." al sink. Default ``False``.
     """
     llm = AsyncMock()
     normalized: list[LLMResponse] = [
         r if isinstance(r, LLMResponse) else LLMResponse.of_text(r) for r in responses
     ]
     llm.complete.side_effect = normalized
+    llm.thinking_active = thinking_active
     return llm
 
 
@@ -578,3 +583,91 @@ async def test_intermediate_sink_skips_empty_text_blocks():
     )
 
     assert sink.emitted == []
+
+
+# ---------------------------------------------------------------------------
+# Thinking mode
+# ---------------------------------------------------------------------------
+
+
+async def test_thinking_indicator_emitted_once_when_thinking_active():
+    """Cuando el provider tiene thinking_active=True, el sink recibe 'Thinking...'
+    UNA SOLA vez al inicio del turno, no por cada iteración."""
+    tool_call = LLMResponse(
+        text_blocks=[],
+        tool_calls=[{"function": {"name": "mytool", "arguments": "{}"}}],
+        thinking="razonando...",
+        raw="",
+    )
+    final = LLMResponse(text_blocks=["listo"], tool_calls=[], thinking="cerrando", raw="")
+    llm = _make_llm(tool_call, final, thinking_active=True)
+    tools = _make_tools()
+    sink = _RecordingSink()
+
+    result = await run_tool_loop(
+        llm=llm,
+        tools=tools,
+        messages=_base_messages(),
+        system_prompt="Prompt",
+        tool_schemas=[{"name": "mytool"}],
+        max_iterations=5,
+        circuit_breaker_threshold=3,
+        agent_id="agent",
+        intermediate_sink=sink,
+    )
+
+    assert result == "listo"
+    # Solo UN "Thinking..." pese a haber dos iteraciones del LLM.
+    assert sink.emitted.count("Thinking...") == 1
+
+
+async def test_thinking_indicator_not_emitted_when_thinking_inactive():
+    llm = _make_llm("respuesta directa", thinking_active=False)
+    tools = _make_tools()
+    sink = _RecordingSink()
+
+    await run_tool_loop(
+        llm=llm,
+        tools=tools,
+        messages=_base_messages(),
+        system_prompt="Prompt",
+        tool_schemas=[],
+        max_iterations=5,
+        circuit_breaker_threshold=3,
+        agent_id="agent",
+        intermediate_sink=sink,
+    )
+
+    assert "Thinking..." not in sink.emitted
+
+
+async def test_thinking_propagates_to_working_messages_during_tool_loop():
+    """El thinking del LLMResponse se propaga al Message del working_messages
+    para que en la próxima iteración llegue como ``reasoning_content`` al provider."""
+    tool_call = LLMResponse(
+        text_blocks=[],
+        tool_calls=[{"function": {"name": "mytool", "arguments": "{}"}}],
+        thinking="paso 1: necesito llamar la tool",
+        raw="",
+    )
+    final_response = LLMResponse(text_blocks=["ok"], tool_calls=[], thinking="paso 2", raw="")
+    llm = _make_llm(tool_call, final_response, thinking_active=True)
+    tools = _make_tools()
+
+    await run_tool_loop(
+        llm=llm,
+        tools=tools,
+        messages=_base_messages(),
+        system_prompt="Prompt",
+        tool_schemas=[{"name": "mytool"}],
+        max_iterations=5,
+        circuit_breaker_threshold=3,
+        agent_id="agent",
+    )
+
+    # En la SEGUNDA llamada al LLM, los working_messages deben incluir el
+    # assistant message del primer turno con su thinking propagado.
+    second_call_args = llm.complete.await_args_list[1].args
+    working_messages = second_call_args[0]
+    asst_msg = next(m for m in working_messages if m.role == Role.ASSISTANT and m.tool_calls)
+    assert asst_msg.thinking == "paso 1: necesito llamar la tool"

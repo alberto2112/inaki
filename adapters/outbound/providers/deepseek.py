@@ -30,25 +30,47 @@ class DeepSeekProvider(BaseLLMProvider):
             "Content-Type": "application/json",
         }
 
+    @property
+    def thinking_active(self) -> bool:
+        return self._cfg.thinking_active
+
+    def _build_payload(
+        self,
+        messages: list[Message],
+        system_prompt: str,
+        tools: list[dict] | None,
+    ) -> dict:
+        """Arma el payload de chat/completions con thinking-aware sampling.
+
+        Cuando ``thinking_active``, DeepSeek rechaza ``temperature``, ``top_p``,
+        ``presence_penalty`` y ``frequency_penalty`` — los omitimos.
+        """
+        payload: dict = {
+            "model": self._cfg.model,
+            "messages": self._build_messages(messages, system_prompt),
+            "max_tokens": self._cfg.max_tokens,
+        }
+        if self._cfg.thinking_active:
+            payload["thinking"] = {"type": "enabled"}
+            payload["reasoning_effort"] = self._cfg.reasoning_effort
+        else:
+            payload["temperature"] = self._cfg.temperature
+            payload["thinking"] = {"type": "disabled"}
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+        return payload
+
     async def complete(
         self,
         messages: list[Message],
         system_prompt: str,
         tools: list[dict] | None = None,
     ) -> LLMResponse:
-        payload: dict = {
-            "model": self._cfg.model,
-            "messages": self._build_messages(messages, system_prompt),
-            "temperature": self._cfg.temperature,
-            "max_tokens": self._cfg.max_tokens,
-            "thinking": {"type": "disabled"},
-        }
-        if tools:
-            payload["tools"] = tools
-            payload["tool_choice"] = "auto"
+        payload = self._build_payload(messages, system_prompt, tools)
 
         try:
-            async with httpx.AsyncClient(timeout=60) as client:
+            async with httpx.AsyncClient(timeout=self._cfg.timeout_seconds) as client:
                 resp = await client.post(
                     f"{self._base_url}/chat/completions",
                     headers=self._headers,
@@ -60,17 +82,25 @@ class DeepSeekProvider(BaseLLMProvider):
             body = exc.response.text[:500]
             raise LLMError(f"DeepSeek HTTP {exc.response.status_code}: {body}") from exc
         except httpx.HTTPError as exc:
-            raise LLMError(f"DeepSeek HTTP error: {exc}") from exc
+            # Muchas excepciones de httpx (ReadTimeout, ConnectTimeout, RemoteProtocolError)
+            # tienen __str__ vacío. Incluimos el tipo para que el mensaje sea
+            # accionable en logs y en el canal del usuario.
+            detail = str(exc) or repr(exc)
+            raise LLMError(
+                f"DeepSeek HTTP error ({type(exc).__name__}, timeout={self._cfg.timeout_seconds}s): {detail}"
+            ) from exc
 
         choice = data["choices"][0]
         message = choice["message"]
         content = message.get("content") or ""
         tool_calls = message.get("tool_calls") or []
+        reasoning = message.get("reasoning_content") or None
         logger.info("%s", self._format_response_log("DeepSeek", content, tool_calls))
 
         return LLMResponse(
             text_blocks=[content] if content else [],
             tool_calls=tool_calls,
+            thinking=reasoning,
             raw=json.dumps(message, ensure_ascii=False),
         )
 
@@ -88,7 +118,7 @@ class DeepSeekProvider(BaseLLMProvider):
             "thinking": {"type": "disabled"},
         }
         try:
-            async with httpx.AsyncClient(timeout=120) as client:
+            async with httpx.AsyncClient(timeout=self._cfg.timeout_seconds) as client:
                 async with client.stream(
                     "POST",
                     f"{self._base_url}/chat/completions",
@@ -114,4 +144,7 @@ class DeepSeekProvider(BaseLLMProvider):
             body = exc.response.text[:500]
             raise LLMError(f"DeepSeek HTTP {exc.response.status_code}: {body}") from exc
         except httpx.HTTPError as exc:
-            raise LLMError(f"DeepSeek stream error: {exc}") from exc
+            detail = str(exc) or repr(exc)
+            raise LLMError(
+                f"DeepSeek stream error ({type(exc).__name__}, timeout={self._cfg.timeout_seconds}s): {detail}"
+            ) from exc

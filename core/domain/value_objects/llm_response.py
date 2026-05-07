@@ -12,6 +12,12 @@ las tools de la misma iteración.
 - ``tool_calls``: lista de tool_calls en formato nativo del provider
   (OpenAI-compatible dict con ``id``, ``function.name``, ``function.arguments``).
   Vacía si la respuesta fue solo texto.
+- ``thinking``: cadena de razonamiento (chain-of-thought) cuando el provider
+  soporta thinking mode (DeepSeek V4, o-series, etc.). ``None`` si el provider
+  no lo expone o si el modelo no razonó en este turno. Es **transitoria**:
+  vive solo durante el tool loop para re-inyectarse en turnos siguientes
+  intra-loop, y se descarta al obtener la respuesta final. NUNCA se persiste
+  en historial.
 - ``raw``: string crudo de debug/logging — representación textual best-effort
   de la respuesta original del provider.
 """
@@ -25,6 +31,7 @@ from dataclasses import dataclass, field
 class LLMResponse:
     text_blocks: list[str] = field(default_factory=list)
     tool_calls: list[dict] = field(default_factory=list)
+    thinking: str | None = None
     raw: str = ""
 
     @property

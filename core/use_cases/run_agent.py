@@ -21,6 +21,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime, timezone
+from core.domain.entities.background_task import BackgroundTaskView
 from core.domain.entities.message import Message, Role
 from core.domain.entities.skill import Skill
 from core.domain.errors import ToolLoopMaxIterationsError
@@ -30,6 +31,7 @@ from core.domain.services.sticky_selector import apply_sticky
 from core.domain.value_objects.agent_context import AgentContext
 from core.domain.value_objects.agent_info import AgentInfoDTO
 from core.domain.value_objects.conversation_state import ConversationState
+from core.ports.outbound.background_delegation_port import IBackgroundDelegationQueue
 from core.ports.outbound.embedding_port import IEmbeddingProvider
 from core.ports.outbound.history_port import IHistoryStore
 from core.ports.outbound.intermediate_sink_port import IIntermediateSink
@@ -94,6 +96,31 @@ def _coalesce_consecutive_same_role(messages: list[Message]) -> list[Message]:
     return result
 
 
+def _render_in_flight_section(snap: list[BackgroundTaskView]) -> str:
+    """Construye la sección del system prompt que lista delegaciones in-flight.
+
+    Texto en INGLÉS por convención del proyecto: todo lo que va al LLM va en
+    inglés, aunque el resto del codebase esté en español
+    (``convention/system-prompts-language``). El prompt_preview de cada bullet
+    se preserva verbatim (puede venir en español del agente padre).
+
+    Pure function: no side effects, deterministic por input.
+    """
+    bullets = "\n".join(
+        f'- {v.id} → {v.target_agent_id} | started {v.elapsed_seconds}s ago | "{v.prompt_preview}"'
+        for v in snap
+    )
+    return (
+        "## In-flight background delegations\n\n"
+        "You have one or more delegations launched via `delegate(... wait=false)` running in\n"
+        "the background. When they finish, you will receive a message starting with `[bg-N] ...`.\n"
+        "That message is NOT user input — it is the result of YOUR own delegation. Process it\n"
+        "directly: no greetings, no preambles.\n\n"
+        "Currently in flight:\n"
+        f"{bullets}"
+    )
+
+
 def _should_bypass_routing_for_short_input(
     *,
     user_input: str,
@@ -150,6 +177,7 @@ class RunAgentUseCase:
         tools: IToolExecutor,
         agent_config: AgentConfig,
         knowledge_orchestrator: KnowledgeOrchestrator | None = None,
+        background_queue: IBackgroundDelegationQueue | None = None,
     ) -> None:
         self._llm = llm
         self._memory = memory
@@ -160,6 +188,10 @@ class RunAgentUseCase:
         self._cfg = agent_config
         # KnowledgeOrchestrator — None si no hay fuentes configuradas
         self._knowledge_orchestrator = knowledge_orchestrator
+        # IBackgroundDelegationQueue — None hasta que se wiree en AppContainer.
+        # Cuando está set, execute() inyecta una sección con el snapshot de
+        # delegaciones in-flight en cada turno (REQ-BGD-7).
+        self._background_queue = background_queue
         # Extra sections injected by wire_delegation (task 6.1).
         # Empty by default — non-breaking when delegation is disabled.
         self._extra_system_sections: list[str] = []
@@ -172,6 +204,16 @@ class RunAgentUseCase:
     def wire_user_timezone(self, tz: str | None) -> None:
         """Inyecta la timezone del usuario para la interpolación de variables en el system prompt."""
         self._user_timezone = tz
+
+    def set_background_queue(self, queue: IBackgroundDelegationQueue | None) -> None:
+        """Inyecta la cola de background-delegation tras la construcción del use case.
+
+        Se llama desde ``wire_delegation`` cuando el ``AppContainer`` ya tiene
+        construido el ``BackgroundDelegationQueueAdapter``. Encapsulación limpia
+        del two-phase init: el use case se construye sin queue, y la recibe
+        cuando todos los containers existen.
+        """
+        self._background_queue = queue
 
     def get_agent_info(self) -> AgentInfoDTO:
         """Retorna información pública del agente sin exponer _cfg."""
@@ -331,6 +373,14 @@ class RunAgentUseCase:
         # de distintos grupos: set_extra_system_sections puede ser sobreescrito por otro
         # flush mientras este execute() espera en la carga del historial.
         extra_sections_snapshot = list(self._extra_system_sections)
+
+        # REQ-BGD-7: inyectar sección de delegaciones in-flight si la queue está
+        # wired y hay tasks pendientes para este agente. snapshot_inflight() es
+        # sync — no await — y el adapter ya purgó las completadas tras dispatch.
+        if self._background_queue is not None:
+            inflight_snap = self._background_queue.snapshot_inflight(agent_id)
+            if inflight_snap:
+                extra_sections_snapshot.append(_render_in_flight_section(inflight_snap))
 
         # Aislar historial por (channel, chat_id) salvo que merge_chats esté activo.
         # Sin filtro, el LLM recibiría mensajes de otros chats del mismo agente

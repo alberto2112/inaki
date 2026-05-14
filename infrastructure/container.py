@@ -18,8 +18,12 @@ from croniter import croniter
 if TYPE_CHECKING:
     from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
     from core.domain.value_objects.channel_context import ChannelContext
+    from core.ports.outbound.background_delegation_port import IBackgroundDelegationQueue
     from core.ports.outbound.knowledge_port import IKnowledgeSource
 
+from adapters.outbound.delegation.background_queue_adapter import (
+    BackgroundDelegationQueueAdapter,
+)
 from adapters.outbound.history.sqlite_history_store import SQLiteHistoryStore
 from adapters.outbound.memory.sqlite_memory_repo import SQLiteMemoryRepository
 from adapters.outbound.scheduler.builtin_tasks import (
@@ -471,6 +475,7 @@ class AgentContainer:
         self,
         get_agent_container: Callable[[str], "AgentContainer | None"],
         sub_agent_ids: list[str] | None = None,
+        background_queue: "IBackgroundDelegationQueue | None" = None,
     ) -> None:
         """
         Phase-2 wiring: registers the delegate tool when delegation is enabled.
@@ -507,13 +512,24 @@ class AgentContainer:
 
         # Build and register the delegate tool.
         # (run_agent_one_shot is already set in __init__ — no construction here.)
+        # REQ-DG-10 / REQ-BGD-*: background_queue puede ser None hasta que
+        # `AppContainer` lo wiree (Phase 6). Mientras tanto el path sync sigue
+        # funcionando; el path async (`wait=False`) reporta failed con razón
+        # "background_delegation_unavailable" — fail-fast en lugar de silenciar.
         delegate_tool = DelegateTool(
             allowed_targets=targets,
             get_agent_container=get_agent_container,
             max_iterations_per_sub=self._global_config.delegation.max_iterations_per_sub,
             timeout_seconds=self._global_config.delegation.timeout_seconds,
+            caller_agent_id=self.agent_config.id,
+            caller_container=self,
+            queue=background_queue,
         )
         self._tools.register(delegate_tool)
+
+        # REQ-BGD-7: propagar la cola al RunAgentUseCase para que pueda inyectar
+        # la sección de delegaciones in-flight en el system prompt cada turno.
+        self.run_agent.set_background_queue(background_queue)
 
         self._delegation_wired = True
 
@@ -1009,6 +1025,27 @@ class AppContainer:
             except Exception as exc:
                 logger.error("Error creando container para agente '%s': %s", agent_cfg.id, exc)
 
+        # Phase 2a: dispatcher + cola de background-delegation.
+        # Se construyen AHORA porque la cola necesita el dispatcher (para inyectar
+        # resultados al scope original) y un resolver de RunAgentOneShotUseCase
+        # por target. Ambos requieren que ``self.agents`` esté poblado, así que
+        # vivimos POST-Phase 1 y PRE-Phase 2 (wire_delegation).
+        # Reusamos UNA sola instancia de LLMDispatcherAdapter entre scheduler y
+        # queue — comparten el dict de locks-por-scope (REQ-BGD-6).
+        self._llm_dispatcher = LLMDispatcherAdapter(self.agents)
+
+        def _resolve_one_shot(target_id: str):
+            target = self.agents.get(target_id)
+            return target.run_agent_one_shot if target is not None else None
+
+        self.background_queue = BackgroundDelegationQueueAdapter(
+            dispatcher=self._llm_dispatcher,
+            one_shot_resolver=_resolve_one_shot,
+            max_iterations_per_sub=global_config.delegation.max_iterations_per_sub,
+            timeout_seconds=global_config.delegation.timeout_seconds,
+            max_concurrent=3,
+        )
+
         # Phase 2: wire delegation AFTER all containers are built so that the
         # get_agent_container closure can resolve any sibling (two-phase init).
         # Solo los agentes regulares reciben el delegate tool; los sub-agentes son
@@ -1022,7 +1059,11 @@ class AppContainer:
             if registry.is_sub_agent(agent_id):
                 continue
             try:
-                container.wire_delegation(_get_agent_container, sub_agent_ids)
+                container.wire_delegation(
+                    _get_agent_container,
+                    sub_agent_ids,
+                    background_queue=self.background_queue,
+                )
             except Exception as exc:
                 logger.error("Error en wire_delegation para agente '%s': %s", agent_id, exc)
 
@@ -1054,9 +1095,13 @@ class AppContainer:
             fallback_config=scheduler_cfg.channel_fallback,
             sink_factory=sink_factory.from_target,
         )
+        # Reusamos la instancia ya construida en Phase 2a para que la cola de
+        # background-delegation y el scheduler compartan el dict de locks-por-scope
+        # (REQ-BGD-6). Sin esto, race entre un bg-result y un scheduled trigger
+        # sobre el mismo scope volvería a estar mal serializada.
         dispatch_ports = SchedulerDispatchPorts(
             channel_sender=channel_router,
-            llm_dispatcher=LLMDispatcherAdapter(self.agents),
+            llm_dispatcher=self._llm_dispatcher,
             consolidator=ConsolidationDispatchAdapter(self.consolidate_all_agents),
             http_caller=HttpCallerAdapter(),
         )
@@ -1508,12 +1553,18 @@ class AppContainer:
             await self.scheduler_repo.save_task(updated)
 
     async def startup(self) -> None:
-        """Arranca el scheduler service y los adapters de broadcast. Llamar en el daemon lifecycle."""
+        """Arranca el scheduler service, la cola de background-delegation y los
+        adapters de broadcast. Llamar en el daemon lifecycle."""
         if self.global_config.scheduler.enabled:
             await self._reconcile_consolidate_memory_task()
             await self._reconcile_face_dedup_task()
             await self.scheduler_service.start()
             logger.info("SchedulerService iniciado")
+
+        # REQ-BGD-1: arrancar la cola de background-delegation tras el scheduler.
+        # Idempotente — segunda llamada a start() es no-op.
+        await self.background_queue.start()
+        logger.info("BackgroundDelegationQueue iniciada")
 
         # Arrancar todos los adapters de broadcast (start es idempotente).
         for adapter in self._broadcast_adapters:
@@ -1529,7 +1580,13 @@ class AppContainer:
                 logger.error("Error arrancando broadcast adapter: %s", exc)
 
     async def shutdown(self) -> None:
-        """Detiene el scheduler service y los adapters de broadcast graciosamente."""
+        """Detiene la cola de background-delegation, el scheduler service y los
+        adapters de broadcast graciosamente."""
+        # REQ-BGD-8: detener la cola PRIMERO. Las tasks in-flight se abandonan
+        # sin dispatchar resultado — aceptable por la decisión in-memory only.
+        await self.background_queue.stop()
+        logger.info("BackgroundDelegationQueue detenida")
+
         await self.scheduler_service.stop()
         logger.info("SchedulerService detenido")
 

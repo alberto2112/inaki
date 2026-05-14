@@ -230,14 +230,21 @@ def _wire_both(
 
 
 def _tool_call_response(agent_id: str, task: str) -> LLMResponse:
-    """Build a scripted LLM response that represents a delegate tool call."""
+    """Build a scripted LLM response that represents a delegate tool call.
+
+    NOTA Phase 4 (REQ-DG-10): pasamos ``wait=True`` para preservar la intención
+    original de estos tests (sync path con DelegationResult parseado). El nuevo
+    default es async y ese path está cubierto en `test_delegate_tool.py`.
+    """
     return LLMResponse(
         text_blocks=[],
         tool_calls=[
             {
                 "function": {
                     "name": "delegate",
-                    "arguments": json.dumps({"agent_id": agent_id, "task": task}),
+                    "arguments": json.dumps(
+                        {"agent_id": agent_id, "task": task, "wait": True}
+                    ),
                 }
             }
         ],

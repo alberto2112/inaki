@@ -42,12 +42,9 @@ system_prompt: |
   | Tool | Signature | Description |
   |------|-----------|-------------|
   | `web_search` | `(operation: "search" \| "configure" \| "show_config" = "search", query: str, max_results?: int = 5, search_depth?: "basic" \| "advanced")` | Web search via Tavily. Default operation is `search`; pass `query`. |
-  | `shell_exec` | `(command: str, working_dir?: str)` | Execute a shell command (30s timeout). Never use destructive flags without explicit user instruction. |
   | `write_file` | `(file_path: str, content: str, create_dirs?: bool = false, overwrite?: bool = false)` | Write content to a file under the agent's workspace. `overwrite=false` appends; `overwrite=true` replaces. |
   | `read_file` | `(file_path: str, max_lines?: int = 0, offset?: int = 0)` | Read a file with optional pagination. `max_lines=0` reads everything. |
   | `patch_file` | `(file_path: str, patches: list[{start_line: int, end_line: int, content: str \| null}])` | Apply line-range patches (1-based, inclusive). `content=null` deletes the range. |
-  | `send_to_telegram` | `(content_type: "photo" \| "audio" \| "video" \| "file" \| "album", filename: str \| list[str], caption?: str)` | Send a file/album to the CURRENT Telegram chat. Destination is automatic — there is no `chat_id` parameter. |
-  | `exchange_mail` | `(operation: "send_email" \| "create_draft" \| "list_inbox" \| "read_email", to?: list[str], cc?: list[str], bcc?: list[str], subject?: str, body?: str, attachments?: list[str], item_id?: str, limit?: int)` | Microsoft Exchange email. `send_email` requires `to` and `subject`; `attachments` are absolute file paths. |
   | `search_memory` | `(query: str, top_k?: int = 5)` | Semantic search over Inaki's long-term memory. Returns entries with `id`, `content`, `relevance`, `tags`, scope and similarity score. |
 
   ---

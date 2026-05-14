@@ -1,9 +1,9 @@
 id: memory_extractor
 name: Memory Extractor
 description: |
-  Extrae recuerdos relevantes de un historial de conversación y los devuelve
-  como JSON estructurado. Invocado one-shot por el proceso de consolidación
-  de memoria del agente padre.
+  Extracts relevant memories from a conversation history and returns them
+  as structured JSON. Invoked once by the parent agent's memory consolidation
+  process.
 
 system_prompt: |
   ## Role
@@ -75,10 +75,10 @@ memory:
   enabled: false
 
 llm:
-  provider: openai
-  model: gpt-5.5-mini
+  provider: "openai"
+  model: "gpt-5.4-mini-2026-03-17"
   temperature: 0.1
-  max_tokens: 16384
+  max_tokens: 65535
 
 tools:
   tool_call_max_iterations: 1

@@ -144,7 +144,6 @@ class LLMConfig(BaseModel):
     temperature: float = 0.7
     max_tokens: int = 2048
     reasoning_effort: str | None = None
-    thinking_indicator: bool = False
     timeout_seconds: int = _LLM_TIMEOUT_FALLBACK
     """Timeout HTTP del request al provider, en segundos.
 
@@ -197,7 +196,6 @@ class ResolvedLLMConfig(BaseModel):
     temperature: float
     max_tokens: int
     reasoning_effort: str | None = None
-    thinking_indicator: bool = False
     timeout_seconds: int = _LLM_TIMEOUT_FALLBACK
     api_key: str | None = None
     base_url: str | None = None
@@ -383,7 +381,6 @@ class MemoryConfig(BaseModel):
             temperature=merged.temperature,
             max_tokens=merged.max_tokens,
             reasoning_effort=merged.reasoning_effort,
-            thinking_indicator=merged.thinking_indicator,
             timeout_seconds=merged.timeout_seconds,
             api_key=provider_cfg.api_key,
             base_url=provider_cfg.base_url,
@@ -397,6 +394,24 @@ class ChatHistoryConfig(BaseModel):
     max_messages: int = 0  # 0 = sin límite; N = últimos N mensajes al LLM
     merge_chats: bool = False  # False = aislar historial por (channel, chat_id);
     # True = compartir todo el historial del agente entre canales/chats
+
+
+class ChannelsGlobalConfig(BaseModel):
+    """Flags transversales de presentación al usuario en cualquier canal.
+
+    Se configura SOLO a nivel global (``global.yaml`` → ``channels:``). No hay
+    override per-agent: ``AgentConfig.channels`` (dict de adapters telegram/rest/…)
+    es una estructura distinta y mantiene su rol. Si el usuario pone estos
+    flags en ``agents/{id}.yaml`` por error, el merge los filtra en
+    ``load_agent_config`` para no contaminar el dict de adapters.
+    """
+
+    thinking_indicator: bool = False
+    """Mostrar "Thinking..." en el canal cuando el modelo está razonando.
+
+    Solo aplica si el provider activa thinking mode (``reasoning_effort``).
+    ``False`` (default) → el bot permanece silencioso durante el razonamiento.
+    """
 
 
 class ChannelFallbackConfig(BaseModel):
@@ -910,6 +925,8 @@ class GlobalConfig(BaseModel):
     embedding: EmbeddingConfig
     memory: MemoryConfig
     chat_history: ChatHistoryConfig
+    channels: ChannelsGlobalConfig = ChannelsGlobalConfig()
+    """Flags de presentación transversales a todos los canales. Solo global."""
     skills: SkillsConfig = SkillsConfig()
     tools: ToolsConfig = ToolsConfig()
     semantic_routing: SemanticRoutingConfig = SemanticRoutingConfig()
@@ -1035,6 +1052,7 @@ def _render_default_global_yaml() -> str:
         "embedding": EmbeddingConfig().model_dump(),
         "memory": MemoryConfig().model_dump(),
         "chat_history": ChatHistoryConfig().model_dump(),
+        "channels": ChannelsGlobalConfig().model_dump(),
         "skills": SkillsConfig().model_dump(),
         "tools": ToolsConfig().model_dump(),
         "scheduler": SchedulerConfig().model_dump(),
@@ -1231,6 +1249,18 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
     return global_cfg, merged
 
 
+def _filter_channel_adapters(raw: dict) -> dict:
+    """Filtra el campo ``channels`` heredado del global para excluir flags transversales.
+
+    ``GlobalConfig.channels`` (``ChannelsGlobalConfig``) y ``AgentConfig.channels``
+    (``dict[str, dict[str, Any]]``) comparten clave de YAML pero significan cosas
+    distintas. El deep-merge propaga los flags globales al merged del agente; este
+    filtro deja solo los valores que son dicts (los adapters como ``telegram``,
+    ``rest``, ``broadcast`` per-grupo, etc.) y descarta scalars.
+    """
+    return {k: v for k, v in raw.items() if isinstance(v, dict)}
+
+
 def load_agent_config(
     agent_id: str,
     agents_dir: Path,
@@ -1287,7 +1317,7 @@ def load_agent_config(
             workspace=WorkspaceConfig(**merged.get("workspace", {})),
             delegation=AgentDelegationConfig(**merged.get("delegation", {})),
             transcription=transcription,
-            channels=merged.get("channels", {}),
+            channels=_filter_channel_adapters(merged.get("channels", {})),
             providers=providers,
         )
     except (KeyError, ValueError) as exc:

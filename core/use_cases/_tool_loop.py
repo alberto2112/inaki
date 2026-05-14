@@ -44,6 +44,7 @@ async def run_tool_loop(
     circuit_breaker_threshold: int,
     agent_id: str,
     intermediate_sink: IIntermediateSink | None = None,
+    thinking_indicator: bool = False,
 ) -> str:
     """
     Ejecuta el loop LLM + tool-dispatch hasta obtener respuesta final o
@@ -74,9 +75,10 @@ async def run_tool_loop(
     last_text: str = ""
 
     # Indicador "Thinking..." una sola vez por turno cuando el provider activa
-    # thinking mode. Es feedback efímero para el canal — no persiste en DB,
-    # no se broadcastea. Si el sink es Null (CLI sin streaming) no se ve.
-    if llm.thinking_active and llm.thinking_indicator:
+    # thinking mode y el operador lo habilitó via ``channels.thinking_indicator``.
+    # Es feedback efímero para el canal — no persiste en DB, no se broadcastea.
+    # Si el sink es Null (CLI sin streaming) no se ve.
+    if llm.thinking_active and thinking_indicator:
         await sink.emit("Thinking...")
 
     for iteration in range(max_iterations):

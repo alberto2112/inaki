@@ -144,6 +144,7 @@ class AgentContainer:
             tools=self._tools,
             agent_config=cfg,
             knowledge_orchestrator=self._knowledge_orchestrator,
+            thinking_indicator=global_config.channels.thinking_indicator,
         )
 
         # Every agent gets a one-shot use case unconditionally so it can always
@@ -154,6 +155,7 @@ class AgentContainer:
             llm=self._llm,
             tools=self._tools,
             agent_config=cfg,
+            thinking_indicator=global_config.channels.thinking_indicator,
         )
 
         # LLM de consolidación: solo se instancia cuando `memory.enabled` es true.

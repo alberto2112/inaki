@@ -103,13 +103,6 @@ llm:
                               # Aumentar para respuestas largas (código, análisis)
                               # Considerar coste en Pi 5 con modelos locales
 
-  thinking_indicator: false   # Mostrar "Thinking..." en el canal mientras el modelo
-                              # razona (solo aplica cuando reasoning_effort activa
-                              # thinking mode — ver nota en timeout_seconds).
-                              # true  → el usuario ve feedback visual inmediato.
-                              # false → el bot permanece silencioso durante el razonamiento.
-                              # Default: false
-
   # Las credenciales NO van acá — se resuelven desde `providers.{provider}`.
 
 
@@ -244,6 +237,21 @@ chat_history:
                               #     todos los canales y chats. Útil si querés que
                               #     el contexto de una conversación privada esté
                               #     disponible cuando el agente responde en grupo.
+
+
+# -----------------------------------------------------------------------------
+# [channels] — Flags de presentación transversales a todos los canales
+# -----------------------------------------------------------------------------
+#
+# Solo configurable a nivel GLOBAL. No tiene override per-agent: la sección
+# `channels:` en `agents/{id}.yaml` es OTRA cosa (dict de adapters telegram/rest/
+# broadcast/…). Si por error ponés estos flags ahí, se filtran y se loggea.
+channels:
+  thinking_indicator: false   # Mostrar "Thinking..." en el canal mientras el modelo
+                              # razona. Solo aplica cuando `llm.reasoning_effort`
+                              # activa thinking mode en el provider.
+                              # true  → el usuario ve feedback visual inmediato.
+                              # false → el bot permanece silencioso durante el razonamiento.
 
 
 # -----------------------------------------------------------------------------

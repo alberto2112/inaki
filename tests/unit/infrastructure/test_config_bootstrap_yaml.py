@@ -34,11 +34,11 @@ def test_bootstrap_yaml_channel_fallback_overrides_es_dict_vacio() -> None:
     assert data["scheduler"]["channel_fallback"]["overrides"] == {}
 
 
-def test_bootstrap_yaml_llm_incluye_thinking_indicator_false_por_defecto() -> None:
-    """El campo `llm.thinking_indicator` debe aparecer en el bootstrap con
+def test_bootstrap_yaml_channels_incluye_thinking_indicator_false_por_defecto() -> None:
+    """El campo `channels.thinking_indicator` debe aparecer en el bootstrap con
     default ``False`` — el bot permanece silencioso durante el thinking salvo
     que el usuario lo active explícitamente."""
     rendered = _render_default_global_yaml()
     data = yaml.safe_load(rendered)
-    assert "thinking_indicator" in data["llm"]
-    assert data["llm"]["thinking_indicator"] is False
+    assert "channels" in data
+    assert data["channels"]["thinking_indicator"] is False

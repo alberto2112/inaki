@@ -44,10 +44,14 @@ class RunAgentOneShotUseCase:
         llm: ILLMProvider,
         tools: IToolExecutor,
         agent_config: AgentConfig,
+        thinking_indicator: bool = False,
     ) -> None:
         self._llm = llm
         self._tools = tools
         self._cfg = agent_config
+        # Flag transversal del bloque global ``channels.thinking_indicator``.
+        # Default False para no-op si nadie lo wirea (el one-shot suele correr sin sink).
+        self._thinking_indicator = thinking_indicator
 
     async def execute(
         self,
@@ -109,6 +113,7 @@ class RunAgentOneShotUseCase:
                 max_iterations=max_iterations,
                 circuit_breaker_threshold=self._cfg.tools.circuit_breaker_threshold,
                 agent_id=self._cfg.id,
+                thinking_indicator=self._thinking_indicator,
             ),
             timeout=timeout_seconds,
         )

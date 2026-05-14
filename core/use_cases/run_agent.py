@@ -178,6 +178,7 @@ class RunAgentUseCase:
         agent_config: AgentConfig,
         knowledge_orchestrator: KnowledgeOrchestrator | None = None,
         background_queue: IBackgroundDelegationQueue | None = None,
+        thinking_indicator: bool = False,
     ) -> None:
         self._llm = llm
         self._memory = memory
@@ -186,6 +187,10 @@ class RunAgentUseCase:
         self._history = history
         self._tools = tools
         self._cfg = agent_config
+        # Flag transversal del bloque global ``channels.thinking_indicator``.
+        # Lo wirea el container desde ``GlobalConfig.channels.thinking_indicator``;
+        # default ``False`` para tests que construyen el use case directo.
+        self._thinking_indicator = thinking_indicator
         # KnowledgeOrchestrator — None si no hay fuentes configuradas
         self._knowledge_orchestrator = knowledge_orchestrator
         # IBackgroundDelegationQueue — None hasta que se wiree en AppContainer.
@@ -602,6 +607,7 @@ class RunAgentUseCase:
                 circuit_breaker_threshold=self._cfg.tools.circuit_breaker_threshold,
                 agent_id=self._cfg.id,
                 intermediate_sink=intermediate_sink,
+                thinking_indicator=self._thinking_indicator,
             )
         except ToolLoopMaxIterationsError as e:
             response = e.last_response or (

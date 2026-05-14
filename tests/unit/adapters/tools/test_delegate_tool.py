@@ -65,8 +65,17 @@ def _make_child_container(
 def _make_tool(
     allowed_targets: list[str] | None = None,
     get_agent_container=None,
+    *,
+    caller_container=None,
+    queue=None,
 ) -> DelegateTool:
-    """Factory de DelegateTool con defaults razonables para tests."""
+    """Factory de DelegateTool con defaults razonables para tests.
+
+    Phase 4 / REQ-DG-10: el ctor ahora recibe ``caller_agent_id``,
+    ``caller_container`` y ``queue``. Para los tests legacy del path sync los
+    mockeamos con ``MagicMock`` — esos tests llaman ``wait=True`` y no tocan ni
+    la cola ni el contexto de canal, por lo que el mock alcanza.
+    """
     if allowed_targets is None:
         allowed_targets = _ALLOWED_TARGETS
 
@@ -74,11 +83,22 @@ def _make_tool(
         container = _make_child_container()
         get_agent_container = MagicMock(return_value=container)
 
+    if caller_container is None:
+        caller_container = MagicMock()
+        caller_container.get_channel_context = MagicMock(return_value=None)
+
+    if queue is None:
+        queue = MagicMock()
+        queue.enqueue = AsyncMock(return_value="bg-1")
+
     return DelegateTool(
         allowed_targets=allowed_targets,
         get_agent_container=get_agent_container,
         max_iterations_per_sub=_MAX_ITERATIONS,
         timeout_seconds=_TIMEOUT_SECONDS,
+        caller_agent_id="caller",
+        caller_container=caller_container,
+        queue=queue,
     )
 
 
@@ -114,7 +134,7 @@ async def test_happy_path_returns_success_delegation_result():
     get_container = MagicMock(return_value=container)
 
     tool = _make_tool(get_agent_container=get_container)
-    result = await tool.execute(agent_id=_AGENT_ID, task="Do the thing")
+    result = await tool.execute(wait=True,agent_id=_AGENT_ID, task="Do the thing")
 
     assert isinstance(result, ToolResult)
     assert result.tool_name == "delegate"
@@ -142,9 +162,12 @@ async def test_target_not_allowed_returns_structured_failure():
         get_agent_container=get_container,
         max_iterations_per_sub=_MAX_ITERATIONS,
         timeout_seconds=_TIMEOUT_SECONDS,
+        caller_agent_id="caller",
+        caller_container=MagicMock(),
+        queue=MagicMock(),
     )
 
-    result = await tool.execute(agent_id="evil", task="do something malicious")
+    result = await tool.execute(wait=True,agent_id="evil", task="do something malicious")
 
     assert isinstance(result, ToolResult)
     assert result.success is False
@@ -169,9 +192,12 @@ async def test_target_not_allowed_empty_allowed_list_passes_all():
         get_agent_container=get_container,
         max_iterations_per_sub=_MAX_ITERATIONS,
         timeout_seconds=_TIMEOUT_SECONDS,
+        caller_agent_id="caller",
+        caller_container=MagicMock(),
+        queue=MagicMock(),
     )
 
-    result = await tool.execute(agent_id="any-agent-id", task="some task")
+    result = await tool.execute(wait=True,agent_id="any-agent-id", task="some task")
     get_container.assert_called_once_with("any-agent-id")
 
     dr = DelegationResult.model_validate_json(result.output)
@@ -195,9 +221,12 @@ async def test_unknown_agent_returns_structured_failure():
         get_agent_container=get_container,
         max_iterations_per_sub=_MAX_ITERATIONS,
         timeout_seconds=_TIMEOUT_SECONDS,
+        caller_agent_id="caller",
+        caller_container=MagicMock(),
+        queue=MagicMock(),
     )
 
-    result = await tool.execute(agent_id="ghost", task="haunt something")
+    result = await tool.execute(wait=True,agent_id="ghost", task="haunt something")
 
     assert isinstance(result, ToolResult)
     assert result.success is False
@@ -221,7 +250,7 @@ async def test_result_parse_error_no_json_block():
     container = _make_child_container(one_shot_response=plain_text)
 
     tool = _make_tool(get_agent_container=MagicMock(return_value=container))
-    result = await tool.execute(agent_id=_AGENT_ID, task="task")
+    result = await tool.execute(wait=True,agent_id=_AGENT_ID, task="task")
 
     dr = DelegationResult.model_validate_json(result.output)
     assert dr.status == "failed"
@@ -238,7 +267,7 @@ async def test_result_parse_error_invalid_json_in_block():
     container = _make_child_container(one_shot_response=bad_json_response)
 
     tool = _make_tool(get_agent_container=MagicMock(return_value=container))
-    result = await tool.execute(agent_id=_AGENT_ID, task="task")
+    result = await tool.execute(wait=True,agent_id=_AGENT_ID, task="task")
 
     dr = DelegationResult.model_validate_json(result.output)
     assert dr.status == "failed"
@@ -262,7 +291,7 @@ async def test_timeout_error_mapped_to_delegation_result():
     container.run_agent_one_shot = use_case
 
     tool = _make_tool(get_agent_container=MagicMock(return_value=container))
-    result = await tool.execute(agent_id=_AGENT_ID, task="slow task")
+    result = await tool.execute(wait=True,agent_id=_AGENT_ID, task="slow task")
 
     assert isinstance(result, ToolResult)
     assert result.success is False
@@ -290,7 +319,7 @@ async def test_max_iterations_exceeded_mapped_to_delegation_result():
     container.run_agent_one_shot = use_case
 
     tool = _make_tool(get_agent_container=MagicMock(return_value=container))
-    result = await tool.execute(agent_id=_AGENT_ID, task="complex task")
+    result = await tool.execute(wait=True,agent_id=_AGENT_ID, task="complex task")
 
     assert isinstance(result, ToolResult)
     assert result.success is False
@@ -316,7 +345,7 @@ async def test_child_runtime_error_mapped_to_delegation_result():
     container.run_agent_one_shot = use_case
 
     tool = _make_tool(get_agent_container=MagicMock(return_value=container))
-    result = await tool.execute(agent_id=_AGENT_ID, task="risky task")
+    result = await tool.execute(wait=True,agent_id=_AGENT_ID, task="risky task")
 
     assert isinstance(result, ToolResult)
     assert result.success is False
@@ -336,7 +365,7 @@ async def test_child_value_error_includes_type_in_reason():
     container.run_agent_one_shot = use_case
 
     tool = _make_tool(get_agent_container=MagicMock(return_value=container))
-    result = await tool.execute(agent_id=_AGENT_ID, task="task")
+    result = await tool.execute(wait=True,agent_id=_AGENT_ID, task="task")
 
     dr = DelegationResult.model_validate_json(result.output)
     assert dr.reason == "child_exception:ValueError"
@@ -354,8 +383,11 @@ async def test_never_raises_target_not_allowed():
         get_agent_container=MagicMock(return_value=None),
         max_iterations_per_sub=5,
         timeout_seconds=10,
+        caller_agent_id="caller",
+        caller_container=MagicMock(),
+        queue=MagicMock(),
     )
-    result = await tool.execute(agent_id="other", task="task")
+    result = await tool.execute(wait=True,agent_id="other", task="task")
     assert isinstance(result, ToolResult)
 
 
@@ -364,7 +396,7 @@ async def test_never_raises_unknown_agent():
     tool = _make_tool(get_agent_container=MagicMock(return_value=None))
     # unknown_agent también en allow-list
     tool._allowed_targets = ["specialist"]
-    result = await tool.execute(agent_id=_AGENT_ID, task="task")
+    result = await tool.execute(wait=True,agent_id=_AGENT_ID, task="task")
     assert isinstance(result, ToolResult)
 
 
@@ -375,7 +407,7 @@ async def test_never_raises_timeout():
     use_case.execute = AsyncMock(side_effect=asyncio.TimeoutError())
     container.run_agent_one_shot = use_case
     tool = _make_tool(get_agent_container=MagicMock(return_value=container))
-    result = await tool.execute(agent_id=_AGENT_ID, task="task")
+    result = await tool.execute(wait=True,agent_id=_AGENT_ID, task="task")
     assert isinstance(result, ToolResult)
 
 
@@ -386,7 +418,7 @@ async def test_never_raises_max_iterations():
     use_case.execute = AsyncMock(side_effect=ToolLoopMaxIterationsError(last_response="x"))
     container.run_agent_one_shot = use_case
     tool = _make_tool(get_agent_container=MagicMock(return_value=container))
-    result = await tool.execute(agent_id=_AGENT_ID, task="task")
+    result = await tool.execute(wait=True,agent_id=_AGENT_ID, task="task")
     assert isinstance(result, ToolResult)
 
 
@@ -397,7 +429,7 @@ async def test_never_raises_child_exception():
     use_case.execute = AsyncMock(side_effect=RuntimeError("boom"))
     container.run_agent_one_shot = use_case
     tool = _make_tool(get_agent_container=MagicMock(return_value=container))
-    result = await tool.execute(agent_id=_AGENT_ID, task="task")
+    result = await tool.execute(wait=True,agent_id=_AGENT_ID, task="task")
     assert isinstance(result, ToolResult)
 
 
@@ -405,7 +437,7 @@ async def test_never_raises_parse_error():
     """DelegateTool.execute no propaga cuando el child retorna texto sin bloque JSON."""
     container = _make_child_container(one_shot_response="plain text, no json block")
     tool = _make_tool(get_agent_container=MagicMock(return_value=container))
-    result = await tool.execute(agent_id=_AGENT_ID, task="task")
+    result = await tool.execute(wait=True,agent_id=_AGENT_ID, task="task")
     assert isinstance(result, ToolResult)
 
 
@@ -429,9 +461,12 @@ async def test_passes_correct_args_to_child_one_shot():
         get_agent_container=get_container,
         max_iterations_per_sub=7,
         timeout_seconds=45,
+        caller_agent_id="caller",
+        caller_container=MagicMock(),
+        queue=MagicMock(),
     )
 
-    await tool.execute(
+    await tool.execute(wait=True,
         agent_id="specialist",
         task="Analyze this dataset",
         system_prompt="You are a data analyst",
@@ -464,9 +499,12 @@ async def test_passes_child_default_plus_footer_when_no_system_prompt_provided()
         get_agent_container=MagicMock(return_value=container),
         max_iterations_per_sub=5,
         timeout_seconds=30,
+        caller_agent_id="caller",
+        caller_container=MagicMock(),
+        queue=MagicMock(),
     )
 
-    await tool.execute(agent_id="specialist", task="Do something")
+    await tool.execute(wait=True, agent_id="specialist", task="Do something")
 
     container.run_agent_one_shot.execute.assert_awaited_once()
     call_kwargs = container.run_agent_one_shot.execute.await_args.kwargs
@@ -494,7 +532,7 @@ async def test_output_is_valid_json_round_trip():
     container = _make_child_container(one_shot_response=response)
     tool = _make_tool(get_agent_container=MagicMock(return_value=container))
 
-    result = await tool.execute(agent_id=_AGENT_ID, task="task")
+    result = await tool.execute(wait=True,agent_id=_AGENT_ID, task="task")
 
     # Debe ser JSON válido
     raw = json.loads(result.output)
@@ -516,7 +554,7 @@ async def test_failed_result_output_is_valid_json():
     container.run_agent_one_shot = use_case
     tool = _make_tool(get_agent_container=MagicMock(return_value=container))
 
-    result = await tool.execute(agent_id=_AGENT_ID, task="task")
+    result = await tool.execute(wait=True,agent_id=_AGENT_ID, task="task")
 
     dr = DelegationResult.model_validate_json(result.output)
     assert dr.status == "failed"
@@ -568,8 +606,11 @@ async def test_canonical_reason_strings_are_exact():
         get_agent_container=MagicMock(),
         max_iterations_per_sub=5,
         timeout_seconds=10,
+        caller_agent_id="caller",
+        caller_container=MagicMock(),
+        queue=MagicMock(),
     )
-    r = await tool.execute(agent_id="b", task="t")
+    r = await tool.execute(wait=True,agent_id="b", task="t")
     assert DelegationResult.model_validate_json(r.output).reason == "target_not_allowed"
 
     # unknown_agent
@@ -578,8 +619,11 @@ async def test_canonical_reason_strings_are_exact():
         get_agent_container=MagicMock(return_value=None),
         max_iterations_per_sub=5,
         timeout_seconds=10,
+        caller_agent_id="caller",
+        caller_container=MagicMock(),
+        queue=MagicMock(),
     )
-    r2 = await tool2.execute(agent_id="b", task="t")
+    r2 = await tool2.execute(wait=True, agent_id="b", task="t")
     assert DelegationResult.model_validate_json(r2.output).reason == "unknown_agent"
 
     # result_parse_error (no block)
@@ -589,8 +633,11 @@ async def test_canonical_reason_strings_are_exact():
         get_agent_container=MagicMock(return_value=container_no_block),
         max_iterations_per_sub=5,
         timeout_seconds=10,
+        caller_agent_id="caller",
+        caller_container=MagicMock(),
+        queue=MagicMock(),
     )
-    r3 = await tool3.execute(agent_id="b", task="t")
+    r3 = await tool3.execute(wait=True, agent_id="b", task="t")
     assert DelegationResult.model_validate_json(r3.output).reason == "result_parse_error"
 
     # timeout
@@ -603,8 +650,11 @@ async def test_canonical_reason_strings_are_exact():
         get_agent_container=MagicMock(return_value=container_timeout),
         max_iterations_per_sub=5,
         timeout_seconds=10,
+        caller_agent_id="caller",
+        caller_container=MagicMock(),
+        queue=MagicMock(),
     )
-    r4 = await tool4.execute(agent_id="b", task="t")
+    r4 = await tool4.execute(wait=True, agent_id="b", task="t")
     assert DelegationResult.model_validate_json(r4.output).reason == "timeout"
 
     # max_iterations_exceeded
@@ -617,8 +667,11 @@ async def test_canonical_reason_strings_are_exact():
         get_agent_container=MagicMock(return_value=container_maxiter),
         max_iterations_per_sub=5,
         timeout_seconds=10,
+        caller_agent_id="caller",
+        caller_container=MagicMock(),
+        queue=MagicMock(),
     )
-    r5 = await tool5.execute(agent_id="b", task="t")
+    r5 = await tool5.execute(wait=True, agent_id="b", task="t")
     assert DelegationResult.model_validate_json(r5.output).reason == "max_iterations_exceeded"
 
     # child_exception:<Type>
@@ -631,8 +684,11 @@ async def test_canonical_reason_strings_are_exact():
         get_agent_container=MagicMock(return_value=container_exc),
         max_iterations_per_sub=5,
         timeout_seconds=10,
+        caller_agent_id="caller",
+        caller_container=MagicMock(),
+        queue=MagicMock(),
     )
-    r6 = await tool6.execute(agent_id="b", task="t")
+    r6 = await tool6.execute(wait=True, agent_id="b", task="t")
     assert DelegationResult.model_validate_json(r6.output).reason == "child_exception:KeyError"
 
 
@@ -653,7 +709,7 @@ async def test_footer_appended_when_system_prompt_is_none():
     )
     tool = _make_tool(get_agent_container=MagicMock(return_value=container))
 
-    await tool.execute(agent_id=_AGENT_ID, task="do X")
+    await tool.execute(wait=True,agent_id=_AGENT_ID, task="do X")
 
     call_kwargs = container.run_agent_one_shot.execute.await_args.kwargs
     effective = call_kwargs["system_prompt"]
@@ -670,7 +726,7 @@ async def test_footer_appended_when_system_prompt_is_provided():
     container = _make_child_container(one_shot_response=response)
     tool = _make_tool(get_agent_container=MagicMock(return_value=container))
 
-    await tool.execute(
+    await tool.execute(wait=True,
         agent_id=_AGENT_ID,
         task="do X",
         system_prompt="Override prompt.",
@@ -691,7 +747,7 @@ async def test_footer_literal_substring_present():
     container = _make_child_container(one_shot_response=response)
     tool = _make_tool(get_agent_container=MagicMock(return_value=container))
 
-    await tool.execute(agent_id=_AGENT_ID, task="do X")
+    await tool.execute(wait=True,agent_id=_AGENT_ID, task="do X")
 
     call_kwargs = container.run_agent_one_shot.execute.await_args.kwargs
     effective = call_kwargs["system_prompt"]
@@ -715,7 +771,7 @@ async def test_footer_always_present_regardless_of_caller_prompt(caller_prompt: 
     if caller_prompt is not None:
         kwargs["system_prompt"] = caller_prompt
 
-    await tool.execute(**kwargs)
+    await tool.execute(wait=True,**kwargs)
 
     call_kwargs = container.run_agent_one_shot.execute.await_args.kwargs
     effective = call_kwargs["system_prompt"]
@@ -738,10 +794,138 @@ async def test_never_raises_when_agent_config_attribute_missing():
     )
 
     tool = _make_tool(get_agent_container=MagicMock(return_value=container))
-    result = await tool.execute(agent_id=_AGENT_ID, task="task")
+    result = await tool.execute(wait=True,agent_id=_AGENT_ID, task="task")
 
     # Must not raise — must return a ToolResult
     assert isinstance(result, ToolResult)
     # The footer alone should have been passed; child returned a valid JSON block
     dr = DelegationResult.model_validate_json(result.output)
     assert dr.status in ("success", "failed")
+
+
+# ---------------------------------------------------------------------------
+# REQ-DG-10 — Async path (wait=false default) — Phase 4
+# ---------------------------------------------------------------------------
+
+import time
+
+from core.domain.value_objects.channel_context import ChannelContext
+
+
+def _make_async_tool(
+    *,
+    queue=None,
+    caller_container=None,
+    allowed_targets: list[str] | None = None,
+) -> tuple[DelegateTool, MagicMock, MagicMock]:
+    """Factory para tests del path async. Devuelve (tool, queue, caller_container)."""
+    if queue is None:
+        queue = MagicMock()
+        queue.enqueue = AsyncMock(return_value="bg-1")
+    if caller_container is None:
+        caller_container = MagicMock()
+        caller_container.get_channel_context = MagicMock(return_value=None)
+    tool = DelegateTool(
+        allowed_targets=allowed_targets if allowed_targets is not None else _ALLOWED_TARGETS,
+        get_agent_container=MagicMock(),
+        max_iterations_per_sub=_MAX_ITERATIONS,
+        timeout_seconds=_TIMEOUT_SECONDS,
+        caller_agent_id="inaki",
+        caller_container=caller_container,
+        queue=queue,
+    )
+    return tool, queue, caller_container
+
+
+async def test_default_async_invoca_queue_enqueue() -> None:
+    """REQ-DG-10: sin `wait`, default async → `queue.enqueue` es invocado."""
+    tool, queue, _ = _make_async_tool()
+
+    await tool.execute(agent_id="researcher", task="investigá X")
+
+    queue.enqueue.assert_awaited_once()
+    kwargs = queue.enqueue.await_args.kwargs
+    assert kwargs["caller_agent_id"] == "inaki"
+    assert kwargs["target_agent_id"] == "researcher"
+    assert kwargs["prompt"] == "investigá X"
+    assert kwargs["system_prompt"] is None
+
+
+async def test_default_async_devuelve_queued_tool_result() -> None:
+    """REQ-DG-10: ToolResult tiene status=success, summary='Delegation queued', details=task_id."""
+    queue = MagicMock()
+    queue.enqueue = AsyncMock(return_value="bg-7")
+    tool, _, _ = _make_async_tool(queue=queue)
+
+    result = await tool.execute(agent_id="researcher", task="x")
+
+    assert isinstance(result, ToolResult)
+    assert result.success is True
+    dr = DelegationResult.model_validate_json(result.output)
+    assert dr.status == "success"
+    assert dr.summary == "Delegation queued"
+    assert dr.details == "bg-7"
+
+
+async def test_default_async_completa_en_menos_de_50ms() -> None:
+    """REQ-DG-10: latencia <50ms (el padre no espera al hijo)."""
+    tool, _, _ = _make_async_tool()
+
+    inicio = time.perf_counter()
+    await tool.execute(agent_id="researcher", task="x")
+    elapsed = time.perf_counter() - inicio
+
+    assert elapsed < 0.050
+
+
+async def test_async_propaga_canal_y_chat_del_channel_context() -> None:
+    """Triangulación: cuando hay ChannelContext activo, sus campos se mapean a
+    channel/chat_id del enqueue. ``ctx.channel_type → channel``."""
+    ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="42")
+    caller_container = MagicMock()
+    caller_container.get_channel_context = MagicMock(return_value=ctx)
+
+    tool, queue, _ = _make_async_tool(caller_container=caller_container)
+    await tool.execute(agent_id="researcher", task="x")
+
+    kwargs = queue.enqueue.await_args.kwargs
+    assert kwargs["channel"] == "telegram"
+    assert kwargs["chat_id"] == "42"
+
+
+async def test_async_fallback_canal_vacio_sin_channel_context() -> None:
+    """Triangulación: sin ChannelContext → channel='' chat_id='' (CLI/daemon)."""
+    tool, queue, _ = _make_async_tool()  # default: get_channel_context → None
+
+    await tool.execute(agent_id="researcher", task="x")
+
+    kwargs = queue.enqueue.await_args.kwargs
+    assert kwargs["channel"] == ""
+    assert kwargs["chat_id"] == ""
+
+
+async def test_async_aplica_allow_list_check() -> None:
+    """REQ-DG-2 también aplica al path async: target fuera de allow-list → target_not_allowed."""
+    tool, queue, _ = _make_async_tool(allowed_targets=["solo_este"])
+
+    result = await tool.execute(agent_id="malicioso", task="x")
+
+    queue.enqueue.assert_not_awaited()
+    dr = DelegationResult.model_validate_json(result.output)
+    assert dr.status == "failed"
+    assert dr.reason == "target_not_allowed"
+
+
+async def test_async_falla_grasiosamente_si_enqueue_lanza() -> None:
+    """REQ-DG-8: nunca propaga. Si queue.enqueue lanza, retorna ToolResult failed."""
+    queue = MagicMock()
+    queue.enqueue = AsyncMock(side_effect=RuntimeError("cola rota"))
+    tool, _, _ = _make_async_tool(queue=queue)
+
+    result = await tool.execute(agent_id="researcher", task="x")
+
+    assert isinstance(result, ToolResult)
+    dr = DelegationResult.model_validate_json(result.output)
+    assert dr.status == "failed"
+    assert dr.reason == "enqueue_failed"
+    assert "cola rota" in (dr.details or "")

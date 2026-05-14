@@ -32,6 +32,7 @@ from core.ports.outbound.tool_port import ITool, ToolResult
 from core.use_cases._result_parser import parse_delegation_result
 
 if TYPE_CHECKING:
+    from core.ports.outbound.background_delegation_port import IBackgroundDelegationQueue
     from infrastructure.container import AgentContainer
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,19 @@ class DelegateTool(ITool):
                     "When omitted, the child uses its own default system prompt."
                 ),
             },
+            "wait": {
+                "type": "boolean",
+                "description": (
+                    "If false (default), runs in background: you immediately get a "
+                    "task_id and the result is injected as a new message starting "
+                    "with `[bg-N] ...` when ready. Use this for long research, "
+                    "analysis, or any delegation expected to take more than a few "
+                    "seconds. If true, blocks until the child finishes and returns "
+                    "the result inline this same turn. Use ONLY when you need the "
+                    "delegation result to make your next decision or tool call."
+                ),
+                "default": False,
+            },
         },
         "required": ["agent_id", "task"],
     }
@@ -108,6 +122,9 @@ class DelegateTool(ITool):
         get_agent_container: Callable[[str], "AgentContainer | None"],
         max_iterations_per_sub: int,
         timeout_seconds: int,
+        caller_agent_id: str,
+        caller_container: "AgentContainer",
+        queue: "IBackgroundDelegationQueue | None" = None,
     ) -> None:
         """
         Args:
@@ -126,13 +143,58 @@ class DelegateTool(ITool):
         self._get_agent_container = get_agent_container
         self._max_iterations_per_sub = max_iterations_per_sub
         self._timeout_seconds = timeout_seconds
+        # REQ-DG-10 / REQ-BGD-*: contexto del caller para el path async
+        self._caller_agent_id = caller_agent_id
+        self._caller_container = caller_container
+        self._queue = queue
 
     async def execute(  # type: ignore[override]
         self,
         agent_id: str,
         task: str,
         system_prompt: str | None = None,
+        wait: bool = False,
         **kwargs,
+    ) -> ToolResult:
+        """Dispatcher: ``wait=True`` → sync path (legacy); ``wait=False`` → async queue.
+
+        Default es async (REQ-DG-10). El caller marca ``wait=True`` explícitamente
+        cuando necesita el resultado de la delegación en este mismo turno (para
+        tomar una decisión o llamar a otra tool con esa información).
+
+        Para devs que modifiquen las dos ramas:
+
+        - **Sync (``wait=True``)** — ``_execute_sync``: bloquea con
+          ``asyncio.wait_for(timeout_seconds)`` sobre ``child_one_shot.execute``.
+          Retorna un ``DelegationResult`` completo (status/summary/details/reason)
+          parseado del bloque ```json``` del hijo. Aplica REQ-DG-2..9.
+
+        - **Async (``wait=False``)** — ``_execute_async``: encola en la cola
+          background y retorna inmediatamente con ``DelegationResult(status="success",
+          summary="Delegation queued", details=task_id)``. El resultado real del
+          hijo llega DESPUÉS, vía ``LLMDispatcherAdapter.dispatch`` con prefijo
+          ``[bg-N] ...`` en el ``(channel, chat_id)`` original. Aplica REQ-DG-2,
+          REQ-DG-10, REQ-DG-11, REQ-BGD-*.
+
+        El path async requiere ``self._queue`` no-None. Si la cola no está
+        wired (ej. tests parciales pre-AppContainer), retorna ``failed`` con
+        ``reason="background_delegation_unavailable"`` — fail-fast en lugar de
+        crashear.
+        """
+        if wait:
+            return await self._execute_sync(
+                agent_id=agent_id, task=task, system_prompt=system_prompt
+            )
+        return await self._execute_async(
+            agent_id=agent_id, task=task, system_prompt=system_prompt
+        )
+
+    async def _execute_sync(
+        self,
+        *,
+        agent_id: str,
+        task: str,
+        system_prompt: str | None,
     ) -> ToolResult:
         """
         Delega `task` al agente `agent_id` y retorna un ToolResult.
@@ -273,6 +335,110 @@ class DelegateTool(ITool):
         # -----------------------------------------------------------------------
         result = parse_delegation_result(raw)
         logger.debug("DelegateTool: agente '%s' completó con status='%s'", agent_id, result.status)
+        return self._build_tool_result(result)
+
+    # ---------------------------------------------------------------------------
+    # Async path — REQ-DG-10 / REQ-BGD-*
+    # ---------------------------------------------------------------------------
+
+    async def _execute_async(
+        self,
+        *,
+        agent_id: str,
+        task: str,
+        system_prompt: str | None,
+    ) -> ToolResult:
+        """Encola la delegación en background y retorna ``task_id`` inmediatamente.
+
+        Flow:
+        1. Allow-list check (REQ-DG-2) — fail-fast antes de tocar la cola.
+        2. Resolver scope ``(channel, chat_id)`` via ``caller_container.get_channel_context()``.
+           Si no hay contexto activo (ej. CLI / daemon sin canal), fallback a ``("", "")``.
+           Mapeo: ``ctx.channel_type → channel``, ``ctx.chat_id → chat_id`` (vacío si None).
+        3. ``queue.enqueue(...)`` — devuelve ``bg-N`` en <50ms (REQ-BGD-2).
+        4. ToolResult con ``DelegationResult(status="success", summary="Delegation queued",
+           details=task_id)`` — el LLM lee ``details`` para anunciarle al usuario el ``bg-N``.
+
+        NUNCA propaga excepciones (REQ-DG-8): si ``enqueue`` falla por algún motivo,
+        retorna un ToolResult ``failed`` con ``reason="enqueue_failed"``.
+        """
+        # 0. Si no hay queue wired, el feature de background-delegation está
+        # desactivado a nivel app — fail-fast. El path sync (wait=True) sigue OK.
+        if self._queue is None:
+            result = DelegationResult(
+                status="failed",
+                summary="Background delegation is not available (queue not wired).",
+                reason="background_delegation_unavailable",
+            )
+            return self._build_tool_result(result)
+
+        # 1. Allow-list (REQ-DG-2)
+        if self._allowed_targets and agent_id not in self._allowed_targets:
+            logger.warning(
+                "DelegateTool(async): agente '%s' no está en la allow-list %s",
+                agent_id,
+                self._allowed_targets,
+            )
+            result = DelegationResult(
+                status="failed",
+                summary=f"Agent '{agent_id}' is not in the allowed delegation targets.",
+                reason="target_not_allowed",
+            )
+            return self._build_tool_result(result)
+
+        # 2. Resolver scope desde el contexto activo del caller
+        try:
+            ctx = self._caller_container.get_channel_context()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "DelegateTool(async): get_channel_context() falló: %s — fallback a ('', '')",
+                exc,
+            )
+            ctx = None
+
+        if ctx is None:
+            channel = ""
+            chat_id = ""
+        else:
+            channel = ctx.channel_type
+            chat_id = ctx.chat_id or ""
+
+        # 3. Encolar (REQ-BGD-2)
+        try:
+            task_id = await self._queue.enqueue(
+                caller_agent_id=self._caller_agent_id,
+                target_agent_id=agent_id,
+                prompt=task,
+                system_prompt=system_prompt,
+                channel=channel,
+                chat_id=chat_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "DelegateTool(async): queue.enqueue() falló para target '%s'", agent_id
+            )
+            result = DelegationResult(
+                status="failed",
+                summary=f"Could not queue delegation to '{agent_id}': {type(exc).__name__}.",
+                details=str(exc),
+                reason="enqueue_failed",
+            )
+            return self._build_tool_result(result)
+
+        # 4. ToolResult "queued" — el LLM lee details para mencionar el bg-N al usuario
+        result = DelegationResult(
+            status="success",
+            summary="Delegation queued",
+            details=task_id,
+        )
+        logger.debug(
+            "DelegateTool(async): delegación '%s' encolada como '%s' (caller=%s scope=%s:%s)",
+            agent_id,
+            task_id,
+            self._caller_agent_id,
+            channel,
+            chat_id,
+        )
         return self._build_tool_result(result)
 
     # ---------------------------------------------------------------------------

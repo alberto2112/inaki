@@ -173,6 +173,42 @@ escribir un único archivo (comportamiento legacy, recuerdos cruzados).
 scopes `(channel, chat_id)` dentro del mismo agente, no solo entre agentes en la
 consolidación global.
 
+### `background-delegation`
+
+La tool `delegate` ahora es **async por defecto**. El parámetro `wait` controla
+el modo: `wait=true` preserva el comportamiento sincrónico legacy
+(bloquea hasta que el hijo responde con DelegationResult parseado); `wait=false`
+(default) encola la delegación en una cola in-memory bajo un semáforo de 3 y
+devuelve `bg-N` al instante. Cuando la delegación termina, el resultado se
+inyecta en el `(channel, chat_id)` original via `LLMDispatcherAdapter.dispatch`
+como un mensaje `Role.USER` con prefijo `[bg-N] ...`. El agente padre tiene una
+sección del system prompt (en inglés) que le explica cómo procesar esos
+mensajes — sin saludo, sin preámbulo.
+
+**Sin migración de DB ni cambios de config**. El feature es 100% in-memory: si
+el daemon reinicia con tasks in-flight, se pierden silenciosamente (decisión
+explícita para uso doméstico Pi 5 — sin retries ni persistencia).
+
+**Lock-per-scope en `LLMDispatcherAdapter`**: la misma instancia se comparte
+entre `BackgroundDelegationQueueAdapter` y `SchedulerService` para que ambos
+serialicen turnos sobre el mismo `(agent_id, channel, chat_id)`. Resuelve un
+race pre-existente latente entre user message + scheduled trigger que el
+proyecto reconocía con `extra_sections_snapshot` pero no mitigaba a nivel del
+historial.
+
+**IMPORTANTE para mantenedores del scheduler**: el adapter
+`LLMDispatcherAdapter` se construye **una sola vez** en `AppContainer.__init__`
+y se almacena en `self._llm_dispatcher`. El `SchedulerService` (vía
+`SchedulerDispatchPorts.llm_dispatcher`) y el `BackgroundDelegationQueueAdapter`
+(vía su param `dispatcher`) reciben **la misma instancia** — por eso comparten
+el dict interno de locks-por-scope. Si en el futuro alguien refactoriza esto
+construyendo instancias separadas, el lock-per-scope deja de serializar entre
+los dos paths y vuelve a aparecer el race condition que mitigamos.
+
+**Breaking para callers que asumían sync**: tests que construyen tool_calls
+de `delegate` deben pasar `wait=true` explícitamente para preservar el path
+legacy. Tests existentes ya actualizados en `tests/unit/use_cases/test_delegation_integration.py`.
+
 ## Git workflow
 
 - Never create a branch without asking me for the name first.

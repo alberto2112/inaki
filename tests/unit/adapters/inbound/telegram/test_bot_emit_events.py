@@ -27,7 +27,7 @@ def _mk_agent_cfg(
     """
     cfg = MagicMock()
     cfg.id = "agente_a"
-    cfg.name = "Iñaki"
+    cfg.name = "Inaki"
     cfg.description = "Asistente"
     cfg.channels = {
         "telegram": {

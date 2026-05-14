@@ -91,7 +91,7 @@ async def par_bots():
 
     - A: bot_username='anacleto_bot'
     - B: bot_username='inaki_bot'
-    B responde 'Hola desde Iñaki' cuando run_agent.execute es llamado.
+    B responde 'Hola desde Inaki' cuando run_agent.execute es llamado.
     A responde 'Hola desde Anacleto'.
     """
     buf_a = BroadcastBuffer(_now=time.time)
@@ -137,7 +137,7 @@ async def par_bots():
     )
     bot_b = _build_bot(
         _agent_cfg("inaki", "inaki_bot"),
-        _container("Hola desde Iñaki"),
+        _container("Hola desde Inaki"),
         emitter=adapter_b,
         receiver=adapter_b,
         rate_limiter=rl,

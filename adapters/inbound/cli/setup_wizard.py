@@ -1,4 +1,4 @@
-"""Interactive setup wizard for Iñaki system configuration.
+"""Interactive setup wizard for Inaki system configuration.
 
 Handles first-run initialization and variable management for the .env file.
 Currently manages: INAKI_SECRET_KEY.
@@ -57,7 +57,7 @@ def _generate_fernet_key() -> str:
 
 def _print_header() -> None:
     print(f"\n{'━' * 52}")
-    print("  🔧 Iñaki — Modo configuración")
+    print("  🔧 Inaki — Modo configuración")
     print(f"{'━' * 52}\n")
     print(f"  Archivo: {_env_path()}\n")
 

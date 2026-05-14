@@ -403,7 +403,7 @@ def test_global_config_delegation_override_timeout_seconds() -> None:
 
 def test_global_config_existing_fields_unaffected_by_delegation() -> None:
     cfg = _make_global_config()
-    assert cfg.app.name == "Iñaki"
+    assert cfg.app.name == "Inaki"
     assert cfg.llm.provider == "openrouter"
     assert cfg.scheduler.enabled is True
 

@@ -1,7 +1,7 @@
 """Tests de los errores de transcripción (tasks 1.1, 1.8).
 
 Fija la jerarquía y los atributos:
-- TranscriptionError es subclase de IñakiError.
+- TranscriptionError es subclase de InakiError.
 - TranscriptionFileTooLargeError lleva size_bytes y limit_bytes.
 - UnknownTranscriptionProviderError es subclase de TranscriptionError.
 """
@@ -11,16 +11,16 @@ from __future__ import annotations
 import pytest
 
 from core.domain.errors import (
-    IñakiError,
+    InakiError,
     TranscriptionError,
     TranscriptionFileTooLargeError,
     UnknownTranscriptionProviderError,
 )
 
 
-def test_transcription_error_hereda_de_iñaki_error() -> None:
+def test_transcription_error_hereda_de_Inaki_error() -> None:
     err = TranscriptionError("boom")
-    assert isinstance(err, IñakiError)
+    assert isinstance(err, InakiError)
     assert str(err) == "boom"
 
 
@@ -39,7 +39,7 @@ def test_unknown_provider_error_hereda_de_transcription_error() -> None:
     err = UnknownTranscriptionProviderError("provider 'foo' no registrado")
 
     assert isinstance(err, TranscriptionError)
-    assert isinstance(err, IñakiError)
+    assert isinstance(err, InakiError)
     assert "foo" in str(err)
 
 

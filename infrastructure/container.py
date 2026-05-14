@@ -42,7 +42,7 @@ from adapters.outbound.embedding.sqlite_embedding_cache import SqliteEmbeddingCa
 from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
 from adapters.outbound.tools.tool_registry import ToolRegistry
 from core.domain.entities.task import TaskStatus
-from core.domain.errors import AgentNotFoundError, IñakiError
+from core.domain.errors import AgentNotFoundError, InakiError
 from core.domain.services.broadcast_buffer import BroadcastBuffer
 from core.domain.services.rate_limiter import FixedWindowRateLimiter
 from core.domain.services.scheduler_service import SchedulerService
@@ -445,7 +445,7 @@ class AgentContainer:
             return None
 
         if cfg.transcription is None:
-            raise IñakiError(
+            raise InakiError(
                 f"Agent '{cfg.id}': channels.telegram.voice_enabled=True requiere "
                 "un bloque 'transcription:' en la config (del agente o global). "
                 "Agregá `transcription:` con provider y api_key, o poné "
@@ -712,7 +712,7 @@ class AgentContainer:
 
     def _build_scene_describer(self, photos_cfg):
         """Instancia el adaptador de descripción de escena según el provider configurado."""
-        from core.domain.errors import IñakiError
+        from core.domain.errors import InakiError
 
         provider = photos_cfg.scene.provider
         model = photos_cfg.scene.model
@@ -745,7 +745,7 @@ class AgentContainer:
 
             return GroqSceneDescriberAdapter(api_key, model, prompt)
         else:
-            raise IñakiError(
+            raise InakiError(
                 f"Scene provider desconocido: '{provider}'. Válidos: anthropic, openai, groq"
             )
 

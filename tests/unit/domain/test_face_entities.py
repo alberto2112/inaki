@@ -51,7 +51,7 @@ class TestPerson:
 
     def test_persona_normal_categoria_none(self) -> None:
         """Persona normal tiene categoria=None por defecto."""
-        persona = Person(nombre="Iñaki")
+        persona = Person(nombre="Inaki")
         assert persona.categoria is None
 
     def test_persona_id_generado_automaticamente(self) -> None:
@@ -211,7 +211,7 @@ class TestFaceMatch:
 
     def test_face_match_multiples_candidatos(self) -> None:
         p1 = self._persona("Alberto")
-        p2 = self._persona("Iñaki")
+        p2 = self._persona("Inaki")
         fm = FaceMatch(
             face_ref="99#0",
             bbox=self._bbox(),

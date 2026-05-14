@@ -39,7 +39,7 @@ def test_merge_sobre_datos_existentes(repo: MagicMock) -> None:
     """Los cambios se mergean con los datos existentes, sin borrar campos no modificados."""
     repo.read_layer.return_value = {
         "llm": {"model": "viejo", "temperature": 0.7},
-        "app": {"name": "Iñaki"},
+        "app": {"name": "Inaki"},
     }
     uc = UpdateGlobalLayerUseCase(repo)
     uc.execute({"llm": {"model": "nuevo"}})
@@ -47,7 +47,7 @@ def test_merge_sobre_datos_existentes(repo: MagicMock) -> None:
     datos_escritos = repo.write_layer.call_args[0][1]
     assert datos_escritos["llm"]["model"] == "nuevo"
     assert datos_escritos["llm"]["temperature"] == 0.7
-    assert datos_escritos["app"]["name"] == "Iñaki"
+    assert datos_escritos["app"]["name"] == "Inaki"
 
 
 def test_capa_de_agente_lanza_error(repo: MagicMock) -> None:

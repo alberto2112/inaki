@@ -14,7 +14,7 @@ llm:
 # Bloque de configuración de la aplicación
 app:
   # Nombre del asistente
-  name: Iñaki
+  name: Inaki
   # Nivel de log
   log_level: INFO
   # Agente por defecto al iniciar

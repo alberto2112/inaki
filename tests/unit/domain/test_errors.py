@@ -9,7 +9,7 @@ from core.domain.errors import (
     DaemonError,
     DaemonNotRunningError,
     DaemonTimeoutError,
-    IñakiError,
+    InakiError,
     ToolLoopMaxIterationsError,
 )
 
@@ -27,7 +27,7 @@ def test_tool_loop_max_iterations_error_attribute_survives_raise() -> None:
 
 def test_tool_loop_max_iterations_error_is_inaki_error() -> None:
     exc = ToolLoopMaxIterationsError("x")
-    assert isinstance(exc, IñakiError)
+    assert isinstance(exc, InakiError)
 
 
 def test_tool_loop_max_iterations_error_is_exception() -> None:
@@ -52,7 +52,7 @@ def test_tool_loop_max_iterations_error_empty_response() -> None:
 
 def test_daemon_error_is_inaki_error() -> None:
     exc = DaemonError("test")
-    assert isinstance(exc, IñakiError)
+    assert isinstance(exc, InakiError)
 
 
 def test_daemon_not_running_error_is_daemon_error() -> None:

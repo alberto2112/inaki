@@ -1,5 +1,5 @@
 [Unit]
-Description=Iñaki — asistente personal agentico
+Description=Inaki — asistente personal agentico
 Documentation=https://github.com/inaki
 After=network-online.target
 Wants=network-online.target

@@ -1,5 +1,5 @@
 """
-Adapter HTTP para comunicación con el daemon de Iñaki.
+Adapter HTTP para comunicación con el daemon de Inaki.
 
 Usa httpx sync (sin event loop) — pensado para uso desde el CLI de Typer.
 """

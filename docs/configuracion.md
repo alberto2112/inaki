@@ -1,4 +1,4 @@
-# Configuración — Iñaki v2
+# Configuración — Inaki v2
 
 ## Edición interactiva con `inaki setup`
 
@@ -170,7 +170,7 @@ El CLI siempre funciona.
 
 ```yaml
 app:
-  name: "Iñaki"           # Nombre del sistema
+  name: "Inaki"           # Nombre del sistema
   log_level: "INFO"       # DEBUG | INFO | WARNING | ERROR
   default_agent: "general" # Agente usado por CLI sin --agent
 
@@ -390,7 +390,7 @@ knowledge:
 #### Fuente `type: sqlite` — Base de datos pre-construida por el usuario
 
 Permite conectar una base de datos SQLite que el usuario construyó y gestiona por su cuenta.
-Iñaki **no indexa ni escribe** esta DB — solo la consulta para búsquedas vectoriales.
+Inaki **no indexa ni escribe** esta DB — solo la consulta para búsquedas vectoriales.
 
 **Schema requerido:**
 
@@ -410,10 +410,10 @@ CREATE VIRTUAL TABLE chunk_embeddings USING vec0(embedding FLOAT[384]);
 
 **Notas importantes:**
 
-- La dimensión **debe ser exactamente 384** — es la dimensión del modelo e5-small que usa Iñaki internamente. Si la DB usa otra dimensión, la fuente se omite al arrancar con un error claro en los logs.
+- La dimensión **debe ser exactamente 384** — es la dimensión del modelo e5-small que usa Inaki internamente. Si la DB usa otra dimensión, la fuente se omite al arrancar con un error claro en los logs.
 - `chunk_embeddings.rowid` se usa para el JOIN con `chunks.id` — deben coincidir.
 - `metadata_json` es opcional pero debe ser JSON válido si está presente (o `NULL`/`'{}'`).
-- Iñaki valida el schema en la primera búsqueda. Si la validación falla, la fuente se deshabilita para esa sesión y se loguea `ERROR` con el nombre de la fuente y el motivo exacto.
+- Inaki valida el schema en la primera búsqueda. Si la validación falla, la fuente se deshabilita para esa sesión y se loguea `ERROR` con el nombre de la fuente y el motivo exacto.
 
 **Ejemplo mínimo de inserción:**
 
@@ -514,10 +514,10 @@ la `api_key` de este archivo — no hace falta repetir campos.
 
 ```yaml
 id: "general"                    # Identificador único del agente (= nombre del archivo)
-name: "Iñaki-g"                  # Nombre para mostrar
+name: "Inaki-g"                  # Nombre para mostrar
 description: "Asistente general" # Descripción breve
 system_prompt: |                 # Prompt base del agente (requerido)
-  Eres Iñaki, un asistente personal inteligente.
+  Eres Inaki, un asistente personal inteligente.
   Eres conciso, directo y útil.
 
 # Overrides LLM — solo los campos que cambian, el resto se hereda del global
@@ -652,9 +652,9 @@ channels:
 
 ---
 
-## `broadcast` — canal de difusión entre instancias de Iñaki
+## `broadcast` — canal de difusión entre instancias de Inaki
 
-Permite que dos o más instancias de Iñaki (p. ej. una en cada Raspberry Pi)
+Permite que dos o más instancias de Inaki (p. ej. una en cada Raspberry Pi)
 compartan el contexto conversacional de un grupo de Telegram en tiempo real.
 Una instancia actúa como **servidor** (escucha conexiones) y el resto como
 **clientes** (se conectan al servidor). Topología en estrella: un servidor, N clientes.

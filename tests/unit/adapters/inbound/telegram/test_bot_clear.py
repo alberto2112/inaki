@@ -25,7 +25,7 @@ def agent_cfg() -> MagicMock:
     """Mock de AgentConfig con id y channels.telegram."""
     cfg = MagicMock()
     cfg.id = "dev"
-    cfg.name = "Iñaki"
+    cfg.name = "Inaki"
     cfg.description = "Asistente"
     cfg.channels = {
         "telegram": {"token": "dummy-token", "allowed_user_ids": [], "reactions": False}

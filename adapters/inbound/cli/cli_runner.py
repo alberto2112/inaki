@@ -1,4 +1,4 @@
-"""CLI adapter para Iñaki — REPL sync sobre IDaemonClient.
+"""CLI adapter para Inaki — REPL sync sobre IDaemonClient.
 
 El chat interactivo delega al daemon vía HTTP. No instancia AppContainer.
 Solo usa IDaemonClient (port) para todas las operaciones de conversación.
@@ -41,7 +41,7 @@ def run_cli(client: IDaemonClient, agent_id: str) -> None:
     session_id = str(uuid.uuid4())
 
     print(
-        f"\niñaki > Conectado al agente '{agent_id}'. Escribe /help para ver comandos. Ctrl+C para salir.\n"
+        f"\nInaki > Conectado al agente '{agent_id}'. Escribe /help para ver comandos. Ctrl+C para salir.\n"
     )
 
     while True:
@@ -142,8 +142,8 @@ def run_cli(client: IDaemonClient, agent_id: str) -> None:
             # los mostramos antes de la respuesta final para que el usuario
             # vea la progresión del turno tal cual la hizo el agente.
             for intermediate in turn_result.intermediates:
-                print(f"\niñaki > {intermediate}")
-            print(f"\niñaki > {turn_result.reply}\n")
+                print(f"\nInaki > {intermediate}")
+            print(f"\nInaki > {turn_result.reply}\n")
         except KeyboardInterrupt:
             print("\nHasta luego.")
             return

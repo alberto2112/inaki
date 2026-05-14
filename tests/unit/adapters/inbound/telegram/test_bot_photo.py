@@ -28,7 +28,7 @@ from core.domain.entities.face import ProcessPhotoResult
 def _mk_agent_cfg(*, allowed_user_ids: list[int] | None = None) -> MagicMock:
     cfg = MagicMock()
     cfg.id = "dev"
-    cfg.name = "Iñaki"
+    cfg.name = "Inaki"
     cfg.description = "Asistente"
     tg = {
         "token": "dummy-token",
@@ -497,7 +497,7 @@ def _mk_agent_cfg_con_emit_photo(allowed_user_ids: list[int]) -> MagicMock:
     """AgentConfig con telegram.broadcast.emit.user_input_photo=true."""
     cfg = MagicMock()
     cfg.id = "agente_a"
-    cfg.name = "Iñaki"
+    cfg.name = "Inaki"
     cfg.description = "Asistente"
     cfg.channels = {
         "telegram": {

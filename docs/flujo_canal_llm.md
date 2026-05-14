@@ -1,4 +1,4 @@
-# Flujo Canal → LLM — Iñaki v2
+# Flujo Canal → LLM — Inaki v2
 
 Cómo viaja un mensaje desde que el usuario lo envía hasta que el LLM responde.
 Incluye el flujo sin tools y el flujo con tool calls.

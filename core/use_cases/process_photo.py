@@ -189,7 +189,7 @@ class ProcessPhotoUseCase:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         path = f"/tmp/inaki.photo-debug.{ts}.log"
         lines: list[str] = [
-            "=== IÑAKI PHOTO DEBUG ===",
+            "=== Inaki PHOTO DEBUG ===",
             f"Timestamp: {datetime.now().isoformat()}",
             f"Agent: {agent_id}",
             f"Chat: channel={channel}, chat_id={chat_id}, chat_type={chat_type}",

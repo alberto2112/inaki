@@ -1,5 +1,5 @@
 """
-Sistema de configuración de Iñaki.
+Sistema de configuración de Inaki.
 
 Layout por defecto en el home del usuario:
   ~/.inaki/config/global.yaml          — config base del sistema
@@ -101,7 +101,7 @@ def sanitize_digest_scope(value: str | None) -> str:
 
 
 class AppConfig(BaseModel):
-    name: str = "Iñaki"
+    name: str = "Inaki"
     log_level: str = "INFO"
     ext_dirs: ExpandedPathList = ["ext", "~/.inaki/ext"]
     default_agent: str = "general"
@@ -523,7 +523,7 @@ class BroadcastEmitConfig(BaseModel):
 
 class BroadcastConfig(BaseModel):
     """
-    Config del canal de broadcast TCP entre instancias de Iñaki.
+    Config del canal de broadcast TCP entre instancias de Inaki.
 
     Un nodo opera como **servidor** si declara ``port`` (sin ``remote``).
     Un nodo opera como **cliente** si declara ``remote`` (sin ``port``).
@@ -957,14 +957,14 @@ def _load_yaml_safe(path: Path) -> dict:
 
 _GLOBAL_YAML_HEADER = """\
 # =============================================================================
-# Iñaki — Configuración global
+# Inaki — Configuración global
 # =============================================================================
 #
 # Este archivo fue generado automáticamente en el primer arranque con los
 # valores por defecto del sistema. Podés editarlo a mano.
 #
 # Referencia completa de todos los parámetros disponibles:
-#   config.example.yaml (en el repo de Iñaki)
+#   config.example.yaml (en el repo de Inaki)
 #
 # Layout:
 #   ~/.inaki/config/global.yaml          ← este archivo (config base)
@@ -977,7 +977,7 @@ _GLOBAL_YAML_HEADER = """\
 
 _SECRETS_YAML_HEADER = """\
 # =============================================================================
-# Iñaki — Secrets globales
+# Inaki — Secrets globales
 # =============================================================================
 #
 # Poné acá las API keys compartidas entre todos los agentes.

@@ -41,13 +41,13 @@ class TestBasicQuery:
     """Búsqueda básica sin filtros."""
 
     async def test_query_basica_retorna_exito(self) -> None:
-        chunks = [_make_chunk(content="Iñaki es un asistente")]
+        chunks = [_make_chunk(content="Inaki es un asistente")]
         tool, orchestrator, _ = _make_tool(chunks=chunks)
 
         resultado = await tool.execute(query="asistente")
 
         assert resultado.success is True
-        assert "Iñaki es un asistente" in resultado.output
+        assert "Inaki es un asistente" in resultado.output
         orchestrator.retrieve_all.assert_called_once()
 
     async def test_sin_resultados_retorna_exito_con_mensaje(self) -> None:

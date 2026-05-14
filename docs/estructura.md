@@ -1,8 +1,8 @@
-# Estructura del Proyecto — Iñaki v2
+# Estructura del Proyecto — Inaki v2
 
 ## Principios de arquitectura
 
-Iñaki sigue una **arquitectura hexagonal (Ports & Adapters)** estricta:
+Inaki sigue una **arquitectura hexagonal (Ports & Adapters)** estricta:
 
 - `core/` — lógica pura de dominio. **Nunca importa de `adapters/` ni de librerías de infraestructura.**
 - `adapters/` — implementaciones concretas de los puertos. Pueden importar librerías externas.
@@ -26,7 +26,7 @@ inaki/
 │   │   ├── value_objects/
 │   │   │   ├── embedding.py               # Embedding(vector, model)
 │   │   │   └── agent_context.py           # AgentContext → build_system_prompt()
-│   │   └── errors.py                      # IñakiError y subclases
+│   │   └── errors.py                      # InakiError y subclases
 │   │
 │   ├── ports/
 │   │   ├── inbound/
@@ -46,7 +46,7 @@ inaki/
 │       └── schedule_task.py               # ScheduleTaskUseCase — CRUD de tareas programadas
 │
 ├── adapters/
-│   ├── inbound/                           # Canales de entrada (cómo llegan mensajes a Iñaki)
+│   ├── inbound/                           # Canales de entrada (cómo llegan mensajes a Inaki)
 │   │   ├── cli/
 │   │   │   └── cli_runner.py              # Chat interactivo por terminal
 │   │   ├── telegram/

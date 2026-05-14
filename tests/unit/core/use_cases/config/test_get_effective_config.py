@@ -60,14 +60,14 @@ def test_capa_vacia_ignorada() -> None:
     """Si una capa devuelve dict vacío, no rompe el merge."""
     repo = _repo_con_capas(
         {
-            (LayerName.GLOBAL, None): {"app": {"name": "Iñaki"}},
+            (LayerName.GLOBAL, None): {"app": {"name": "Inaki"}},
             (LayerName.GLOBAL_SECRETS, None): {},
         }
     )
     uc = GetEffectiveConfigUseCase(repo)
     resultado = uc.execute(agent_id=None)
 
-    assert resultado.datos["app"]["name"] == "Iñaki"
+    assert resultado.datos["app"]["name"] == "Inaki"
 
 
 # ---------------------------------------------------------------------------

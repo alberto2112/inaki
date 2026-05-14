@@ -10,7 +10,7 @@ se almacenan en plano para que el YAML siga siendo legible por humanos.
 
 YAML layout example::
 
-    # Iñaki — Web Search configuration
+    # Inaki — Web Search configuration
     # El campo api_key está cifrado. No lo edites manualmente.
 
     api_key: "enc:gAAAAABh..."
@@ -40,7 +40,7 @@ _HTTP_TIMEOUT = 20.0
 _SENSITIVE_FIELDS: frozenset[str] = frozenset({"api_key"})
 _CONFIG_FILENAME = "web_search_config.yaml"
 _CONFIG_HEADER = (
-    "# Iñaki — Web Search configuration\n"
+    "# Inaki — Web Search configuration\n"
     "# El campo api_key está cifrado. No lo edites manualmente.\n\n"
 )
 

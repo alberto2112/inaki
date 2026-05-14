@@ -1,4 +1,4 @@
-"""Iñaki — asistente personal agentico."""
+"""Inaki — asistente personal agentico."""
 
 from importlib.metadata import PackageNotFoundError, version
 

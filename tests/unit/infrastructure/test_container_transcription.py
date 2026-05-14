@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.domain.errors import IñakiError
+from core.domain.errors import InakiError
 from core.ports.outbound.transcription_port import ITranscriptionProvider
 from infrastructure.config import (
     AgentConfig,
@@ -111,7 +111,7 @@ def test_telegram_voice_enabled_true_sin_transcription_lanza_error() -> None:
         channels={"telegram": {"token": "t"}},
         transcription=None,
     )
-    with pytest.raises(IñakiError) as exc_info:
+    with pytest.raises(InakiError) as exc_info:
         AgentContainer._resolve_transcription(cfg)
     msg = str(exc_info.value).lower()
     assert "transcription" in msg
@@ -123,5 +123,5 @@ def test_telegram_voice_enabled_true_explicit_sin_transcription_lanza_error() ->
         channels={"telegram": {"token": "t", "voice_enabled": True}},
         transcription=None,
     )
-    with pytest.raises(IñakiError):
+    with pytest.raises(InakiError):
         AgentContainer._resolve_transcription(cfg)

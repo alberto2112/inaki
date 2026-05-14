@@ -1,5 +1,5 @@
 # =============================================================================
-# Iñaki v2 — Configuración Global de Referencia
+# Inaki v2 — Configuración Global de Referencia
 # =============================================================================
 #
 # Este fichero documenta TODOS los parámetros configurables del sistema.
@@ -66,7 +66,7 @@ providers: {}
 # [app] — Configuración general del sistema
 # -----------------------------------------------------------------------------
 app:
-  name: "Iñaki"               # Nombre del asistente (usado en logs y presentaciones)
+  name: "Inaki"               # Nombre del asistente (usado en logs y presentaciones)
 
   log_level: "INFO"           # Nivel de log: DEBUG | INFO | WARNING | ERROR | CRITICAL
                               # DEBUG muestra llamadas HTTP, embeddings, tool calls
@@ -405,10 +405,10 @@ user:
 # =============================================================================
 
 # id: "general"
-# name: "Iñaki-g"
+# name: "Inaki-g"
 # description: "Asistente personal de uso general"
 # system_prompt: |
-#   Eres Iñaki, un asistente personal inteligente.
+#   Eres Inaki, un asistente personal inteligente.
 #
 # # Override LLM — solo campos que cambian, el resto se hereda del global
 # llm:
@@ -441,7 +441,7 @@ user:
 #     # -------------------------------------------------------------------------
 #     # [channels.telegram.broadcast] — Canal de broadcast entre asistentes
 #     # -------------------------------------------------------------------------
-#     # OPCIONAL. Permite a múltiples instancias de Iñaki (cada una en su
+#     # OPCIONAL. Permite a múltiples instancias de Inaki (cada una en su
 #     # Raspberry, en la MISMA LAN) verse mutuamente en un grupo Telegram
 #     # compartido. Necesario porque la Bot API de Telegram NO entrega a un bot
 #     # los mensajes de OTROS bots — se necesita un canal lateral.
@@ -468,7 +468,7 @@ user:
 #     #                 decide si responder (o emitir [SKIP]) leyendo el prefijo
 #     #                 de origen inyectado en el user_input.
 #     #
-#     # --- Modo SERVER (el Iñaki que acepta conexiones) ---
+#     # --- Modo SERVER (el Inaki que acepta conexiones) ---
 #     # broadcast:
 #     #   port: 6499              # Puerto TCP donde escucha (1024..65535).
 #     #   auth: "shared-secret"   # Secret compartido HMAC. → SECRETS
@@ -489,7 +489,7 @@ user:
 #     #                           # intercambios y el limiter es inefectivo.
 #     #                           # Recomendado: 300 (5min) o más.
 #     #
-#     # --- Modo CLIENT (el Iñaki que se conecta al server) ---
+#     # --- Modo CLIENT (el Inaki que se conecta al server) ---
 #     # broadcast:
 #     #   remote:
 #     #     host: "192.168.1.50:6499"  # host:port del server.

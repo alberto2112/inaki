@@ -35,7 +35,7 @@ def mock_container() -> MagicMock:
 def agent_cfg_autonomous() -> MagicMock:
     cfg = MagicMock()
     cfg.id = "inaki"
-    cfg.name = "Iñaki"
+    cfg.name = "Inaki"
     cfg.description = "Asistente"
     cfg.channels = {
         "telegram": {
@@ -125,7 +125,7 @@ async def test_subscribe_broadcast_trigger_mention_noop(mock_container, mock_rec
     """behavior=mention no registra el trigger (no tiene sentido sin entities reales)."""
     cfg = MagicMock()
     cfg.id = "inaki"
-    cfg.name = "Iñaki"
+    cfg.name = "Inaki"
     cfg.description = ""
     cfg.channels = {
         "telegram": {

@@ -93,4 +93,4 @@ def test_render_default_global_yaml_has_header() -> None:
     rendered = _render_default_global_yaml()
 
     assert rendered.startswith("#")
-    assert "Iñaki" in rendered
+    assert "Inaki" in rendered

@@ -35,9 +35,9 @@ def use_case(
 
 
 async def test_execute_returns_llm_response(use_case, mock_llm):
-    mock_llm.complete.return_value = LLMResponse.of_text("Hola, soy Iñaki")
+    mock_llm.complete.return_value = LLMResponse.of_text("Hola, soy Inaki")
     response = await use_case.execute("Hola")
-    assert response == "Hola, soy Iñaki"
+    assert response == "Hola, soy Inaki"
 
 
 async def test_execute_persists_user_and_assistant_messages(use_case, mock_llm, mock_history):

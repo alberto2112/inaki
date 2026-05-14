@@ -27,7 +27,7 @@ def create_admin_app(
 ) -> FastAPI:
     """Crea la instancia FastAPI del admin server."""
     app = FastAPI(
-        title="Iñaki — Admin",
+        title="Inaki — Admin",
         description="Admin server para gestión del daemon",
         version="2.0.0",
     )

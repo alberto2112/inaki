@@ -36,7 +36,7 @@ def _mk_agent_cfg(
 ) -> MagicMock:
     cfg = MagicMock()
     cfg.id = "dev"
-    cfg.name = "Iñaki"
+    cfg.name = "Inaki"
     cfg.description = "Asistente"
     tg = {
         "token": "dummy-token",

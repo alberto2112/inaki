@@ -47,7 +47,7 @@ class TestSectionsForModelGlobalConfig:
         app_fields = next(fields for name, fields in secciones if name == "APP")
         name_field = next((f for f in app_fields if f.label == "name"), None)
         assert name_field is not None
-        assert name_field.default == "Iñaki"
+        assert name_field.default == "Inaki"
 
     def test_default_agent_default(self):
         secciones = sections_for_model(GlobalConfig, {}, section_prefix="APP")

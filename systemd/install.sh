@@ -1,5 +1,5 @@
 #!/bin/bash
-# Instala y habilita el servicio systemd de Iñaki.
+# Instala y habilita el servicio systemd de Inaki.
 # Ejecutar con sudo desde el directorio raíz del repo:
 #   sudo bash systemd/install.sh
 
@@ -33,7 +33,7 @@ if [ ! -x "$VENV_PYTHON" ]; then
     exit 1
 fi
 
-echo "Instalando Iñaki:"
+echo "Instalando Inaki:"
 echo "  Repo:    $INAKI_DIR"
 echo "  Usuario: $RUN_USER ($RUN_GROUP)"
 echo "  Python:  $VENV_PYTHON"

@@ -1,5 +1,5 @@
 """
-Entry point de Iñaki.
+Entry point de Inaki.
 
 Modos de uso:
   inaki                                    → CLI interactivo (agente por defecto)
@@ -35,7 +35,7 @@ from inaki import __version__
 
 app = typer.Typer(
     name="inaki",
-    help="Iñaki — asistente personal agentico",
+    help="Inaki — asistente personal agentico",
     invoke_without_command=True,
     no_args_is_help=False,
 )
@@ -97,7 +97,7 @@ def _run_daemon(config_dir: Path, agents_dir: Path, global_config, registry) -> 
     from adapters.inbound.daemon.runner import run_daemon
 
     logger = logging.getLogger(__name__)
-    logger.info("Iniciando Iñaki en modo daemon")
+    logger.info("Iniciando Inaki en modo daemon")
 
     initial_container = AppContainer(global_config, registry)
 
@@ -312,7 +312,7 @@ def _root(
         ),
     ),
 ) -> None:
-    """Iñaki — asistente personal agentico."""
+    """Inaki — asistente personal agentico."""
     ctx.ensure_object(dict)
     ctx.obj["config_dir"] = config
     ctx.obj["remote_url"] = remote

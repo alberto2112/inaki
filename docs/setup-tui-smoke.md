@@ -7,7 +7,7 @@ Correr esta lista en un entorno real después de cada release que toque el TUI d
 
 ## Prerequisitos
 
-- Iñaki instalado en el Pi 5 (modo systemd o venv directo).
+- Inaki instalado en el Pi 5 (modo systemd o venv directo).
 - Al menos un agente configurado en `~/.inaki/config/agents/`.
 - Conexión SSH activa con terminal de al menos 80x24.
 

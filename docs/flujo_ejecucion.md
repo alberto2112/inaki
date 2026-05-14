@@ -1,4 +1,4 @@
-# Flujo de Ejecución — Iñaki v2
+# Flujo de Ejecución — Inaki v2
 
 ## Arranque del sistema
 

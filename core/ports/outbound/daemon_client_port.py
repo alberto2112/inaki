@@ -8,7 +8,7 @@ from core.domain.value_objects.chat_turn_result import ChatTurnResult
 
 
 class IDaemonClient(Protocol):
-    """Interfaz para comunicarse con el daemon de Iñaki vía HTTP."""
+    """Interfaz para comunicarse con el daemon de Inaki vía HTTP."""
 
     def health(self) -> bool:
         """Verifica si el daemon está corriendo. Retorna False si no responde."""

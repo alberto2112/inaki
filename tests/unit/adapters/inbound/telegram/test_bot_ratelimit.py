@@ -27,7 +27,7 @@ def mock_container() -> MagicMock:
 def agent_cfg() -> MagicMock:
     cfg = MagicMock()
     cfg.id = "dev"
-    cfg.name = "Iñaki"
+    cfg.name = "Inaki"
     cfg.description = "Asistente"
     cfg.channels = {
         "telegram": {

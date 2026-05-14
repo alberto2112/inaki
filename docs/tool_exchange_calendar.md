@@ -48,7 +48,7 @@ El LLM invoca `operation=configure` y las credenciales se persisten en `~/.confi
 Ubicación: `~/.config/inaki/exchange_config.yaml`
 
 ```yaml
-# Iñaki — Exchange Calendar configuration
+# Inaki — Exchange Calendar configuration
 # El campo password está cifrado. No lo edites manualmente.
 
 username: dominio\alberto

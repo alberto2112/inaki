@@ -1,4 +1,4 @@
-# AGENTS.md — Iñaki v2
+# AGENTS.md — Inaki v2
 
 Multi-agent AI assistant with hexagonal architecture, RAG memory, scheduling, and agent delegation.
 

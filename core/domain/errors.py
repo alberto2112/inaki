@@ -1,28 +1,28 @@
-class IñakiError(Exception):
+class InakiError(Exception):
     """Base exception para todos los errores del dominio."""
 
 
-class AgentNotFoundError(IñakiError):
+class AgentNotFoundError(InakiError):
     """El agente solicitado no existe en el registry."""
 
 
-class LLMError(IñakiError):
+class LLMError(InakiError):
     """Error al llamar al proveedor LLM."""
 
 
-class ConfigError(IñakiError):
+class ConfigError(InakiError):
     """Error de configuración detectado al cargar o resolver config."""
 
 
-class ConsolidationError(IñakiError):
+class ConsolidationError(InakiError):
     """Error durante la consolidación de memoria."""
 
 
-class EmbeddingError(IñakiError):
+class EmbeddingError(InakiError):
     """Error al generar embeddings."""
 
 
-class TranscriptionError(IñakiError):
+class TranscriptionError(InakiError):
     """Error al transcribir audio (provider remoto, timeout, formato, etc.)."""
 
 
@@ -39,7 +39,7 @@ class UnknownTranscriptionProviderError(TranscriptionError):
     """El provider de transcripción solicitado no está registrado en la factory."""
 
 
-class KnowledgeConfigError(IñakiError):
+class KnowledgeConfigError(InakiError):
     """Error de configuración de una fuente de conocimiento.
 
     Se lanza al validar la DB de usuario: dimensión de embeddings incorrecta,
@@ -47,15 +47,15 @@ class KnowledgeConfigError(IñakiError):
     """
 
 
-class ToolError(IñakiError):
+class ToolError(InakiError):
     """Error al ejecutar una tool."""
 
 
-class HistoryError(IñakiError):
+class HistoryError(InakiError):
     """Error al leer o escribir el historial."""
 
 
-class SchedulerError(IñakiError):
+class SchedulerError(InakiError):
     """Base para errores del scheduler."""
 
 
@@ -79,7 +79,7 @@ class TooManyActiveTasksError(SchedulerError):
         self.agent_id = agent_id
 
 
-class ToolLoopMaxIterationsError(IñakiError):
+class ToolLoopMaxIterationsError(InakiError):
     """El tool-loop alcanzó el límite de iteraciones sin completar la tarea."""
 
     def __init__(self, last_response: str) -> None:
@@ -92,15 +92,15 @@ class ToolLoopMaxIterationsError(IñakiError):
 # ---------------------------------------------------------------------------
 
 
-class VisionError(IñakiError):
+class VisionError(InakiError):
     """Error al procesar una imagen con el proveedor de visión (InsightFace, etc.)."""
 
 
-class SceneDescriptionError(IñakiError):
+class SceneDescriptionError(InakiError):
     """Error al describir la escena de una imagen con el proveedor LLM multimodal."""
 
 
-class FaceRegistryError(IñakiError):
+class FaceRegistryError(InakiError):
     """Error al leer o escribir el registro de personas en faces.db."""
 
 
@@ -154,7 +154,7 @@ class UnknownSceneProviderError(SceneDescriptionError):
 # ---------------------------------------------------------------------------
 
 
-class DaemonError(IñakiError):
+class DaemonError(InakiError):
     """Base para errores de comunicación con el daemon."""
 
 
@@ -212,7 +212,7 @@ class DaemonAuthError(DaemonClientError):
 # ---------------------------------------------------------------------------
 
 
-class AgentYaExisteError(IñakiError):
+class AgentYaExisteError(InakiError):
     """El id de agente ya está ocupado — no se puede crear un agente con ese id."""
 
     def __init__(self, agent_id: str) -> None:
@@ -220,7 +220,7 @@ class AgentYaExisteError(IñakiError):
         self.agent_id = agent_id
 
 
-class ReferenciaInvalidaError(IñakiError):
+class ReferenciaInvalidaError(InakiError):
     """Una referencia cruzada en la config apunta a un recurso inexistente."""
 
     def __init__(self, campo: str, valor: str, disponibles: list[str]) -> None:

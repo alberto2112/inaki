@@ -27,7 +27,7 @@ def mock_run_agent() -> RunAgentUseCase:
     """Mock de RunAgent con create_autospec — accesos a atributos privados no especificados fallan."""
     agent = create_autospec(RunAgentUseCase, instance=True)
     agent.get_agent_info.return_value = AgentInfoDTO(
-        id="dev", name="Iñaki", description="Asistente de prueba"
+        id="dev", name="Inaki", description="Asistente de prueba"
     )
     agent.get_history = AsyncMock(return_value=[])
     agent.clear_history = AsyncMock(return_value=None)

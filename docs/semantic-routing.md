@@ -1,4 +1,4 @@
-# Mecanismo de semantic routing de Iñaki
+# Mecanismo de semantic routing de Inaki
 
 Documentación del pipeline de **semantic routing** para selección dinámica de skills y tools.
 

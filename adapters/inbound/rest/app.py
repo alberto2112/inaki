@@ -38,7 +38,7 @@ def create_agent_app(agent_cfg: AgentConfig, container: AgentContainer) -> FastA
     auth_key = rest_cfg.get("auth_key")
 
     app = FastAPI(
-        title=f"Iñaki — {agent_cfg.name}",
+        title=f"Inaki — {agent_cfg.name}",
         description=agent_cfg.description,
         version="2.0.0",
     )

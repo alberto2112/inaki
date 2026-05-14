@@ -8,7 +8,7 @@
 
 ## El problema: timing del broadcast context
 
-Cuando dos instancias de Iñaki (`A` y `B`) están en el mismo grupo Telegram con
+Cuando dos instancias de Inaki (`A` y `B`) están en el mismo grupo Telegram con
 `behavior: autonomous`, ambas reciben el mismo mensaje del usuario casi al mismo tiempo.
 
 ```

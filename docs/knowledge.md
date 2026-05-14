@@ -1,4 +1,4 @@
-# Knowledge — Cómo darle conocimiento a Iñaki
+# Knowledge — Cómo darle conocimiento a Inaki
 
 Este documento explica cómo añadir fuentes de conocimiento externas al agente. Para la referencia completa de parámetros YAML ver `docs/configuracion.md`.
 
@@ -6,7 +6,7 @@ Este documento explica cómo añadir fuentes de conocimiento externas al agente.
 
 ## Conceptos clave
 
-Iñaki tiene dos formas de "recordar" cosas:
+Inaki tiene dos formas de "recordar" cosas:
 
 | Mecanismo | Qué es | Cuándo se usa |
 |-----------|--------|---------------|
@@ -19,7 +19,7 @@ Las fuentes de knowledge se consultan en cada turno (pre-fetch automático) y ta
 
 ## Caso 1 — Tengo una carpeta con documentos
 
-El caso más común: tenés archivos `.md`, `.txt` o `.pdf` y querés que Iñaki los entienda.
+El caso más común: tenés archivos `.md`, `.txt` o `.pdf` y querés que Inaki los entienda.
 
 **Paso 1 — Configurar la fuente en `~/.inaki/config/global.yaml`:**
 
@@ -52,7 +52,7 @@ inaki knowledge list          # muestra todas las fuentes y su estado
 inaki knowledge stats mis-docs  # archivos, chunks, última indexación, dimensión
 ```
 
-A partir de aquí, en cada conversación Iñaki recupera los fragmentos más relevantes para la pregunta actual y los inyecta en el contexto antes de responder.
+A partir de aquí, en cada conversación Inaki recupera los fragmentos más relevantes para la pregunta actual y los inyecta en el contexto antes de responder.
 
 ### Formatos soportados
 
@@ -76,7 +76,7 @@ El índice se guarda en `~/.inaki/knowledge/<id>.db` — no en el proyecto.
 
 ## Caso 2 — Tengo una base de datos SQLite propia
 
-Si ya tenés embeddings calculados en SQLite (por ejemplo, generados con otro pipeline), podés conectarla directamente sin que Iñaki la re-indexe.
+Si ya tenés embeddings calculados en SQLite (por ejemplo, generados con otro pipeline), podés conectarla directamente sin que Inaki la re-indexe.
 
 ```yaml
 knowledge:
@@ -86,7 +86,7 @@ knowledge:
       path: ~/data/knowledge.db
 ```
 
-Iñaki **no escribe** esta DB — solo la consulta. La DB debe tener el schema que Iñaki espera (tabla `chunks` + tabla virtual `chunk_embeddings` con vectores de 384 dimensiones). Ver `docs/configuracion.md` para el schema exacto y un ejemplo de inserción.
+Inaki **no escribe** esta DB — solo la consulta. La DB debe tener el schema que Inaki espera (tabla `chunks` + tabla virtual `chunk_embeddings` con vectores de 384 dimensiones). Ver `docs/configuracion.md` para el schema exacto y un ejemplo de inserción.
 
 **Requisito crítico**: los embeddings deben ser de 384 dimensiones (e5-small ONNX o texto equivalente). Si la DB usa otra dimensión, la fuente falla al arrancar con un error claro en los logs.
 
@@ -126,7 +126,7 @@ Una tool `knowledge_add_document` que automatice esto sería una extensión natu
 
 ## Control del pre-fetch
 
-Por defecto Iñaki hace un pre-fetch automático en cada turno. Podés ajustarlo:
+Por defecto Inaki hace un pre-fetch automático en cada turno. Podés ajustarlo:
 
 ```yaml
 knowledge:

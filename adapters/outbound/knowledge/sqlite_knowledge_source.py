@@ -139,7 +139,7 @@ class SqliteKnowledgeSource(IKnowledgeSource):
             raise KnowledgeConfigError(
                 f"Fuente '{self._source_id}': dimensión de embeddings incorrecta. "
                 f"Esperado {EXPECTED_EMBEDDING_DIM}, encontrado {dim} en '{self._db_path}'. "
-                "El modelo de embeddings de Iñaki usa 384 dimensiones (e5-small). "
+                "El modelo de embeddings de Inaki usa 384 dimensiones (e5-small). "
                 "Reconstruí la DB con la dimensión correcta."
             )
 

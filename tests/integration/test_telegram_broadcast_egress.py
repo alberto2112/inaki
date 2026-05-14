@@ -31,7 +31,7 @@ def _make_agent_cfg(behavior: str = "mention") -> MagicMock:
     """Mock de AgentConfig con config de telegram y broadcast."""
     cfg = MagicMock()
     cfg.id = "agente_test"
-    cfg.name = "Iñaki Test"
+    cfg.name = "Inaki Test"
     cfg.description = "Asistente de test"
     cfg.channels = {
         "telegram": {

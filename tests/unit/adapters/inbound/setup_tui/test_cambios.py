@@ -18,8 +18,8 @@ class TestBuildCambiosSeccionPlana:
     """Sección sin punto → un solo nivel de anidación."""
 
     def test_app_name(self) -> None:
-        result = build_cambios("APP", "name", "Iñaki", section_to_yaml=_MAPPING)
-        assert result == {"app": {"name": "Iñaki"}}
+        result = build_cambios("APP", "name", "Inaki", section_to_yaml=_MAPPING)
+        assert result == {"app": {"name": "Inaki"}}
 
     def test_memory_default_top_k(self) -> None:
         result = build_cambios("MEMORY", "default_top_k", 7, section_to_yaml=_MAPPING)

@@ -22,7 +22,7 @@ No Makefile or CI. All commands are direct calls.
 
 ## Architecture
 
-Iñaki is a multi-agent AI assistant following **strict hexagonal architecture**:
+Inaki is a multi-agent AI assistant following **strict hexagonal architecture**:
 
 - **`core/`** — Domain layer. Entities, ports (interfaces), use cases, domain services and errors. **NEVER imports from `adapters/` or `infrastructure/`**. Only stdlib + `core/` imports allowed.
 - **`adapters/`** — Concrete implementations of ports. Inbound (CLI, Telegram, REST, daemon) and outbound (LLM providers, tools, memory/history repos, embedding, skills, scheduler).

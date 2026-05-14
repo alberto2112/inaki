@@ -1,4 +1,4 @@
-# Modelo de Datos — Iñaki v2
+# Modelo de Datos — Inaki v2
 
 Todas las entidades del dominio están en `core/domain/` y son **Pydantic BaseModel**.
 El core no importa de `adapters/` ni de librerías de infraestructura.
@@ -193,7 +193,7 @@ class AgentContext(BaseModel):
 ## Jerarquía de errores (`core/domain/errors.py`)
 
 ```
-IñakiError
+InakiError
 ├── AgentNotFoundError     # Agente no existe en el registry
 ├── LLMError               # Error al llamar al proveedor LLM
 ├── ConsolidationError     # Error durante consolidación (historial intacto garantizado)

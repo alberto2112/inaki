@@ -1,4 +1,4 @@
-"""Puertos de broadcast entre instancias de Iñaki en LAN."""
+"""Puertos de broadcast entre instancias de Inaki en LAN."""
 
 from __future__ import annotations
 

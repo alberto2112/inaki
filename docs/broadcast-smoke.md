@@ -1,7 +1,7 @@
 # Smoke test manual — broadcast multi-agente
 
 Plan de prueba end-to-end para verificar el canal de broadcast entre dos instancias
-de Iñaki en la misma LAN. Se ejecuta manualmente antes de dar por buena una puesta
+de Inaki en la misma LAN. Se ejecuta manualmente antes de dar por buena una puesta
 en producción nueva o tras cualquier cambio en `adapters/broadcast/` o el handler
 Telegram.
 

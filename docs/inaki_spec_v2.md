@@ -1,13 +1,13 @@
-# Iñaki — Especificación Técnica del Proyecto
+# Inaki — Especificación Técnica del Proyecto
 
-> Documento de referencia para el desarrollo del agente Iñaki.  
+> Documento de referencia para el desarrollo del agente Inaki.  
 > Usar como contexto inicial completo para Claude Code.
 
 ---
 
 ## 1. Visión General
 
-Iñaki es un asistente personal agentico impulsado por IA, diseñado para ejecutarse como servicio systemd en una **Raspberry Pi 5 (4GB RAM)**. El proyecto sigue una **arquitectura hexagonal (Ports & Adapters)** estricta para garantizar modularidad, testabilidad y escalabilidad.
+Inaki es un asistente personal agentico impulsado por IA, diseñado para ejecutarse como servicio systemd en una **Raspberry Pi 5 (4GB RAM)**. El proyecto sigue una **arquitectura hexagonal (Ports & Adapters)** estricta para garantizar modularidad, testabilidad y escalabilidad.
 
 ### Principios de diseño
 
@@ -418,7 +418,7 @@ AgentConfig resuelto y completo
 ### `config/global.yaml`
 ```yaml
 app:
-  name: "Iñaki"
+  name: "Inaki"
   log_level: "INFO"
   default_agent: "general"       # Agente usado por CLI si no se pasa --agent
 
@@ -454,10 +454,10 @@ llm:
 ### `config/agents/general.yaml`
 ```yaml
 id: "general"
-name: "Iñaki-g"
+name: "Inaki-g"
 description: "Asistente personal de uso general"
 system_prompt: |
-  Eres Iñaki, un asistente personal inteligente.
+  Eres Inaki, un asistente personal inteligente.
   Eres conciso, directo y útil.
 
 # Override LLM — solo los campos que cambian, el resto se hereda
@@ -490,10 +490,10 @@ channels:
 ### `config/agents/dev.yaml`
 ```yaml
 id: "dev"
-name: "Iñaki-dev"
+name: "Inaki-dev"
 description: "Especialista en desarrollo de software"
 system_prompt: |
-  Eres Iñaki en modo desarrollador.
+  Eres Inaki en modo desarrollador.
   Experto en Python, Rust y arquitecturas de software.
   Respondes con código cuando es apropiado.
 
@@ -594,7 +594,7 @@ La memoria a largo plazo es **global y compartida** entre todos los agentes. El 
 ### Formato del fichero de historial (texto plano)
 
 ```
-user: hola iñaki, ¿cómo estás?
+user: hola Inaki, ¿cómo estás?
 assistant: Bien, gracias. ¿En qué puedo ayudarte hoy?
 user: necesito que me ayudes con una tarea de python
 assistant: Claro, dime qué necesitas.
@@ -952,11 +952,11 @@ class AppContainer:
 Definir excepciones propias en `core/domain/`:
 
 ```python
-class IñakiError(Exception): ...
-class AgentNotFoundError(IñakiError): ...
-class LLMError(IñakiError): ...
-class ConsolidationError(IñakiError): ...
-class EmbeddingError(IñakiError): ...
+class InakiError(Exception): ...
+class AgentNotFoundError(InakiError): ...
+class LLMError(InakiError): ...
+class ConsolidationError(InakiError): ...
+class EmbeddingError(InakiError): ...
 ```
 
 ### Reglas de seguridad para tools

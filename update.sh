@@ -1,14 +1,14 @@
 #!/bin/bash
 
-echo "Updating Iñaki..."
+echo "Updating Inaki..."
 git pull origin main
 
 echo "Installing dependencies..."
 .venv/bin/pip install -e .
 
-echo "Restarting Iñaki..."
+echo "Restarting Inaki..."
 sleep 2
 sudo systemctl restart inaki
 
-echo "Iñaki updated and restarted."
+echo "Inaki updated and restarted."
 echo "If you want to see the logs, run: journalctl -u inaki -f"

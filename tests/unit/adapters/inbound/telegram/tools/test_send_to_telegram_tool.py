@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from adapters.inbound.telegram.tools.send_to_telegram_tool import SendToTelegramTool
+from core.domain.entities.message import Role
 from core.domain.value_objects.channel_context import ChannelContext
 
 
@@ -24,17 +25,26 @@ def sender() -> AsyncMock:
     return AsyncMock()
 
 
+@pytest.fixture
+def history() -> AsyncMock:
+    return AsyncMock()
+
+
 def _make_tool(
     sender: AsyncMock,
     workspace: Path,
     *,
     ctx: ChannelContext | None,
+    history: AsyncMock | None = None,
+    agent_id: str = "test-agent",
 ) -> SendToTelegramTool:
     return SendToTelegramTool(
         sender=sender,
         workspace=workspace,
         containment="strict",
         get_channel_context=lambda: ctx,
+        history=history or AsyncMock(),
+        agent_id=agent_id,
     )
 
 
@@ -172,3 +182,52 @@ async def test_value_error_del_sender_no_retryable(sender, workspace):
     result = await tool.execute(content_type="photo", filename="x.jpg")
     assert result.success is False
     assert result.retryable is False
+
+
+# ---------------------------------------------------------------------------
+# Persistencia en historial
+# ---------------------------------------------------------------------------
+
+
+async def test_guarda_en_historial_al_enviar_individual(sender, workspace, history):
+    _foto(workspace, "x.jpg")
+    ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100")
+    tool = _make_tool(sender, workspace, ctx=ctx, history=history)
+
+    await tool.execute(content_type="photo", filename="x.jpg", caption="hola")
+
+    history.append.assert_awaited_once()
+    args, kwargs = history.append.call_args
+    assert args[0] == "test-agent"
+    msg = args[1]
+    assert msg.role == Role.ASSISTANT
+    assert "photo" in msg.content
+    assert "hola" in msg.content
+    assert kwargs.get("channel") == "telegram"
+    assert kwargs.get("chat_id") == "-100"
+
+
+async def test_guarda_en_historial_al_enviar_album(sender, workspace, history):
+    f1 = _foto(workspace, "a.jpg")
+    f2 = _foto(workspace, "b.jpg")
+    ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100")
+    tool = _make_tool(sender, workspace, ctx=ctx, history=history)
+
+    await tool.execute(content_type="album", filename=[f1.name, f2.name])
+
+    history.append.assert_awaited_once()
+    msg = history.append.call_args.args[1]
+    assert msg.role == Role.ASSISTANT
+    assert "album" in msg.content
+    assert "2" in msg.content
+
+
+async def test_no_guarda_en_historial_si_falla_el_envio(sender, workspace, history):
+    sender.send.side_effect = TimeoutError("timeout")
+    _foto(workspace, "x.jpg")
+    ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100")
+    tool = _make_tool(sender, workspace, ctx=ctx, history=history)
+
+    await tool.execute(content_type="photo", filename="x.jpg")
+
+    history.append.assert_not_awaited()

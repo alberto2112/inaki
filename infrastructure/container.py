@@ -642,6 +642,8 @@ class AgentContainer:
                 workspace=workspace_path,
                 containment=ws_cfg.containment,
                 get_channel_context=self.get_channel_context,
+                history=self._history,
+                agent_id=self.agent_config.id,
             )
         )
         self._tools.register(

@@ -19,9 +19,11 @@ from adapters.outbound.tools.path_resolution import (
     WorkspaceEscapeError,
     resolve_path,
 )
+from core.domain.entities.message import Message, Role
 from core.domain.value_objects.channel_context import ChannelContext
 from core.domain.value_objects.telegram_file import FileContentType
 from core.ports.outbound.file_sender_port import IFileSender
+from core.ports.outbound.history_port import IHistoryStore
 from core.ports.outbound.tool_port import ITool, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -76,11 +78,15 @@ class SendToTelegramTool(ITool):
         workspace: Path,
         containment: ContainmentMode,
         get_channel_context: Callable[[], ChannelContext | None],
+        history: IHistoryStore,
+        agent_id: str,
     ) -> None:
         self._sender = sender
         self._workspace = workspace
         self._containment = containment
         self._get_channel_context = get_channel_context
+        self._history = history
+        self._agent_id = agent_id
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         content_type = str(kwargs.get("content_type") or "").strip().lower()
@@ -136,6 +142,16 @@ class SendToTelegramTool(ITool):
                 ctx.chat_id,
             )
             return self._fail(f"transport error: {exc}", retryable=True)
+
+        sent_desc = f"[{content_type}]" if not caption else f"[{content_type}: {caption}]"
+        if content_type == "album":
+            sent_desc = f"[album: {len(paths)} fotos]" if not caption else f"[album: {len(paths)} fotos: {caption}]"
+        await self._history.append(
+            self._agent_id,
+            Message(role=Role.ASSISTANT, content=sent_desc),
+            channel=ctx.channel_type,
+            chat_id=ctx.chat_id,
+        )
 
         payload = {
             "sent": True,

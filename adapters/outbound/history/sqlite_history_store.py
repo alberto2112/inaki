@@ -242,15 +242,24 @@ class SQLiteHistoryStore(IHistoryStore):
             return
         async with self._conn() as conn:
             await self._ensure_schema(conn)
+            # ROW_NUMBER() OVER (PARTITION BY channel, chat_id …) garantiza que
+            # se preservan los últimos `keep_last` mensajes POR SCOPE. Sin esto,
+            # el LIMIT global dejaba vacíos los chats menos activos.
             cursor = await conn.execute(
                 """
                 DELETE FROM history
                 WHERE agent_id = ?
                   AND id NOT IN (
-                    SELECT id FROM history
-                    WHERE agent_id = ?
-                    ORDER BY id DESC
-                    LIMIT ?
+                    SELECT id FROM (
+                      SELECT id,
+                             ROW_NUMBER() OVER (
+                               PARTITION BY channel, chat_id
+                               ORDER BY id DESC
+                             ) AS rn
+                      FROM history
+                      WHERE agent_id = ?
+                    )
+                    WHERE rn <= ?
                   )
                 """,
                 (agent_id, agent_id, keep_last),
@@ -258,7 +267,7 @@ class SQLiteHistoryStore(IHistoryStore):
             await conn.commit()
             if cursor.rowcount > 0:
                 logger.info(
-                    "Historial de '%s' truncado: %d fila(s) borrada(s), últimas %d preservadas",
+                    "Historial de '%s' truncado: %d fila(s) borrada(s), últimas %d por scope preservadas",
                     agent_id,
                     cursor.rowcount,
                     keep_last,

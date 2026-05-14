@@ -143,6 +143,40 @@ async def test_trim_isolated_per_agent(history_store):
     assert len(msgs_b) == 3  # agent_b intacto
 
 
+async def test_trim_isolated_per_scope(history_store):
+    """trim mantiene los últimos N mensajes POR (channel, chat_id), no globalmente."""
+    # scope A: 5 mensajes en telegram/grupo1
+    for i in range(1, 6):
+        await history_store.append(
+            "agent1",
+            Message(role=Role.USER, content=f"g1-msg{i}"),
+            channel="telegram",
+            chat_id="grupo1",
+        )
+    # scope B: 3 mensajes en telegram/grupo2 (chat menos activo)
+    for i in range(1, 4):
+        await history_store.append(
+            "agent1",
+            Message(role=Role.USER, content=f"g2-msg{i}"),
+            channel="telegram",
+            chat_id="grupo2",
+        )
+
+    # keep_last=3 → cada scope conserva sus últimos 3, no se mezclan
+    await history_store.trim("agent1", keep_last=3)
+
+    msgs_g1 = await history_store.load("agent1", channel="telegram", chat_id="grupo1")
+    msgs_g2 = await history_store.load("agent1", channel="telegram", chat_id="grupo2")
+
+    assert len(msgs_g1) == 3, f"grupo1 debería tener 3, tiene {len(msgs_g1)}"
+    assert msgs_g1[0].content == "g1-msg3"
+    assert msgs_g1[-1].content == "g1-msg5"
+
+    # grupo2 tenía solo 3 → todos sobreviven (no queda vacío)
+    assert len(msgs_g2) == 3, f"grupo2 debería tener 3, tiene {len(msgs_g2)}"
+    assert msgs_g2[0].content == "g2-msg1"
+
+
 # ---------------------------------------------------------------------------
 # infused flag — load_uninfused + mark_infused
 # ---------------------------------------------------------------------------

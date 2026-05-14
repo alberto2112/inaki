@@ -111,14 +111,15 @@ class IHistoryStore(ABC):
     @abstractmethod
     async def trim(self, agent_id: str, keep_last: int) -> None:
         """
-        Borra todos los mensajes del agente salvo los N más recientes.
+        Borra todos los mensajes del agente salvo los N más recientes
+        POR SCOPE ``(channel, chat_id)``.
 
         Se llama tras una consolidación exitosa: los recuerdos relevantes ya
         están extraídos al storage vectorial, pero preservamos los últimos N
-        mensajes como contexto inmediato para el próximo turno.
+        mensajes de CADA conversación como contexto inmediato para el próximo turno.
 
         Si `keep_last <= 0` no borra nada (no-op defensivo).
-        Si el agente tiene menos mensajes que `keep_last`, tampoco borra.
+        Si un scope tiene menos mensajes que `keep_last`, no borra nada de ese scope.
         """
         ...
 

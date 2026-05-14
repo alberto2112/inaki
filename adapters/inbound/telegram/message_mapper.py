@@ -111,21 +111,19 @@ def extract_sender_name(message) -> str:
 def format_group_message(message) -> str:
     """Formatea un mensaje de grupo con prefijo del remitente.
 
-    El formato resultante es ``"username said: texto"``. El sender DEBE
-    embeberse en el ``content`` porque el role ``user`` del protocolo OpenAI no
-    carga identidad — sin él, el LLM no sabe quién habló en un grupo.
+    El sender DEBE embeberse en el ``content`` porque el role ``user`` del
+    protocolo OpenAI no carga identidad — sin él, el LLM no sabe quién habló.
+
+    Formatos posibles:
+    - Sin reply: ``"<remitente> said: <texto>"``
+    - Con reply: ``"<remitente> reply to <original>(<original_texto[:64]>): <texto>"``
 
     La marca de tiempo se inyecta aparte en ``RunAgentUseCase`` cuando el flag
-    ``channels.telegram.add_llm_timestamp`` está activo, leyendo el
-    ``Message.timestamp`` persistido en la DB. Mantener acá un timestamp
-    embebido duplicaría el dato y obligaría a parsearlo en cualquier
-    re-procesamiento del historial.
+    ``channels.telegram.add_llm_timestamp`` está activo.
 
     Args:
-        message: Objeto ``telegram.Message`` con el campo ``from_user`` poblado.
-
-    Returns:
-        String con formato ``"<remitente> said: <texto>"``.
+        message: Objeto ``telegram.Message`` con ``from_user`` y opcionalmente
+            ``reply_to_message`` poblados.
     """
     location = getattr(message, "location", None)
     if location and not getattr(location, "live_period", None):
@@ -134,6 +132,13 @@ def format_group_message(message) -> str:
         texto = (message.text or "").strip()
 
     remitente = extract_sender_name(message)
+
+    reply = getattr(message, "reply_to_message", None)
+    if reply is not None:
+        nombre_original = extract_sender_name(reply)
+        texto_original = (getattr(reply, "text", None) or "").strip()[:64]
+        return f"{remitente} reply to {nombre_original}({texto_original}): {texto}"
+
     return f"{remitente} said: {texto}"
 
 

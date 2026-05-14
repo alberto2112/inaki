@@ -144,6 +144,7 @@ class LLMConfig(BaseModel):
     temperature: float = 0.7
     max_tokens: int = 2048
     reasoning_effort: str | None = None
+    thinking_indicator: bool = False
     timeout_seconds: int = _LLM_TIMEOUT_FALLBACK
     """Timeout HTTP del request al provider, en segundos.
 
@@ -196,6 +197,7 @@ class ResolvedLLMConfig(BaseModel):
     temperature: float
     max_tokens: int
     reasoning_effort: str | None = None
+    thinking_indicator: bool = False
     timeout_seconds: int = _LLM_TIMEOUT_FALLBACK
     api_key: str | None = None
     base_url: str | None = None
@@ -381,6 +383,7 @@ class MemoryConfig(BaseModel):
             temperature=merged.temperature,
             max_tokens=merged.max_tokens,
             reasoning_effort=merged.reasoning_effort,
+            thinking_indicator=merged.thinking_indicator,
             timeout_seconds=merged.timeout_seconds,
             api_key=provider_cfg.api_key,
             base_url=provider_cfg.base_url,

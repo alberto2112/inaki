@@ -34,6 +34,10 @@ class DeepSeekProvider(BaseLLMProvider):
     def thinking_active(self) -> bool:
         return self._cfg.thinking_active
 
+    @property
+    def thinking_indicator(self) -> bool:
+        return self._cfg.thinking_indicator
+
     def _build_payload(
         self,
         messages: list[Message],

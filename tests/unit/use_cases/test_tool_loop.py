@@ -35,15 +35,19 @@ def _tool_call_response(tool_name: str, arguments: dict | None = None) -> LLMRes
     )
 
 
-def _make_llm(*responses: LLMResponse | str, thinking_active: bool = False) -> AsyncMock:
+def _make_llm(
+    *responses: LLMResponse | str,
+    thinking_active: bool = False,
+    thinking_indicator: bool = False,
+) -> AsyncMock:
     """LLM mock que devuelve las respuestas en orden.
 
     Acepta ``LLMResponse`` o ``str`` (los strings se envuelven con
     ``LLMResponse.of_text`` por conveniencia).
 
-    ``thinking_active`` se expone como atributo regular del mock (no
-    auto-generado por AsyncMock) para que el tool loop pueda decidir si
-    emitir "Thinking..." al sink. Default ``False``.
+    ``thinking_active`` y ``thinking_indicator`` se exponen como atributos
+    regulares del mock para que el tool loop pueda decidir si emitir
+    "Thinking..." al sink.
     """
     llm = AsyncMock()
     normalized: list[LLMResponse] = [
@@ -51,6 +55,7 @@ def _make_llm(*responses: LLMResponse | str, thinking_active: bool = False) -> A
     ]
     llm.complete.side_effect = normalized
     llm.thinking_active = thinking_active
+    llm.thinking_indicator = thinking_indicator
     return llm
 
 
@@ -600,7 +605,7 @@ async def test_thinking_indicator_emitted_once_when_thinking_active():
         raw="",
     )
     final = LLMResponse(text_blocks=["listo"], tool_calls=[], thinking="cerrando", raw="")
-    llm = _make_llm(tool_call, final, thinking_active=True)
+    llm = _make_llm(tool_call, final, thinking_active=True, thinking_indicator=True)
     tools = _make_tools()
     sink = _RecordingSink()
 
@@ -623,6 +628,27 @@ async def test_thinking_indicator_emitted_once_when_thinking_active():
 
 async def test_thinking_indicator_not_emitted_when_thinking_inactive():
     llm = _make_llm("respuesta directa", thinking_active=False)
+    tools = _make_tools()
+    sink = _RecordingSink()
+
+    await run_tool_loop(
+        llm=llm,
+        tools=tools,
+        messages=_base_messages(),
+        system_prompt="Prompt",
+        tool_schemas=[],
+        max_iterations=5,
+        circuit_breaker_threshold=3,
+        agent_id="agent",
+        intermediate_sink=sink,
+    )
+
+    assert "Thinking..." not in sink.emitted
+
+
+async def test_thinking_indicator_suppressed_when_indicator_disabled():
+    """thinking_active=True pero thinking_indicator=False → no se emite 'Thinking...'."""
+    llm = _make_llm("respuesta directa", thinking_active=True, thinking_indicator=False)
     tools = _make_tools()
     sink = _RecordingSink()
 

@@ -15,6 +15,15 @@ class ILLMProvider(ABC):
         """
         return False
 
+    @property
+    def thinking_indicator(self) -> bool:
+        """¿Mostrar el mensaje "Thinking..." en el canal cuando thinking está activo?
+
+        Default ``False``. Configurable via ``llm.thinking_indicator`` en el YAML.
+        Providers con thinking mode override este valor leyendo su ``ResolvedLLMConfig``.
+        """
+        return False
+
     @abstractmethod
     async def complete(
         self,

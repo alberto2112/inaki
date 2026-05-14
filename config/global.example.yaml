@@ -103,6 +103,13 @@ llm:
                               # Aumentar para respuestas largas (código, análisis)
                               # Considerar coste en Pi 5 con modelos locales
 
+  thinking_indicator: false   # Mostrar "Thinking..." en el canal mientras el modelo
+                              # razona (solo aplica cuando reasoning_effort activa
+                              # thinking mode — ver nota en timeout_seconds).
+                              # true  → el usuario ve feedback visual inmediato.
+                              # false → el bot permanece silencioso durante el razonamiento.
+                              # Default: false
+
   # Las credenciales NO van acá — se resuelven desde `providers.{provider}`.
 
 

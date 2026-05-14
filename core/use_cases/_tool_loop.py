@@ -76,7 +76,7 @@ async def run_tool_loop(
     # Indicador "Thinking..." una sola vez por turno cuando el provider activa
     # thinking mode. Es feedback efímero para el canal — no persiste en DB,
     # no se broadcastea. Si el sink es Null (CLI sin streaming) no se ve.
-    if llm.thinking_active:
+    if llm.thinking_active and llm.thinking_indicator:
         await sink.emit("Thinking...")
 
     for iteration in range(max_iterations):

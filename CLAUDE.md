@@ -112,6 +112,21 @@ otros `false`) — sin cambios en config existente, comportamiento idéntico al 
 broadcastear transcripciones de voice o descripciones de fotos, activar `user_input_voice`
 y/o `user_input_photo` en UN bot del grupo (ver `docs/configuracion.md`).
 
+### `agent-state-scoped-by-channel-chat`
+
+La tabla `agent_state` en `history.db` pasa de PK `agent_id` a PK compuesta
+`(agent_id, channel, chat_id)` y agrega columna `updated_at` para purga futura.
+Esto elimina el bleed de sticky skills/tools entre conversaciones distintas del
+mismo agente (ej: un grupo de Telegram vs un chat privado ya no comparten estado).
+
+La migración es **automática en caliente** — `_ensure_agent_state_schema()` detecta
+el schema legacy en el primer arranque post-deploy y migra los registros existentes
+al scope `(agent_id, '', '')` sin pérdida de datos. No se requiere intervención manual.
+
+`save_state` y `load_state` ahora aceptan `channel` y `chat_id` (default `""`).
+`clear(channel, chat_id)` borra también el `agent_state` del scope limpiado
+(antes solo borraba el historial scoped y dejaba el state intacto).
+
 ### `memory-management-tools`
 
 Se exponen al LLM tres tools nuevas (`search_memory`, `delete_memory`,

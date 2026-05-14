@@ -137,15 +137,20 @@ class IHistoryStore(ABC):
         ambos en sincronía. Es el modo "limpieza total" (``/clear_all`` en Telegram,
         ``DELETE /history`` en REST, ``/clear`` en CLI).
 
-        Si se proveen ``channel`` y/o ``chat_id`` borra SOLO los mensajes que
-        matchean ese filtro y deja el ``agent_state`` intacto (es per-agente, no
-        per-chat). Es el modo "limpieza scoped" (``/clear`` en Telegram).
+        Si se proveen ``channel`` y/o ``chat_id`` borra los mensajes que matchean
+        ese filtro Y el ``agent_state`` del mismo scope. Es el modo "limpieza
+        scoped" (``/clear`` en Telegram).
         """
         ...
 
     @abstractmethod
-    async def load_state(self, agent_id: str) -> ConversationState:
-        """Retorna el estado conversacional persistido del agente.
+    async def load_state(
+        self,
+        agent_id: str,
+        channel: str = "",
+        chat_id: str = "",
+    ) -> ConversationState:
+        """Retorna el estado conversacional persistido para el scope ``(agent_id, channel, chat_id)``.
 
         Si no existe estado previo (primer turno o tras ``clear``), devuelve un
         ``ConversationState`` vacío. Nunca retorna ``None``.
@@ -153,6 +158,15 @@ class IHistoryStore(ABC):
         ...
 
     @abstractmethod
-    async def save_state(self, agent_id: str, state: ConversationState) -> None:
-        """Persiste el estado conversacional del agente (upsert)."""
+    async def save_state(
+        self,
+        agent_id: str,
+        state: ConversationState,
+        channel: str = "",
+        chat_id: str = "",
+    ) -> None:
+        """Persiste el estado conversacional del scope ``(agent_id, channel, chat_id)`` (upsert).
+
+        Actualiza ``updated_at`` con la marca de tiempo UTC del momento del save.
+        """
         ...

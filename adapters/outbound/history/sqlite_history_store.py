@@ -60,8 +60,12 @@ CREATE INDEX IF NOT EXISTS idx_history_channel_chat ON history(channel, chat_id)
 
 _CREATE_STATE_TABLE = """
 CREATE TABLE IF NOT EXISTS agent_state (
-    agent_id   TEXT PRIMARY KEY,
-    state_json TEXT NOT NULL
+    agent_id   TEXT    NOT NULL,
+    channel    TEXT    NOT NULL DEFAULT '',
+    chat_id    TEXT    NOT NULL DEFAULT '',
+    state_json TEXT    NOT NULL,
+    updated_at TEXT    NOT NULL,
+    PRIMARY KEY (agent_id, channel, chat_id)
 );
 """
 
@@ -110,8 +114,43 @@ class SQLiteHistoryStore(IHistoryStore):
         await conn.execute(_CREATE_INDEX)
         await conn.execute(_CREATE_INFUSED_INDEX)
         await conn.execute(_CREATE_CHANNEL_CHAT_INDEX)
-        await conn.execute(_CREATE_STATE_TABLE)
+        await self._ensure_agent_state_schema(conn)
         await conn.commit()
+
+    async def _ensure_agent_state_schema(self, conn: aiosqlite.Connection) -> None:
+        """Crea o migra la tabla agent_state al schema scoped por (channel, chat_id).
+
+        Detecta la versión legacy (PK = agent_id solo, sin columnas channel/chat_id)
+        y la migra en caliente sin pérdida de datos — el estado existente se preserva
+        como scope (agent_id, '', '') para mantener compatibilidad.
+        """
+        rows = await conn.execute_fetchall("PRAGMA table_info(agent_state)")
+        column_names = {r["name"] for r in rows}
+
+        if not rows:
+            # Tabla no existe aún → CREATE la nueva directamente.
+            await conn.execute(_CREATE_STATE_TABLE)
+            return
+
+        if "channel" in column_names:
+            # Ya tiene el schema nuevo, nada que hacer.
+            return
+
+        # Schema legacy detectado: migrar preservando los registros existentes.
+        logger.info(
+            "Migrando agent_state al schema scoped (channel, chat_id, updated_at)…"
+        )
+        await conn.execute("ALTER TABLE agent_state RENAME TO agent_state_legacy")
+        await conn.execute(_CREATE_STATE_TABLE)
+        await conn.execute(
+            """
+            INSERT OR IGNORE INTO agent_state (agent_id, channel, chat_id, state_json, updated_at)
+            SELECT agent_id, '', '', state_json, datetime('now')
+            FROM agent_state_legacy
+            """
+        )
+        await conn.execute("DROP TABLE agent_state_legacy")
+        logger.info("Migración agent_state completada.")
 
     async def append(
         self,
@@ -282,22 +321,31 @@ class SQLiteHistoryStore(IHistoryStore):
         async with self._conn() as conn:
             await self._ensure_schema(conn)
             if channel is None and chat_id is None:
-                # Limpieza total: history + agent_state (sticky TTLs).
+                # Limpieza total: history + todos los agent_state del agente.
                 await conn.execute("DELETE FROM history WHERE agent_id = ?", (agent_id,))
                 await conn.execute("DELETE FROM agent_state WHERE agent_id = ?", (agent_id,))
             else:
-                # Limpieza scoped por (channel, chat_id). NO se toca agent_state:
-                # los sticky skills/tools son per-agente, no per-chat.
+                # Limpieza scoped: history + agent_state del scope (channel, chat_id).
                 filtros, params = _build_where_filters(agent_id, channel=channel, chat_id=chat_id)
                 await conn.execute(f"DELETE FROM history WHERE {filtros}", params)
+                await conn.execute(
+                    "DELETE FROM agent_state WHERE agent_id = ? AND channel = ? AND chat_id = ?",
+                    (agent_id, channel or "", chat_id or ""),
+                )
             await conn.commit()
 
-    async def load_state(self, agent_id: str) -> ConversationState:
+    async def load_state(
+        self,
+        agent_id: str,
+        channel: str = "",
+        chat_id: str = "",
+    ) -> ConversationState:
         async with self._conn() as conn:
             await self._ensure_schema(conn)
             async with conn.execute(
-                "SELECT state_json FROM agent_state WHERE agent_id = ?",
-                (agent_id,),
+                "SELECT state_json FROM agent_state "
+                "WHERE agent_id = ? AND channel = ? AND chat_id = ?",
+                (agent_id, channel, chat_id),
             ) as cursor:
                 row = await cursor.fetchone()
 
@@ -308,8 +356,10 @@ class SQLiteHistoryStore(IHistoryStore):
             data = json.loads(row["state_json"])
         except (json.JSONDecodeError, TypeError) as exc:
             logger.warning(
-                "state_json corrupto para agente '%s' (%s) — se ignora y se parte de estado vacío",
+                "state_json corrupto para agente '%s' scope=(%r, %r) (%s) — estado vacío",
                 agent_id,
+                channel,
+                chat_id,
                 exc,
             )
             return ConversationState()
@@ -326,7 +376,13 @@ class SQLiteHistoryStore(IHistoryStore):
         }
         return ConversationState(sticky_skills=sticky_skills, sticky_tools=sticky_tools)
 
-    async def save_state(self, agent_id: str, state: ConversationState) -> None:
+    async def save_state(
+        self,
+        agent_id: str,
+        state: ConversationState,
+        channel: str = "",
+        chat_id: str = "",
+    ) -> None:
         payload = json.dumps(
             {
                 "sticky_skills": state.sticky_skills,
@@ -334,12 +390,15 @@ class SQLiteHistoryStore(IHistoryStore):
             },
             ensure_ascii=False,
         )
+        updated_at = datetime.now(timezone.utc).isoformat()
         async with self._conn() as conn:
             await self._ensure_schema(conn)
             await conn.execute(
-                "INSERT INTO agent_state (agent_id, state_json) VALUES (?, ?) "
-                "ON CONFLICT(agent_id) DO UPDATE SET state_json = excluded.state_json",
-                (agent_id, payload),
+                "INSERT INTO agent_state (agent_id, channel, chat_id, state_json, updated_at) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(agent_id, channel, chat_id) DO UPDATE SET "
+                "state_json = excluded.state_json, updated_at = excluded.updated_at",
+                (agent_id, channel, chat_id, payload, updated_at),
             )
             await conn.commit()
 

@@ -417,7 +417,7 @@ class RunAgentUseCase:
         retrieved_skills: list[Skill] = all_skills
         tool_schemas: list[dict] = tools_override if tools_override is not None else all_schemas
 
-        prev_state = await self._history.load_state(agent_id)
+        prev_state = await self._history.load_state(agent_id, channel=channel, chat_id=chat_id)
         new_sticky_skills = dict(prev_state.sticky_skills)
         new_sticky_tools = dict(prev_state.sticky_tools)
         state_dirty = False
@@ -619,6 +619,8 @@ class RunAgentUseCase:
                         sticky_skills=new_sticky_skills,
                         sticky_tools=new_sticky_tools,
                     ),
+                    channel=channel,
+                    chat_id=chat_id,
                 )
             await self._history.append(
                 agent_id,
@@ -722,7 +724,7 @@ class RunAgentUseCase:
         skill_scores: list[tuple[str, float]] = []
         tool_scores: list[tuple[str, float]] = []
 
-        prev_state = await self._history.load_state(self._cfg.id)
+        prev_state = await self._history.load_state(self._cfg.id, channel=channel, chat_id=chat_id)
         routing_bypass = _should_bypass_routing_for_short_input(
             user_input=user_input,
             min_words_threshold=self._cfg.semantic_routing.min_words_threshold,

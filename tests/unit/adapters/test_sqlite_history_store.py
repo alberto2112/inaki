@@ -372,6 +372,74 @@ async def test_clear_one_agent_preserves_other_state(history_store):
     assert state_b.sticky_skills == {"y": 2}
 
 
+async def test_state_isolated_per_scope(history_store):
+    """El estado sticky de un scope no se filtra al scope de otro chat."""
+    await history_store.save_state(
+        "agent1",
+        ConversationState(sticky_skills={"agenda": 3}),
+        channel="telegram",
+        chat_id="grupo1",
+    )
+    await history_store.save_state(
+        "agent1",
+        ConversationState(sticky_tools={"search": 2}),
+        channel="telegram",
+        chat_id="grupo2",
+    )
+
+    state_g1 = await history_store.load_state("agent1", channel="telegram", chat_id="grupo1")
+    state_g2 = await history_store.load_state("agent1", channel="telegram", chat_id="grupo2")
+    state_default = await history_store.load_state("agent1")
+
+    assert state_g1.sticky_skills == {"agenda": 3}
+    assert state_g1.sticky_tools == {}
+    assert state_g2.sticky_skills == {}
+    assert state_g2.sticky_tools == {"search": 2}
+    assert state_default.sticky_skills == {}  # scope (agent1, '', '') no tiene nada
+
+
+async def test_save_state_sets_updated_at(history_store):
+    """save_state escribe updated_at como ISO8601 UTC."""
+    import aiosqlite
+
+    await history_store.save_state(
+        "agent1",
+        ConversationState(sticky_skills={"a": 1}),
+        channel="telegram",
+        chat_id="g1",
+    )
+
+    async with aiosqlite.connect(history_store._db_path) as conn:
+        conn.row_factory = aiosqlite.Row
+        async with conn.execute(
+            "SELECT updated_at FROM agent_state WHERE agent_id = ? AND channel = ? AND chat_id = ?",
+            ("agent1", "telegram", "g1"),
+        ) as cursor:
+            row = await cursor.fetchone()
+
+    assert row is not None
+    from datetime import datetime
+    parsed = datetime.fromisoformat(row["updated_at"])
+    assert parsed.year >= 2025
+
+
+async def test_clear_scoped_wipes_state_of_that_scope(history_store):
+    """clear(channel, chat_id) borra el agent_state del scope limpiado y preserva los demás."""
+    await history_store.save_state(
+        "agent1", ConversationState(sticky_skills={"a": 2}), channel="telegram", chat_id="g1"
+    )
+    await history_store.save_state(
+        "agent1", ConversationState(sticky_skills={"b": 2}), channel="telegram", chat_id="g2"
+    )
+
+    await history_store.clear("agent1", channel="telegram", chat_id="g1")
+
+    state_g1 = await history_store.load_state("agent1", channel="telegram", chat_id="g1")
+    state_g2 = await history_store.load_state("agent1", channel="telegram", chat_id="g2")
+    assert state_g1.sticky_skills == {}   # borrado
+    assert state_g2.sticky_skills == {"b": 2}  # intacto
+
+
 async def test_load_state_filters_non_positive_ttls(history_store):
     """
     Defensivo: si un TTL corrupto (<=0 o no-int) llega al JSON, el loader lo descarta

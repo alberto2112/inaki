@@ -909,6 +909,17 @@ class AgentContainer:
                 sys.path.insert(0, parent_str)
                 logger.debug("sys.path += %s (extensiones en %s)", parent_str, ext_dir.name)
 
+            # Si el paquete 'ext' ya fue importado (por un dir anterior), extender su __path__
+            # para que incluya este directorio también. Evita que el primer 'ext' encontrado
+            # monopolice el nombre del paquete y bloquee imports de extensiones en otros dirs.
+            pkg_name = ext_dir.name
+            if pkg_name in sys.modules:
+                pkg = sys.modules[pkg_name]
+                ext_dir_abs = str(ext_dir)
+                if hasattr(pkg, "__path__") and ext_dir_abs not in list(pkg.__path__):
+                    pkg.__path__.append(ext_dir_abs)
+                    logger.debug("Extendido %s.__path__ += %s", pkg_name, ext_dir_abs)
+
             for manifest_path in sorted(ext_dir.glob("*/manifest.py")):
                 ext_name = manifest_path.parent.name
                 # ID único para evitar colisión entre extensiones de mismo nombre en dirs distintos

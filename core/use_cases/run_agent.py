@@ -96,6 +96,27 @@ def _coalesce_consecutive_same_role(messages: list[Message]) -> list[Message]:
     return result
 
 
+# Texto que se inyecta como sección del system prompt para que el LLM sepa
+# interpretar mensajes role=user que aparezcan EN MEDIO de un tool loop como
+# aclaraciones/correcciones/aborts del trabajo en curso (feature
+# in-flight-message-injection). En INGLÉS por convención del proyecto
+# (system-prompts-language).
+_INFLIGHT_CLARIFICATIONS_SECTION = (
+    "## In-flight user clarifications\n\n"
+    "While you are working through tool calls, the user may send additional "
+    "messages on the same conversation. These messages will appear as new "
+    "`role=user` entries interleaved with your tool results — they are NOT a "
+    "new conversation turn.\n\n"
+    "Treat them as clarifications, corrections, additional constraints, or "
+    "abort signals for the work you are currently doing. Incorporate them into "
+    "the in-progress task without restarting completed steps when possible. "
+    "If the user clearly asks you to stop or change direction, abandon the "
+    "current branch and follow the new instruction. Respond once when the "
+    "combined task is complete — do not send a separate reply per injected "
+    "message."
+)
+
+
 def _render_in_flight_section(snap: list[BackgroundTaskView]) -> str:
     """Construye la sección del system prompt que lista delegaciones in-flight.
 
@@ -387,6 +408,12 @@ class RunAgentUseCase:
             if inflight_snap:
                 extra_sections_snapshot.append(_render_in_flight_section(inflight_snap))
 
+        # Sección estática que le explica al LLM cómo interpretar mensajes
+        # role=user que aparezcan en medio del tool loop (in-flight-message-injection).
+        # Siempre presente: si nunca aparece un mensaje mid-loop, el LLM
+        # ignora la guidance sin costo. ~100 palabras.
+        extra_sections_snapshot.append(_INFLIGHT_CLARIFICATIONS_SECTION)
+
         # Aislar historial por (channel, chat_id) salvo que merge_chats esté activo.
         # Sin filtro, el LLM recibiría mensajes de otros chats del mismo agente
         # (p. ej. privado de Telegram viendo mensajes del grupo).
@@ -608,6 +635,11 @@ class RunAgentUseCase:
                 agent_id=self._cfg.id,
                 intermediate_sink=intermediate_sink,
                 thinking_indicator=self._thinking_indicator,
+                # in-flight-message-injection: activamos drainage pasando el
+                # history store y el scope del turno. El loop releerá history
+                # entre iteraciones y drenará mensajes role=user nuevos.
+                history_store=self._history,
+                scope=(agent_id, channel, chat_id),
             )
         except ToolLoopMaxIterationsError as e:
             response = e.last_response or (

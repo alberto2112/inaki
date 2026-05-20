@@ -59,7 +59,11 @@ async def test_execute_loads_history_before_calling_llm(use_case, mock_history, 
     mock_history.load.return_value = existing
     await use_case.execute("nuevo mensaje")
 
-    mock_history.load.assert_called_once_with("test", channel="", chat_id="")
+    # assert_any_call (no _once_): tras in-flight-message-injection, el tool loop
+    # también consulta history.load() en cada checkpoint para drenar mensajes
+    # role=user nuevos. Lo que verificamos acá es que el use case haya llamado
+    # con los kwargs correctos al menos una vez (la primera, antes del LLM).
+    mock_history.load.assert_any_call("test", channel="", chat_id="")
     # El LLM recibe el historial cargado + el nuevo mensaje
     call_args = mock_llm.complete.call_args
     messages_passed = call_args.args[0]

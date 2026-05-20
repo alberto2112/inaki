@@ -23,14 +23,48 @@ import logging
 
 from core.domain.entities.message import Message, Role
 from core.domain.errors import ToolLoopMaxIterationsError
+from core.ports.outbound.history_port import IHistoryStore
 from core.ports.outbound.intermediate_sink_port import (
     IIntermediateSink,
     NullIntermediateSink,
 )
 from core.ports.outbound.llm_port import ILLMProvider
+from core.ports.outbound.scope_registry_port import Scope
 from core.ports.outbound.tool_port import IToolExecutor
 
 logger = logging.getLogger(__name__)
+
+
+async def _drain_new_user_messages(
+    history_store: IHistoryStore | None,
+    scope: Scope | None,
+    initial_user_count: int,
+    already_drained: int,
+) -> list[Message]:
+    """Devuelve mensajes ``role=user`` aparecidos en history.db tras iniciar el loop.
+
+    Calcula la diferencia entre los user-messages que había en history al arrancar
+    el turno (``initial_user_count``), los que ya drené en checkpoints previos
+    (``already_drained``), y los que hay AHORA en history. La diferencia son los
+    nuevos — los devuelve en orden (los últimos N user-messages de history).
+
+    Si ``history_store`` o ``scope`` son ``None``, el loop corre en modo legacy
+    (sin in-flight injection) — devuelve lista vacía sin tocar la DB.
+
+    Es seguro contra el caso "history no creció": si por algún motivo
+    ``fresh_count <= initial + already_drained``, devuelve ``[]``.
+    """
+    if history_store is None or scope is None:
+        return []
+    fresh = await history_store.load(*scope)
+    fresh_user_count = sum(1 for m in fresh if m.role == Role.USER)
+    new_count = fresh_user_count - initial_user_count - already_drained
+    if new_count <= 0:
+        return []
+    # history.db es append-only durante el turno, así que los nuevos son los
+    # últimos N mensajes role=user de la lista cargada.
+    user_messages = [m for m in fresh if m.role == Role.USER]
+    return user_messages[-new_count:]
 
 
 async def run_tool_loop(
@@ -45,6 +79,8 @@ async def run_tool_loop(
     agent_id: str,
     intermediate_sink: IIntermediateSink | None = None,
     thinking_indicator: bool = False,
+    history_store: IHistoryStore | None = None,
+    scope: Scope | None = None,
 ) -> str:
     """
     Ejecuta el loop LLM + tool-dispatch hasta obtener respuesta final o
@@ -59,6 +95,13 @@ async def run_tool_loop(
         max_iterations: Límite de iteraciones del loop.
         circuit_breaker_threshold: Número de fallos de una tool antes de abrir el circuit breaker.
         agent_id: ID del agente (solo para logging).
+        history_store: Si se provee junto con ``scope``, el loop drena mensajes
+            ``role=user`` aparecidos en history.db entre iteraciones (feature
+            ``in-flight-message-injection``). Cuando hay drain no-vacío, el
+            contador de iteraciones se resetea a 0. Default ``None`` →
+            comportamiento legacy (loop ciego al historial externo).
+        scope: Tupla ``(agent_id, channel, chat_id)`` del turno. Requerido junto
+            con ``history_store`` para activar la drainage. Default ``None``.
 
     Returns:
         El texto de respuesta final del LLM (sin tool calls).
@@ -74,6 +117,13 @@ async def run_tool_loop(
     tripped: set[str] = set()
     last_text: str = ""
 
+    # Baseline para detectar mensajes role=user que aparezcan en history.db
+    # mientras este loop está corriendo (in-flight-message-injection). Si el
+    # caller no pasó history_store/scope, estas variables existen pero el
+    # helper _drain_new_user_messages no las usa (devuelve [] inmediato).
+    initial_user_count = sum(1 for m in messages if m.role == Role.USER)
+    already_drained = 0
+
     # Indicador "Thinking..." una sola vez por turno cuando el provider activa
     # thinking mode y el operador lo habilitó via ``channels.thinking_indicator``.
     # Es feedback efímero para el canal — no persiste en DB, no se broadcastea.
@@ -81,7 +131,26 @@ async def run_tool_loop(
     if llm.thinking_active and thinking_indicator:
         await sink.emit("Thinking...")
 
-    for iteration in range(max_iterations):
+    iteration = 0
+    while iteration < max_iterations:
+        # Checkpoint A — drenar antes de llamar al LLM. Cualquier mensaje
+        # role=user que el inbound adapter haya persistido en history mientras
+        # estábamos ejecutando tools en la iteración previa se incorpora ahora
+        # a working_messages y el LLM lo ve en la próxima llamada.
+        drained = await _drain_new_user_messages(
+            history_store, scope, initial_user_count, already_drained
+        )
+        if drained:
+            working_messages.extend(drained)
+            already_drained += len(drained)
+            logger.info(
+                "[in-flight] drain checkpoint=A count=%d agent_id=%s iter_reset_from=%d",
+                len(drained),
+                agent_id,
+                iteration,
+            )
+            iteration = 0
+
         response = await llm.complete(
             working_messages,
             system_prompt,
@@ -163,6 +232,32 @@ async def run_tool_loop(
                         tool_name,
                         failure_counts[tool_name],
                     )
+
+        # Checkpoint B — drenar después de que TODO el batch de tool_calls esté
+        # en working_messages. Si entre el LLM call y aquí el usuario mandó un
+        # mensaje nuevo, lo vemos ahora y la próxima iteración del while lo
+        # incorpora a la siguiente llamada al LLM.
+        #
+        # IMPORTANTE: nunca drenamos en medio del for-tc (entre tool calls
+        # individuales). Eso violaría el contrato de los providers: la API de
+        # OpenAI/DeepSeek requiere que todos los tool_result de un mismo
+        # assistant(tool_calls) lleguen juntos antes del próximo mensaje.
+        drained = await _drain_new_user_messages(
+            history_store, scope, initial_user_count, already_drained
+        )
+        if drained:
+            working_messages.extend(drained)
+            already_drained += len(drained)
+            logger.info(
+                "[in-flight] drain checkpoint=B count=%d agent_id=%s iter_reset_from=%d",
+                len(drained),
+                agent_id,
+                iteration,
+            )
+            iteration = 0
+            continue  # no incrementar: ya reseteamos, arrancamos iteración 1
+
+        iteration += 1
 
     logger.warning("Máximo de iteraciones de tool calls alcanzado para '%s'", agent_id)
 

@@ -224,6 +224,74 @@ los dos paths y vuelve a aparecer el race condition que mitigamos.
 de `delegate` deben pasar `wait=true` explícitamente para preservar el path
 legacy. Tests existentes ya actualizados en `tests/unit/use_cases/test_delegation_integration.py`.
 
+### `in-flight-message-injection`
+
+Mensajes nuevos del usuario sobre un scope `(agent_id, channel, chat_id)` que ya
+tiene un `execute()` corriendo ahora se persisten en `history.db` vía
+`record_user_message` y el tool loop del turno en curso los drena entre
+iteraciones (checkpoints A: antes de `llm.complete`; B: después del batch
+completo de `tool_calls`). El LLM ve los mensajes drenados como `role=user`
+en `working_messages` en la siguiente llamada y decide la semántica — enriquecer,
+corregir, o abortar la tarea. No hay señales especiales: una sección del system
+prompt (`_INFLIGHT_CLARIFICATIONS_SECTION` en `run_agent.py`, en inglés) le
+explica al LLM cómo interpretarlos.
+
+Cuando el drain devuelve mensajes no-vacíos, el contador `tool_call_max_iterations`
+resetea a 0 — sin esto, un enriquecimiento en iter 4/5 dejaría solo 1 iteración
+para incorporar el cambio. El `circuit_breaker` NO se resetea (fallos reales de
+tools siguen acumulando).
+
+**Componentes nuevos**:
+- `core/ports/outbound/scope_registry_port.py` — `IScopeRegistry` con
+  `try_mark_busy(scope) -> bool` y `mark_idle(scope) -> None`. Type alias
+  `Scope = tuple[str, str, str]`.
+- `adapters/outbound/scope_registry_adapter.py` — `InMemoryScopeRegistryAdapter`
+  con `set` protegido por un `asyncio.Lock` global. Una sola instancia compartida
+  entre todos los agentes (los scopes ya están aislados por `agent_id`).
+- `_tool_loop.py` recibe params opcionales `history_store` y `scope`; con
+  `None` el comportamiento es legacy (backward-compat 100%).
+
+**Routing en inbound adapters** (`bot.py:_run_pipeline`, `chat.py:chat_turn`,
+`agents.py:chat`):
+```
+if try_mark_busy(scope):
+    try: execute() finally: mark_idle(scope)
+else:
+    record_user_message(message, channel, chat_id)
+    return ACK "📝 incorporando a la tarea en curso..."
+```
+
+**Sin migración de DB ni cambios de config**. El feature es 100% in-memory: si
+el daemon reinicia con scopes marcados busy, todos vuelven a estar libres
+(mismo trade-off que `background-delegation` — uso doméstico Pi 5).
+
+**Behavior shift observable**: dos mensajes seguidos del usuario sobre el mismo
+scope ahora producen **UNA respuesta combinada** en vez de dos turnos secuenciales.
+Antes M2 esperaba a que M1 terminara y disparaba un turno nuevo desde cero
+(perdiendo el trabajo previo). Ahora M2 se incorpora al loop en curso.
+
+**Grupos de Telegram EXCLUIDOS**. `_run_group_pipeline` mantiene el flow legacy
+con `_schedule_group_flush` + buffer-delay-coalesce + `_extract_trailing_user_batch`.
+Razón: durante el delay random NO hay `execute()` corriendo, así que la
+"injection in-flight" no aplica. El delay ES su ventana de coalescencia natural.
+En `_run_pipeline` el branch in-flight se activa solo cuando `not es_grupo and
+user_input is not None` (también skip cuando `user_input=None` para no romper
+el path history-derived de fotos enriquecidas).
+
+**Bug aceptado para V1 — race window narrow**: si `execute()` termina exactamente
+cuando llega un mensaje nuevo (microsegundos entre `mark_idle` y `try_mark_busy`),
+el mensaje puede quedar persistido en history sin que nadie lo procese hasta el
+siguiente turno del usuario. Aceptable para uso doméstico (el usuario re-envía
+o el próximo mensaje lo trae al loop). Si se vuelve problemático, mitigación
+sería re-chequear `try_mark_busy` después del persist y disparar un turno
+history-derived si el scope se liberó en el ínterin.
+
+**Costo I/O**: cada iteración del tool loop hace 2 queries adicionales a SQLite
+(checkpoints A y B). Para Pi 5 con SQLite local, overhead despreciable (~10-20ms
+por turno vs varios segundos del turno completo). Si en el futuro la perf
+importara, agregar `IHistoryStore.load_since(after_id)` para leer solo el delta
+en vez de toda la historia del scope.
+
 ## Git workflow
 
 - Never create a branch without asking me for the name first.

@@ -96,7 +96,7 @@ def bot_fixture(emit_mock):
 
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
-        mock_app_cls.builder.return_value.token.return_value.build.return_value = mock_app
+        mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
 
         bot = TelegramBot(
             agent_cfg=agent_cfg,
@@ -177,7 +177,7 @@ async def test_skip_marker_suprime_reply_y_emit(emit_mock):
     emitter.emit = emit_mock
 
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
-        mock_app_cls.builder.return_value.token.return_value.build.return_value = MagicMock()
+        mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = MagicMock()
 
         bot = TelegramBot(
             agent_cfg=agent_cfg,
@@ -209,7 +209,7 @@ async def test_skip_marker_con_whitespace(emit_mock):
     emitter.emit = emit_mock
 
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
-        mock_app_cls.builder.return_value.token.return_value.build.return_value = MagicMock()
+        mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = MagicMock()
 
         bot = TelegramBot(
             agent_cfg=agent_cfg,
@@ -256,7 +256,7 @@ async def test_sin_broadcast_emitter_no_falla():
     container = _make_container(respuesta_llm="respuesta normal")
 
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
-        mock_app_cls.builder.return_value.token.return_value.build.return_value = MagicMock()
+        mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = MagicMock()
 
         bot = TelegramBot(
             agent_cfg=agent_cfg,

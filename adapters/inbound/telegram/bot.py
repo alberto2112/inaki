@@ -186,7 +186,7 @@ class TelegramBot:
         if not self._token:
             raise ValueError(f"Agente '{agent_cfg.id}': channels.telegram.token no configurado")
 
-        self._app = Application.builder().token(self._token).build()
+        self._app = Application.builder().token(self._token).concurrent_updates(True).build()
         self._app.add_handler(CommandHandler("start", self._cmd_start))
         self._app.add_handler(CommandHandler("consolidate", self._cmd_consolidate))
         self._app.add_handler(CommandHandler("clear", self._cmd_clear))

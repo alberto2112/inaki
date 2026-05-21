@@ -77,7 +77,7 @@ def mock_container(mock_process_photo) -> MagicMock:
 def _build_bot(agent_cfg, mock_container):
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
-        mock_app_cls.builder.return_value.token.return_value.build.return_value = mock_app
+        mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
         return TelegramBot(agent_cfg=agent_cfg, container=mock_container)
@@ -305,7 +305,7 @@ def test_bot_registra_handler_photo(agent_cfg, mock_container) -> None:
     """El __init__ del bot debe registrar un MessageHandler para filters.PHOTO."""
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
-        mock_app_cls.builder.return_value.token.return_value.build.return_value = mock_app
+        mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
         bot = TelegramBot(agent_cfg=agent_cfg, container=mock_container)
@@ -465,7 +465,7 @@ def test_photo_handler_registrado_antes_que_texto(agent_cfg, mock_container) -> 
     """El handler de fotos debe registrarse antes que el de texto."""
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
-        mock_app_cls.builder.return_value.token.return_value.build.return_value = mock_app
+        mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
         bot = TelegramBot(agent_cfg=agent_cfg, container=mock_container)
@@ -527,7 +527,7 @@ async def test_handle_photo_grupo_dispara_emit_event_user_input_photo(mock_conta
 
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
-        mock_app_cls.builder.return_value.token.return_value.build.return_value = mock_app
+        mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
         bot = TelegramBot(agent_cfg=cfg, container=mock_container, broadcast_emitter=None)
@@ -586,7 +586,7 @@ async def test_handle_photo_modo_bang_emite_user_input_photo_sin_assistant_respo
 
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
-        mock_app_cls.builder.return_value.token.return_value.build.return_value = mock_app
+        mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
         bot = TelegramBot(agent_cfg=cfg, container=container, broadcast_emitter=None)

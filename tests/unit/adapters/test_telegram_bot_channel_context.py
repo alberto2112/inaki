@@ -61,7 +61,7 @@ def _make_bot(run_agent_response: str = "ok") -> tuple[TelegramBot, MagicMock]:
     # Parchear Application.builder() para no necesitar token real
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
-        mock_app_cls.builder.return_value.token.return_value.build.return_value = mock_app
+        mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         bot = TelegramBot(agent_cfg, container)
 
     return bot, container

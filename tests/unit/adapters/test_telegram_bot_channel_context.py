@@ -50,7 +50,13 @@ def _make_bot(run_agent_response: str = "ok") -> tuple[TelegramBot, MagicMock]:
     container.run_agent = MagicMock()
     container.run_agent.execute = AsyncMock(return_value=run_agent_response)
     container.run_agent.set_extra_system_sections = MagicMock()
+    container.run_agent.record_user_message = AsyncMock(return_value=None)
     container.set_channel_context = MagicMock()
+    # scope_registry para in-flight-message-injection — try_mark_busy=True
+    # significa "scope libre", el camino normal corre execute() como antes.
+    container.scope_registry = MagicMock()
+    container.scope_registry.try_mark_busy = AsyncMock(return_value=True)
+    container.scope_registry.mark_idle = AsyncMock(return_value=None)
 
     # Parchear Application.builder() para no necesitar token real
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:

@@ -68,7 +68,13 @@ def mock_container(mock_transcription) -> MagicMock:
     container.transcription = mock_transcription
     container.run_agent = MagicMock()
     container.run_agent.execute = AsyncMock(return_value="Respuesta del agente")
+    container.run_agent.record_user_message = AsyncMock(return_value=None)
     container.set_channel_context = MagicMock()
+    # scope_registry para in-flight-message-injection — try_mark_busy=True
+    # significa "scope libre", el camino normal corre execute() como antes.
+    container.scope_registry = MagicMock()
+    container.scope_registry.try_mark_busy = AsyncMock(return_value=True)
+    container.scope_registry.mark_idle = AsyncMock(return_value=None)
     return container
 
 

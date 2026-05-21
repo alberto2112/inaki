@@ -69,6 +69,14 @@ def mock_agent_container(mock_run_agent: MagicMock) -> MagicMock:
     container = MagicMock()
     container.run_agent = mock_run_agent
     container.set_channel_context = MagicMock(return_value=None)
+    # scope_registry para in-flight-message-injection — try_mark_busy=True
+    # significa "scope libre", el camino normal corre execute() como antes.
+    container.scope_registry = MagicMock()
+    container.scope_registry.try_mark_busy = AsyncMock(return_value=True)
+    container.scope_registry.mark_idle = AsyncMock(return_value=None)
+    # record_user_message solo se llama en el branch busy — no se ejecuta en
+    # los tests pero el mock evita TypeError si algún test futuro lo dispara.
+    mock_run_agent.record_user_message = AsyncMock(return_value=None)
     return container
 
 
@@ -109,6 +117,36 @@ async def test_post_turn_happy_path(chat_app, mock_run_agent) -> None:
     assert data["agent_id"] == "dev"
     assert data["session_id"] == TURN_BODY["session_id"]
     mock_run_agent.execute.assert_awaited_once_with("hola", intermediate_sink=ANY)
+
+
+async def test_post_turn_scope_busy_persists_and_returns_ack(
+    chat_app, mock_run_agent, mock_agent_container
+) -> None:
+    """Scope ocupado (try_mark_busy=False) → no se llama execute(); se persiste
+    el mensaje vía record_user_message y se devuelve un ACK al cliente.
+
+    Verifica la rama in-flight-message-injection del routing: cuando el agente
+    está procesando otro turno, el mensaje nuevo se incorpora a history para
+    que el loop activo lo drene entre iteraciones, en vez de disparar un
+    segundo turno en paralelo.
+    """
+    # Forzar el caso "scope ocupado".
+    mock_agent_container.scope_registry.try_mark_busy = AsyncMock(return_value=False)
+
+    async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as ac:
+        resp = await ac.post("/admin/chat/turn", json=TURN_BODY, headers=VALID_KEY)
+
+    assert resp.status_code == 200
+    data = resp.json()
+    # ACK al cliente (texto exacto definido en chat.py).
+    assert "incorpor" in data["reply"].lower()
+    # execute() NO se llamó — esa es la garantía clave del feature.
+    mock_run_agent.execute.assert_not_called()
+    # El mensaje SÍ se persistió en history para que el loop activo lo drene.
+    mock_run_agent.record_user_message.assert_awaited_once_with("hola", "", "")
+    # mark_idle NO se llamó porque NO adquirimos el slot (lo tiene el turno
+    # en curso, que lo liberará en su propio finally).
+    mock_agent_container.scope_registry.mark_idle.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

@@ -77,8 +77,12 @@ class BaseLLMProvider(ILLMProvider):
     ) -> LLMResponse: ...
 
     @abstractmethod
-    async def stream(
+    def stream(
         self,
         messages: list[Message],
         system_prompt: str,
-    ) -> AsyncIterator[str]: ...
+    ) -> AsyncIterator[str]:
+        """Stream de chunks de texto. Ver docstring en
+        ``core.ports.outbound.llm_port.ILLMProvider.stream`` para el detalle
+        de por qué se declara como ``def`` y no ``async def``."""
+        ...

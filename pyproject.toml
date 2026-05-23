@@ -43,6 +43,8 @@ dev = [
     "respx>=0.21",
     "ruff>=0.4",
     "mypy>=1.10",
+    "types-PyYAML>=6.0",
+    "types-croniter>=2.0",
 ]
 
 [project.scripts]
@@ -71,4 +73,22 @@ disable_error_code = ["attr-defined", "arg-type"]
 [[tool.mypy.overrides]]
 # ruamel.yaml no expone py.typed marker — third-party sin stubs.
 module = "ruamel.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# sqlite_vec no expone py.typed marker — third-party sin stubs.
+# Wrapper de extensión SQLite para vectores; usado en outbound/memory y faces.
+module = "sqlite_vec"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# exchangelib no expone py.typed marker — third-party sin stubs.
+# Usado por el ext de exchange_calendar.
+module = "exchangelib.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# insightface no expone py.typed marker — third-party sin stubs.
+# Modelo de reconocimiento facial cargado lazy en el adapter de visión.
+module = "insightface.*"
 ignore_missing_imports = true

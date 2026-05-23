@@ -53,7 +53,7 @@ def rate_limiter() -> FixedWindowRateLimiter:
 def bot(agent_cfg, mock_container, rate_limiter):
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
-        mock_app_cls.builder.return_value.token.return_value.build.return_value = mock_app
+        mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
         return TelegramBot(
@@ -259,7 +259,7 @@ async def test_sin_rate_limiter_responde_aviso(agent_cfg, mock_container):
     # Bot sin rate_limiter inyectado.
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
-        mock_app_cls.builder.return_value.token.return_value.build.return_value = mock_app
+        mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
         bot = TelegramBot(

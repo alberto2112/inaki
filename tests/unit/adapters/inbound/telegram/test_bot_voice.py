@@ -68,14 +68,20 @@ def mock_container(mock_transcription) -> MagicMock:
     container.transcription = mock_transcription
     container.run_agent = MagicMock()
     container.run_agent.execute = AsyncMock(return_value="Respuesta del agente")
+    container.run_agent.record_user_message = AsyncMock(return_value=None)
     container.set_channel_context = MagicMock()
+    # scope_registry para in-flight-message-injection — try_mark_busy=True
+    # significa "scope libre", el camino normal corre execute() como antes.
+    container.scope_registry = MagicMock()
+    container.scope_registry.try_mark_busy = AsyncMock(return_value=True)
+    container.scope_registry.mark_idle = AsyncMock(return_value=None)
     return container
 
 
 def _build_bot(agent_cfg, mock_container):
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
-        mock_app_cls.builder.return_value.token.return_value.build.return_value = mock_app
+        mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
         return TelegramBot(agent_cfg=agent_cfg, container=mock_container)
@@ -307,7 +313,7 @@ def test_bot_registra_handlers_voice_audio_video_note(agent_cfg, mock_container)
     de audio (VOICE, AUDIO, VIDEO_NOTE) apuntando a `_handle_voice_message`."""
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
-        mock_app_cls.builder.return_value.token.return_value.build.return_value = mock_app
+        mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
         bot = TelegramBot(agent_cfg=agent_cfg, container=mock_container)
@@ -335,7 +341,7 @@ def test_voice_enabled_false_registra_handlers_para_persistencia(mock_container)
     cfg = _mk_agent_cfg(voice_enabled=False, allowed_user_ids=[12345])
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
-        mock_app_cls.builder.return_value.token.return_value.build.return_value = mock_app
+        mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
         bot = TelegramBot(agent_cfg=cfg, container=mock_container)
@@ -357,7 +363,7 @@ def test_handlers_de_voz_se_registran_antes_que_handler_de_texto(agent_cfg, mock
     para que python-telegram-bot los despache correctamente."""
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
-        mock_app_cls.builder.return_value.token.return_value.build.return_value = mock_app
+        mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
         bot = TelegramBot(agent_cfg=agent_cfg, container=mock_container)

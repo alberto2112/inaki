@@ -60,7 +60,7 @@ def _build_bot(agent_cfg, *, emitter=None):
 
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
-        mock_app_cls.builder.return_value.token.return_value.build.return_value = mock_app
+        mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
         return TelegramBot(

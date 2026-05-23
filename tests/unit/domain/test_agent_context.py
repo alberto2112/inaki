@@ -363,3 +363,82 @@ def test_empty_string_channel_treated_as_missing() -> None:
     ctx = AgentContext(agent_id="test", channel="", chat_id="")
     prompt = "{{CHANNEL}}/{{CHANNEL.CHATID}}"
     assert ctx.build_system_prompt(prompt) == prompt
+
+
+# ---- {{CHANNEL.SENDER}} / {{CHANNEL.USERNAME}} / {{CHANNEL.FIRST_NAME}} / {{CHANNEL.LAST_NAME}} ----
+
+
+def test_channel_sender_replaces_token() -> None:
+    ctx = AgentContext(agent_id="test", sender_name="Juan Pérez (@juan_dev)")
+    result = ctx.build_system_prompt("Estás hablando con {{CHANNEL.SENDER}}.")
+    assert result == "Estás hablando con Juan Pérez (@juan_dev)."
+
+
+def test_channel_username_replaces_token() -> None:
+    ctx = AgentContext(agent_id="test", sender_username="juan_dev")
+    assert ctx.build_system_prompt("@{{CHANNEL.USERNAME}}") == "@juan_dev"
+
+
+def test_channel_first_name_replaces_token() -> None:
+    ctx = AgentContext(agent_id="test", sender_first_name="Juan")
+    assert ctx.build_system_prompt("Hola {{CHANNEL.FIRST_NAME}}") == "Hola Juan"
+
+
+def test_channel_last_name_replaces_token() -> None:
+    ctx = AgentContext(agent_id="test", sender_last_name="Pérez")
+    assert ctx.build_system_prompt("Apellido: {{CHANNEL.LAST_NAME}}") == "Apellido: Pérez"
+
+
+def test_channel_sender_tokens_passthrough_when_none() -> None:
+    """Si los 4 campos son None → las variables quedan literales (mismo criterio que WORKSPACE)."""
+    ctx = AgentContext(agent_id="test")
+    prompt = (
+        "{{CHANNEL.SENDER}} | {{CHANNEL.USERNAME}} | "
+        "{{CHANNEL.FIRST_NAME}} | {{CHANNEL.LAST_NAME}}"
+    )
+    assert ctx.build_system_prompt(prompt) == prompt
+
+
+def test_channel_sender_tokens_resolucion_independiente() -> None:
+    """Cada variable se resuelve sólo si su campo está seteado — el resto queda literal."""
+    ctx = AgentContext(agent_id="test", sender_first_name="Juan")
+    result = ctx.build_system_prompt(
+        "{{CHANNEL.FIRST_NAME}} ({{CHANNEL.LAST_NAME}}) @{{CHANNEL.USERNAME}}"
+    )
+    assert result == "Juan ({{CHANNEL.LAST_NAME}}) @{{CHANNEL.USERNAME}}"
+
+
+def test_channel_sender_tokens_case_insensitive() -> None:
+    ctx = AgentContext(
+        agent_id="test",
+        sender_name="Juan",
+        sender_username="juan_dev",
+        sender_first_name="Juan",
+        sender_last_name="Pérez",
+    )
+    result = ctx.build_system_prompt(
+        "{{channel.sender}}/{{Channel.Username}}/{{CHANNEL.first_name}}/{{channel.LAST_NAME}}"
+    )
+    assert result == "Juan/juan_dev/Juan/Pérez"
+
+
+def test_channel_sender_tokens_in_extra_sections() -> None:
+    ctx = AgentContext(agent_id="test", sender_first_name="Juan")
+    result = ctx.build_system_prompt(
+        BASE_PROMPT, extra_sections=["\nUsuario actual: {{CHANNEL.FIRST_NAME}}"]
+    )
+    assert "Usuario actual: Juan" in result
+
+
+def test_channel_sender_no_interfiere_con_channel_name() -> None:
+    """Regresión: {{CHANNEL.NAME}} sigue funcionando con las variantes nuevas en la regex."""
+    ctx = AgentContext(
+        agent_id="test",
+        channel="telegram",
+        chat_id="42",
+        sender_first_name="Juan",
+    )
+    result = ctx.build_system_prompt(
+        "{{CHANNEL.NAME}}#{{CHANNEL.CHATID}} habla con {{CHANNEL.FIRST_NAME}}"
+    )
+    assert result == "telegram#42 habla con Juan"

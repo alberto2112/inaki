@@ -108,6 +108,54 @@ def extract_sender_name(message) -> str:
     return "anonimo"
 
 
+def compose_sender_identity(message) -> str | None:
+    """Compone una identidad legible del remitente para inyectar en el system prompt.
+
+    Formato según los campos disponibles en ``from_user``:
+
+    - ``first_name`` + ``last_name`` + ``@username``  → ``"Juan Pérez (@juan_dev)"``
+    - ``first_name`` + ``last_name`` sin username     → ``"Juan Pérez"``
+    - ``first_name`` + ``@username`` sin last_name    → ``"Juan (@juan_dev)"``
+    - solo ``first_name``                             → ``"Juan"``
+    - sin ``first_name``, con ``@username``           → ``"@juan_dev"`` (edge case
+      defensivo: la API de Telegram garantiza ``first_name`` para mensajes humanos,
+      pero stubs en tests pueden no setearlo)
+    - sin nada utilizable o ``from_user`` ausente     → ``None``
+
+    Diferencia con ``extract_sender_name``: aquella prioriza ``username > first_name``
+    para preservar unicidad en el prefijo de grupos. Esta función prioriza el nombre
+    real (``first_name``) y trata ``@username`` como anotación entre paréntesis para
+    que el LLM tenga ambos: forma humana de dirigirse al usuario + handle único
+    desambiguador. Por eso ambas conviven sin reemplazarse.
+
+    Args:
+        message: Objeto Message de Telegram (real o stub) con ``from_user``.
+
+    Returns:
+        La identidad compuesta o ``None`` si no hay información utilizable.
+    """
+    from_user = getattr(message, "from_user", None)
+    if from_user is None:
+        return None
+
+    first_name = (getattr(from_user, "first_name", None) or "").strip()
+    last_name = (getattr(from_user, "last_name", None) or "").strip()
+    username = (getattr(from_user, "username", None) or "").strip()
+
+    if first_name:
+        nombre = f"{first_name} {last_name}".strip() if last_name else first_name
+        if username:
+            return f"{nombre} (@{username})"
+        return nombre
+
+    # Defensa: first_name es requerido por la API real de Telegram, pero los stubs
+    # de test pueden omitirlo. Si igual hay username, lo devolvemos como @handle.
+    if username:
+        return f"@{username}"
+
+    return None
+
+
 def format_group_message(message) -> str:
     """Formatea un mensaje de grupo con prefijo del remitente.
 

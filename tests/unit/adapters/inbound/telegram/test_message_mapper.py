@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from adapters.inbound.telegram.message_mapper import (
+    compose_sender_identity,
     detect_mention,
     dirigido_a,
     es_reply_a,
@@ -26,8 +27,12 @@ from adapters.inbound.telegram.message_mapper import (
 # ---------------------------------------------------------------------------
 
 
-def _user(username: str | None = None, first_name: str | None = None) -> SimpleNamespace:
-    return SimpleNamespace(username=username, first_name=first_name)
+def _user(
+    username: str | None = None,
+    first_name: str | None = None,
+    last_name: str | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(username=username, first_name=first_name, last_name=last_name)
 
 
 def _entity(
@@ -448,3 +453,67 @@ def test_format_group_message_live_location_cae_a_texto():
     )
     resultado = format_group_message(msg)
     assert "{GPS:" not in resultado
+
+
+# ---------------------------------------------------------------------------
+# compose_sender_identity
+# ---------------------------------------------------------------------------
+
+
+def test_compose_sender_identity_first_name_last_name_y_username():
+    """Composición completa: 'Juan Pérez (@juan_dev)'."""
+    msg = _message(from_user=_user(username="juan_dev", first_name="Juan", last_name="Pérez"))
+    assert compose_sender_identity(msg) == "Juan Pérez (@juan_dev)"
+
+
+def test_compose_sender_identity_first_name_y_last_name_sin_username():
+    """Sin @username: 'Juan Pérez' (no aparece paréntesis)."""
+    msg = _message(from_user=_user(first_name="Juan", last_name="Pérez"))
+    assert compose_sender_identity(msg) == "Juan Pérez"
+
+
+def test_compose_sender_identity_first_name_y_username_sin_last_name():
+    """Sin last_name: 'Juan (@juan_dev)' (sin espacio colgante)."""
+    msg = _message(from_user=_user(username="juan_dev", first_name="Juan"))
+    assert compose_sender_identity(msg) == "Juan (@juan_dev)"
+
+
+def test_compose_sender_identity_solo_first_name():
+    """Mínimo viable: 'Juan' (Telegram garantiza first_name)."""
+    msg = _message(from_user=_user(first_name="Juan"))
+    assert compose_sender_identity(msg) == "Juan"
+
+
+def test_compose_sender_identity_sin_first_name_pero_con_username():
+    """Defensa contra stubs incompletos: si falta first_name pero hay username, devuelve @handle.
+
+    La API real de Telegram garantiza ``first_name`` para mensajes humanos, pero los
+    tests pueden producir mensajes con ``from_user`` parcial.
+    """
+    msg = _message(from_user=_user(username="juan_dev"))
+    assert compose_sender_identity(msg) == "@juan_dev"
+
+
+def test_compose_sender_identity_sin_from_user_devuelve_none():
+    """``from_user`` ausente (canal anónimo, mensaje raro): None, no excepción."""
+    msg = _message(from_user=None)
+    assert compose_sender_identity(msg) is None
+
+
+def test_compose_sender_identity_from_user_vacio_devuelve_none():
+    """``from_user`` presente pero con todos los campos vacíos: None."""
+    msg = _message(from_user=_user())
+    assert compose_sender_identity(msg) is None
+
+
+def test_compose_sender_identity_strippea_espacios_colgantes():
+    """last_name = ' ' (whitespace) no debe agregar espacio colgante después del first_name."""
+    msg = _message(from_user=_user(first_name="Juan", last_name="   "))
+    # last_name whitespace se considera vacío → "Juan" sin espacio extra
+    assert compose_sender_identity(msg) == "Juan"
+
+
+def test_compose_sender_identity_first_name_whitespace_cae_a_username():
+    """first_name solo con espacios se trata como ausente y cae al fallback de @handle."""
+    msg = _message(from_user=_user(username="juan_dev", first_name="   "))
+    assert compose_sender_identity(msg) == "@juan_dev"

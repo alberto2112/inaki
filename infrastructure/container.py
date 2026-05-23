@@ -145,6 +145,7 @@ class AgentContainer:
             agent_config=cfg,
             knowledge_orchestrator=self._knowledge_orchestrator,
             thinking_indicator=global_config.channels.thinking_indicator,
+            get_channel_context=self.get_channel_context,
         )
 
         # Every agent gets a one-shot use case unconditionally so it can always

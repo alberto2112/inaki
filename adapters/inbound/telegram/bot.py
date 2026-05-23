@@ -20,6 +20,7 @@ from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 from adapters.inbound.telegram.message_mapper import (
+    compose_sender_identity,
     dirigido_a,
     extract_audio_payload,
     extract_photo_payload,
@@ -1252,11 +1253,43 @@ class TelegramBot:
         secciones_no_vacias = [s for s in secciones if s]
         self._container.run_agent.set_extra_system_sections(secciones_no_vacias)
 
+        # Identidad del remitente — solo se puebla en chats privados, donde hay
+        # exactamente un único humano por turno y las variables {{CHANNEL.SENDER}}/
+        # {{CHANNEL.USERNAME}}/{{CHANNEL.FIRST_NAME}}/{{CHANNEL.LAST_NAME}} tienen un
+        # valor unívoco. En grupos los 4 campos quedan en None: la identidad por
+        # mensaje ya va embebida en el contenido (format_group_message agrega el
+        # prefijo "@sender said: ..." y los flushes pueden mezclar varios autores en
+        # un mismo turno). Resolver las variables a una sola persona en ese contexto
+        # sería incorrecto.
+        def _safe_str(val: object) -> str | None:
+            """Solo devuelve ``val`` si es un str no vacío. Filtra MagicMocks (tests con
+            ``update = MagicMock()`` no setean estos campos) y cualquier no-string defensivo
+            del lado de telegram. ``ChannelContext`` rechaza strings vacíos vía validator."""
+            if isinstance(val, str) and val.strip():
+                return val
+            return None
+
+        sender_name: str | None = None
+        sender_username: str | None = None
+        sender_first_name: str | None = None
+        sender_last_name: str | None = None
+        if not es_grupo and update.message is not None:
+            from_user = getattr(update.message, "from_user", None)
+            if from_user is not None:
+                sender_username = _safe_str(getattr(from_user, "username", None))
+                sender_first_name = _safe_str(getattr(from_user, "first_name", None))
+                sender_last_name = _safe_str(getattr(from_user, "last_name", None))
+            sender_name = _safe_str(compose_sender_identity(update.message))
+
         self._container.set_channel_context(
             ChannelContext(
                 channel_type="telegram",
                 user_id=str(update.effective_user.id),
                 chat_id=str(chat_id),
+                sender_name=sender_name,
+                username=sender_username,
+                first_name=sender_first_name,
+                last_name=sender_last_name,
             )
         )
         # En grupos NO usamos intermediate_sink: los intermedios del LLM (texto que

@@ -12,7 +12,12 @@ from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
 _VAR_RE = re.compile(
     r"\{\{("
     r"WORKSPACE|TIMEZONE|DATETIME|DATE|TIME|WEEKDAY_NUMBER|WEEKDAY"
-    r"|CHANNEL\.NAME|CHANNEL\.CHATID|CHANNEL"
+    # Las variantes específicas (CHANNEL.SENDER, CHANNEL.USERNAME, etc.) deben ir
+    # ANTES de CHANNEL "pelado" en la alternancia: regex usa first-match wins y
+    # CHANNEL solo capturaría "CHANNEL" dejando ".SENDER" colgando fuera del token.
+    r"|CHANNEL\.NAME|CHANNEL\.CHATID"
+    r"|CHANNEL\.SENDER|CHANNEL\.USERNAME|CHANNEL\.FIRST_NAME|CHANNEL\.LAST_NAME"
+    r"|CHANNEL"
     r")(?:\[([A-Z]{2})\])?\}\}",
     re.IGNORECASE,
 )
@@ -30,8 +35,19 @@ def _resolve_vars(
     workspace_root: str | None,
     channel: str | None = None,
     chat_id: str | None = None,
+    sender_name: str | None = None,
+    sender_username: str | None = None,
+    sender_first_name: str | None = None,
+    sender_last_name: str | None = None,
 ) -> str:
-    """Reemplaza variables dinámicas en el prompt con valores reales en runtime."""
+    """Reemplaza variables dinámicas en el prompt con valores reales en runtime.
+
+    Las variables ``{{CHANNEL.SENDER}}``, ``{{CHANNEL.USERNAME}}``,
+    ``{{CHANNEL.FIRST_NAME}}`` y ``{{CHANNEL.LAST_NAME}}`` se resuelven sólo cuando el
+    adapter inyecta los valores correspondientes en ``ChannelContext``. Si el valor
+    es ``None`` (canal sin sender claro, usuario sin username configurado, etc.) la
+    variable queda literal en el prompt — mismo criterio que ``{{WORKSPACE}}``.
+    """
     if not _VAR_RE.search(text):
         return text
 
@@ -56,6 +72,14 @@ def _resolve_vars(
             return channel if channel else m.group(0)
         if token == "CHANNEL.CHATID":
             return chat_id if chat_id else m.group(0)
+        if token == "CHANNEL.SENDER":
+            return sender_name if sender_name else m.group(0)
+        if token == "CHANNEL.USERNAME":
+            return sender_username if sender_username else m.group(0)
+        if token == "CHANNEL.FIRST_NAME":
+            return sender_first_name if sender_first_name else m.group(0)
+        if token == "CHANNEL.LAST_NAME":
+            return sender_last_name if sender_last_name else m.group(0)
         if token == "TIMEZONE":
             return tz_display
         if token == "DATETIME":
@@ -86,6 +110,14 @@ class AgentContext(BaseModel):
     # Canal y chat_id del turno actual. Vacío/None → {{CHANNEL.*}} intacto (mismo criterio que WORKSPACE).
     channel: str | None = None
     chat_id: str | None = None
+    # Identidad del remitente humano del turno (Telegram private chat, etc.). Cada campo
+    # puede ser None de forma independiente: el adapter rellena lo que conoce y deja en
+    # None lo que no aplica. En grupos quedan todos None — la identidad se embebe en el
+    # contenido del mensaje (ver ``format_group_message``).
+    sender_name: str | None = None
+    sender_username: str | None = None
+    sender_first_name: str | None = None
+    sender_last_name: str | None = None
     # Fragmentos de conocimiento recuperados por KnowledgeOrchestrator para este turno.
     knowledge_chunks: list[KnowledgeChunk] = []
 
@@ -135,4 +167,8 @@ class AgentContext(BaseModel):
             self.workspace_root,
             self.channel,
             self.chat_id,
+            sender_name=self.sender_name,
+            sender_username=self.sender_username,
+            sender_first_name=self.sender_first_name,
+            sender_last_name=self.sender_last_name,
         )

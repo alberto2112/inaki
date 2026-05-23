@@ -15,6 +15,8 @@ import random
 import time
 from pathlib import Path
 
+from typing import Any
+
 from telegram import BotCommand, Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -236,32 +238,45 @@ class TelegramBot:
 
         Útil para obtener el ``chat_id`` de un grupo y agregarlo a ``allowed_chat_ids``.
         """
-        if not self._is_allowed(update.effective_user.id):
+        user = update.effective_user
+        chat = update.effective_chat
+        message = update.message
+        if user is None or chat is None or message is None:
+            return
+        if not self._is_allowed(user.id):
             return
 
-        chat_id = update.effective_chat.id
-        chat_type = update.effective_chat.type
+        chat_id = chat.id
+        chat_type = chat.type
         logger.info(
             "/chatid invocado",
             extra={
-                "user_id": update.effective_user.id,
+                "user_id": user.id,
                 "chat_id": chat_id,
                 "chat_type": chat_type,
             },
         )
-        await update.message.reply_text(str(chat_id))
+        await message.reply_text(str(chat_id))
 
     async def _cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._is_allowed(update.effective_user.id):
+        user = update.effective_user
+        message = update.message
+        if user is None or message is None:
             return
-        await update.message.reply_text(
+        if not self._is_allowed(user.id):
+            return
+        await message.reply_text(
             f"Hola, soy {self._agent_cfg.name}. {self._agent_cfg.description}"
         )
 
     async def _cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._is_allowed(update.effective_user.id):
+        user = update.effective_user
+        message = update.message
+        if user is None or message is None:
             return
-        await update.message.reply_text(
+        if not self._is_allowed(user.id):
+            return
+        await message.reply_text(
             "/consolidate — Extraer recuerdos del historial\n"
             "/clear — Limpiar historial de ESTE chat (privado o grupo)\n"
             "/clear_all — Limpiar TODO el historial del agente (todos los chats)\n"
@@ -276,50 +291,67 @@ class TelegramBot:
         )
 
     async def _cmd_consolidate(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._is_allowed(update.effective_user.id):
+        user = update.effective_user
+        message = update.message
+        if user is None or message is None:
             return
-        await update.message.reply_text("Consolidando memoria...")
+        if not self._is_allowed(user.id):
+            return
+        uc = self._container.consolidate_memory
+        if uc is None:
+            await message.reply_text("La consolidación de memoria no está disponible.")
+            return
+        await message.reply_text("Consolidando memoria...")
         try:
-            result = await self._container.consolidate_memory.execute()
-            await update.message.reply_text(result)
+            result = await uc.execute()
+            await message.reply_text(result)
         except Exception as exc:
-            await update.message.reply_text(f"Error: {exc}")
+            await message.reply_text(f"Error: {exc}")
 
     async def _cmd_clear(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Borra el historial SOLO del chat actual (privado o grupo).
 
         Para limpiar el historial del agente en todos los chats, usar /clear_all.
         """
-        if not self._is_allowed(update.effective_user.id):
+        user = update.effective_user
+        chat = update.effective_chat
+        message = update.message
+        if user is None or chat is None or message is None:
             return
-        chat_id = str(update.effective_chat.id)
+        if not self._is_allowed(user.id):
+            return
+        chat_id = str(chat.id)
         try:
             await self._container.run_agent.clear_history(
                 channel="telegram",
                 chat_id=chat_id,
             )
-            await update.message.reply_text("Historial de este chat limpiado.")
+            await message.reply_text("Historial de este chat limpiado.")
         except Exception as exc:
             logger.exception(
                 "Error en /clear Telegram para '%s' (chat_id=%s)",
                 self._agent_cfg.id,
                 chat_id,
             )
-            await update.message.reply_text(f"Error: {exc}")
+            await message.reply_text(f"Error: {exc}")
 
     async def _cmd_clear_all(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Borra TODO el historial del agente (todos los canales y chats).
 
         También resetea el ``agent_state`` (sticky skills/tools).
         """
-        if not self._is_allowed(update.effective_user.id):
+        user = update.effective_user
+        message = update.message
+        if user is None or message is None:
+            return
+        if not self._is_allowed(user.id):
             return
         try:
             await self._container.run_agent.clear_history()
-            await update.message.reply_text("Historial completo del agente limpiado.")
+            await message.reply_text("Historial completo del agente limpiado.")
         except Exception as exc:
             logger.exception("Error en /clear_all Telegram para '%s'", self._agent_cfg.id)
-            await update.message.reply_text(f"Error: {exc}")
+            await message.reply_text(f"Error: {exc}")
 
     async def _cmd_reload(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Reinicia el daemon: cierra todos los channels, recarga config y vuelve a levantar.
@@ -328,20 +360,25 @@ class TelegramBot:
         comando se va a apagar como parte del reload — el reply se envía ANTES de señalar
         al runner para que el usuario tenga feedback antes del corte.
         """
-        if not self._is_allowed(update.effective_user.id):
+        user = update.effective_user
+        chat = update.effective_chat
+        message = update.message
+        if user is None or chat is None or message is None:
+            return
+        if not self._is_allowed(user.id):
             return
         if self._reloader is None:
-            await update.message.reply_text(
+            await message.reply_text(
                 "Reload no disponible — el bot no fue arrancado con DaemonReloader inyectado."
             )
             return
-        await update.message.reply_text("Reiniciando daemon...")
+        await message.reply_text("Reiniciando daemon...")
         logger.info(
             "Reload solicitado vía /reload Telegram",
             extra={
                 "agent_id": self._agent_cfg.id,
-                "user_id": update.effective_user.id,
-                "chat_id": update.effective_chat.id,
+                "user_id": user.id,
+                "chat_id": chat.id,
             },
         )
         self._reloader.request_reload()
@@ -358,11 +395,15 @@ class TelegramBot:
         El cambio es solo en memoria — al reiniciar el daemon se reaplican los valores
         de ``~/.inaki/config/...``. Aplica al bot completo (todos los chats).
         """
-        if not self._is_allowed(update.effective_user.id):
+        user = update.effective_user
+        message = update.message
+        if user is None or message is None:
+            return
+        if not self._is_allowed(user.id):
             return
 
         if self._rate_limiter is None:
-            await update.message.reply_text(
+            await message.reply_text(
                 "El broadcast no está configurado en este agente — el rate limiter no aplica."
             )
             return
@@ -371,11 +412,11 @@ class TelegramBot:
 
         # Sin argumentos: mostrar estado actual.
         if not args:
-            window = int(self._rate_limiter.window_seconds)
-            await update.message.reply_text(
+            display_window = int(self._rate_limiter.window_seconds)
+            await message.reply_text(
                 f"Rate limiter actual:\n"
                 f"  count = {self._rate_limit_max} (default: {self._rate_limit_max_default})\n"
-                f"  window = {window}s (default: {self._rate_limit_window_default}s)\n"
+                f"  window = {display_window}s (default: {self._rate_limit_window_default}s)\n"
                 f"\n"
                 f"Sintaxis:\n"
                 f"  /ratelimit <count>\n"
@@ -394,7 +435,7 @@ class TelegramBot:
                 self._rate_limit_max,
                 self._rate_limit_window_default,
             )
-            await update.message.reply_text(
+            await message.reply_text(
                 f"Rate limiter reseteado a config: "
                 f"count={self._rate_limit_max}, window={self._rate_limit_window_default}s."
             )
@@ -404,13 +445,13 @@ class TelegramBot:
         try:
             count_raw = int(args[0])
         except ValueError:
-            await update.message.reply_text(
+            await message.reply_text(
                 f"Count inválido: '{args[0]}'. Debe ser un entero entre 1 y 99."
             )
             return
 
         if count_raw < 1:
-            await update.message.reply_text("Count debe ser >= 1.")
+            await message.reply_text("Count debe ser >= 1.")
             return
 
         # Clamp count a [1, 99].
@@ -424,12 +465,12 @@ class TelegramBot:
             try:
                 window_raw = int(args[1])
             except ValueError:
-                await update.message.reply_text(
+                await message.reply_text(
                     f"Window inválida: '{args[1]}'. Debe ser un entero entre 1 y 900 (segundos)."
                 )
                 return
             if window_raw < 1:
-                await update.message.reply_text("Window debe ser >= 1 segundo.")
+                await message.reply_text("Window debe ser >= 1 segundo.")
                 return
             window = min(window_raw, 900)
             window_clamped = window_raw > 900
@@ -454,21 +495,25 @@ class TelegramBot:
             count,
             current_window,
         )
-        await update.message.reply_text("\n".join(partes))
+        await message.reply_text("\n".join(partes))
 
     async def _cmd_scheduler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """`/scheduler {list|show|enable|disable} [id]` — gestión read-only/toggle de tareas."""
-        if not self._is_allowed(update.effective_user.id):
+        user = update.effective_user
+        message = update.message
+        if user is None or message is None:
+            return
+        if not self._is_allowed(user.id):
             return
 
         uc = self._container.schedule_task
         if uc is None:
-            await update.message.reply_text("El scheduler no está inicializado en este proceso.")
+            await message.reply_text("El scheduler no está inicializado en este proceso.")
             return
 
         args = context.args or []
         if not args:
-            await update.message.reply_text(
+            await message.reply_text(
                 "Uso:\n"
                 "/scheduler list\n"
                 "/scheduler show <id>\n"
@@ -484,44 +529,44 @@ class TelegramBot:
                 tasks = await uc.list_tasks()
             except Exception as exc:
                 logger.exception("Error en /scheduler list para '%s'", self._agent_cfg.id)
-                await update.message.reply_text(f"Error: {exc}")
+                await message.reply_text(f"Error: {exc}")
                 return
             if not tasks:
-                await update.message.reply_text("No hay tareas programadas.")
+                await message.reply_text("No hay tareas programadas.")
                 return
-            await update.message.reply_text(self._format_task_list(tasks))
+            await message.reply_text(self._format_task_list(tasks))
             return
 
         if sub in {"show", "enable", "disable"}:
             if len(args) < 2:
-                await update.message.reply_text(f"Uso: /scheduler {sub} <id>")
+                await message.reply_text(f"Uso: /scheduler {sub} <id>")
                 return
             try:
                 task_id = int(args[1])
             except ValueError:
-                await update.message.reply_text(f"ID inválido: {args[1]}")
+                await message.reply_text(f"ID inválido: {args[1]}")
                 return
 
             try:
                 if sub == "show":
                     task = await uc.get_task(task_id)
-                    await update.message.reply_text(self._format_task_detail(task))
+                    await message.reply_text(self._format_task_detail(task))
                 elif sub == "enable":
                     await uc.enable_task(task_id)
-                    await update.message.reply_text(f"Tarea {task_id} habilitada.")
+                    await message.reply_text(f"Tarea {task_id} habilitada.")
                 else:  # disable
                     await uc.disable_task(task_id)
-                    await update.message.reply_text(f"Tarea {task_id} deshabilitada.")
+                    await message.reply_text(f"Tarea {task_id} deshabilitada.")
             except TaskNotFoundError:
-                await update.message.reply_text(f"Tarea {task_id} no encontrada.")
+                await message.reply_text(f"Tarea {task_id} no encontrada.")
             except Exception as exc:
                 logger.exception(
                     "Error en /scheduler %s %s para '%s'", sub, task_id, self._agent_cfg.id
                 )
-                await update.message.reply_text(f"Error: {exc}")
+                await message.reply_text(f"Error: {exc}")
             return
 
-        await update.message.reply_text(
+        await message.reply_text(
             f"Sub-comando desconocido: {sub}. Usá list, show, enable o disable."
         )
 
@@ -570,10 +615,15 @@ class TelegramBot:
         6. Si hay imagen anotada, la envía con ``reply_photo``.
         7. Llama a ``_run_pipeline`` con el texto contextual como user_input.
         """
-        if not self._is_allowed(update.effective_user.id):
+        user = update.effective_user
+        chat = update.effective_chat
+        message = update.message
+        if user is None or chat is None or message is None:
+            return
+        if not self._is_allowed(user.id):
             logger.warning(
                 "Foto rechazada de user_id=%s (no autorizado)",
-                update.effective_user.id,
+                user.id,
             )
             return
 
@@ -581,10 +631,10 @@ class TelegramBot:
         # caption (típicamente solo la primera foto del grupo), se trata como
         # input del usuario y dispara pipeline UNA vez con __ALBUM__. Sin
         # caption queda persistido para download_from_telegram(content_type='album').
-        if getattr(update.message, "media_group_id", None) is not None:
-            media_group_id = update.message.media_group_id
+        if message.media_group_id is not None:
+            media_group_id = str(message.media_group_id)
             await self._persist_incoming_file(update)
-            caption = (getattr(update.message, "caption", None) or "").strip()
+            caption = (getattr(message, "caption", None) or "").strip()
             if not caption:
                 return
 
@@ -593,7 +643,7 @@ class TelegramBot:
             # y después juntamos TODAS las del media_group_id desde la DB.
             await asyncio.sleep(ALBUM_GATHER_DELAY_SEC)
 
-            chat_id_str = str(update.effective_chat.id)
+            chat_id_str = str(chat.id)
             paths_album = await self._gather_album_paths(
                 media_group_id=media_group_id, chat_id=chat_id_str
             )
@@ -604,7 +654,7 @@ class TelegramBot:
                 ubicacion_album = ""
 
             user_input = f"__ALBUM__{ubicacion_album}\n\n{caption}"
-            chat_type_album = update.effective_chat.type
+            chat_type_album = chat.type
             if chat_type_album in _TIPOS_GRUPO:
                 await self._handle_group_message(update, user_input, chat_type_album)
             else:
@@ -612,8 +662,8 @@ class TelegramBot:
                 await self._run_pipeline(update, user_input, chat_type=chat_type_album)
             return
 
-        chat_type = update.effective_chat.type
-        chat_id = str(update.effective_chat.id)
+        chat_type = chat.type
+        chat_id = str(chat.id)
 
         # Feature check: si photos no está wired, avisar y salir.
         # En grupos hacemos return silencioso para no inundar el chat con el aviso
@@ -622,18 +672,18 @@ class TelegramBot:
         process_photo_uc = getattr(self._container, "process_photo", None)
         if process_photo_uc is None:
             if chat_type not in _TIPOS_GRUPO:
-                await update.message.reply_text(
+                await message.reply_text(
                     "La función de reconocimiento visual no está habilitada."
                 )
             return
 
         # Extraer bytes de la foto.
-        payload = await extract_photo_payload(update.message)
+        payload = await extract_photo_payload(message)
         if payload is None:
             return
         image_bytes, _mime, _size = payload
 
-        caption_raw = (getattr(update.message, "caption", None) or "").strip()
+        caption_raw = (getattr(message, "caption", None) or "").strip()
         # "!transcribí este texto" → prompt override para el scene describer.
         if caption_raw.startswith("!"):
             scene_prompt = caption_raw[1:].strip()
@@ -674,20 +724,20 @@ class TelegramBot:
             )
         except Exception as exc:
             logger.exception("Error procesando foto Telegram para '%s'", self._agent_cfg.id)
-            await update.message.reply_text(f"Error al procesar la foto: {exc}")
+            await message.reply_text(f"Error al procesar la foto: {exc}")
             await self._set_reaction(update, "👎")
             return
 
         # Enviar imagen anotada si existe (cara desconocida en chat privado).
         if result.annotated_image:
-            await update.message.reply_photo(result.annotated_image)
+            await message.reply_photo(result.annotated_image)
 
         # Si el use case pide saltar el agente (photos.enabled=False en runtime),
         # responder con aviso solo en privado. En grupos return silencioso para no
         # ensuciar el chat — los bots sin la feature simplemente no participan.
         if result.should_skip_run_agent:
             if chat_type not in _TIPOS_GRUPO:
-                await update.message.reply_text(
+                await message.reply_text(
                     "La función de reconocimiento visual no está habilitada."
                 )
             return
@@ -696,7 +746,7 @@ class TelegramBot:
         # al chat y se guarda como mensaje del asistente para que el usuario pueda iterar.
         if scene_prompt and result.text_context:
             direct_text = result.text_context
-            await update.message.reply_text(direct_text)
+            await message.reply_text(direct_text)
             await self._container.run_agent.record_assistant_message(
                 f"photo_transcription: {direct_text}",
                 channel="telegram",
@@ -710,7 +760,7 @@ class TelegramBot:
                         event_type="user_input_photo",
                         chat_id=chat_id,
                         content=direct_text,
-                        sender=extract_sender_name(update.message),
+                        sender=extract_sender_name(message),
                     )
                 )
             return
@@ -725,7 +775,7 @@ class TelegramBot:
         if caption:
             enriched_content = f"{result.text_context}\n\nDescripción del usuario: {caption}"
         if chat_type in _TIPOS_GRUPO:
-            sender = extract_sender_name(update.message)
+            sender = extract_sender_name(message)
             enriched_content = f"{sender} (foto): {enriched_content}"
         await self._container.run_agent.update_message_content(history_id, enriched_content)
 
@@ -737,7 +787,7 @@ class TelegramBot:
                     event_type="user_input_photo",
                     chat_id=chat_id,
                     content=result.text_context,
-                    sender=extract_sender_name(update.message),
+                    sender=extract_sender_name(message),
                 )
             )
 
@@ -752,10 +802,14 @@ class TelegramBot:
         await self._run_pipeline(update, None, chat_type=chat_type)
 
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._is_allowed(update.effective_user.id):
+        user = update.effective_user
+        message = update.message
+        if user is None or message is None:
+            return
+        if not self._is_allowed(user.id):
             logger.warning(
                 "Mensaje rechazado de user_id=%s (no autorizado)",
-                update.effective_user.id,
+                user.id,
             )
             return
 
@@ -763,7 +817,7 @@ class TelegramBot:
         if not user_input:
             return
 
-        chat_type = update.message.chat.type
+        chat_type = message.chat.type
         es_grupo = chat_type in _TIPOS_GRUPO
 
         if es_grupo:
@@ -787,7 +841,10 @@ class TelegramBot:
            dentro de la ventana de delay se acumulan en el historial y se procesan
            todos juntos en un único turno cuando el delay vence.
         """
-        chat_id = update.effective_chat.id
+        chat = update.effective_chat
+        if chat is None:
+            return
+        chat_id = chat.id
         chat_id_str = str(chat_id)
 
         if self._allowed_chat_ids and not self._is_allowed_chat(chat_id):
@@ -832,7 +889,7 @@ class TelegramBot:
         await self._set_group_reaction(update, "👀")
 
         if behavior == "autonomous" and self._rate_limiter is not None:
-            sender = update.message.from_user
+            sender = update.message.from_user if update.message is not None else None
             if sender and not sender.is_bot:
                 self._rate_limiter.reset(self._agent_cfg.id, chat_id_str)
 
@@ -880,7 +937,7 @@ class TelegramBot:
         await asyncio.sleep(delay)
         await self._run_group_pipeline(chat_id_str, chat_type)
 
-    def _extract_file_metadata(self, message) -> tuple[FileContentType, object, str | None] | None:
+    def _extract_file_metadata(self, message) -> tuple[FileContentType, Any, str | None] | None:
         """Detecta el media payload de un Message y devuelve (content_type, payload, mime).
 
         ``payload`` es el objeto de telegram (PhotoSize, Voice, Audio, Video,
@@ -1005,8 +1062,9 @@ class TelegramBot:
         repo = getattr(self._container, "telegram_file_repo", None)
         if repo is None:
             return
+        chat = update.effective_chat
         message = update.message
-        if message is None:
+        if chat is None or message is None:
             return
         meta = self._extract_file_metadata(message)
         if meta is None:
@@ -1028,7 +1086,7 @@ class TelegramBot:
             record = TelegramFileRecord(
                 agent_id=self._agent_cfg.id,
                 channel="telegram",
-                chat_id=str(update.effective_chat.id),
+                chat_id=str(chat.id),
                 content_type=content_type,
                 file_id=payload.file_id,
                 file_unique_id=payload.file_unique_id,
@@ -1059,7 +1117,10 @@ class TelegramBot:
         - Sin caption: queda persistido para que el LLM lo recupere después
           con ``download_from_telegram``, pero NO genera respuesta.
         """
-        if not self._is_allowed(update.effective_user.id):
+        user = update.effective_user
+        if user is None:
+            return
+        if not self._is_allowed(user.id):
             return
 
         await self._persist_incoming_file(update)
@@ -1105,10 +1166,14 @@ class TelegramBot:
         Flujo: allow → voice_enabled → 🔊 → descarga+mime → size-check →
         transcribir → reinyectar el texto en el mismo pipeline que `_handle_message`.
         """
-        if not self._is_allowed(update.effective_user.id):
+        user = update.effective_user
+        message = update.message
+        if user is None or message is None:
+            return
+        if not self._is_allowed(user.id):
             logger.warning(
                 "Audio rechazado de user_id=%s (no autorizado)",
-                update.effective_user.id,
+                user.id,
             )
             return
 
@@ -1121,14 +1186,18 @@ class TelegramBot:
             # Transcripción deshabilitada: ya persistimos, salimos sin reply.
             return
 
-        payload = await extract_audio_payload(update.message)
+        payload = await extract_audio_payload(message)
         if payload is None:
             return  # Defensa: ningún audio presente (no debería ocurrir por los filters).
         audio_bytes, mime, file_size = payload
 
         # Size-check: preferimos file_size de Telegram (antes de procesar),
         # con fallback al tamaño real descargado.
-        max_mb = self._agent_cfg.transcription.max_audio_mb
+        transcription_cfg = self._agent_cfg.transcription
+        transcription_provider = self._container.transcription
+        if transcription_cfg is None or transcription_provider is None:
+            return
+        max_mb = transcription_cfg.max_audio_mb
         max_bytes = max_mb * 1024 * 1024
         effective_size = file_size or len(audio_bytes)
         if effective_size > max_bytes:
@@ -1139,7 +1208,7 @@ class TelegramBot:
                 max_bytes,
             )
             await self._set_reaction(update, "👎")
-            await update.message.reply_text(
+            await message.reply_text(
                 f"El audio es demasiado grande ({effective_size // (1024 * 1024)} MB). "
                 f"Máximo permitido: {max_mb} MB."
             )
@@ -1150,32 +1219,33 @@ class TelegramBot:
         # Transcribir — errores del provider se reportan al usuario pero NO
         # corren el pipeline (sin texto no hay nada que ejecutar).
         try:
-            transcribed = await self._container.transcription.transcribe(
+            transcribed = await transcription_provider.transcribe(
                 audio_bytes,
                 mime,
-                language=self._agent_cfg.transcription.language,
+                language=transcription_cfg.language,
             )
         except TranscriptionError as exc:
             logger.warning("Transcripción fallida para agente '%s': %s", self._agent_cfg.id, exc)
-            await update.message.reply_text(f"No pude transcribir el audio: {exc}")
+            await message.reply_text(f"No pude transcribir el audio: {exc}")
             await self._set_reaction(update, "👎")
             return
 
         if not transcribed or not transcribed.strip():
-            await update.message.reply_text("La transcripción vino vacía.")
+            await message.reply_text("La transcripción vino vacía.")
             await self._set_reaction(update, "👎")
             return
 
-        chat_type = update.message.chat.type if update.message else "private"
-        sender = extract_sender_name(update.message)
+        chat = update.effective_chat
+        chat_type = message.chat.type if message.chat else "private"
+        sender = extract_sender_name(message)
 
         # Emitir el evento user_input_voice si el flag está activo. Solo aplica
         # a chats grupales — en privado no hay otros agentes que reciban el evento.
-        if chat_type in _TIPOS_GRUPO:
+        if chat_type in _TIPOS_GRUPO and chat is not None:
             asyncio.ensure_future(
                 self._emit_event(
                     event_type="user_input_voice",
-                    chat_id=str(update.effective_chat.id),
+                    chat_id=str(chat.id),
                     content=transcribed,
                     sender=sender,
                 )
@@ -1199,8 +1269,11 @@ class TelegramBot:
         """
         if not self._reactions:
             return
+        message = update.message
+        if message is None:
+            return
         try:
-            await update.message.set_reaction(emoji)
+            await message.set_reaction(emoji)
         except Exception:
             pass  # Reacciones opcionales — no deben bloquear el handler.
 
@@ -1209,8 +1282,11 @@ class TelegramBot:
         si está seteado, hereda de ``channels.telegram.reactions`` si no."""
         if not self._group_reactions:
             return
+        message = update.message
+        if message is None:
+            return
         try:
-            await update.message.set_reaction(emoji)
+            await message.set_reaction(emoji)
         except Exception:
             pass
 
@@ -1238,7 +1314,12 @@ class TelegramBot:
                 instrucción __SKIP__, etc.). Se pasan via ``set_extra_system_sections`` ANTES
                 de invocar ``execute``.
         """
-        chat_id = update.effective_chat.id
+        chat = update.effective_chat
+        user = update.effective_user
+        message = update.message
+        if chat is None or user is None or message is None:
+            return
+        chat_id = chat.id
         es_grupo = chat_type in _TIPOS_GRUPO
         secciones: list[str] = list(extra_sections or [])
 
@@ -1255,7 +1336,7 @@ class TelegramBot:
         self._container.set_channel_context(
             ChannelContext(
                 channel_type="telegram",
-                user_id=str(update.effective_user.id),
+                user_id=str(user.id),
                 chat_id=str(chat_id),
             )
         )
@@ -1286,7 +1367,7 @@ class TelegramBot:
                 )
                 return
 
-            await update.message.reply_text(format_response(response), parse_mode=ParseMode.HTML)
+            await message.reply_text(format_response(response), parse_mode=ParseMode.HTML)
 
             # Emitir broadcast DESPUÉS del reply, solo para grupos, fire-and-forget.
             # Gated por broadcast.emit.assistant_response (default true).
@@ -1301,7 +1382,7 @@ class TelegramBot:
 
         except Exception as exc:
             logger.exception("Error procesando mensaje Telegram para '%s'", self._agent_cfg.id)
-            await update.message.reply_text(f"Error: {exc}")
+            await message.reply_text(f"Error: {exc}")
             await self._set_reaction(update, "👎")
         finally:
             self._container.set_channel_context(None)
@@ -1642,7 +1723,7 @@ class TelegramBot:
     async def send_photo(
         self,
         chat_id: int,
-        photo: object,
+        photo: Any,
         caption: str | None = None,
     ) -> None:
         """Envía una foto a un chat. ``photo`` puede ser URL, path local o file-like."""
@@ -1651,7 +1732,7 @@ class TelegramBot:
     async def send_audio(
         self,
         chat_id: int,
-        audio: object,
+        audio: Any,
         caption: str | None = None,
     ) -> None:
         await self._app.bot.send_audio(chat_id=chat_id, audio=audio, caption=caption)
@@ -1659,7 +1740,7 @@ class TelegramBot:
     async def send_video(
         self,
         chat_id: int,
-        video: object,
+        video: Any,
         caption: str | None = None,
     ) -> None:
         await self._app.bot.send_video(chat_id=chat_id, video=video, caption=caption)
@@ -1667,7 +1748,7 @@ class TelegramBot:
     async def send_document(
         self,
         chat_id: int,
-        document: object,
+        document: Any,
         caption: str | None = None,
     ) -> None:
         await self._app.bot.send_document(chat_id=chat_id, document=document, caption=caption)

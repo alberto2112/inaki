@@ -18,14 +18,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
-from typing import Callable
+from contextlib import nullcontext
+from typing import TYPE_CHECKING, Callable
+
+if TYPE_CHECKING:
+    from infrastructure.config import AgentRegistry
+    from infrastructure.container import AppContainer
 
 logger = logging.getLogger(__name__)
 
 
 # Tipo del factory que produce un (AppContainer, AgentRegistry) en cada iteración
 # del loop de reload. Se invoca al primer arranque y otra vez por cada reload.
-BootstrapFn = Callable[[], tuple[object, object]]
+BootstrapFn = Callable[[], tuple["AppContainer", "AgentRegistry"]]
 
 
 async def _run_admin_server(app_container, admin_cfg, servers: list) -> None:
@@ -48,7 +53,13 @@ async def _run_admin_server(app_container, admin_cfg, servers: list) -> None:
         access_log=True,
     )
     server = uvicorn.Server(config)
-    server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
+    # Desactivamos la captura de signals de uvicorn: los maneja el daemon
+    # vía should_exit para un shutdown coordinado de todos los canales.
+    # En uvicorn >= 0.34 el hook viejo `install_signal_handlers` fue reemplazado
+    # por el context manager `capture_signals`, que `serve()` siempre invoca
+    # como `with self.capture_signals(): await self._serve(...)`. Sustituirlo
+    # por `nullcontext` lo neutraliza sin tocar el flow de `serve()`.
+    server.capture_signals = nullcontext  # type: ignore[method-assign,assignment]
     servers.append(server)
     logger.info("Admin server iniciado en %s:%d", admin_cfg.host, admin_cfg.port)
     await server.serve()
@@ -72,9 +83,11 @@ async def _run_rest_server(agent_cfg, container, servers: list) -> None:
         access_log=True,
     )
     server = uvicorn.Server(config)
-    # Desactivamos los signal handlers de uvicorn: los maneja el daemon
-    # vía should_exit para un shutdown coordinado de todos los canales.
-    server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
+    # Desactivamos la captura de signals de uvicorn: los maneja el daemon vía
+    # should_exit para un shutdown coordinado de todos los canales. Ver
+    # comentario equivalente en `_run_admin_server` para el detalle del cambio
+    # `install_signal_handlers` → `capture_signals` (uvicorn >= 0.34).
+    server.capture_signals = nullcontext  # type: ignore[method-assign,assignment]
     servers.append(server)
     logger.info("REST server iniciado para '%s' en %s:%d", agent_cfg.id, host, port)
     await server.serve()
@@ -108,7 +121,12 @@ async def _run_telegram_bot(agent_cfg, container, app_container=None) -> None:
 
     logger.info("Telegram bot iniciando para agente '%s'", agent_cfg.id)
 
-    # python-telegram-bot 21+ ofrece API async nativa via context manager
+    # python-telegram-bot 21+ ofrece API async nativa via context manager.
+    # `Application.updater` es Optional porque PTB permite construir Apps sin
+    # updater (handlers manuales, webhook-only, etc.). Acá siempre lo tenemos
+    # porque `TelegramBot` arma el App con `.builder().token(...).build()`,
+    # que incluye updater por default. Lo asertamos para descartar `None` y
+    # darle tipo concreto al resto del bloque.
     async with bot._app:
         await bot._app.start()
         await bot.setup_commands()
@@ -120,14 +138,16 @@ async def _run_telegram_bot(agent_cfg, container, app_container=None) -> None:
         # Suscripción al canal broadcast para trigger bot-to-bot (solo autonomous).
         await bot.subscribe_broadcast_trigger()
 
-        await bot._app.updater.start_polling(drop_pending_updates=True)
+        updater = bot._app.updater
+        assert updater is not None, "PTB Application sin updater — config inesperada"
+        await updater.start_polling(drop_pending_updates=True)
         logger.info("Telegram bot '%s' en polling", agent_cfg.id)
         try:
             await asyncio.get_running_loop().create_future()  # bloquear hasta cancelación
         except asyncio.CancelledError:
             pass
         finally:
-            await bot._app.updater.stop()
+            await updater.stop()
             await bot._app.stop()
 
 
@@ -227,7 +247,7 @@ async def _shutdown_iteration(
 
 async def run_daemon(
     bootstrap_fn: BootstrapFn,
-    initial: tuple[object, object] | None = None,
+    initial: tuple["AppContainer", "AgentRegistry"] | None = None,
 ) -> None:
     """
     Arranca todos los canales de todos los agentes en paralelo. Loop de reload-aware:

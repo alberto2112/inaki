@@ -608,6 +608,11 @@ class SchedulerTool(ITool):
                     payload_raw["target"] = f"{context.channel_type}:{llm_user_id}"
                     payload_raw["user_id"] = llm_user_id
                 else:
+                    # En la rama trigger_type_str == "channel_send", el payload
+                    # existente DEBE ser ChannelSendPayload (invariante por
+                    # construcción). El isinstance le da el narrowing a mypy
+                    # frente al Union de los 5 tipos posibles.
+                    assert isinstance(existing.trigger_payload, ChannelSendPayload)
                     payload_raw["target"] = existing.trigger_payload.target
 
             # Resolución de 'self' para agent_send (misma lógica que _create)

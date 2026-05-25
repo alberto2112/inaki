@@ -68,6 +68,11 @@ class E5OnnxProvider(BaseEmbeddingProvider):
 
     def _embed(self, text: str) -> list[float]:
         self._ensure_loaded()
+        # _ensure_loaded() asegura que tokenizer/session no son None (o raisea).
+        # Los asserts narrowan el tipo para el resto del método.
+        assert self._tokenizer is not None
+        assert self._session is not None
+
         encoding = self._tokenizer.encode(text)
         input_ids = np.array([encoding.ids], dtype=np.int64)
         attention_mask = np.array([encoding.attention_mask], dtype=np.int64)

@@ -92,3 +92,15 @@ ignore_missing_imports = true
 # Modelo de reconocimiento facial cargado lazy en el adapter de visión.
 module = "insightface.*"
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# onnxruntime no expone py.typed marker — third-party sin stubs.
+# Usado por el embedder e5-small ONNX (adapters/outbound/embedding/e5_onnx).
+module = "onnxruntime"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# tokenizers (HuggingFace) no expone py.typed marker — third-party sin stubs.
+# Usado por el embedder e5-small ONNX (adapters/outbound/embedding/e5_onnx).
+module = "tokenizers"
+ignore_missing_imports = true

@@ -63,7 +63,7 @@ class WriteFileTool(ITool):
         self._workspace = workspace
         self._containment = containment
 
-    async def execute(
+    async def execute(  # type: ignore[override]
         self,
         file_path: str,
         content: str,
@@ -103,17 +103,13 @@ class WriteFileTool(ITool):
                     )
             else:
                 logger.warning("write_file répertoire parent absent: %s", parent)
-                payload = {
-                    "success": False,
-                    "error": (
-                        "Parent directory does not exist. Set create_dirs=true to create it."
-                    ),
-                }
+                err_msg = "Parent directory does not exist. Set create_dirs=true to create it."
+                payload = {"success": False, "error": err_msg}
                 return ToolResult(
                     tool_name=self.name,
                     output=json.dumps(payload, ensure_ascii=False),
                     success=False,
-                    error=payload["error"],
+                    error=err_msg,
                 )
 
         if overwrite:

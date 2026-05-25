@@ -13,6 +13,7 @@ import logging
 import pkgutil
 from pathlib import Path
 
+from adapters.outbound.providers.base import BaseLLMProvider
 from core.domain.errors import ConfigError
 from core.ports.outbound.llm_port import ILLMProvider
 from infrastructure.config import LLMConfig, ProviderConfig, ResolvedLLMConfig
@@ -52,7 +53,9 @@ class LLMProviderFactory:
         logger.info("LLMProviderFactory: providers disponibles: %s", list(cls._registry))
 
     @classmethod
-    def _resolve_adapter(cls, provider_key: str, type_override: str | None) -> type:
+    def _resolve_adapter(
+        cls, provider_key: str, type_override: str | None
+    ) -> type[BaseLLMProvider]:
         """Resuelve la clase del adapter a partir del ``type`` (o la key si no hay type)."""
         cls._load()
         type_key = type_override or provider_key

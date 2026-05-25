@@ -1,5 +1,6 @@
 from abc import abstractmethod
 from core.ports.outbound.embedding_port import IEmbeddingProvider
+from infrastructure.config import ResolvedEmbeddingConfig
 
 
 class BaseEmbeddingProvider(IEmbeddingProvider):
@@ -11,6 +12,11 @@ class BaseEmbeddingProvider(IEmbeddingProvider):
     """
 
     REQUIRES_CREDENTIALS: bool = True
+
+    def __init__(self, cfg: ResolvedEmbeddingConfig) -> None:
+        """Signature común para la factory (`adapter_type(resolved)`).
+        Las subclases override este __init__ para su setup específico."""
+        self._cfg = cfg
 
     @abstractmethod
     async def embed_query(self, text: str) -> list[float]: ...

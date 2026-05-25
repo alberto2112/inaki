@@ -13,6 +13,7 @@ import logging
 import pkgutil
 from pathlib import Path
 
+from adapters.outbound.embedding.base import BaseEmbeddingProvider
 from core.domain.errors import ConfigError
 from core.ports.outbound.embedding_port import IEmbeddingProvider
 from infrastructure.config import EmbeddingConfig, ProviderConfig, ResolvedEmbeddingConfig
@@ -59,7 +60,9 @@ class EmbeddingProviderFactory:
         )
 
     @classmethod
-    def _resolve_adapter(cls, provider_key: str, type_override: str | None) -> type:
+    def _resolve_adapter(
+        cls, provider_key: str, type_override: str | None
+    ) -> type[BaseEmbeddingProvider]:
         cls._load()
         type_key = type_override or provider_key
         if type_key not in cls._registry:

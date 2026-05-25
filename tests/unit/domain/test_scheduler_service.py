@@ -232,7 +232,7 @@ async def test_dispatch_webhook_failure_propagates_as_execute_failure(
 ) -> None:
     """RuntimeError from http_caller leads to FAILED status after retries."""
     task = _make_webhook_task()
-    service._dispatch.http_caller.call = AsyncMock(side_effect=RuntimeError("500 error"))
+    service._dispatch.http_caller.call = AsyncMock(side_effect=RuntimeError("500 error"))  # type: ignore[method-assign]
 
     await service._execute_task(task)
 
@@ -264,7 +264,7 @@ async def test_channel_send_propaga_metadata_a_tasklog(
     """Tras un channel_send, el TaskLog persistido por _finalize_task debe
     contener metadata {original_target, resolved_target}."""
     task = _make_channel_task()
-    service._dispatch.channel_sender.send_message = AsyncMock(
+    service._dispatch.channel_sender.send_message = AsyncMock(  # type: ignore[method-assign]
         return_value=DispatchResult(
             original_target="cli:local",
             resolved_target="file:///tmp/inaki-schedule-output.log",
@@ -291,7 +291,7 @@ async def test_dispatch_trigger_channel_send_devuelve_metadata(
     service: SchedulerService,
 ) -> None:
     task = _make_channel_task()
-    service._dispatch.channel_sender.send_message = AsyncMock(
+    service._dispatch.channel_sender.send_message = AsyncMock(  # type: ignore[method-assign]
         return_value=DispatchResult(original_target="cli:local", resolved_target="null:")
     )
 
@@ -342,11 +342,11 @@ async def test_agent_send_con_output_channel_pasa_sink_construido_al_dispatcher(
     sink resultante llega al llm_dispatcher como ``intermediate_sink=``."""
     task = _make_agent_task(output_channel="telegram:7")
     sentinel_sink = object()
-    service._dispatch.channel_sender.build_intermediate_sink = MagicMock(return_value=sentinel_sink)
-    service._dispatch.channel_sender.send_message = AsyncMock(
+    service._dispatch.channel_sender.build_intermediate_sink = MagicMock(return_value=sentinel_sink)  # type: ignore[method-assign]
+    service._dispatch.channel_sender.send_message = AsyncMock(  # type: ignore[method-assign]
         return_value=DispatchResult(original_target="telegram:7", resolved_target="telegram:7")
     )
-    service._dispatch.llm_dispatcher.dispatch = AsyncMock(return_value="reply final")
+    service._dispatch.llm_dispatcher.dispatch = AsyncMock(return_value="reply final")  # type: ignore[method-assign]
 
     await service._dispatch_trigger(task)
 
@@ -361,8 +361,8 @@ async def test_agent_send_sin_output_channel_no_construye_sink(
 ) -> None:
     """Sin output_channel: no hay sink — el dispatcher recibe None."""
     task = _make_agent_task(output_channel=None)
-    service._dispatch.channel_sender.build_intermediate_sink = MagicMock()
-    service._dispatch.llm_dispatcher.dispatch = AsyncMock(return_value="reply")
+    service._dispatch.channel_sender.build_intermediate_sink = MagicMock()  # type: ignore[method-assign]
+    service._dispatch.llm_dispatcher.dispatch = AsyncMock(return_value="reply")  # type: ignore[method-assign]
 
     await service._dispatch_trigger(task)
 

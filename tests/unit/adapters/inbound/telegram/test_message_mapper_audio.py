@@ -61,7 +61,9 @@ async def test_voice_respeta_mime_type_si_viene() -> None:
     voice = _mk_payload(bytes_result=b"xx", mime_type="audio/ogg; codecs=opus", file_size=10)
     msg = _mk_message(voice=voice)
 
-    _, mime, _ = await extract_audio_payload(msg)
+    result = await extract_audio_payload(msg)
+    assert result is not None
+    _, mime, _ = result
     assert mime == "audio/ogg; codecs=opus"
 
 
@@ -69,7 +71,9 @@ async def test_audio_usa_mime_type_del_payload() -> None:
     audio = _mk_payload(bytes_result=b"mp3-data", mime_type="audio/mpeg", file_size=9999)
     msg = _mk_message(audio=audio)
 
-    data, mime, size = await extract_audio_payload(msg)
+    result = await extract_audio_payload(msg)
+    assert result is not None
+    data, mime, size = result
     assert data == b"mp3-data"
     assert mime == "audio/mpeg"
     assert size == 9999
@@ -79,7 +83,9 @@ async def test_audio_sin_mime_type_default_audio_mpeg() -> None:
     audio = _mk_payload(bytes_result=b"x", mime_type=None, file_size=1)
     msg = _mk_message(audio=audio)
 
-    _, mime, _ = await extract_audio_payload(msg)
+    result = await extract_audio_payload(msg)
+    assert result is not None
+    _, mime, _ = result
     assert mime == "audio/mpeg"
 
 
@@ -88,7 +94,9 @@ async def test_video_note_mime_es_video_mp4() -> None:
     vn = _mk_payload(bytes_result=b"vn-data", mime_type=None, file_size=55555)
     msg = _mk_message(video_note=vn)
 
-    data, mime, size = await extract_audio_payload(msg)
+    result = await extract_audio_payload(msg)
+    assert result is not None
+    data, mime, size = result
     assert data == b"vn-data"
     assert mime == "video/mp4"
     assert size == 55555
@@ -100,7 +108,9 @@ async def test_prioridad_voice_sobre_audio_sobre_video_note() -> None:
     audio = _mk_payload(bytes_result=b"aud", mime_type="audio/mpeg", file_size=2)
     msg = _mk_message(voice=voice, audio=audio)
 
-    data, _, _ = await extract_audio_payload(msg)
+    result = await extract_audio_payload(msg)
+    assert result is not None
+    data, _, _ = result
     assert data == b"voz"
 
 
@@ -109,7 +119,9 @@ async def test_retorna_bytes_no_bytearray() -> None:
     voice = _mk_payload(bytes_result=b"\x00\x01\x02", mime_type=None, file_size=3)
     msg = _mk_message(voice=voice)
 
-    data, _, _ = await extract_audio_payload(msg)
+    result = await extract_audio_payload(msg)
+    assert result is not None
+    data, _, _ = result
     assert isinstance(data, bytes)
 
 
@@ -117,7 +129,7 @@ async def test_file_size_none_se_normaliza_a_cero() -> None:
     voice = _mk_payload(bytes_result=b"x", mime_type=None, file_size=None)
     msg = _mk_message(voice=voice)
 
-    _, _, size = (
-        await extract_audio_payload(voice=voice) if False else await extract_audio_payload(msg)
-    )
+    result = await extract_audio_payload(msg)
+    assert result is not None
+    _, _, size = result
     assert size == 0

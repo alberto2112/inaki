@@ -59,7 +59,9 @@ async def test_selecciona_ultima_foto_mayor_resolucion() -> None:
     large = _mk_photo_size(bytes_result=b"large-hd", file_size=90000)
     msg = _mk_message(photos=[small, large])
 
-    data, _, _ = await extract_photo_payload(msg)
+    result = await extract_photo_payload(msg)
+    assert result is not None
+    data, _, _ = result
     assert data == b"large-hd"
 
 
@@ -67,7 +69,9 @@ async def test_retorna_bytes_no_bytearray() -> None:
     ps = _mk_photo_size(bytes_result=b"\xff\xd8\xff", file_size=3)
     msg = _mk_message(photos=[ps])
 
-    data, _, _ = await extract_photo_payload(msg)
+    result = await extract_photo_payload(msg)
+    assert result is not None
+    data, _, _ = result
     assert isinstance(data, bytes)
 
 
@@ -75,5 +79,7 @@ async def test_file_size_none_se_normaliza_a_cero() -> None:
     ps = _mk_photo_size(bytes_result=b"x", file_size=None)
     msg = _mk_message(photos=[ps])
 
-    _, _, size = await extract_photo_payload(msg)
+    result = await extract_photo_payload(msg)
+    assert result is not None
+    _, _, size = result
     assert size == 0

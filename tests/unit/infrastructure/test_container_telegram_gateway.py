@@ -14,6 +14,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 from adapters.outbound.sinks.telegram_sink import TelegramSink as ChannelSenderAdapter
+from infrastructure.container import AppContainer
 
 
 # ---------------------------------------------------------------------------
@@ -21,15 +22,13 @@ from adapters.outbound.sinks.telegram_sink import TelegramSink as ChannelSenderA
 # ---------------------------------------------------------------------------
 
 
-def _build_minimal_app_container() -> object:
+def _build_minimal_app_container() -> AppContainer:
     """
     Construye un AppContainer usando __new__ para evitar el constructor completo.
     Inyecta los atributos mínimos necesarios para probar T5.
     """
-    from infrastructure.container import AppContainer
-
     app = AppContainer.__new__(AppContainer)
-    app._telegram_bots: dict = {}
+    app._telegram_bots = {}
     return app
 
 

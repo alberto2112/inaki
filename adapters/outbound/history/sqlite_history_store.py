@@ -202,20 +202,20 @@ class SQLiteHistoryStore(IHistoryStore):
         async with self._conn() as conn:
             await self._ensure_schema(conn)
             if self._max_n > 0:
-                rows = await conn.execute_fetchall(
+                rows = list(await conn.execute_fetchall(
                     f"SELECT role, content, created_at, channel, chat_id FROM history "
                     f"WHERE {filtros} "
                     f"ORDER BY id DESC LIMIT ?",
                     (*params, self._max_n),
-                )
+                ))
                 return [self._row_to_message(r) for r in reversed(rows)]
             else:
-                rows = await conn.execute_fetchall(
+                rows = list(await conn.execute_fetchall(
                     f"SELECT role, content, created_at, channel, chat_id FROM history "
                     f"WHERE {filtros} "
                     f"ORDER BY id ASC",
                     params,
-                )
+                ))
                 return [self._row_to_message(r) for r in rows]
 
     async def load_full(self, agent_id: str) -> list[Message]:
@@ -249,7 +249,7 @@ class SQLiteHistoryStore(IHistoryStore):
 
         async with self._conn() as conn:
             await self._ensure_schema(conn)
-            rows = await conn.execute_fetchall(base_sql, tuple(params))
+            rows = list(await conn.execute_fetchall(base_sql, tuple(params)))
 
         logger.info(
             "load_uninfused: db=%s agent_id=%r channels=%r encontrados=%d",

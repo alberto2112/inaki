@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
@@ -29,12 +30,15 @@ from adapters.inbound.rest.admin.schemas import (
 from adapters.outbound.intermediate_sinks.buffering import BufferingIntermediateSink
 from core.domain.value_objects.channel_context import ChannelContext
 
+if TYPE_CHECKING:
+    from infrastructure.container import AgentContainer
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-def _resolver_agente(request: Request, agent_id: str) -> object:
+def _resolver_agente(request: Request, agent_id: str) -> "AgentContainer":
     """Resuelve el AgentContainer para el agent_id dado o levanta 404."""
     app_container = request.app.state.app_container
     if agent_id not in app_container.agents:
@@ -145,14 +149,16 @@ async def chat_task(body: TaskTurnRequest, request: Request) -> TaskTurnResponse
     # Si vienen channel + chat_id (validados both-or-none por el schema), se propagan
     # al execute para cargar el historial del scope correcto. Si no vienen, defaults
     # del use case (channel="" / chat_id="") preservan el comportamiento legacy.
-    scope_kwargs: dict[str, str] = {}
-    if body.channel is not None and body.chat_id is not None:
-        scope_kwargs["channel"] = body.channel
-        scope_kwargs["chat_id"] = body.chat_id
+    channel = body.channel if body.channel is not None else ""
+    chat_id = body.chat_id if body.chat_id is not None else ""
 
     try:
         reply = await agent_container.run_agent.execute(
-            body.message, intermediate_sink=sink, ephemeral=True, **scope_kwargs
+            body.message,
+            intermediate_sink=sink,
+            ephemeral=True,
+            channel=channel,
+            chat_id=chat_id,
         )
     except Exception as exc:
         duration_ms = int((time.monotonic() - t0) * 1000)

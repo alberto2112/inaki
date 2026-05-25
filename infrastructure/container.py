@@ -158,7 +158,10 @@ class AgentContainer:
         # be a delegation target, regardless of whether it can INITIATE delegation.
         # (REQ-DG-1 still holds: the `delegate` tool is only registered when
         # delegation.enabled=True — see wire_delegation.)
-        self.run_agent_one_shot = RunAgentOneShotUseCase(
+        # Anotación explícita: el callsite en DelegateTool importa AgentContainer
+        # vía TYPE_CHECKING — el round trip cae en "Cannot determine type" si
+        # mypy no ve el tipo declarado acá.
+        self.run_agent_one_shot: RunAgentOneShotUseCase = RunAgentOneShotUseCase(
             llm=self._llm,
             tools=self._tools,
             agent_config=cfg,

@@ -274,13 +274,15 @@ def _render_inline(token: Token) -> str:
         elif t == "code_inline":
             out.append(f"<code>{_escape(child.content)}</code>")
         elif t == "link_open":
-            href = child.attrGet("href") or ""
+            # attrGet retorna str | int | float | None — normalizamos a str
+            # porque _escape requiere str y los hrefs son siempre cadenas.
+            href = str(child.attrGet("href") or "")
             out.append(f'<a href="{_escape(href)}">')
         elif t == "link_close":
             out.append("</a>")
         elif t == "image":
             alt = child.content or ""
-            src = child.attrGet("src") or ""
+            src = str(child.attrGet("src") or "")
             if src:
                 out.append(f'<a href="{_escape(src)}">{_escape(alt or src)}</a>')
             elif alt:

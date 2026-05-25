@@ -277,7 +277,9 @@ class WebSearchTool(ITool):
         max_results_raw = params.get("max_results")
         if max_results_raw not in (None, ""):
             try:
-                data["max_results"] = int(max_results_raw)
+                # max_results_raw es Any | None acá; el filtro de arriba
+                # descarta None y "" pero mypy no narrowea contra "".
+                data["max_results"] = int(max_results_raw)  # type: ignore[arg-type]
             except (TypeError, ValueError):
                 return self._error(
                     f"max_results inválido: '{max_results_raw}'. Debe ser un entero."

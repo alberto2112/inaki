@@ -26,7 +26,7 @@ def _mk_message(
     return msg
 
 
-def _mk_payload(*, bytes_result: bytes, mime_type: str | None, file_size: int):
+def _mk_payload(*, bytes_result: bytes, mime_type: str | None, file_size: int | None):
     """Construye un mock de Voice/Audio/VideoNote con get_file() async."""
     payload = MagicMock()
     payload.mime_type = mime_type

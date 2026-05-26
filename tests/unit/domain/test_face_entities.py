@@ -156,7 +156,7 @@ class TestMatchStatus:
 
 
 class TestFaceMatch:
-    def _persona(self, nombre: str = "Test", categoria: str | None = None) -> Person:
+    def _persona(self, nombre: str | None = "Test", categoria: str | None = None) -> Person:
         return Person(nombre=nombre, categoria=categoria)
 
     def _bbox(self) -> BBox:

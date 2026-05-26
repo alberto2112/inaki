@@ -79,7 +79,7 @@ class TestWebhookPayloadJsonRoundTrip:
         """WebhookPayload deserializes correctly via the TriggerPayload union."""
         from pydantic import TypeAdapter
 
-        adapter = TypeAdapter(TriggerPayload)
+        adapter: TypeAdapter = TypeAdapter(TriggerPayload)
         raw = {
             "type": "webhook",
             "url": "https://example.com/hook",

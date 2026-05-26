@@ -88,10 +88,10 @@ async def test_channel_send_cli_cae_en_hardcoded_file_y_persiste_metadata(
     # --- Assert: TaskLog persistido con metadata ---
     async with aiosqlite.connect(str(tmp_path / "sched.db")) as conn:
         conn.row_factory = aiosqlite.Row
-        rows = await conn.execute_fetchall(
+        rows = list(await conn.execute_fetchall(
             "SELECT status, metadata FROM task_logs WHERE task_id = ? AND status = 'success'",
             (task.id,),
-        )
+        ))
     assert len(rows) == 1
     metadata = json.loads(rows[0]["metadata"])
     assert metadata == {

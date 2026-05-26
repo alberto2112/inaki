@@ -31,7 +31,9 @@ def _make_field(label: str = "provider", kind: str = "scalar") -> Field:
 def _make_page_with_container(container: object) -> BasePage:
     """Crea una BasePage stub con un _container inyectado, sin montar en Textual."""
     page = BasePage.__new__(BasePage)
-    page._container = container
+    # _container es atributo de subclases (no declarado en BasePage) inyectado
+    # por los tests para simular el wiring del container post-construcción.
+    page._container = container  # type: ignore[attr-defined]
     return page
 
 
@@ -145,7 +147,7 @@ class TestAfterEditNullEscape:
         row_mock._field = field
         row_mock.refresh_value = MagicMock()
         page._rows = [row_mock]
-        page._container = None
+        page._container = None  # type: ignore[attr-defined]
         return page
 
     def test_null_escape_hatch_asigna_none(self):

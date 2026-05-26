@@ -10,7 +10,9 @@ from core.ports.outbound.daemon_client_port import IDaemonClient
 def test_idaemon_client_is_protocol() -> None:
     from typing import Protocol
 
-    assert issubclass(IDaemonClient, Protocol)
+    # issubclass acepta typing.Protocol como ClassInfo en runtime, pero el
+    # type hint de su segundo argumento lo rechaza estáticamente.
+    assert issubclass(IDaemonClient, Protocol)  # type: ignore[arg-type]
 
 
 def test_idaemon_client_has_health_method() -> None:

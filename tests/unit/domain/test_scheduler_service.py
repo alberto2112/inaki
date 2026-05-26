@@ -210,7 +210,7 @@ async def test_dispatch_webhook_calls_http_caller(
     task = _make_webhook_task()
     result = await service._dispatch_trigger(task)
 
-    service._dispatch.http_caller.call.assert_awaited_once_with(task.trigger_payload)
+    service._dispatch.http_caller.call.assert_awaited_once_with(task.trigger_payload)  # type: ignore[attr-defined]
     # _dispatch_trigger ahora devuelve (output, metadata)
     assert result == ("webhook response", None)
 
@@ -352,7 +352,7 @@ async def test_agent_send_con_output_channel_pasa_sink_construido_al_dispatcher(
 
     service._dispatch.channel_sender.build_intermediate_sink.assert_called_once_with("telegram:7")
     service._dispatch.llm_dispatcher.dispatch.assert_awaited_once()
-    call_kwargs = service._dispatch.llm_dispatcher.dispatch.await_args.kwargs
+    call_kwargs = service._dispatch.llm_dispatcher.dispatch.await_args.kwargs  # type: ignore[union-attr]
     assert call_kwargs["intermediate_sink"] is sentinel_sink
 
 
@@ -367,5 +367,5 @@ async def test_agent_send_sin_output_channel_no_construye_sink(
     await service._dispatch_trigger(task)
 
     service._dispatch.channel_sender.build_intermediate_sink.assert_not_called()
-    call_kwargs = service._dispatch.llm_dispatcher.dispatch.await_args.kwargs
+    call_kwargs = service._dispatch.llm_dispatcher.dispatch.await_args.kwargs  # type: ignore[union-attr]
     assert call_kwargs["intermediate_sink"] is None

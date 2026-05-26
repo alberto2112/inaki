@@ -279,4 +279,7 @@ class TestDocumentKnowledgeSourceSearch:
 
         assert stats["source_id"] == "stats-src"
         assert stats["archivos_indexados"] == 2
-        assert stats["chunks_totales"] > 0
+        # stats value es int | str | float | None per signature — el test
+        # sabe que chunks_totales es int. cast inline para satisfacer mypy.
+        chunks_totales = stats["chunks_totales"]
+        assert isinstance(chunks_totales, int) and chunks_totales > 0

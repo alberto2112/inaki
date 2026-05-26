@@ -17,7 +17,7 @@ def _mk_message(*, photos: list | None = None):
     return msg
 
 
-def _mk_photo_size(*, bytes_result: bytes, file_size: int):
+def _mk_photo_size(*, bytes_result: bytes, file_size: int | None):
     """Mock de PhotoSize con get_file() async."""
     ps = MagicMock()
     ps.file_size = file_size

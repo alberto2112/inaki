@@ -61,6 +61,13 @@ testpaths = ["tests"]
 line-length = 100
 target-version = "py311"
 
+[tool.mypy]
+# ext/ es territorio de extensiones de usuario (gitignored, ver CLAUDE.md).
+# Cada usuario gestiona su propio código de extensión — no versionamos ni
+# type-checkeamos. Si una extensión tiene errores, son responsabilidad del
+# usuario, no del proyecto.
+exclude = ["^ext/"]
+
 [[tool.mypy.overrides]]
 # Textual stubs son incompletos:
 #   - Las subclases de Screen no resuelven `push_screen` en type-check,

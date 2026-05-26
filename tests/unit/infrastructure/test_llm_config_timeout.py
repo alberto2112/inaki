@@ -35,9 +35,12 @@ def test_malformed_falls_back_to_60(value: object) -> None:
     Nada de fail-fast acá: priorizamos que el bootstrap del daemon no muera
     por un dedazo en el YAML.
     """
-    assert LLMConfig(timeout_seconds=value).timeout_seconds == 60
+    # El parametrize pasa tipos inválidos a propósito para verificar que el
+    # validator coerce/falla a 60 sin raisear — el ignore es por eso.
+    assert LLMConfig(timeout_seconds=value).timeout_seconds == 60  # type: ignore[arg-type]
 
 
 def test_string_numeric_is_coerced() -> None:
     """``int(v)`` acepta strings numéricos — valor positivo se respeta."""
-    assert LLMConfig(timeout_seconds="180").timeout_seconds == 180
+    # Idem: string es input inválido por la signature pero el validator lo coerce.
+    assert LLMConfig(timeout_seconds="180").timeout_seconds == 180  # type: ignore[arg-type]

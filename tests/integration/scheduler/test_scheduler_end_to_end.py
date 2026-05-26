@@ -201,9 +201,9 @@ async def test_agent_send_no_output_channel_stores_output(
 
     async with aiosqlite.connect(repo._db_path) as conn:
         conn.row_factory = aiosqlite.Row
-        rows = await conn.execute_fetchall(
+        rows = list(await conn.execute_fetchall(
             "SELECT * FROM task_logs WHERE task_id = ?", (saved_task.id,)
-        )
+        ))
     assert len(rows) >= 1
     success_logs = [r for r in rows if r["status"] == "success"]
     assert len(success_logs) == 1

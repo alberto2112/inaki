@@ -23,7 +23,7 @@ from infrastructure.config import ResolvedLLMConfig
 
 SYSTEM_PROMPT = "Eres un asistente de test."
 
-TOOL_CALLS = [
+TOOL_CALLS: list[dict] = [
     {
         "id": "call_123",
         "type": "function",

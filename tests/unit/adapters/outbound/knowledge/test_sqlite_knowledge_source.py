@@ -79,6 +79,9 @@ def _insert_chunk(
         (source_path, content, meta_json),
     )
     row_id = cursor.lastrowid
+    # lastrowid es Optional para SELECT, pero después de INSERT siempre tiene
+    # valor; el assert lo narrowea a int.
+    assert row_id is not None
     vec_bytes = struct.pack(f"{len(vector)}f", *vector)
     conn.execute(
         "INSERT INTO chunk_embeddings (rowid, embedding) VALUES (?, ?)",

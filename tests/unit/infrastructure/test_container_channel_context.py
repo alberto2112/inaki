@@ -279,7 +279,8 @@ def test_wire_scheduler_callable_no_es_lambda_none() -> None:
 
     container.wire_scheduler(uc, "UTC")
 
-    tool: SchedulerTool = container._tools._tools["scheduler"]
+    tool = container._tools._tools["scheduler"]
+    assert isinstance(tool, SchedulerTool)
 
     # Si seteamos un contexto y la callable lo refleja, NO es lambda: None
     ctx = ChannelContext(channel_type="cli", user_id="local")

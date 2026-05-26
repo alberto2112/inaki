@@ -52,6 +52,12 @@ class FakeMemory:
     async def get_all(self, *args, **kwargs):
         return []
 
+    async def delete(self, *args, **kwargs):
+        return None
+
+    async def update(self, *args, **kwargs):
+        return None
+
 
 class FakeKnowledgeSource(IKnowledgeSource):
     """Fuente de conocimiento mínima para tests."""
@@ -114,19 +120,18 @@ def _make_container(tmp_path: Path) -> AgentContainer:
     container._embedder = FakeEmbedder()
     container._memory = FakeMemory()
 
-    # Simular un agent_config mínimo
+    # Simular un agent_config mínimo — SimpleNamespace cubre el acceso por
+    # atributo que necesita el path bajo test (sin pagar AgentConfig completo).
     fake_cfg = types.SimpleNamespace(id="test-agent")
-    container.agent_config = fake_cfg
+    container.agent_config = fake_cfg  # type: ignore[assignment]
 
     # Simular global_config mínimo
     fake_global_cfg = types.SimpleNamespace(knowledge=None)
-    container._global_config = fake_global_cfg
+    container._global_config = fake_global_cfg  # type: ignore[assignment]
 
     # Fuentes de nivel 1+2 pre-cargadas (normalmente se cargan en _register_tools)
     memory_source = FakeMemoryKnowledgeSource()
     container._pending_knowledge_sources = [memory_source]
-    container._knowledge_max_chunks = 10
-    container._knowledge_token_budget = 4000
     container._knowledge_orchestrator = KnowledgeOrchestrator(
         sources=container._pending_knowledge_sources,
         max_total_chunks=10,
@@ -174,7 +179,7 @@ def test_ext_knowledge_source_registrada(tmp_path: Path) -> None:
 
     # Inyectar FakeKnowledgeSource como módulo importable por el manifest
     fake_mod = types.ModuleType("_test_ks_fake_mod")
-    fake_mod.FakeKnowledgeSource = FakeKnowledgeSource
+    setattr(fake_mod, "FakeKnowledgeSource", FakeKnowledgeSource)
     sys.modules["_test_ks_fake_mod"] = fake_mod
 
     _write_manifest(
@@ -209,7 +214,7 @@ def test_orden_descubrimiento_memoria_config_ext(tmp_path: Path) -> None:
     ext_dir.mkdir()
 
     fake_mod = types.ModuleType("_test_ks_order_mod")
-    fake_mod.FakeKnowledgeSource = FakeKnowledgeSource
+    setattr(fake_mod, "FakeKnowledgeSource", FakeKnowledgeSource)
     sys.modules["_test_ks_order_mod"] = fake_mod
 
     _write_manifest(
@@ -255,7 +260,7 @@ def test_factory_que_falla_loguea_warning_y_continua(tmp_path: Path, caplog) -> 
     ext_dir.mkdir()
 
     fake_mod = types.ModuleType("_test_ks_fail_mod")
-    fake_mod.FakeKnowledgeSource = FakeKnowledgeSource
+    setattr(fake_mod, "FakeKnowledgeSource", FakeKnowledgeSource)
     sys.modules["_test_ks_fail_mod"] = fake_mod
 
     # Dos factories: la primera falla, la segunda funciona

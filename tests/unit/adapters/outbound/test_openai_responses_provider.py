@@ -22,7 +22,9 @@ from infrastructure.config import ResolvedLLMConfig
 
 
 def _cfg(**overrides) -> ResolvedLLMConfig:
-    base = dict(
+    from typing import Any
+
+    base: dict[str, Any] = dict(
         provider="openai_responses",
         model="gpt-5.3-codex",
         temperature=0.2,
@@ -238,7 +240,7 @@ def test_parse_output_function_call_remapped_to_chat_format() -> None:
 
 
 def test_parse_output_text_and_function_calls_mixed() -> None:
-    output = [
+    output: list[dict] = [
         {
             "type": "message",
             "content": [{"type": "output_text", "text": "voy a buscar"}],
@@ -259,7 +261,7 @@ def test_parse_output_text_and_function_calls_mixed() -> None:
 
 def test_parse_output_ignores_unknown_item_types() -> None:
     """Items tipo reasoning, web_search_call, etc. se descartan silenciosamente."""
-    output = [
+    output: list[dict] = [
         {"type": "reasoning", "summary": "..."},
         {"type": "web_search_call", "id": "w1"},
         {

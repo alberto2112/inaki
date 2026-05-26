@@ -276,6 +276,11 @@ def test_wire_scheduler_idempotent_different_args() -> None:
     container.wire_scheduler(uc2, "Asia/Tokyo")  # second call — must be no-op
 
     tool = container._tools._tools["scheduler"]
+    # El registry tipa los valores como ITool; narrowamos a SchedulerTool para
+    # acceder a los atributos privados que validamos.
+    from adapters.outbound.tools.scheduler_tool import SchedulerTool
+
+    assert isinstance(tool, SchedulerTool)
     # The FIRST call's use case and timezone are preserved
     assert tool._uc is uc1
     assert tool._user_timezone == "UTC"

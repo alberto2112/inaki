@@ -970,7 +970,11 @@ async def test_create_channel_send_target_en_payload_descartado_silenciosamente(
 
     assert result.success is True
     call_arg: ScheduledTask = uc.create_task.call_args[0][0]
-    # target debe venir del contexto, no del LLM
+    # target debe venir del contexto, no del LLM. isinstance narrowea el Union
+    # de payloads y le da acceso a .target a mypy.
+    from core.domain.entities.task import ChannelSendPayload
+
+    assert isinstance(call_arg.trigger_payload, ChannelSendPayload)
     assert call_arg.trigger_payload.target == "telegram:123"
 
 

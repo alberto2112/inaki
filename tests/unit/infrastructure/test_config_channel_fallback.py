@@ -52,8 +52,11 @@ def test_scheduler_config_acepta_channel_fallback_custom() -> None:
 
 def test_scheduler_config_acepta_dict_anidado_yaml_like() -> None:
     """Simula cómo pydantic recibe el dict tras el merge de YAMLs."""
+    # Dict nested explícitamente — el **kwargs hacia pydantic mezcla tipos
+    # heterogéneos (str, dict) y mypy infiere dict[str, Collection[str]]
+    # que no encaja con la firma tipada de SchedulerConfig.
     scfg = SchedulerConfig(
-        **{
+        **{  # type: ignore[arg-type]
             "channel_fallback": {
                 "default": "file:///tmp/x.log",
                 "overrides": {"cli": "telegram:42"},

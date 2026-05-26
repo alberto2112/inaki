@@ -67,12 +67,12 @@ def test_get_history_usa_api_publica(client: TestClient, mock_run_agent: RunAgen
     response = client.get("/history")
 
     assert response.status_code == 200
-    mock_run_agent.get_history.assert_called_once()
+    mock_run_agent.get_history.assert_called_once()  # type: ignore[attr-defined]
 
 
 def test_get_history_retorna_mensajes(client: TestClient, mock_run_agent: RunAgentUseCase) -> None:
     """GET /history retorna los mensajes del historial en formato correcto."""
-    mock_run_agent.get_history.return_value = [
+    mock_run_agent.get_history.return_value = [  # type: ignore[attr-defined]
         Message(role=Role.USER, content="hola"),
         Message(role=Role.ASSISTANT, content="hola de vuelta"),
     ]
@@ -103,7 +103,7 @@ def test_delete_history_usa_api_publica(
     response = client.delete("/history")
 
     assert response.status_code == 200
-    mock_run_agent.clear_history.assert_called_once()
+    mock_run_agent.clear_history.assert_called_once()  # type: ignore[attr-defined]
 
 
 def test_delete_history_retorna_ok(client: TestClient) -> None:

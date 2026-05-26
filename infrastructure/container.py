@@ -51,6 +51,7 @@ from core.domain.errors import AgentNotFoundError, InakiError
 from core.domain.services.broadcast_buffer import BroadcastBuffer
 from core.domain.services.rate_limiter import FixedWindowRateLimiter
 from core.domain.services.scheduler_service import SchedulerService
+from core.ports.outbound.memory_port import IMemoryRepository
 from core.ports.outbound.transcription_port import ITranscriptionProvider
 from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
 from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
@@ -122,7 +123,12 @@ class AgentContainer:
         # y componen ResolvedXConfig contra el registry top-level de providers.
         self._embedder = EmbeddingProviderFactory.create(cfg.embedding, cfg.providers)
         self._embedding_cache = SqliteEmbeddingCache(cfg.embedding.cache_filename)
-        self._memory = SQLiteMemoryRepository(cfg.memory.db_filename, self._embedder)
+        # Anotamos como el port (IMemoryRepository) en vez del adapter concreto
+        # para que tests puedan inyectar fakes via Protocol estructural sin
+        # error de assignment.
+        self._memory: IMemoryRepository = SQLiteMemoryRepository(
+            cfg.memory.db_filename, self._embedder
+        )
         self._llm = LLMProviderFactory.create(cfg.llm, cfg.providers)
         self._skills = YamlSkillRepository(
             embedder=self._embedder,
@@ -577,7 +583,9 @@ class AgentContainer:
             targets,
         )
 
-    def wire_scheduler(self, schedule_task_uc: ScheduleTaskUseCase, user_timezone: str) -> None:
+    def wire_scheduler(
+        self, schedule_task_uc: ScheduleTaskUseCase | None, user_timezone: str
+    ) -> None:
         """
         Phase-3 wiring: registers the scheduler tool.
 

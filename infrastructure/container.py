@@ -27,6 +27,7 @@ from adapters.outbound.delegation.background_queue_adapter import (
 )
 from adapters.outbound.history.sqlite_history_store import SQLiteHistoryStore
 from adapters.outbound.memory.sqlite_memory_repo import SQLiteMemoryRepository
+from adapters.outbound.scope_registry_adapter import InMemoryScopeRegistryAdapter
 from adapters.outbound.scheduler.builtin_tasks import (
     CONSOLIDATE_MEMORY_TASK_ID,
     FACE_DEDUP_TASK_ID,
@@ -52,6 +53,7 @@ from core.domain.services.broadcast_buffer import BroadcastBuffer
 from core.domain.services.rate_limiter import FixedWindowRateLimiter
 from core.domain.services.scheduler_service import SchedulerService
 from core.ports.outbound.memory_port import IMemoryRepository
+from core.ports.outbound.scope_registry_port import IScopeRegistry
 from core.ports.outbound.transcription_port import ITranscriptionProvider
 from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
 from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
@@ -76,9 +78,20 @@ logger = logging.getLogger(__name__)
 class AgentContainer:
     """Container de dependencias para un agente concreto."""
 
-    def __init__(self, agent_config: AgentConfig, global_config: GlobalConfig) -> None:
+    def __init__(
+        self,
+        agent_config: AgentConfig,
+        global_config: GlobalConfig,
+        scope_registry: IScopeRegistry | None = None,
+    ) -> None:
         cfg = agent_config
         self.agent_config = agent_config
+
+        # Registry compartido de scopes activos para in-flight-message-injection.
+        # Si el caller no lo provee (tests directos), creamos uno local — pero la
+        # idea normal es que AppContainer pase la MISMA instancia a todos los
+        # agentes para que el state esté centralizado por scope.
+        self.scope_registry: IScopeRegistry = scope_registry or InMemoryScopeRegistryAdapter()
 
         # Stash global_config so wire_delegation can access delegation limits (task 5.1)
         self._global_config = global_config
@@ -158,6 +171,7 @@ class AgentContainer:
             agent_config=cfg,
             knowledge_orchestrator=self._knowledge_orchestrator,
             thinking_indicator=global_config.channels.thinking_indicator,
+            get_channel_context=self.get_channel_context,
         )
 
         # Every agent gets a one-shot use case unconditionally so it can always
@@ -1066,10 +1080,17 @@ class AppContainer:
         # para señalar al runner que debe reiniciar todos los channels.
         self.reloader = DaemonReloader()
 
+        # Registry compartido de scopes activos (in-flight-message-injection).
+        # Una sola instancia para TODOS los agentes — los scopes ya están
+        # aislados por agent_id en la tupla `(agent_id, channel, chat_id)`.
+        self.scope_registry: IScopeRegistry = InMemoryScopeRegistryAdapter()
+
         # Phase 1: build all AgentContainers (existing loop, unchanged)
         for agent_cfg in registry.list_all():
             try:
-                self.agents[agent_cfg.id] = AgentContainer(agent_cfg, global_config)
+                self.agents[agent_cfg.id] = AgentContainer(
+                    agent_cfg, global_config, scope_registry=self.scope_registry
+                )
                 logger.info("AgentContainer creado para '%s'", agent_cfg.id)
             except Exception as exc:
                 logger.error("Error creando container para agente '%s': %s", agent_cfg.id, exc)

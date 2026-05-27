@@ -21,6 +21,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime, timezone
+from typing import Callable
 from core.domain.entities.background_task import BackgroundTaskView
 from core.domain.entities.message import Message, Role
 from core.domain.entities.skill import Skill
@@ -30,6 +31,7 @@ from core.domain.services.prepend_timestamps import prepend_timestamps
 from core.domain.services.sticky_selector import apply_sticky
 from core.domain.value_objects.agent_context import AgentContext
 from core.domain.value_objects.agent_info import AgentInfoDTO
+from core.domain.value_objects.channel_context import ChannelContext
 from core.domain.value_objects.conversation_state import ConversationState
 from core.ports.outbound.background_delegation_port import IBackgroundDelegationQueue
 from core.ports.outbound.embedding_port import IEmbeddingProvider
@@ -94,6 +96,27 @@ def _coalesce_consecutive_same_role(messages: list[Message]) -> list[Message]:
         else:
             result.append(msg)
     return result
+
+
+# Texto que se inyecta como sección del system prompt para que el LLM sepa
+# interpretar mensajes role=user que aparezcan EN MEDIO de un tool loop como
+# aclaraciones/correcciones/aborts del trabajo en curso (feature
+# in-flight-message-injection). En INGLÉS por convención del proyecto
+# (system-prompts-language).
+_INFLIGHT_CLARIFICATIONS_SECTION = (
+    "## In-flight user clarifications\n\n"
+    "While you are working through tool calls, the user may send additional "
+    "messages on the same conversation. These messages will appear as new "
+    "`role=user` entries interleaved with your tool results — they are NOT a "
+    "new conversation turn.\n\n"
+    "Treat them as clarifications, corrections, additional constraints, or "
+    "abort signals for the work you are currently doing. Incorporate them into "
+    "the in-progress task without restarting completed steps when possible. "
+    "If the user clearly asks you to stop or change direction, abandon the "
+    "current branch and follow the new instruction. Respond once when the "
+    "combined task is complete — do not send a separate reply per injected "
+    "message."
+)
 
 
 def _render_in_flight_section(snap: list[BackgroundTaskView]) -> str:
@@ -179,6 +202,7 @@ class RunAgentUseCase:
         knowledge_orchestrator: KnowledgeOrchestrator | None = None,
         background_queue: IBackgroundDelegationQueue | None = None,
         thinking_indicator: bool = False,
+        get_channel_context: Callable[[], ChannelContext | None] | None = None,
     ) -> None:
         self._llm = llm
         self._memory = memory
@@ -197,6 +221,12 @@ class RunAgentUseCase:
         # Cuando está set, execute() inyecta una sección con el snapshot de
         # delegaciones in-flight en cada turno (REQ-BGD-7).
         self._background_queue = background_queue
+        # Lector del ``ChannelContext`` del turno (lo setea el adapter inbound vía
+        # ``AgentContainer.set_channel_context``). Lo usamos para resolver las variables
+        # ``{{CHANNEL.SENDER}}``, ``{{CHANNEL.USERNAME}}``, ``{{CHANNEL.FIRST_NAME}}`` y
+        # ``{{CHANNEL.LAST_NAME}}`` en el system prompt. Default ``None`` para no romper
+        # tests que construyen el use case sin container.
+        self._get_channel_context = get_channel_context
         # Extra sections injected by wire_delegation (task 6.1).
         # Empty by default — non-breaking when delegation is disabled.
         self._extra_system_sections: list[str] = []
@@ -245,6 +275,23 @@ class RunAgentUseCase:
         discovery section. Safe to call multiple times — replaces the list.
         """
         self._extra_system_sections = list(sections)
+
+    def _snapshot_sender(self) -> tuple[str | None, str | None, str | None, str | None]:
+        """Devuelve ``(sender_name, username, first_name, last_name)`` del turno.
+
+        Snapshot defensivo: el ``ChannelContext`` puede ser ``None`` (canal que no lo
+        setea, ej: scheduler triggers que invocan ``execute`` sin pasar por un adapter
+        inbound), y cualquiera de los 4 campos puede ser ``None`` (usuario sin
+        ``@username``, canal sin first_name, grupos donde no hay un único sender, etc.).
+        En todos esos casos las variables ``{{CHANNEL.*}}`` correspondientes quedan
+        literales en el system prompt — mismo criterio que ``{{WORKSPACE}}``.
+        """
+        if self._get_channel_context is None:
+            return (None, None, None, None)
+        ctx = self._get_channel_context()
+        if ctx is None:
+            return (None, None, None, None)
+        return (ctx.sender_name, ctx.username, ctx.first_name, ctx.last_name)
 
     def _read_user_context(self) -> str:
         """Lee ~/.inaki/USER.md. Retorna '' si no existe."""
@@ -386,6 +433,12 @@ class RunAgentUseCase:
             inflight_snap = self._background_queue.snapshot_inflight(agent_id)
             if inflight_snap:
                 extra_sections_snapshot.append(_render_in_flight_section(inflight_snap))
+
+        # Sección estática que le explica al LLM cómo interpretar mensajes
+        # role=user que aparezcan en medio del tool loop (in-flight-message-injection).
+        # Siempre presente: si nunca aparece un mensaje mid-loop, el LLM
+        # ignora la guidance sin costo. ~100 palabras.
+        extra_sections_snapshot.append(_INFLIGHT_CLARIFICATIONS_SECTION)
 
         # Aislar historial por (channel, chat_id) salvo que merge_chats esté activo.
         # Sin filtro, el LLM recibiría mensajes de otros chats del mismo agente
@@ -537,6 +590,9 @@ class RunAgentUseCase:
                     )
 
         user_context = self._read_user_context()
+        sender_name, sender_username, sender_first_name, sender_last_name = (
+            self._snapshot_sender()
+        )
         context = AgentContext(
             agent_id=agent_id,
             user_context=user_context,
@@ -546,6 +602,10 @@ class RunAgentUseCase:
             workspace_root=_workspace_absolute_path(self._cfg),
             channel=channel or None,
             chat_id=chat_id or None,
+            sender_name=sender_name,
+            sender_username=sender_username,
+            sender_first_name=sender_first_name,
+            sender_last_name=sender_last_name,
             knowledge_chunks=knowledge_chunks,
         )
         system_prompt = context.build_system_prompt(
@@ -608,6 +668,11 @@ class RunAgentUseCase:
                 agent_id=self._cfg.id,
                 intermediate_sink=intermediate_sink,
                 thinking_indicator=self._thinking_indicator,
+                # in-flight-message-injection: activamos drainage pasando el
+                # history store y el scope del turno. El loop releerá history
+                # entre iteraciones y drenará mensajes role=user nuevos.
+                history_store=self._history,
+                scope=(agent_id, channel, chat_id),
             )
         except ToolLoopMaxIterationsError as e:
             response = e.last_response or (
@@ -788,6 +853,9 @@ class RunAgentUseCase:
             )
 
         user_context = self._read_user_context()
+        sender_name, sender_username, sender_first_name, sender_last_name = (
+            self._snapshot_sender()
+        )
         context = AgentContext(
             agent_id=self._cfg.id,
             user_context=user_context,
@@ -797,6 +865,10 @@ class RunAgentUseCase:
             workspace_root=_workspace_absolute_path(self._cfg),
             channel=channel or None,
             chat_id=chat_id or None,
+            sender_name=sender_name,
+            sender_username=sender_username,
+            sender_first_name=sender_first_name,
+            sender_last_name=sender_last_name,
             knowledge_chunks=knowledge_chunks,
         )
         system_prompt = context.build_system_prompt(self._cfg.system_prompt)

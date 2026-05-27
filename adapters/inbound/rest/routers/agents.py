@@ -38,8 +38,24 @@ async def chat(
     container: AgentContainer = Depends(get_container),
 ) -> ChatResponse:
     info = container.run_agent.get_agent_info()
+    # REST per-agente sin channel/chat_id explícitos → scope con strings vacíos
+    # (mismo default que execute()). Aislamiento entre clientes REST: ninguno
+    # en V1 — comparten el mismo scope (agent_id, "", ""). Aceptable para
+    # uso doméstico Pi 5 con pocos clientes.
+    scope = (info.id, "", "")
     try:
-        response = await container.run_agent.execute(body.message)
+        if await container.scope_registry.try_mark_busy(scope):
+            # Scope libre → corremos un turno normal.
+            try:
+                response = await container.run_agent.execute(body.message)
+            finally:
+                await container.scope_registry.mark_idle(scope)
+        else:
+            # Scope ocupado por otro turno en curso. Persistimos el mensaje
+            # en history; el tool loop activo lo verá entre iteraciones via
+            # drainage e integrará la nueva instrucción a la tarea actual.
+            await container.run_agent.record_user_message(body.message, "", "")
+            response = "📝 Mensaje recibido — se incorporará al turno en curso."
     except Exception as exc:
         logger.exception("Error en /chat para agente '%s'", info.id)
         raise HTTPException(status_code=500, detail=str(exc))

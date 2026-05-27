@@ -85,9 +85,24 @@ async def chat_turn(body: ChatTurnRequest, request: Request) -> ChatTurnResponse
     ctx = ChannelContext(channel_type="cli", user_id=body.session_id)
     sink = BufferingIntermediateSink()
 
+    # Routing in-flight-message-injection: si el scope tiene un turno en curso,
+    # persistimos el mensaje en history y respondemos un ACK. El loop activo lo
+    # drenará entre iteraciones e integrará la nueva instrucción al turno actual.
+    # Default channel="" / chat_id="" porque execute() sin overrides usa esos.
+    agent_id = agent_container.run_agent.get_agent_info().id
+    scope = (agent_id, "", "")
     try:
         agent_container.set_channel_context(ctx)
-        reply = await agent_container.run_agent.execute(body.message, intermediate_sink=sink)
+        if await agent_container.scope_registry.try_mark_busy(scope):
+            try:
+                reply = await agent_container.run_agent.execute(
+                    body.message, intermediate_sink=sink
+                )
+            finally:
+                await agent_container.scope_registry.mark_idle(scope)
+        else:
+            await agent_container.run_agent.record_user_message(body.message, "", "")
+            reply = "📝 Mensaje recibido — se incorporará al turno en curso."
     except Exception as exc:
         duration_ms = int((time.monotonic() - t0) * 1000)
         logger.error(

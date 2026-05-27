@@ -133,3 +133,81 @@ def test_chat_id_vacio_lanza_error() -> None:
 def test_chat_id_solo_espacios_lanza_error() -> None:
     with pytest.raises(ValidationError):
         ChannelContext(channel_type="telegram", user_id="42", chat_id="   ")
+
+
+# ---------------------------------------------------------------------------
+# Sender fields opcionales (sender_name, username, first_name, last_name)
+# ---------------------------------------------------------------------------
+
+
+def test_sender_fields_default_none() -> None:
+    """Por defecto los 4 campos de identidad del remitente quedan en None."""
+    ctx = ChannelContext(channel_type="telegram", user_id="42")
+    assert ctx.sender_name is None
+    assert ctx.username is None
+    assert ctx.first_name is None
+    assert ctx.last_name is None
+
+
+def test_sender_fields_explicitos_se_preservan() -> None:
+    ctx = ChannelContext(
+        channel_type="telegram",
+        user_id="42",
+        sender_name="Juan Pérez (@juan_dev)",
+        username="juan_dev",
+        first_name="Juan",
+        last_name="Pérez",
+    )
+    assert ctx.sender_name == "Juan Pérez (@juan_dev)"
+    assert ctx.username == "juan_dev"
+    assert ctx.first_name == "Juan"
+    assert ctx.last_name == "Pérez"
+
+
+def test_sender_name_vacio_lanza_error() -> None:
+    with pytest.raises(ValidationError):
+        ChannelContext(channel_type="telegram", user_id="42", sender_name="")
+
+
+def test_sender_name_solo_espacios_lanza_error() -> None:
+    with pytest.raises(ValidationError):
+        ChannelContext(channel_type="telegram", user_id="42", sender_name="   ")
+
+
+def test_username_vacio_lanza_error() -> None:
+    with pytest.raises(ValidationError):
+        ChannelContext(channel_type="telegram", user_id="42", username="")
+
+
+def test_first_name_vacio_lanza_error() -> None:
+    with pytest.raises(ValidationError):
+        ChannelContext(channel_type="telegram", user_id="42", first_name="")
+
+
+def test_last_name_vacio_lanza_error() -> None:
+    with pytest.raises(ValidationError):
+        ChannelContext(channel_type="telegram", user_id="42", last_name="")
+
+
+def test_sender_fields_independientes() -> None:
+    """Cada campo puede setearse de forma independiente — caso real: usuario sin last_name."""
+    ctx = ChannelContext(
+        channel_type="telegram",
+        user_id="42",
+        sender_name="Juan (@juan_dev)",
+        username="juan_dev",
+        first_name="Juan",
+        # last_name omitido a propósito
+    )
+    assert ctx.first_name == "Juan"
+    assert ctx.last_name is None
+
+
+def test_sender_fields_no_afectan_routing_key() -> None:
+    ctx = ChannelContext(
+        channel_type="telegram",
+        user_id="42",
+        sender_name="Juan",
+        first_name="Juan",
+    )
+    assert ctx.routing_key == "telegram:42"

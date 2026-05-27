@@ -22,6 +22,7 @@ from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 from adapters.inbound.telegram.message_mapper import (
+    compose_sender_identity,
     dirigido_a,
     extract_audio_payload,
     extract_photo_payload,
@@ -188,7 +189,7 @@ class TelegramBot:
         if not self._token:
             raise ValueError(f"Agente '{agent_cfg.id}': channels.telegram.token no configurado")
 
-        self._app = Application.builder().token(self._token).build()
+        self._app = Application.builder().token(self._token).concurrent_updates(True).build()
         self._app.add_handler(CommandHandler("start", self._cmd_start))
         self._app.add_handler(CommandHandler("consolidate", self._cmd_consolidate))
         self._app.add_handler(CommandHandler("clear", self._cmd_clear))
@@ -1333,11 +1334,43 @@ class TelegramBot:
         secciones_no_vacias = [s for s in secciones if s]
         self._container.run_agent.set_extra_system_sections(secciones_no_vacias)
 
+        # Identidad del remitente — solo se puebla en chats privados, donde hay
+        # exactamente un único humano por turno y las variables {{CHANNEL.SENDER}}/
+        # {{CHANNEL.USERNAME}}/{{CHANNEL.FIRST_NAME}}/{{CHANNEL.LAST_NAME}} tienen un
+        # valor unívoco. En grupos los 4 campos quedan en None: la identidad por
+        # mensaje ya va embebida en el contenido (format_group_message agrega el
+        # prefijo "@sender said: ..." y los flushes pueden mezclar varios autores en
+        # un mismo turno). Resolver las variables a una sola persona en ese contexto
+        # sería incorrecto.
+        def _safe_str(val: object) -> str | None:
+            """Solo devuelve ``val`` si es un str no vacío. Filtra MagicMocks (tests con
+            ``update = MagicMock()`` no setean estos campos) y cualquier no-string defensivo
+            del lado de telegram. ``ChannelContext`` rechaza strings vacíos vía validator."""
+            if isinstance(val, str) and val.strip():
+                return val
+            return None
+
+        sender_name: str | None = None
+        sender_username: str | None = None
+        sender_first_name: str | None = None
+        sender_last_name: str | None = None
+        if not es_grupo and update.message is not None:
+            from_user = getattr(update.message, "from_user", None)
+            if from_user is not None:
+                sender_username = _safe_str(getattr(from_user, "username", None))
+                sender_first_name = _safe_str(getattr(from_user, "first_name", None))
+                sender_last_name = _safe_str(getattr(from_user, "last_name", None))
+            sender_name = _safe_str(compose_sender_identity(update.message))
+
         self._container.set_channel_context(
             ChannelContext(
                 channel_type="telegram",
                 user_id=str(user.id),
                 chat_id=str(chat_id),
+                sender_name=sender_name,
+                username=sender_username,
+                first_name=sender_first_name,
+                last_name=sender_last_name,
             )
         )
         # En grupos NO usamos intermediate_sink: los intermedios del LLM (texto que
@@ -1347,13 +1380,53 @@ class TelegramBot:
         live_sink: TelegramLiveIntermediateSink | None = (
             None if es_grupo else TelegramLiveIntermediateSink(bot=self, chat_id=chat_id)
         )
+        # In-flight-message-injection: para chats PRIVADOS, si ya hay un turno
+        # corriendo en este scope, persistimos el mensaje y ACK rápido. El loop
+        # en curso drenará el mensaje entre iteraciones via history.db.
+        # Para GRUPOS mantenemos el flow legacy: ya tienen su propio buffer-delay
+        # vía _schedule_group_flush + record_user_message, y la inyección
+        # in-flight no aplica (SCN-IFI-13/14 del spec).
+        agent_id = self._container.run_agent.get_agent_info().id
+        scope = (agent_id, "telegram", str(chat_id))
+        skip_marker_value = (
+            "__SKIP__" if (self._behavior == "autonomous" and es_grupo) else None
+        )
+
+        # Si es grupo o si user_input is None (modo history-derived: foto enriquecida)
+        # → saltar el branch in-flight y caer en el flow legacy.
+        use_inflight_routing = not es_grupo and user_input is not None
+
+        # Flag para saber si DEBEMOS liberar el slot en el finally. Solo se libera
+        # cuando esta misma invocación lo adquirió. Sin esto, una llamada que NO
+        # tomó el slot podría liberarlo y arruinar un turno de OTRA invocación
+        # legítima que sí lo tiene.
+        slot_acquired = False
+
         try:
+            if use_inflight_routing:
+                # use_inflight_routing implica user_input is not None (ver
+                # asignación arriba); asertamos para narrowear el tipo a str.
+                assert user_input is not None
+                slot_acquired = await self._container.scope_registry.try_mark_busy(scope)
+                if not slot_acquired:
+                    # Scope ocupado por otro turno: persistir + ACK rápido.
+                    await self._container.run_agent.record_user_message(
+                        user_input, "telegram", str(chat_id)
+                    )
+                    if update.message is not None:
+                        await update.message.reply_text(
+                            "📝 Lo incorporo a lo que estoy haciendo, dame un momento."
+                        )
+                    return
+
+            # Camino normal: ejecutamos el turno. Si slot_acquired=True, el finally
+            # libera el slot. Si False (caso grupo), el slot no existe y no hace falta.
             response = await self._container.run_agent.execute(
                 user_input,
                 intermediate_sink=live_sink,
                 channel="telegram",
                 chat_id=str(chat_id),
-                skip_marker=("__SKIP__" if (self._behavior == "autonomous" and es_grupo) else None),
+                skip_marker=skip_marker_value,
             )
 
             # Verificar marcador __SKIP__ — solo aplica en modo autónomo en grupos.
@@ -1385,6 +1458,11 @@ class TelegramBot:
             await message.reply_text(f"Error: {exc}")
             await self._set_reaction(update, "👎")
         finally:
+            # Liberar el slot del scope registry SIEMPRE que lo hayamos adquirido,
+            # incluso si execute() lanzó excepción. Sin esto un bug en el turno
+            # dejaría el scope marcado busy para siempre.
+            if slot_acquired:
+                await self._container.scope_registry.mark_idle(scope)
             self._container.set_channel_context(None)
             # Limpiar extra_sections después del turno para no contaminar el siguiente.
             self._container.run_agent.set_extra_system_sections([])

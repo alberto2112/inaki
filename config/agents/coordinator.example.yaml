@@ -54,9 +54,11 @@ delegation:
                                 # Set to false (or omit) to disable delegation.
 
   allowed_targets:              # Explicit allow-list of agent ids this coordinator
-    - researcher                # may delegate to. Agents NOT listed here will
-    - coder                     # receive `target_not_allowed` at runtime even if
-                                # their YAML exists.
+    - researcher                # may delegate to. If this key is omitted (or left
+    - coder                     # as an empty list), ALL registered agents are valid
+                                # targets — no restriction applied.
+                                # Agents listed here that are NOT registered receive
+                                # `target_not_allowed` at runtime without raising.
                                 #
                                 # Replace "researcher" and "coder" with the actual
                                 # ids of the agents you have configured.

@@ -13,6 +13,7 @@ from abc import abstractmethod
 from typing import Any
 
 from core.ports.outbound.transcription_port import ITranscriptionProvider
+from infrastructure.config import ResolvedTranscriptionConfig
 
 # Groq (y OpenAI Whisper) usan la extensión del filename para detectar el formato
 # cuando el content-type multipart no es suficiente.
@@ -37,6 +38,11 @@ class BaseTranscriptionProvider(ITranscriptionProvider):
     """
 
     REQUIRES_CREDENTIALS: bool = True
+
+    def __init__(self, cfg: ResolvedTranscriptionConfig) -> None:
+        """Signature común para la factory (`adapter_type(resolved)`).
+        Las subclases override este __init__ para su setup específico."""
+        self._cfg = cfg
 
     @staticmethod
     def _format_response_log(provider: str, text: str) -> str:

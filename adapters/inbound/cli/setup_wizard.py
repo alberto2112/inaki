@@ -115,7 +115,9 @@ def run_setup() -> None:
                 print("  → Omitida (valor vacío).\n")
                 continue
 
-        set_key(str(_env_path()), var["key"], value)
+        # var["key"] viene de un dict heterogéneo (str/bool) — cast a str
+        # explícito para set_key, que valida el tipo del nombre de la variable.
+        set_key(str(_env_path()), str(var["key"]), value)
         print(f"  → Guardada en {_env_path().name}.\n")
 
     print(_SEP)

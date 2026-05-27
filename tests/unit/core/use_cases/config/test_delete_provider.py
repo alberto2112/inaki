@@ -23,7 +23,7 @@ def _repo_con_providers(global_providers: dict, secrets_providers: dict) -> Magi
     return repo
 
 
-def test_elimina_provider_de_global(repo: MagicMock = None) -> None:
+def test_elimina_provider_de_global() -> None:
     """El provider se elimina de global.yaml."""
     repo = _repo_con_providers(
         {"groq": {"type": "groq"}, "openai": {"type": "openai"}},

@@ -373,7 +373,7 @@ async def test_happy_path_end_to_end(tmp_path):
     # must embed a DelegationResult with status="success".
     # We verify by inspecting the messages list in the parent's 2nd LLM call:
     # the last message before the final call is [Resultados de tools] containing JSON.
-    parent_second_call_messages = parent_llm.complete.call_args_list[1].args[0]
+    parent_second_call_messages = parent_llm.complete.call_args_list[1].args[0]  # type: ignore[attr-defined]
     tool_result_msg = parent_second_call_messages[-1]
     # El tool result se inyecta como JSON puro en el content del mensaje TOOL.
     dr = DelegationResult.model_validate_json(tool_result_msg.content)
@@ -399,7 +399,7 @@ async def _run_delegation_and_extract_result(
     await parent_container.run_agent.execute(task)
     # The second call to parent LLM carries the tool result
     parent_llm = parent_container._llm
-    second_call_messages = parent_llm.complete.call_args_list[1].args[0]
+    second_call_messages = parent_llm.complete.call_args_list[1].args[0]  # type: ignore[attr-defined]
     tool_result_msg = second_call_messages[-1]
     return DelegationResult.model_validate_json(tool_result_msg.content)
 
@@ -783,9 +783,11 @@ async def test_failure_modes_canonical_reason_strings(scenario: str, expected_re
     result_text = await parent_container.run_agent.execute("task")
     assert isinstance(result_text, str)
 
-    # Extract the DelegationResult from the tool result message
-    parent_llm = parent_container._llm
-    second_call_messages = parent_llm.complete.call_args_list[1].args[0]
+    # Extract the DelegationResult from the tool result message.
+    # Renombrado a parent_llm_used para evitar la incompatibilidad con la
+    # binding previa (parent_llm: AsyncMock asignado en el scenario branch).
+    parent_llm_used = parent_container._llm
+    second_call_messages = parent_llm_used.complete.call_args_list[1].args[0]  # type: ignore[attr-defined]
     tool_result_msg = second_call_messages[-1]
     dr = DelegationResult.model_validate_json(tool_result_msg.content)
 
@@ -1028,7 +1030,7 @@ async def test_child_with_delegation_disabled_can_be_delegation_target(tmp_path)
     assert isinstance(result, str), "parent.execute() must return a string"
 
     # Assertion 2: DelegationResult must have status="success"
-    second_call_messages = parent_llm.complete.call_args_list[1].args[0]
+    second_call_messages = parent_llm.complete.call_args_list[1].args[0]  # type: ignore[attr-defined]
     tool_result_msg = second_call_messages[-1]
     dr = DelegationResult.model_validate_json(tool_result_msg.content)
     assert dr.status == "success", (

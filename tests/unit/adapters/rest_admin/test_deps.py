@@ -53,7 +53,7 @@ def test_sin_auth_key_configurada_devuelve_403() -> None:
 
 
 def test_acepta_header_correcto() -> None:
-    """Header correcto → no levanta excepción, retorna None."""
+    """Header correcto → no levanta excepción. Signature ya declara -> None,
+    basta con verificar que no raisea."""
     request = _mock_request(header="clave-secreta", auth_key="clave-secreta")
-    resultado = check_admin_auth(request)
-    assert resultado is None
+    check_admin_auth(request)

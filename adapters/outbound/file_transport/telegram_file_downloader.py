@@ -34,6 +34,9 @@ class TelegramFileDownloader(IFileDownloader):
 
         dest.parent.mkdir(parents=True, exist_ok=True)
 
-        file_obj = await ptb_bot.get_file(file_id)
+        # ptb_bot acá es Any | object por el getattr defensivo de arriba.
+        # En runtime es siempre un telegram.Bot real (de PTB) o un mock con la
+        # misma interfaz — get_file existe en ambos casos.
+        file_obj = await ptb_bot.get_file(file_id)  # type: ignore[union-attr]
         await file_obj.download_to_drive(custom_path=str(dest))
         logger.debug("file_id=%s descargado a %s", file_id, dest)

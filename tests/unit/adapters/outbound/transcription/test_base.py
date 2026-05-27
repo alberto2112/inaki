@@ -19,8 +19,10 @@ def test_base_hereda_de_port() -> None:
 
 
 def test_no_se_puede_instanciar_sin_transcribe() -> None:
+    # Pasamos cfg=None ignorando el type: el TypeError esperado viene del
+    # @abstractmethod `transcribe`, no de la signature del __init__.
     with pytest.raises(TypeError):
-        BaseTranscriptionProvider()  # type: ignore[abstract]
+        BaseTranscriptionProvider(None)  # type: ignore[abstract,arg-type]
 
 
 def test_format_response_log_incluye_provider_y_length() -> None:

@@ -90,15 +90,15 @@ async def test_end_to_end_async_delegation() -> None:
     # ----- Asserts -----
     # El hijo se ejecutó UNA vez con el prompt original
     target_one_shot.execute.assert_awaited_once()
-    kwargs = target_one_shot.execute.await_args.kwargs
+    kwargs = target_one_shot.execute.await_args.kwargs  # type: ignore[union-attr]
     assert kwargs["task"] == "averiguá el saldo de Galicia"
     assert kwargs["max_iterations"] == 5
     assert kwargs["timeout_seconds"] == 10
 
     # El dispatcher invocó run_agent.execute del PADRE con marker correcto
     assert caller.run_agent.execute.await_count == 1
-    dispatched_kwargs = caller.run_agent.execute.await_args.kwargs
-    dispatched_prompt = caller.run_agent.execute.await_args.args[0]
+    dispatched_kwargs = caller.run_agent.execute.await_args.kwargs  # type: ignore[union-attr]
+    dispatched_prompt = caller.run_agent.execute.await_args.args[0]  # type: ignore[union-attr]
     assert dispatched_prompt == "[bg-1] Saldo $5.420"
     assert dispatched_kwargs["channel"] == "telegram"
     assert dispatched_kwargs["chat_id"] == "42"

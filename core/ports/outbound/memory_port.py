@@ -1,19 +1,25 @@
-from abc import ABC, abstractmethod
+from typing import Protocol, runtime_checkable
+
 from core.domain.entities.memory import MemoryEntry
 
 
-class IMemoryRepository(ABC):
-    @abstractmethod
+@runtime_checkable
+class IMemoryRepository(Protocol):
+    """Port estructural para repositorios de memoria.
+
+    Declarado como Protocol (no ABC) para permitir duck typing — útil en
+    tests con fakes que implementan los métodos sin heredar explícitamente.
+    Misma convención que IEmbeddingProvider.
+    """
+
     async def store(self, entry: MemoryEntry) -> None: ...
 
-    @abstractmethod
     async def search(
         self,
         query_embedding: list[float],
         top_k: int = 5,
     ) -> list[MemoryEntry]: ...
 
-    @abstractmethod
     async def search_with_scores(
         self,
         query_vec: list[float],
@@ -35,7 +41,6 @@ class IMemoryRepository(ABC):
         """
         ...
 
-    @abstractmethod
     async def get_recent(
         self,
         limit: int = 10,
@@ -52,7 +57,6 @@ class IMemoryRepository(ABC):
         """
         ...
 
-    @abstractmethod
     async def delete(self, memory_id: str) -> MemoryEntry | None:
         """
         Soft-delete por id. La entry deja de aparecer en ``search`` y
@@ -63,7 +67,6 @@ class IMemoryRepository(ABC):
         """
         ...
 
-    @abstractmethod
     async def update(
         self,
         memory_id: str,

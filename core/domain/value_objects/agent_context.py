@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, tzinfo
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel
@@ -51,6 +51,10 @@ def _resolve_vars(
     if not _VAR_RE.search(text):
         return text
 
+    # tzinfo | None es el tipo común: ZoneInfo cuando hay match, fallback al
+    # tz del proceso si tz_name no resuelve o está vacío (puede ser None si el
+    # sistema no expone tzinfo).
+    tz: tzinfo | None
     if tz_name:
         try:
             tz = ZoneInfo(tz_name)

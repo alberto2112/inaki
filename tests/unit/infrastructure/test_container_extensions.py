@@ -123,7 +123,7 @@ def test_happy_path_tool_and_skill(tmp_path: Path, monkeypatch) -> None:
 
     # Necesitamos que FakeTool sea importable desde el manifest — inyectamos el módulo
     fake_mod = types.ModuleType("_test_fake_tool_mod")
-    fake_mod.FakeTool = FakeTool
+    setattr(fake_mod, "FakeTool", FakeTool)
     sys.modules["_test_fake_tool_mod"] = fake_mod
 
     skill_file = _write_skill_yaml(ext_dir, "myext", "myext.yaml", "my_skill")
@@ -188,7 +188,7 @@ def test_tool_instantiation_error_skipped(tmp_path: Path) -> None:
     ext_dir.mkdir()
 
     fail_mod = types.ModuleType("_test_failing_tool_mod")
-    fail_mod.FailingTool = FailingTool
+    setattr(fail_mod, "FailingTool", FailingTool)
     sys.modules["_test_failing_tool_mod"] = fail_mod
 
     _write_manifest(
@@ -212,7 +212,7 @@ def test_missing_skill_file_warning(tmp_path: Path, caplog) -> None:
     ext_dir.mkdir()
 
     fake_mod = types.ModuleType("_test_fake_tool_mod2")
-    fake_mod.FakeTool = FakeTool
+    setattr(fake_mod, "FakeTool", FakeTool)
     sys.modules["_test_fake_tool_mod2"] = fake_mod
 
     _write_manifest(
@@ -242,7 +242,7 @@ def test_name_collision_warning(tmp_path: Path, caplog) -> None:
 
     # Pre-registrar FakeTool como "built-in"
     fake_mod = types.ModuleType("_test_fake_tool_mod3")
-    fake_mod.FakeTool = FakeTool
+    setattr(fake_mod, "FakeTool", FakeTool)
     sys.modules["_test_fake_tool_mod3"] = fake_mod
 
     _write_manifest(
@@ -288,11 +288,11 @@ def test_multiple_dirs_order(tmp_path: Path) -> None:
             return ToolResult(tool_name=self.name, output="b", success=True)
 
     mod_a = types.ModuleType("_test_tool_a_mod")
-    mod_a.ToolA = ToolA
+    setattr(mod_a, "ToolA", ToolA)
     sys.modules["_test_tool_a_mod"] = mod_a
 
     mod_b = types.ModuleType("_test_tool_b_mod")
-    mod_b.ToolB = ToolB
+    setattr(mod_b, "ToolB", ToolB)
     sys.modules["_test_tool_b_mod"] = mod_b
 
     _write_manifest(

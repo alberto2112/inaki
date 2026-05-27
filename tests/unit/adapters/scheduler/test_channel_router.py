@@ -20,8 +20,10 @@ def _mk_router(
     native = native_prefixes or {}
     cfg = fallback or ChannelFallbackConfig()
     factory = SinkFactory(get_telegram_bot=lambda: AsyncMock())
+    # native_prefixes contiene mocks que satisfacen IOutboundSink
+    # estructuralmente — pero el tipo declarado en el helper es genérico.
     return ChannelRouter(
-        native_sinks=native,
+        native_sinks=native,  # type: ignore[arg-type]
         fallback_config=cfg,
         sink_factory=factory.from_target,
     )

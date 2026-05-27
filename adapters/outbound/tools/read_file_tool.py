@@ -51,7 +51,7 @@ class ReadFileTool(ITool):
         self._workspace = workspace
         self._containment = containment
 
-    async def execute(
+    async def execute(  # type: ignore[override]
         self,
         file_path: str,
         max_lines: int | None = 0,

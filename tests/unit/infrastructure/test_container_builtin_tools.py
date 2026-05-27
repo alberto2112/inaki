@@ -27,8 +27,14 @@ class FakeMemory:
     async def search_with_scores(self, query_vec, top_k=5):
         return []
 
-    async def get_recent(self, limit=10):
+    async def get_recent(self, limit=10, agent_id=None, channel=None, chat_id=None):
         return []
+
+    async def delete(self, memory_id):
+        return None
+
+    async def update(self, memory_id, content=None, tags=None, relevance=None, embedding=None):
+        return None
 
 
 def _make_container(tmp_path: Path) -> AgentContainer:
@@ -38,7 +44,7 @@ def _make_container(tmp_path: Path) -> AgentContainer:
     container._skills = YamlSkillRepository(embedder)
     container._embedder = embedder
     container._memory = FakeMemory()
-    container.agent_config = SimpleNamespace(
+    container.agent_config = SimpleNamespace(  # type: ignore[assignment]
         id="test-agent",
         workspace=SimpleNamespace(
             path=str(tmp_path / "workspace"),
@@ -46,7 +52,7 @@ def _make_container(tmp_path: Path) -> AgentContainer:
         ),
     )
     # _global_config necesario para _build_knowledge_orchestrator
-    container._global_config = SimpleNamespace(knowledge=None)
+    container._global_config = SimpleNamespace(knowledge=None)  # type: ignore[assignment]
     return container
 
 

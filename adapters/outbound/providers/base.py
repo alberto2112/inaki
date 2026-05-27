@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 from core.domain.entities.message import Message, Role
 from core.domain.value_objects.llm_response import LLMResponse
 from core.ports.outbound.llm_port import ILLMProvider
+from infrastructure.config import ResolvedLLMConfig
 
 
 class BaseLLMProvider(ILLMProvider):
@@ -14,6 +15,13 @@ class BaseLLMProvider(ILLMProvider):
     """
 
     REQUIRES_CREDENTIALS: bool = True
+
+    def __init__(self, cfg: ResolvedLLMConfig) -> None:
+        """Declara la signature común de los providers para que la factory
+        pueda instanciar `adapter_type(resolved)` con type-check correcto.
+        Las subclases override este __init__ para hacer su setup específico
+        (httpx client, headers, etc.), no llaman super().__init__()."""
+        self._cfg = cfg
 
     @staticmethod
     def _format_response_log(provider: str, content: str, tool_calls: list[dict]) -> str:
@@ -77,8 +85,12 @@ class BaseLLMProvider(ILLMProvider):
     ) -> LLMResponse: ...
 
     @abstractmethod
-    async def stream(
+    def stream(
         self,
         messages: list[Message],
         system_prompt: str,
-    ) -> AsyncIterator[str]: ...
+    ) -> AsyncIterator[str]:
+        """Stream de chunks de texto. Ver docstring en
+        ``core.ports.outbound.llm_port.ILLMProvider.stream`` para el detalle
+        de por qué se declara como ``def`` y no ``async def``."""
+        ...

@@ -24,8 +24,18 @@ class ILLMProvider(ABC):
     ) -> LLMResponse: ...
 
     @abstractmethod
-    async def stream(
+    def stream(
         self,
         messages: list[Message],
         system_prompt: str,
-    ) -> AsyncIterator[str]: ...
+    ) -> AsyncIterator[str]:
+        """Stream de chunks de texto. Las implementaciones son async generators
+        (``async def`` con ``yield``) que devuelven un ``AsyncIterator[str]``.
+
+        El abstract se declara como ``def`` (no ``async def``) porque sin un
+        ``yield`` interno mypy interpretaría ``async def`` como una corrutina
+        que devuelve un AsyncIterator — incompatible con los async generators
+        de las implementaciones. Ver
+        https://mypy.readthedocs.io/en/stable/more_types.html#asynchronous-iterators.
+        """
+        ...

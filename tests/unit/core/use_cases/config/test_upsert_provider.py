@@ -30,7 +30,7 @@ def test_api_key_va_a_secrets(repo: MagicMock) -> None:
     assert LayerName.GLOBAL_SECRETS in capas_escritas
 
     # Y que el GLOBAL no tiene api_key
-    escritura_global = next(
+    escritura_global: dict = next(
         (c[0][1] for c in repo.write_layer.call_args_list if c[0][0] == LayerName.GLOBAL),
         {},
     )

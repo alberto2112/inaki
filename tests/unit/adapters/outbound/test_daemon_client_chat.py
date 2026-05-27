@@ -357,23 +357,23 @@ def test_chat_clear_envia_auth_header(client: DaemonClient) -> None:
 
 
 def test_chat_clear_retorna_none_en_204(client: DaemonClient) -> None:
-    """chat_clear retorna None en éxito (204)."""
+    """chat_clear retorna None en éxito (204).
+
+    Nota: la signature ya declara `-> None`. El test verifica que el método
+    no raisea ante 204 (vs 500/etc) — basta con llamarlo sin asignar.
+    """
     with patch("httpx.delete") as mock_delete:
         mock_delete.return_value = MagicMock(status_code=204)
-        result = client.chat_clear("dev")
-
-    assert result is None
+        client.chat_clear("dev")
 
 
 def test_chat_clear_retorna_none_en_200(client: DaemonClient) -> None:
-    """chat_clear retorna None en éxito (200)."""
+    """chat_clear retorna None en éxito (200) — ver nota en test_204."""
     with patch("httpx.delete") as mock_delete:
         mock_resp = MagicMock(status_code=200)
         mock_resp.json.return_value = {"agent_id": "dev", "cleared": True}
         mock_delete.return_value = mock_resp
-        result = client.chat_clear("dev")
-
-    assert result is None
+        client.chat_clear("dev")
 
 
 def test_chat_clear_404_raises_unknown_agent(client: DaemonClient) -> None:

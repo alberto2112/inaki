@@ -66,6 +66,17 @@ async def chat(
 async def consolidate(
     container: AgentContainer = Depends(get_container),
 ) -> ConsolidateResponse:
+    if container.consolidate_memory is None:
+        # consolidate_memory es None cuando memory.enabled=false en el agent
+        # config. Devolvemos 503 (Service Unavailable) en vez de 500 porque
+        # es una config esperada, no un error interno.
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "El agente no tiene 'memory.enabled=true' en su config — "
+                "consolidate no está disponible."
+            ),
+        )
     try:
         result = await container.consolidate_memory.execute()
     except Exception as exc:

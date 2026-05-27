@@ -157,7 +157,7 @@ class LLMConfig(BaseModel):
     @classmethod
     def _coerce_timeout(cls, v: object) -> int:
         try:
-            n = int(v)  # type: ignore[arg-type]
+            n = int(v)  # type: ignore[call-overload]
             return n if n > 0 else _LLM_TIMEOUT_FALLBACK
         except (TypeError, ValueError):
             return _LLM_TIMEOUT_FALLBACK

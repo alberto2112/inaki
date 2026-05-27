@@ -226,9 +226,9 @@ def test_wire_delegation_registers_tool_when_enabled(tmp_path) -> None:
 
     # get_container_mock IS called during wiring to build the discovery section
     # (once per sub_agent_id). All return None here → no section set.
-    get_container_mock.assert_called_once_with("specialist-agent")
+    get_container_mock.assert_called_once_with("specialist-agent")  # type: ignore[attr-defined]
     # All targets returned None → no extra sections set on run_agent
-    container.run_agent.set_extra_system_sections.assert_not_called()
+    container.run_agent.set_extra_system_sections.assert_not_called()  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
@@ -387,7 +387,8 @@ def test_wire_delegation_closure_late_binding(tmp_path) -> None:
     container_a.wire_delegation(_get_agent_container, sub_agent_ids=["late-b"])
 
     # The delegate tool in container_a holds the closure we passed
-    delegate_tool: DelegateTool = container_a._tools._tools["delegate"]
+    delegate_tool = container_a._tools._tools["delegate"]
+    assert isinstance(delegate_tool, DelegateTool)
 
     # Invoke the closure — it must see BOTH containers (late binding, not a snapshot)
     assert delegate_tool._get_agent_container("late-b") is container_b, (
@@ -478,8 +479,8 @@ def test_discovery_section_present_when_enabled(tmp_path) -> None:
     parent.wire_delegation(_get_container, sub_agent_ids=["agent-b"])
 
     # set_extra_system_sections MUST have been called
-    parent.run_agent.set_extra_system_sections.assert_called_once()
-    call_args = parent.run_agent.set_extra_system_sections.call_args[0][0]
+    parent.run_agent.set_extra_system_sections.assert_called_once()  # type: ignore[attr-defined]
+    call_args = parent.run_agent.set_extra_system_sections.call_args[0][0]  # type: ignore[attr-defined]
     assert isinstance(call_args, list) and len(call_args) == 1
     section = call_args[0]
 
@@ -519,8 +520,8 @@ def test_discovery_section_filtered_by_allowlist(tmp_path) -> None:
     # Solo agent-b es sub-agente — la sección solo debe mostrar agent-b
     parent.wire_delegation(registry.get, sub_agent_ids=["agent-b"])
 
-    parent.run_agent.set_extra_system_sections.assert_called_once()
-    section = parent.run_agent.set_extra_system_sections.call_args[0][0][0]
+    parent.run_agent.set_extra_system_sections.assert_called_once()  # type: ignore[attr-defined]
+    section = parent.run_agent.set_extra_system_sections.call_args[0][0][0]  # type: ignore[attr-defined]
 
     assert "agent-b" in section
     assert "agent-a" not in section, "agent-a must NOT appear (not a sub-agent)"
@@ -551,7 +552,7 @@ def test_discovery_section_absent_when_disabled(tmp_path) -> None:
 
     parent.wire_delegation(get_container)
 
-    parent.run_agent.set_extra_system_sections.assert_not_called()
+    parent.run_agent.set_extra_system_sections.assert_not_called()  # type: ignore[attr-defined]
     get_container.assert_not_called()
 
 
@@ -579,7 +580,7 @@ def test_discovery_section_empty_allowlist(tmp_path) -> None:
     parent.wire_delegation(get_container)
 
     # No discovery section (empty allow-list → nothing to enumerate)
-    parent.run_agent.set_extra_system_sections.assert_not_called()
+    parent.run_agent.set_extra_system_sections.assert_not_called()  # type: ignore[attr-defined]
     # get_container should not be called for enumeration (no targets)
     get_container.assert_not_called()
 
@@ -611,8 +612,8 @@ def test_discovery_section_unknown_targets_skipped(tmp_path) -> None:
     # Must not raise even though "ghost" doesn't exist
     parent.wire_delegation(_get_container, sub_agent_ids=["agent-b", "ghost"])
 
-    parent.run_agent.set_extra_system_sections.assert_called_once()
-    section = parent.run_agent.set_extra_system_sections.call_args[0][0][0]
+    parent.run_agent.set_extra_system_sections.assert_called_once()  # type: ignore[attr-defined]
+    section = parent.run_agent.set_extra_system_sections.call_args[0][0][0]  # type: ignore[attr-defined]
 
     assert "agent-b" in section
     assert "ghost" not in section, "ghost must not appear in the discovery section"
@@ -640,7 +641,7 @@ def test_discovery_section_all_targets_unknown(tmp_path) -> None:
     # All return None
     parent.wire_delegation(lambda _: None, sub_agent_ids=["ghost"])
 
-    parent.run_agent.set_extra_system_sections.assert_not_called()
+    parent.run_agent.set_extra_system_sections.assert_not_called()  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
@@ -669,8 +670,8 @@ def test_discovery_section_mixed_targets(tmp_path) -> None:
 
     parent.wire_delegation(registry.get, sub_agent_ids=["agent-b", "ghost", "agent-c"])
 
-    parent.run_agent.set_extra_system_sections.assert_called_once()
-    section = parent.run_agent.set_extra_system_sections.call_args[0][0][0]
+    parent.run_agent.set_extra_system_sections.assert_called_once()  # type: ignore[attr-defined]
+    section = parent.run_agent.set_extra_system_sections.call_args[0][0][0]  # type: ignore[attr-defined]
 
     assert "agent-b" in section
     assert "agent-c" in section
@@ -733,7 +734,7 @@ def test_wire_delegation_idempotent_with_discovery(tmp_path) -> None:
     parent.wire_delegation(_get_container, sub_agent_ids=["agent-b"])  # second call — must be no-op
 
     # set_extra_system_sections called exactly ONCE (idempotency guard)
-    assert parent.run_agent.set_extra_system_sections.call_count == 1, (
+    assert parent.run_agent.set_extra_system_sections.call_count == 1, (  # type: ignore[attr-defined]
         "set_extra_system_sections must be called exactly once despite two wire_delegation calls"
     )
 

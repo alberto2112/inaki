@@ -39,7 +39,7 @@ async def test_iterates_all_enabled_agents_in_order() -> None:
         "general": _make("general"),
         "dev": _make("dev"),
     }
-    uc = ConsolidateAllAgentsUseCase(enabled_agents=agents, delay_seconds=0)
+    uc = ConsolidateAllAgentsUseCase(enabled_agents=agents, delay_seconds=0)  # type: ignore[arg-type]
 
     result = await uc.execute()
 
@@ -95,7 +95,7 @@ async def test_delay_between_agents_invoked(monkeypatch: pytest.MonkeyPatch) -> 
         "b": _mock_uc(),
         "c": _mock_uc(),
     }
-    uc = ConsolidateAllAgentsUseCase(enabled_agents=agents, delay_seconds=3)
+    uc = ConsolidateAllAgentsUseCase(enabled_agents=agents, delay_seconds=3)  # type: ignore[arg-type]
 
     await uc.execute()
 
@@ -105,7 +105,7 @@ async def test_delay_between_agents_invoked(monkeypatch: pytest.MonkeyPatch) -> 
 
 async def test_no_delay_between_agents_when_zero() -> None:
     agents = {"a": _mock_uc(), "b": _mock_uc()}
-    uc = ConsolidateAllAgentsUseCase(enabled_agents=agents, delay_seconds=0)
+    uc = ConsolidateAllAgentsUseCase(enabled_agents=agents, delay_seconds=0)  # type: ignore[arg-type]
 
     # No debe romper ni dormir
     result = await uc.execute()

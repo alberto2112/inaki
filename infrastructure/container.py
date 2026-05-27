@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from functools import partial
 from typing import TYPE_CHECKING, Callable, Literal
 
 from croniter import croniter
@@ -51,6 +52,7 @@ from core.domain.errors import AgentNotFoundError, InakiError
 from core.domain.services.broadcast_buffer import BroadcastBuffer
 from core.domain.services.rate_limiter import FixedWindowRateLimiter
 from core.domain.services.scheduler_service import SchedulerService
+from core.ports.outbound.memory_port import IMemoryRepository
 from core.ports.outbound.scope_registry_port import IScopeRegistry
 from core.ports.outbound.transcription_port import ITranscriptionProvider
 from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
@@ -58,7 +60,13 @@ from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
 from core.use_cases.run_agent import RunAgentUseCase
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from core.use_cases.schedule_task import ScheduleTaskUseCase
-from infrastructure.config import AgentConfig, AgentRegistry, GlobalConfig, TelegramChannelConfig
+from infrastructure.config import (
+    AgentConfig,
+    AgentRegistry,
+    GlobalConfig,
+    KnowledgeSourceConfig,
+    TelegramChannelConfig,
+)
 from infrastructure.daemon_reloader import DaemonReloader
 from infrastructure.factories.embedding_factory import EmbeddingProviderFactory
 from infrastructure.factories.llm_factory import LLMProviderFactory
@@ -128,7 +136,12 @@ class AgentContainer:
         # y componen ResolvedXConfig contra el registry top-level de providers.
         self._embedder = EmbeddingProviderFactory.create(cfg.embedding, cfg.providers)
         self._embedding_cache = SqliteEmbeddingCache(cfg.embedding.cache_filename)
-        self._memory = SQLiteMemoryRepository(cfg.memory.db_filename, self._embedder)
+        # Anotamos como el port (IMemoryRepository) en vez del adapter concreto
+        # para que tests puedan inyectar fakes via Protocol estructural sin
+        # error de assignment.
+        self._memory: IMemoryRepository = SQLiteMemoryRepository(
+            cfg.memory.db_filename, self._embedder
+        )
         self._llm = LLMProviderFactory.create(cfg.llm, cfg.providers)
         self._skills = YamlSkillRepository(
             embedder=self._embedder,
@@ -165,7 +178,10 @@ class AgentContainer:
         # be a delegation target, regardless of whether it can INITIATE delegation.
         # (REQ-DG-1 still holds: the `delegate` tool is only registered when
         # delegation.enabled=True — see wire_delegation.)
-        self.run_agent_one_shot = RunAgentOneShotUseCase(
+        # Anotación explícita: el callsite en DelegateTool importa AgentContainer
+        # vía TYPE_CHECKING — el round trip cae en "Cannot determine type" si
+        # mypy no ve el tipo declarado acá.
+        self.run_agent_one_shot: RunAgentOneShotUseCase = RunAgentOneShotUseCase(
             llm=self._llm,
             tools=self._tools,
             agent_config=cfg,
@@ -320,15 +336,24 @@ class AgentContainer:
             default_min_score=params["default_min_score"],
         )
 
-    def _build_document_source(self, fuente_cfg: object) -> "IKnowledgeSource":
+    def _build_document_source(self, fuente_cfg: "KnowledgeSourceConfig") -> "IKnowledgeSource":
         """Instancia un DocumentKnowledgeSource a partir de la config de fuente."""
         from adapters.outbound.knowledge.document_knowledge_source import (
             DocumentKnowledgeSource,
         )
 
+        # `path` es Optional en la config (válido para type='sqlite' que no lo
+        # usa), pero para type='document' es obligatorio. El caller filtra por
+        # type, asi que llegar acá con path=None es un error de config.
+        if fuente_cfg.path is None:
+            raise ValueError(
+                f"Fuente de conocimiento '{fuente_cfg.id}' (type='document') "
+                "requiere 'path' configurado."
+            )
+
         return DocumentKnowledgeSource(
             source_id=fuente_cfg.id,
-            description=getattr(fuente_cfg, "description", ""),
+            description=fuente_cfg.description,
             path=fuente_cfg.path,
             embedder=self._embedder,
             glob=getattr(fuente_cfg, "glob", "**/*.md"),
@@ -572,7 +597,9 @@ class AgentContainer:
             targets,
         )
 
-    def wire_scheduler(self, schedule_task_uc: ScheduleTaskUseCase, user_timezone: str) -> None:
+    def wire_scheduler(
+        self, schedule_task_uc: ScheduleTaskUseCase | None, user_timezone: str
+    ) -> None:
         """
         Phase-3 wiring: registers the scheduler tool.
 
@@ -941,6 +968,13 @@ class AgentContainer:
 
                 try:
                     spec = importlib.util.spec_from_file_location(module_id, manifest_path)
+                    if spec is None or spec.loader is None:
+                        # spec_from_file_location devuelve None si la ruta no es
+                        # importable (extensión rara, permisos, etc.). loader es
+                        # None si el spec se arma sin loader (no debería pasar acá).
+                        raise ImportError(
+                            f"No se pudo armar ModuleSpec para {manifest_path}"
+                        )
                     module = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(module)
                 except Exception as exc:
@@ -1103,11 +1137,14 @@ class AppContainer:
             except Exception as exc:
                 logger.error("Error en wire_delegation para agente '%s': %s", agent_id, exc)
 
-        # Global consolidation use case — itera agentes habilitados con delay
+        # Global consolidation use case — itera agentes habilitados con delay.
+        # El filtro por `consolidate_memory is not None` es equivalente a filtrar
+        # por `memory.enabled` (invariante: AgentContainer construye el use case
+        # solo cuando memory.enabled=True), pero le da el narrowing a mypy.
         enabled_consolidators: dict[str, ConsolidateMemoryUseCase] = {
             agent_id: container.consolidate_memory
             for agent_id, container in self.agents.items()
-            if container.agent_config.memory.enabled
+            if container.consolidate_memory is not None
         }
         self.consolidate_all_agents = ConsolidateAllAgentsUseCase(
             enabled_agents=enabled_consolidators,
@@ -1243,8 +1280,12 @@ class AppContainer:
             if registry.is_sub_agent(agent_id):
                 continue
             try:
+                # functools.partial captura agent_id por valor (no por referencia
+                # como haría una lambda en un loop), y le da a mypy un
+                # Callable[[], object | None] inferible vs "Cannot infer type of
+                # lambda" con argumento default.
                 container.wire_telegram_tools(
-                    lambda aid=agent_id: self._get_telegram_bot_for(aid),
+                    partial(self._get_telegram_bot_for, agent_id),
                     self._telegram_file_repo,
                 )
             except Exception as exc:

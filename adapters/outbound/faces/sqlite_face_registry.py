@@ -340,6 +340,9 @@ class SqliteFaceRegistryAdapter(IFaceRegistryPort):
             # Verificar que hay embeddings en el registro
             async with conn.execute("SELECT COUNT(*) as cnt FROM person_embeddings_vec") as cursor:
                 row = await cursor.fetchone()
+                # SELECT COUNT(*) siempre devuelve exactamente una fila — el assert
+                # narrowea Row | None a Row para mypy.
+                assert row is not None
                 if row["cnt"] == 0:
                     return []
 
@@ -479,6 +482,8 @@ class SqliteFaceRegistryAdapter(IFaceRegistryPort):
                 (target_id,),
             ) as cursor:
                 row = await cursor.fetchone()
+                # SELECT COUNT(*) siempre devuelve exactamente una fila.
+                assert row is not None
                 total_embeddings = row["cnt"]
 
             ahora = datetime.now(timezone.utc).isoformat()

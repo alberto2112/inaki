@@ -73,7 +73,9 @@ class PatchFileTool(ITool):
         self._workspace = workspace
         self._containment = containment
 
-    async def execute(self, patches: list[dict[str, Any]], file_path: str, **kwargs) -> ToolResult:
+    async def execute(  # type: ignore[override]
+        self, patches: list[dict[str, Any]], file_path: str, **kwargs
+    ) -> ToolResult:
         try:
             resolved = resolve_path(file_path, self._workspace, self._containment)
         except WorkspaceEscapeError as exc:
@@ -87,12 +89,13 @@ class PatchFileTool(ITool):
             )
 
         if not resolved.exists():
-            payload = {"success": False, "error": f"File not found: {file_path}"}
+            err_msg = f"File not found: {file_path}"
+            payload = {"success": False, "error": err_msg}
             return ToolResult(
                 tool_name=self.name,
                 output=json.dumps(payload, ensure_ascii=False),
                 success=False,
-                error=payload["error"],
+                error=err_msg,
             )
 
         try:
@@ -116,54 +119,46 @@ class PatchFileTool(ITool):
             end = patch.get("end_line")
 
             if not isinstance(start, int) or not isinstance(end, int):
-                payload = {
-                    "success": False,
-                    "error": f"Patch {i}: start_line and end_line must be integers",
-                }
+                err_msg = f"Patch {i}: start_line and end_line must be integers"
+                payload = {"success": False, "error": err_msg}
                 return ToolResult(
                     tool_name=self.name,
                     output=json.dumps(payload, ensure_ascii=False),
                     success=False,
-                    error=payload["error"],
+                    error=err_msg,
                 )
 
             if start <= 0:
-                payload = {
-                    "success": False,
-                    "error": f"Patch {i}: start_line must be greater than 0, got {start}",
-                }
+                err_msg = f"Patch {i}: start_line must be greater than 0, got {start}"
+                payload = {"success": False, "error": err_msg}
                 return ToolResult(
                     tool_name=self.name,
                     output=json.dumps(payload, ensure_ascii=False),
                     success=False,
-                    error=payload["error"],
+                    error=err_msg,
                 )
 
             if start > end:
-                payload = {
-                    "success": False,
-                    "error": (
-                        f"Patch {i}: start_line must not exceed end_line "
-                        f"(got start_line={start}, end_line={end})"
-                    ),
-                }
+                err_msg = (
+                    f"Patch {i}: start_line must not exceed end_line "
+                    f"(got start_line={start}, end_line={end})"
+                )
+                payload = {"success": False, "error": err_msg}
                 return ToolResult(
                     tool_name=self.name,
                     output=json.dumps(payload, ensure_ascii=False),
                     success=False,
-                    error=payload["error"],
+                    error=err_msg,
                 )
 
             if end > file_line_count:
-                payload = {
-                    "success": False,
-                    "error": f"Patch {i}: end_line {end} exceeds file length {file_line_count}",
-                }
+                err_msg = f"Patch {i}: end_line {end} exceeds file length {file_line_count}"
+                payload = {"success": False, "error": err_msg}
                 return ToolResult(
                     tool_name=self.name,
                     output=json.dumps(payload, ensure_ascii=False),
                     success=False,
-                    error=payload["error"],
+                    error=err_msg,
                 )
 
         sorted_patches = sorted(patches, key=lambda p: p["start_line"], reverse=True)

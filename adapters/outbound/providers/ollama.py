@@ -27,7 +27,8 @@ class OllamaProvider(BaseLLMProvider):
         self._cfg = cfg
         self._base_url = cfg.base_url or "http://localhost:11434"
 
-    def _build_messages(self, messages: list[Message], system_prompt: str) -> list[dict]:
+    @staticmethod
+    def _build_messages(messages: list[Message], system_prompt: str) -> list[dict]:
         """Construye el payload de mensajes para Ollama.
 
         Hereda la lógica del base (que ya soporta ASSISTANT+tool_calls y rol TOOL
@@ -39,8 +40,12 @@ class OllamaProvider(BaseLLMProvider):
         Construye tool_calls nuevos en vez de mutar los del Message original —
         si la misma conversación viaja después a un provider OpenAI-compat, los
         arguments deben seguir siendo string JSON.
+
+        Es @staticmethod para que el override coincida con BaseLLMProvider
+        (que también es staticmethod). No usa self, así que el cambio es
+        semánticamente trivial.
         """
-        result = super()._build_messages(messages, system_prompt)
+        result = BaseLLMProvider._build_messages(messages, system_prompt)
         for msg in result:
             tool_calls = msg.get("tool_calls")
             if not tool_calls:

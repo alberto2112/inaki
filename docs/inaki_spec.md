@@ -1,63 +1,63 @@
-# Inaki — Especificación Técnica
+# Inaki — Technical Specification
 
-> Documento de referencia para el desarrollo del agente Inaki.  
-> Refleja el estado real del sistema en v2.x.
-
----
-
-## 1. Visión General
-
-Inaki es un asistente personal agéntico impulsado por IA, diseñado para ejecutarse como servicio systemd en una **Raspberry Pi 5 (4 GB RAM, ARM64)**. El proyecto sigue una **arquitectura hexagonal (Ports & Adapters)** estricta para garantizar modularidad, testabilidad y extensibilidad.
-
-### Principios de diseño
-
-- **El core no conoce el mundo exterior.** Ningún archivo de `core/` importa de `adapters/` ni de librerías de infraestructura. Solo stdlib + tipos del propio `core/`.
-- **Dirección de dependencias inviolable:** `adapters/` → `core/`. Nunca al revés.
-- **Un único punto de wiring:** `infrastructure/container.py` es el único lugar donde se instancian adaptadores concretos.
-- **Configuración en `~/.inaki/`:** todos los datos del usuario (configs, secrets, DBs, modelos) viven fuera del repo.
-- **Diseñado para la Pi 5:** footprint de RAM, ARM64 y coste de tokens son restricciones de primera clase.
+> Reference document for the development of the Inaki agent.  
+> Reflects the actual state of the system in v2.x.
 
 ---
 
-## 2. Stack Tecnológico
+## 1. Overview
 
-| Componente | Tecnología |
+Inaki is a personal agentic AI assistant designed to run as a systemd service on a **Raspberry Pi 5 (4 GB RAM, ARM64)**. The project follows a **strict hexagonal architecture (Ports & Adapters)** to ensure modularity, testability, and extensibility.
+
+### Design Principles
+
+- **The core knows nothing about the outside world.** No file in `core/` imports from `adapters/` or infrastructure libraries. Only stdlib + `core/` types allowed.
+- **Inviolable dependency direction:** `adapters/` → `core/`. Never reversed.
+- **Single wiring point:** `infrastructure/container.py` is the only place where concrete adapters are instantiated.
+- **Configuration in `~/.inaki/`:** all user data (configs, secrets, DBs, models) lives outside the repo.
+- **Designed for the Pi 5:** RAM footprint, ARM64, and token cost are first-class constraints.
+
+---
+
+## 2. Technology Stack
+
+| Component | Technology |
 |---|---|
-| Lenguaje | Python 3.11+ |
-| Hardware destino | Raspberry Pi 5, 4 GB RAM, ARM64 |
-| Despliegue | systemd service |
-| LLM providers | OpenRouter, OpenAI, Groq, Ollama, DeepSeek (descubrimiento dinámico) |
-| Embeddings | `multilingual-e5-small` (ONNX) · OpenAI (alternativa) |
+| Language | Python 3.11+ |
+| Target hardware | Raspberry Pi 5, 4 GB RAM, ARM64 |
+| Deployment | systemd service |
+| LLM providers | OpenRouter, OpenAI, Groq, Ollama, DeepSeek (dynamic discovery) |
+| Embeddings | `multilingual-e5-small` (ONNX) · OpenAI (alternative) |
 | Vector store | `sqlite-vec` + SQLite3 |
-| Historial | SQLite3 (`aiosqlite`) |
-| Config | YAML · fusión de 4 capas · `pydantic` v2 |
-| Tests | `pytest` + `pytest-asyncio` (modo `auto`) |
+| History | SQLite3 (`aiosqlite`) |
+| Config | YAML · 4-layer merge · `pydantic` v2 |
+| Tests | `pytest` + `pytest-asyncio` (`auto` mode) |
 | CLI | `typer` + `rich` |
-| TUI configuración | `textual` + `ruamel.yaml` |
+| Config TUI | `textual` + `ruamel.yaml` |
 | Inbound Telegram | `python-telegram-bot` v21+ (async) |
 | Inbound REST | `FastAPI` + `uvicorn` |
 | HTTP client | `httpx` (async) |
 | Face recognition | `InsightFace` (lazy-loaded, ~400 MB RAM) |
 | Scheduler | `croniter` |
-| Transcripción voz | Whisper via Groq API |
+| Voice transcription | Whisper via Groq API |
 
 ---
 
-## 3. Estructura de Directorios
+## 3. Directory Structure
 
 ```
-inaki/                                  ← raíz del repositorio
+inaki/                                  ← repository root
 │
-├── core/                               ← Hexágono: cero dependencias externas
+├── core/                               ← Hexagon: zero external dependencies
 │   ├── domain/
 │   │   ├── entities/
 │   │   │   ├── message.py              # Message, Role
 │   │   │   ├── memory.py              # MemoryEntry
 │   │   │   ├── skill.py               # Skill, SkillResult
 │   │   │   ├── task.py                # ScheduledTask, TaskStatus, TaskType
-│   │   │   ├── task_log.py            # TaskLog (historial de ejecuciones)
+│   │   │   ├── task_log.py            # TaskLog (execution history)
 │   │   │   ├── face.py                # FaceDetection, Person, KnownFace
-│   │   │   └── background_task.py     # BackgroundTaskView (delegación async)
+│   │   │   └── background_task.py     # BackgroundTaskView (async delegation)
 │   │   ├── value_objects/
 │   │   │   ├── agent_context.py       # AgentContext → build_system_prompt()
 │   │   │   ├── agent_info.py          # AgentInfoDTO
@@ -72,24 +72,24 @@ inaki/                                  ← raíz del repositorio
 │   │   │   └── telegram_file.py       # TelegramFile (id, mime_type, bytes)
 │   │   ├── services/
 │   │   │   ├── scheduler_service.py   # SchedulerService (cron loop)
-│   │   │   ├── knowledge_orchestrator.py  # RAG multi-fuente
+│   │   │   ├── knowledge_orchestrator.py  # Multi-source RAG
 │   │   │   ├── sticky_selector.py     # Sticky semantic routing (TTL)
 │   │   │   ├── rate_limiter.py        # FixedWindowRateLimiter
-│   │   │   ├── broadcast_buffer.py    # Buffer de mensajes de grupo
-│   │   │   ├── prepend_timestamps.py  # Inyecta timestamps en historial
+│   │   │   ├── broadcast_buffer.py    # Group message buffer
+│   │   │   ├── prepend_timestamps.py  # Injects timestamps into history
 │   │   │   └── similarity.py          # Cosine similarity utils
 │   │   ├── utils/
-│   │   │   └── time_parser.py         # Parser de expresiones de tiempo (ONESHOT)
-│   │   └── errors.py                  # InakiError y subclases
+│   │   │   └── time_parser.py         # Time expression parser (ONESHOT)
+│   │   └── errors.py                  # InakiError and subclasses
 │   │
 │   ├── ports/
-│   │   ├── config_repository.py       # IConfigRepository (lectura/escritura YAML)
+│   │   ├── config_repository.py       # IConfigRepository (YAML read/write)
 │   │   ├── inbound/
 │   │   │   ├── agent_port.py          # IAgentUseCase
 │   │   │   └── scheduler_port.py      # ISchedulerUseCase
 │   │   └── outbound/
 │   │       ├── llm_port.py            # ILLMProvider
-│   │       ├── llm_dispatcher_port.py # ILLMDispatcher (turno completo scoped)
+│   │       ├── llm_dispatcher_port.py # ILLMDispatcher (scoped full turn)
 │   │       ├── memory_port.py         # IMemoryRepository
 │   │       ├── embedding_port.py      # IEmbeddingProvider
 │   │       ├── embedding_cache_port.py# IEmbeddingCache
@@ -103,29 +103,29 @@ inaki/                                  ← raíz del repositorio
 │   │       ├── broadcast_port.py      # IBroadcastChannel (multi-Pi TCP)
 │   │       ├── vision_port.py         # IVisionPort (face detect + embed)
 │   │       ├── face_registry_port.py  # IFaceRegistry (faces.db)
-│   │       ├── scene_describer_port.py# ISceneDescriber (descripción LLM multimodal)
-│   │       ├── transcription_port.py  # ITranscriptionProvider (voz → texto)
+│   │       ├── scene_describer_port.py# ISceneDescriber (multimodal LLM description)
+│   │       ├── transcription_port.py  # ITranscriptionProvider (voice → text)
 │   │       ├── file_downloader_port.py# IFileDownloader (Telegram → bytes)
 │   │       ├── file_sender_port.py    # IFileSender (bytes → Telegram)
-│   │       ├── file_repo_port.py      # ITelegramFileRepo (caché local de archivos)
+│   │       ├── file_repo_port.py      # ITelegramFileRepo (local file cache)
 │   │       ├── message_face_metadata_port.py # IMessageFaceMetadataRepo
 │   │       ├── intermediate_sink_port.py      # IIntermediateSink
-│   │       ├── outbound_sink_port.py  # IOutboundSink (respuesta hacia canal)
-│   │       └── daemon_client_port.py  # IDaemonClient (CLI ↔ daemon remoto)
+│   │       ├── outbound_sink_port.py  # IOutboundSink (response to channel)
+│   │       └── daemon_client_port.py  # IDaemonClient (CLI ↔ remote daemon)
 │   │
 │   ├── services/
 │   │   └── crypto_service.py          # CryptoService (Fernet, secrets)
 │   │
 │   └── use_cases/
-│       ├── run_agent.py               # RunAgentUseCase — un turno de conversación
-│       ├── run_agent_one_shot.py      # RunAgentOneShotUseCase — turno sin historial
-│       ├── _tool_loop.py              # run_tool_loop() — loop LLM ↔ tools
-│       ├── _result_parser.py          # Parser de respuestas LLM
+│       ├── run_agent.py               # RunAgentUseCase — one conversation turn
+│       ├── run_agent_one_shot.py      # RunAgentOneShotUseCase — turn without history
+│       ├── _tool_loop.py              # run_tool_loop() — LLM ↔ tools loop
+│       ├── _result_parser.py          # LLM response parser
 │       ├── consolidate_memory.py      # ConsolidateMemoryUseCase
 │       ├── consolidate_all_agents.py  # ConsolidateAllAgentsUseCase
 │       ├── schedule_task.py           # ScheduleTaskUseCase
-│       ├── process_photo.py           # ProcessPhotoUseCase (facial + escena)
-│       └── config/                    # CRUD de configuración (via TUI/REST admin)
+│       ├── process_photo.py           # ProcessPhotoUseCase (facial + scene)
+│       └── config/                    # Configuration CRUD (via TUI/REST admin)
 │           ├── create_agent.py
 │           ├── delete_agent.py
 │           ├── update_agent_layer.py
@@ -139,32 +139,32 @@ inaki/                                  ← raíz del repositorio
 ├── adapters/
 │   ├── inbound/
 │   │   ├── cli/
-│   │   │   ├── cli_runner.py          # Chat interactivo por terminal
+│   │   │   ├── cli_runner.py          # Interactive terminal chat
 │   │   │   ├── scheduler_cli.py       # inaki scheduler ...
 │   │   │   ├── knowledge_cli.py       # inaki knowledge ...
 │   │   │   ├── setup_cli.py           # inaki setup ...
-│   │   │   └── setup_wizard.py        # Wizard Fernet legacy
-│   │   ├── setup_tui/                 # TUI Textual offline (inaki setup)
+│   │   │   └── setup_wizard.py        # Legacy Fernet wizard
+│   │   ├── setup_tui/                 # Offline Textual TUI (inaki setup)
 │   │   │   ├── app.py
 │   │   │   ├── screens/, widgets/, modals/, validators/
 │   │   │   └── domain/, _schema.py, _cambios.py
 │   │   ├── telegram/
-│   │   │   ├── bot.py                 # TelegramBot per-agent (PTB 21+)
-│   │   │   ├── message_mapper.py      # Update → Message, respuesta → texto
-│   │   │   └── tools/                 # Tools Telegram-específicas
+│   │   │   ├── bot.py                 # Per-agent TelegramBot (PTB 21+)
+│   │   │   ├── message_mapper.py      # Update → Message, response → text
+│   │   │   └── tools/                 # Telegram-specific tools
 │   │   ├── rest/
-│   │   │   ├── app.py                 # create_agent_app() — por agente
+│   │   │   ├── app.py                 # create_agent_app() — per agent
 │   │   │   ├── schemas.py
 │   │   │   ├── routers/               # GET /info, POST /chat, etc.
 │   │   │   └── admin/                 # Admin REST server (daemon)
 │   │   └── daemon/
-│   │       └── runner.py              # DaemonRunner — levanta todos los agentes
+│   │       └── runner.py              # DaemonRunner — starts all agents
 │   │
 │   ├── broadcast/
 │   │   └── tcp.py                     # BroadcastTCPServer / BroadcastTCPClient
 │   │
 │   └── outbound/
-│       ├── providers/                 # LLM — descubrimiento dinámico por PROVIDER_NAME
+│       ├── providers/                 # LLM — dynamic discovery via PROVIDER_NAME
 │       │   ├── base.py
 │       │   ├── openrouter.py
 │       │   ├── openai.py
@@ -172,12 +172,12 @@ inaki/                                  ← raíz del repositorio
 │       │   ├── groq.py
 │       │   ├── ollama.py
 │       │   └── deepseek.py
-│       ├── embedding/                 # Embedding — descubrimiento dinámico
+│       ├── embedding/                 # Embedding — dynamic discovery
 │       │   ├── base.py
 │       │   ├── e5_onnx.py
 │       │   ├── openai.py
 │       │   └── sqlite_embedding_cache.py
-│       ├── transcription/             # Voz → texto — descubrimiento dinámico
+│       ├── transcription/             # Voice → text — dynamic discovery
 │       │   ├── base.py
 │       │   └── groq.py
 │       ├── memory/
@@ -194,7 +194,7 @@ inaki/                                  ← raíz del repositorio
 │       │   └── _chunker.py
 │       ├── tools/
 │       │   ├── tool_registry.py
-│       │   ├── delegate_tool.py       # Delegación agente-a-agente
+│       │   ├── delegate_tool.py       # Agent-to-agent delegation
 │       │   ├── memory_tools.py        # search/delete/update_memory
 │       │   ├── scheduler_tool.py
 │       │   ├── knowledge_search_tool.py
@@ -210,11 +210,11 @@ inaki/                                  ← raíz del repositorio
 │       │   ├── dispatch_adapters.py   # LLMDispatcherAdapter, ChannelRouter, etc.
 │       │   └── builtin_tasks.py       # consolidate_memory, face_dedup
 │       ├── delegation/
-│       │   └── background_queue_adapter.py  # Cola async (semáforo 3)
+│       │   └── background_queue_adapter.py  # Async queue (semaphore = 3)
 │       ├── faces/
 │       │   └── sqlite_face_registry.py
 │       ├── vision/
-│       │   └── insightface_adapter.py # IVisionPort (lazy-load en primera foto)
+│       │   └── insightface_adapter.py # IVisionPort (lazy-load on first photo)
 │       ├── scene/
 │       │   ├── anthropic_describer.py
 │       │   ├── openai_describer.py
@@ -236,33 +236,33 @@ inaki/                                  ← raíz del repositorio
 │       ├── imaging/
 │       │   └── pillow_annotator.py
 │       ├── config_repository/
-│       │   ├── yaml_repository.py     # IConfigRepository sobre YAML en ~/.inaki/
+│       │   ├── yaml_repository.py     # IConfigRepository over YAML in ~/.inaki/
 │       │   └── paths.py
 │       ├── scope_registry_adapter.py  # InMemoryScopeRegistryAdapter
 │       └── daemon_client.py           # DaemonClient (HTTP → admin REST)
 │
 ├── infrastructure/
-│   ├── container.py                   # AgentContainer + AppContainer (único wiring)
-│   ├── config.py                      # Modelos pydantic v2 + loader 4 capas
+│   ├── container.py                   # AgentContainer + AppContainer (single wiring)
+│   ├── config.py                      # Pydantic v2 models + 4-layer loader
 │   ├── logging_setup.py
 │   ├── daemon_reloader.py             # DaemonReloader (hot-reload)
 │   └── factories/
-│       ├── llm_factory.py             # Descubrimiento dinámico providers/
-│       ├── embedding_factory.py       # Descubrimiento dinámico embedding/
-│       └── transcription_factory.py   # Descubrimiento dinámico transcription/
+│       ├── llm_factory.py             # Dynamic discovery providers/
+│       ├── embedding_factory.py       # Dynamic discovery embedding/
+│       └── transcription_factory.py   # Dynamic discovery transcription/
 │
-├── ext/                               # Extensiones del usuario (auto-descubrimiento)
+├── ext/                               # User extensions (auto-discovery)
 │   └── {extension}/
 │       ├── manifest.py
 │       └── *.py / *.yaml
 │
 ├── config/
-│   └── global.example.yaml            # Referencia canónica de todos los parámetros
+│   └── global.example.yaml            # Canonical reference for all parameters
 │
-├── docs/                              # Documentación técnica
+├── docs/                              # Technical documentation
 ├── systemd/                           # inaki.service + install.sh
 ├── tests/
-│   ├── conftest.py                    # Fixtures compartidos
+│   ├── conftest.py                    # Shared fixtures
 │   ├── unit/
 │   └── integration/
 │
@@ -273,30 +273,30 @@ inaki/                                  ← raíz del repositorio
 └── pyproject.toml
 ```
 
-**Datos del usuario — siempre en `~/.inaki/`:**
+**User data — always in `~/.inaki/`:**
 
 ```
 ~/.inaki/
 ├── config/
 │   ├── global.yaml
-│   ├── global.secrets.yaml            # gitignoreado — nunca commitear
+│   ├── global.secrets.yaml            # gitignored — never commit
 │   └── agents/
 │       ├── {id}.yaml
-│       └── {id}.secrets.yaml          # gitignoreado
+│       └── {id}.secrets.yaml          # gitignored
 ├── data/
-│   ├── inaki.db                       # Memorias (sqlite-vec)
-│   ├── history.db                     # Historial de conversación
-│   ├── faces.db                       # Registro facial (creado en primer uso)
-│   └── embedding_cache.db             # Caché de embeddings
+│   ├── inaki.db                       # Memories (sqlite-vec)
+│   ├── history.db                     # Conversation history
+│   ├── faces.db                       # Face registry (created on first use)
+│   └── embedding_cache.db             # Embedding cache
 ├── models/
 │   └── e5-small/                      # ONNX model + tokenizer
 └── mem/
-    └── digest_{channel}_{chat_id}.md  # Digest de memoria por scope
+    └── digest_{channel}_{chat_id}.md  # Memory digest per scope
 ```
 
 ---
 
-## 4. Entidades del Dominio
+## 4. Domain Entities
 
 ```python
 # core/domain/entities/message.py
@@ -309,8 +309,8 @@ class Role(str, Enum):
 class Message(BaseModel):
     role: Role
     content: str
-    tool_calls: list[dict] | None = None  # para rol assistant con calls
-    tool_call_id: str | None = None        # para rol tool (resultado)
+    tool_calls: list[dict] | None = None  # for assistant role with calls
+    tool_call_id: str | None = None        # for tool role (result)
 ```
 
 ```python
@@ -318,21 +318,21 @@ class Message(BaseModel):
 class MemoryEntry(BaseModel):
     id: str                          # UUID
     content: str
-    embedding: list[float]           # dimensión 384 (e5-small)
-    relevance: float                 # 0.0–1.0, estimado por LLM extractor
+    embedding: list[float]           # dimension 384 (e5-small)
+    relevance: float                 # 0.0–1.0, estimated by LLM extractor
     tags: list[str]
     created_at: datetime
     agent_id: str | None = None
-    channel: str | None = None       # scope (channel, chat_id) del origen
+    channel: str | None = None       # scope (channel, chat_id) of origin
     chat_id: str | None = None
-    deleted: int = 0                 # soft-delete: 0 = activo, 1 = eliminado
+    deleted: int = 0                 # soft-delete: 0 = active, 1 = deleted
 ```
 
 ```python
 # core/domain/entities/task.py
 class TaskType(str, Enum):
     RECURRENT = "recurrent"   # cron
-    ONESHOT = "oneshot"       # datetime exacto
+    ONESHOT = "oneshot"       # exact datetime
 
 class TaskStatus(str, Enum):
     ACTIVE = "active"
@@ -344,7 +344,7 @@ class ScheduledTask(BaseModel):
     agent_id: str
     description: str
     task_kind: TaskType
-    schedule: str                    # cron expr o ISO datetime
+    schedule: str                    # cron expr or ISO datetime
     system_prompt_override: str | None = None
     status: TaskStatus = TaskStatus.ACTIVE
 ```
@@ -359,12 +359,12 @@ class FaceDetection(BaseModel):
 class Person(BaseModel):
     id: str
     name: str
-    categoria: str | None = None     # None = normal, "ignorada" = skip permanente
+    categoria: str | None = None     # None = normal, "ignorada" = permanent skip
 ```
 
 ---
 
-## 5. Puertos Clave
+## 5. Key Ports
 
 ### `ILLMProvider`
 
@@ -379,7 +379,7 @@ class ILLMProvider(ABC):
     ) -> LLMResponse: ...
 ```
 
-`LLMResponse` encapsula el texto y los `tool_calls` devueltos por el modelo.
+`LLMResponse` encapsulates the text and `tool_calls` returned by the model.
 
 ### `IHistoryStore`
 
@@ -392,7 +392,7 @@ class IHistoryStore(ABC):
     async def drain_pending(self, agent_id: str, channel: str, chat_id: str) -> list[Message]: ...
 ```
 
-El historial se almacena en **SQLite** (`history.db`). Está scoped por `(agent_id, channel, chat_id)`. `record_user_message` + `drain_pending` soportan la inyección de mensajes in-flight.
+History is stored in **SQLite** (`history.db`). It is scoped by `(agent_id, channel, chat_id)`. `record_user_message` + `drain_pending` support in-flight message injection.
 
 ### `IScopeRegistry`
 
@@ -402,7 +402,7 @@ class IScopeRegistry(ABC):
     async def mark_idle(self, scope: Scope) -> None: ...
 ```
 
-`Scope = tuple[str, str, str]` — `(agent_id, channel, chat_id)`. Implementado con `asyncio.Lock` en `InMemoryScopeRegistryAdapter`. Una sola instancia compartida entre todos los agentes (los scopes son disjuntos por `agent_id`).
+`Scope = tuple[str, str, str]` — `(agent_id, channel, chat_id)`. Implemented with `asyncio.Lock` in `InMemoryScopeRegistryAdapter`. A single instance is shared across all agents (scopes are disjoint by `agent_id`).
 
 ### `IMemoryRepository`
 
@@ -422,7 +422,7 @@ class IVisionPort(ABC):
     async def detect_and_embed(self, image_bytes: bytes) -> list[FaceDetection]: ...
 ```
 
-Implementado por `InsightFaceAdapter`. El modelo se carga de forma **lazy** en la primera llamada (`_get_app()` con singleton perezoso). Ocupa ~400 MB de RAM.
+Implemented by `InsightFaceAdapter`. The model is **lazily** loaded on the first call (`_get_app()` with lazy singleton). It uses ~400 MB of RAM.
 
 ### `ITool` / `IToolExecutor`
 
@@ -446,68 +446,68 @@ class ITool(ABC):
 
 ### `RunAgentUseCase`
 
-Orquesta un turno completo de conversación:
+Orchestrates a full conversation turn:
 
-1. Cargar historial scoped por `(agent_id, channel, chat_id)`
-2. Si semantic routing activo: generar embedding del input y filtrar tools/skills relevantes via cosine similarity
-3. Construir `AgentContext` y system prompt dinámico (base + memoria digest + skills)
-4. Llamar al LLM vía `run_tool_loop()` — ver §7
-5. Persistir mensajes `user` / `assistant` en historial (nunca `tool` ni `tool_result`)
-6. Devolver `ChatTurnResult`
+1. Load history scoped by `(agent_id, channel, chat_id)`
+2. If semantic routing is active: generate input embedding and filter relevant tools/skills via cosine similarity
+3. Build `AgentContext` and dynamic system prompt (base + memory digest + skills)
+4. Call the LLM via `run_tool_loop()` — see S7
+5. Persist `user` / `assistant` messages in history (never `tool` or `tool_result`)
+6. Return `ChatTurnResult`
 
 ### `_tool_loop.run_tool_loop()`
 
-Loop LLM ↔ tools hasta agotar `tool_call_max_iterations` (default 5) o hasta que el LLM no llame más tools:
+LLM-tools loop until `tool_call_max_iterations` (default 5) is exhausted or the LLM stops calling tools:
 
-- **Circuit breaker:** si la misma tool falla `circuit_breaker_threshold` veces consecutivas, se corta el loop.
-- **In-flight injection:** entre iteraciones (checkpoints A: antes de `llm.complete`, B: después del batch de tool_calls), drena mensajes pendientes del usuario via `history_store.drain_pending()`. Si hay mensajes, resetea el contador de iteraciones a 0.
-- Backward-compatible: `history_store=None` desactiva la inyección (modo legacy).
+- **Circuit breaker:** if the same tool fails `circuit_breaker_threshold` consecutive times, the loop is cut.
+- **In-flight injection:** between iterations (checkpoints A: before `llm.complete`, B: after the tool_calls batch), pending user messages are drained via `history_store.drain_pending()`. If messages are found, the iteration counter resets to 0.
+- Backward-compatible: `history_store=None` disables injection (legacy mode).
 
 ### `ConsolidateMemoryUseCase`
 
-1. Carga el historial no-infundido del scope
-2. LLM extrae recuerdos como JSON
-3. Genera embedding para cada recuerdo (`embed_passage`)
-4. Persiste en `IMemoryRepository` (DELETE + INSERT para evitar bug UNIQUE en `vec0`)
-5. Si todo OK: archiva y limpia historial. Si falla: historial intacto (transaccional)
+1. Load undigested history from the scope
+2. LLM extracts memories as JSON
+3. Generate embedding for each memory (`embed_passage`)
+4. Persist in `IMemoryRepository` (DELETE + INSERT to avoid UNIQUE bug in `vec0`)
+5. If everything succeeds: archive and clear history. If it fails: history remains intact (transactional)
 
 ### `ProcessPhotoUseCase`
 
-1. Descarga la imagen desde Telegram vía `IFileDownloader`
-2. Llama a `IVisionPort.detect_and_embed()` → lista de `FaceDetection`
-3. Para cada cara: busca en `IFaceRegistry` por cosine similarity
-4. Según el resultado (MATCHED / AMBIGUOUS / UNKNOWN / IGNORED): decide si enrolar, ignorar o pedir confirmación
-5. Llama a `ISceneDescriber.describe()` → descripción de texto de la escena
-6. Persiste metadata en `IMessageFaceMetadataRepo` (side-table en `history.db`, `ON DELETE CASCADE`)
-7. Devuelve respuesta combinada (reconocimientos + descripción)
+1. Download the image from Telegram via `IFileDownloader`
+2. Call `IVisionPort.detect_and_embed()` → list of `FaceDetection`
+3. For each face: search in `IFaceRegistry` by cosine similarity
+4. Based on the result (MATCHED / AMBIGUOUS / UNKNOWN / IGNORED): decide whether to enroll, ignore, or request confirmation
+5. Call `ISceneDescriber.describe()` → text description of the scene
+6. Persist metadata in `IMessageFaceMetadataRepo` (side-table in `history.db`, `ON DELETE CASCADE`)
+7. Return combined response (recognitions + description)
 
 ### Config Use Cases (`core/use_cases/config/`)
 
-CRUD de configuración YAML a través de `IConfigRepository`. Usados por la TUI y el admin REST. Operan sobre `~/.inaki/config/` sin tocar el repositorio.
+YAML configuration CRUD through `IConfigRepository`. Used by the TUI and admin REST. Operates on `~/.inaki/config/` without touching the repository.
 
 ---
 
-## 7. Sistema de Configuración
+## 7. Configuration System
 
-### 4 capas de merge (campo a campo)
+### 4-layer merge (field by field)
 
 ```
 ~/.inaki/config/global.yaml
-        ↓ merge campo a campo
+        ↓ field-by-field merge
 ~/.inaki/config/global.secrets.yaml
-        ↓ merge campo a campo
+        ↓ field-by-field merge
 ~/.inaki/config/agents/{id}.yaml
-        ↓ merge campo a campo
+        ↓ field-by-field merge
 ~/.inaki/config/agents/{id}.secrets.yaml
         ↓
-AgentConfig resuelto
+Resolved AgentConfig
 ```
 
-- Cada capa solo sobreescribe los campos que define. Los campos ausentes se heredan.
-- `*.secrets.yaml` están en `.gitignore` y **nunca se commitean**.
-- La referencia canónica y comentada de todos los parámetros es `config/global.example.yaml`.
+- Each layer only overrides the fields it defines. Absent fields are inherited.
+- `*.secrets.yaml` files are in `.gitignore` and **must never be committed**.
+- The canonical, commented reference for all parameters is `config/global.example.yaml`.
 
-### Registry de providers
+### Provider registry
 
 ```yaml
 providers:
@@ -516,9 +516,9 @@ providers:
   openai:     { api_key: "sk-..." }
 ```
 
-`llm.provider`, `embedding.provider` y `transcription.provider` referencian una key de este dict. Las credenciales viven **solo** en el registry, nunca en los bloques feature.
+`llm.provider`, `embedding.provider`, and `transcription.provider` reference a key from this dict. Credentials live **only** in the registry, never in feature blocks.
 
-### Modelos de config relevantes
+### Relevant config models
 
 ```python
 class GlobalConfig(BaseModel):
@@ -542,174 +542,174 @@ class AgentConfig(GlobalConfig):
     name: str
     description: str
     system_prompt: str
-    channels: dict[str, dict]   # telegram, rest, broadcast — por agente
+    channels: dict[str, dict]   # telegram, rest, broadcast — per agent
 ```
 
 ---
 
-## 8. Sistema Multi-Agente
+## 8. Multi-Agent System
 
-### Arranque
+### Startup
 
 `AppContainer.__init__()`:
-1. Construye un `AgentContainer` por agente (primera pasada)
-2. Registra la tool `delegate` en cada container con referencias a los demás (segunda pasada — necesaria porque los containers deben existir antes de las referencias cruzadas)
-3. Inicia `SchedulerService` con todos los agentes
+1. Builds one `AgentContainer` per agent (first pass)
+2. Registers the `delegate` tool in each container with references to the others (second pass — necessary because containers must exist before cross-references)
+3. Starts `SchedulerService` with all agents
 
-### Scope de historial y memoria
+### History and memory scope
 
-- **Historial:** scoped por `(agent_id, channel, chat_id)`. Conversaciones en grupos de Telegram, privados y CLI quedan completamente aisladas.
-- **Memoria:** scoped por `(agent_id, channel, chat_id)` opcionalmente. `channel=NULL, chat_id=NULL` = recuerdos globales pre-migración.
-- **Agent state** (sticky tools/skills): scoped por `(agent_id, channel, chat_id)`.
+- **History:** scoped by `(agent_id, channel, chat_id)`. Conversations in Telegram groups, private chats, and CLI are completely isolated.
+- **Memory:** optionally scoped by `(agent_id, channel, chat_id)`. `channel=NULL, chat_id=NULL` = global pre-migration memories.
+- **Agent state** (sticky tools/skills): scoped by `(agent_id, channel, chat_id)`.
 
-### Delegación
+### Delegation
 
-La tool `delegate` permite que un agente invoque a otro. Dos modos:
+The `delegate` tool allows one agent to invoke another. Two modes:
 
-- **`wait=true`** — sincrónico (legacy): bloquea hasta recibir `DelegationResult`.
-- **`wait=false`** — asíncrono (default): encola en `BackgroundDelegationQueueAdapter` (semáforo = 3), devuelve `bg-N` al instante. Cuando termina, el resultado se inyecta como `Role.USER` con prefijo `[bg-N]` en el scope origen via `LLMDispatcherAdapter`.
+- **`wait=true`** — synchronous (legacy): blocks until a `DelegationResult` is received.
+- **`wait=false`** — asynchronous (default): enqueues in `BackgroundDelegationQueueAdapter` (semaphore = 3), returns `bg-N` instantly. When finished, the result is injected as `Role.USER` with prefix `[bg-N]` into the origin scope via `LLMDispatcherAdapter`.
 
-`LLMDispatcherAdapter` se construye **una sola vez** en `AppContainer` y se comparte entre el queue adapter y el `SchedulerService`. Esto serializa turnos sobre el mismo `(agent_id, channel, chat_id)` vía lock-per-scope.
+`LLMDispatcherAdapter` is built **once** in `AppContainer` and shared between the queue adapter and `SchedulerService`. This serializes turns on the same `(agent_id, channel, chat_id)` via lock-per-scope.
 
 ### In-flight message injection
 
-Cuando llega un mensaje nuevo sobre un scope que ya tiene un `execute()` en curso:
+When a new message arrives on a scope that already has an `execute()` in progress:
 
 ```
 if try_mark_busy(scope):
     try: execute() finally: mark_idle(scope)
 else:
     record_user_message(message)
-    return "📝 incorporando a la tarea en curso..."
+    return "incorporating into the task in progress..."
 ```
 
-El tool loop drena esos mensajes entre iteraciones y los incorpora al contexto del LLM. Al recibir mensajes drenados, el contador de iteraciones se resetea. El circuit breaker **no** se resetea (los fallos de tools siguen acumulando).
+The tool loop drains those messages between iterations and incorporates them into the LLM context. When drained messages are received, the iteration counter resets. The circuit breaker does **not** reset (tool failures keep accumulating).
 
-**Grupos de Telegram excluidos**: el pipeline de grupo usa buffer+delay de coalescencia natural; la inyección in-flight no aplica allí.
+**Telegram groups excluded**: the group pipeline uses natural buffer+delay coalescing; in-flight injection does not apply there.
 
 ---
 
-## 9. Canales
+## 9. Channels
 
 ### CLI
 
 ```bash
-inaki                            # agente por defecto, interactivo
-inaki chat --agent dev           # agente específico
-inaki --remote http://host:6497  # conectarse a daemon remoto
+inaki                            # default agent, interactive
+inaki chat --agent dev           # specific agent
+inaki --remote http://host:6497  # connect to remote daemon
 ```
 
 ### Telegram
 
-Un bot por agente (un token por agente). Config en `agents/{id}.yaml`:
+One bot per agent (one token per agent). Config in `agents/{id}.yaml`:
 
 ```yaml
 channels:
   telegram:
     allowed_user_ids: ["123456789"]
-    allowed_chat_ids: []           # grupos autorizados (IDs negativos)
+    allowed_chat_ids: []           # authorized groups (negative IDs)
     reactions: true
-    voice_enabled: true            # transcripción Whisper
+    voice_enabled: true            # Whisper transcription
 ```
 
-**Grupos:** pipeline con buffer + delay aleatorio + coalescencia de mensajes consecutivos del mismo autor. Los mensajes del grupo se coalesce antes de enviar al LLM para evitar alternación `user/assistant` rota.
+**Groups:** pipeline with buffer + random delay + coalescing of consecutive messages from the same author. Group messages are coalesced before sending to the LLM to avoid broken `user/assistant` alternation.
 
-**Broadcast multi-Pi:** ver §11.
+**Multi-Pi broadcast:** see S11.
 
 ### REST API
 
-Una instancia FastAPI por agente en su propio puerto. Autenticación por `X-API-Key`. Endpoints: `GET /info`, `POST /chat`, `POST /consolidate`, `GET/DELETE /history`.
+One FastAPI instance per agent on its own port. Authentication via `X-API-Key`. Endpoints: `GET /info`, `POST /chat`, `POST /consolidate`, `GET/DELETE /history`.
 
-**Admin REST** (puerto 6497, `127.0.0.1`): server centralizado para el daemon. Expone endpoints de gestión (`/agents`, `/config`, `/chat` desde CLI remoto).
+**Admin REST** (port 6497, `127.0.0.1`): centralized server for the daemon. Exposes management endpoints (`/agents`, `/config`, `/chat` from remote CLI).
 
 ---
 
 ## 10. Semantic Routing
 
-Tools y skills se seleccionan por cosine similarity (embedding del input vs. embedding de descripción/nombre):
+Tools and skills are selected by cosine similarity (input embedding vs. description/name embedding):
 
-- **Sin routing** (< `semantic_routing_min_tools`/`min_skills` tools/skills): se pasan todas al LLM.
-- **Con routing**: se calculan scores, se pasan las top-K que superen `min_score`.
-- **Sticky:** si el LLM usó una tool/skill en el turno anterior, se mantiene en el contexto durante `sticky_ttl` turnos aunque el routing no la incluiría. Implementado en `StickySelector`.
+- **Without routing** (< `semantic_routing_min_tools`/`min_skills` tools/skills): all are passed to the LLM.
+- **With routing**: scores are computed, the top-K exceeding `min_score` are passed.
+- **Sticky:** if the LLM used a tool/skill in the previous turn, it stays in context for `sticky_ttl` turns even if routing would not include it. Implemented in `StickySelector`.
 
-El estado sticky se persiste en `agent_state` en `history.db`, scoped por `(agent_id, channel, chat_id)`.
-
----
-
-## 11. Broadcast Multi-Pi
-
-Permite que múltiples instancias de Inaki en la misma LAN compartan un grupo de Telegram. La Bot API no entrega mensajes de otros bots, por lo que se usa un canal lateral TCP.
-
-**Topología:** estrella — un server (`broadcast.port`), N clients (`broadcast.remote.host`).  
-**Wire format:** JSON line-delimited, firmado HMAC-SHA256 con ventana de frescura de 60 s.  
-**Modos de behavior:** `listen` (solo recibe) | `mention` (responde si lo mencionan) | `autonomous` (responde si considera que aporta, puede emitir `[SKIP]`).  
-**Rate limiter:** `FixedWindowRateLimiter` para evitar loops infinitos en modo `autonomous`.
+The sticky state is persisted in `agent_state` in `history.db`, scoped by `(agent_id, channel, chat_id)`.
 
 ---
 
-## 12. Features Opcionales
+## 11. Multi-Pi Broadcast
 
-### Reconocimiento facial (fotos en Telegram)
+Allows multiple Inaki instances on the same LAN to share a Telegram group. The Bot API does not deliver messages from other bots, so a TCP side channel is used.
 
-Activado con `photos.enabled: true`. Pipeline:
+**Topology:** star — one server (`broadcast.port`), N clients (`broadcast.remote.host`).  
+**Wire format:** JSON line-delimited, signed HMAC-SHA256 with a 60 s freshness window.  
+**Behavior modes:** `listen` (receive only) | `mention` (responds when mentioned) | `autonomous` (responds if it considers it can contribute, may emit `[SKIP]`).  
+**Rate limiter:** `FixedWindowRateLimiter` to prevent infinite loops in `autonomous` mode.
+
+---
+
+## 12. Optional Features
+
+### Face recognition (Telegram photos)
+
+Enabled with `photos.enabled: true`. Pipeline:
 
 1. `IVisionPort.detect_and_embed()` → `list[FaceDetection]` (InsightFace, lazy-load)
-2. `IFaceRegistry` busca por embedding en `faces.db` (sqlite-vec FLOAT[512])
-3. `ISceneDescriber.describe()` → descripción LLM multimodal
+2. `IFaceRegistry` searches by embedding in `faces.db` (sqlite-vec FLOAT[512])
+3. `ISceneDescriber.describe()` → multimodal LLM description
 
-Base de datos `faces.db` independiente de `history.db` e `inaki.db`. La tabla `persons` usa `categoria VARCHAR`: `NULL` = persona normal, `"ignorada"` = ignorada permanentemente.
+Database `faces.db` is independent from `history.db` and `inaki.db`. The `persons` table uses `categoria VARCHAR`: `NULL` = normal person, `"ignorada"` = permanently ignored.
 
-⚠ Cambiar `faces.model` invalida `faces.db` — borrar y re-enrolar.  
-⚠ `schema_meta.embedding_dim` se valida al arrancar. Mismatch → `EmbeddingDimensionMismatchError`.
+Warning: Changing `faces.model` invalidates `faces.db` — delete and re-enroll.  
+Warning: `schema_meta.embedding_dim` is validated at startup. Mismatch → `EmbeddingDimensionMismatchError`.
 
-### Transcripción de voz
+### Voice transcription
 
-Activado con `channels.telegram.voice_enabled: true` (default). Usa `ITranscriptionProvider` (Groq Whisper). El proveedor se descubre dinámicamente igual que LLM y embedding.
+Enabled with `channels.telegram.voice_enabled: true` (default). Uses `ITranscriptionProvider` (Groq Whisper). The provider is dynamically discovered just like LLM and embedding.
 
-### Knowledge Sources (RAG sobre documentos)
+### Knowledge Sources (RAG over documents)
 
-Configurado en `knowledge.sources`. Tres tipos: `document` (Markdown, PDF en disco), `sqlite` (tabla SQLite), `memory` (fusión con memorias del agente). El `KnowledgeOrchestrator` agrega resultados de todas las fuentes con presupuesto de tokens.
+Configured in `knowledge.sources`. Three types: `document` (Markdown, PDF on disk), `sqlite` (SQLite table), `memory` (fusion with agent memories). The `KnowledgeOrchestrator` aggregates results from all sources with a token budget.
 
 ---
 
 ## 13. Scheduler
 
-`SchedulerService` corre un loop async. Dos tipos de tareas:
+`SchedulerService` runs an async loop. Two task types:
 
-- **RECURRENT** — expresión cron (`croniter`). Se dispara cuando `next_run_time <= now`.
-- **ONESHOT** — datetime ISO exacto. Se dispara una vez y pasa a `DONE`.
+- **RECURRENT** — cron expression (`croniter`). Fires when `next_run_time <= now`.
+- **ONESHOT** — exact ISO datetime. Fires once and transitions to `DONE`.
 
-Las tareas se persisten en `scheduler.db` (o en `history.db`, según config). El dispatcher (`SchedulerDispatchPorts`) enruta la ejecución según el tipo de tarea: a `LLMDispatcherAdapter`, a `ConsolidationDispatchAdapter` o a `HttpCallerAdapter`.
+Tasks are persisted in `scheduler.db` (or in `history.db`, depending on config). The dispatcher (`SchedulerDispatchPorts`) routes execution based on task type: to `LLMDispatcherAdapter`, to `ConsolidationDispatchAdapter`, or to `HttpCallerAdapter`.
 
-Tareas built-in registradas automáticamente: `consolidate_memory` (nightly, cron desde `memory.schedule`) y `face_dedup` (si `photos.dedup.enabled`).
+Built-in tasks registered automatically: `consolidate_memory` (nightly, cron from `memory.schedule`) and `face_dedup` (if `photos.dedup.enabled`).
 
 ---
 
-## 14. Extensiones (`ext/`)
+## 14. Extensions (`ext/`)
 
-Mecanismo de auto-descubrimiento: cualquier carpeta en `ext/` con un `manifest.py` que declare el package se carga automáticamente. Las tools que implementen `ITool` y las skills YAML que sigan la convención se registran sin tocar nada en `core/` ni `infrastructure/`.
+Auto-discovery mechanism: any folder in `ext/` with a `manifest.py` declaring the package is loaded automatically. Tools implementing `ITool` and YAML skills following the convention are registered without touching anything in `core/` or `infrastructure/`.
 
-Extensiones incluidas: `exchange_calendar`, `nominatim`, `notes_todo_list`, `replicate_music`, `shell_exec`.
+Included extensions: `exchange_calendar`, `nominatim`, `notes_todo_list`, `replicate_music`, `shell_exec`.
 
-Convenciones:
+Conventions:
 
-| Elemento | Convención |
+| Element | Convention |
 |---|---|
-| Archivo tool | `{nombre}_tool.py` |
-| Clase tool | `{Nombre}Tool` |
+| Tool file | `{name}_tool.py` |
+| Tool class | `{Name}Tool` |
 | `ITool.name` | `snake_case` |
-| Skill | `{nombre}.yaml` con campos `name`, `description`, `content` |
+| Skill | `{name}.yaml` with fields `name`, `description`, `content` |
 
 ---
 
-## 15. Provider Factories (Descubrimiento Dinámico)
+## 15. Provider Factories (Dynamic Discovery)
 
-Las factories escanean sus carpetas, importan módulos, leen `PROVIDER_NAME` y construyen un registry en memoria. Añadir un proveedor = crear el fichero con `PROVIDER_NAME` correcto. Sin tocar nada más.
+The factories scan their directories, import modules, read `PROVIDER_NAME`, and build an in-memory registry. Adding a provider = creating the file with the correct `PROVIDER_NAME`. Nothing else to touch.
 
-Aplica a: `adapters/outbound/providers/` (LLM), `adapters/outbound/embedding/` (embedding), `adapters/outbound/transcription/` (voz).
+Applies to: `adapters/outbound/providers/` (LLM), `adapters/outbound/embedding/` (embedding), `adapters/outbound/transcription/` (voice).
 
 ```python
-# Convención obligatoria
+# Mandatory convention
 PROVIDER_NAME = "mi_proveedor"
 
 class MiProvider(BaseLLMProvider):
@@ -720,21 +720,21 @@ class MiProvider(BaseLLMProvider):
 
 ## 16. Testing
 
-- `pytest-asyncio` en modo `auto` — sin `@pytest.mark.asyncio`.
-- Fixtures compartidos en `tests/conftest.py`: `agent_config` (`:memory:` DB), `mock_llm`, `mock_memory`, `mock_embedder`, `mock_skills`, `mock_history`, `mock_tools`.
-- Tests unitarios: mocks de todos los puertos. Sin SQLite, ONNX ni red.
-- Tests de integración: SQLite real en memoria o archivo temporal.
+- `pytest-asyncio` in `auto` mode — no `@pytest.mark.asyncio` needed.
+- Shared fixtures in `tests/conftest.py`: `agent_config` (`:memory:` DB), `mock_llm`, `mock_memory`, `mock_embedder`, `mock_skills`, `mock_history`, `mock_tools`.
+- Unit tests: mock all ports. No SQLite, ONNX, or network.
+- Integration tests: real SQLite in memory or temporary file.
 
 ```bash
-pytest                          # todos
-pytest tests/unit/              # solo unitarios
-pytest tests/integration/       # solo integración
-pytest -k test_name             # test específico
+pytest                          # all
+pytest tests/unit/              # unit only
+pytest tests/integration/       # integration only
+pytest -k test_name             # specific test
 ```
 
 ---
 
-## 17. Gestión de Errores
+## 17. Error Handling
 
 ```python
 # core/domain/errors.py
@@ -748,24 +748,24 @@ class ToolLoopMaxIterationsError(InakiError): ...
 class ConfigError(InakiError): ...
 ```
 
-Los adaptadores loggean en su capa y propagan excepciones tipadas hacia arriba. El core nunca loggea directamente — usa excepciones para comunicar errores.
+Adapters log at their layer and propagate typed exceptions upward. The core never logs directly — it uses exceptions to communicate errors.
 
 ---
 
-## 18. Reglas de Desarrollo
+## 18. Development Rules
 
-Al añadir cualquier nueva funcionalidad, este es el orden obligatorio:
+When adding any new functionality, this is the mandatory order:
 
-1. **Entidad/Value Object** en `core/domain/` si se introduce un nuevo concepto
-2. **Puerto** en `core/ports/` si se necesita una nueva dependencia externa
-3. **Use Case** en `core/use_cases/` con la orquestación
-4. **Test unitario** en `tests/unit/` con mocks de los puertos — antes del adaptador
-5. **Adaptador** en `adapters/outbound/` o `adapters/inbound/`
-6. **Wiring** en `infrastructure/container.py`
-7. **Config** en `config/global.example.yaml` si requiere nuevos parámetros
+1. **Entity/Value Object** in `core/domain/` if a new concept is introduced
+2. **Port** in `core/ports/` if a new external dependency is needed
+3. **Use Case** in `core/use_cases/` with the orchestration
+4. **Unit test** in `tests/unit/` with port mocks — before the adapter
+5. **Adapter** in `adapters/outbound/` or `adapters/inbound/`
+6. **Wiring** in `infrastructure/container.py`
+7. **Config** in `config/global.example.yaml` if new parameters are required
 
-**Nunca saltarse pasos. Nunca mezclar capas.**
+**Never skip steps. Never mix layers.**
 
 ---
 
-*Versión: 2.x — Actualizado para reflejar el sistema completo post-`in-flight-message-injection`.*
+*Version: 2.x — Updated to reflect the complete system post-`in-flight-message-injection`.*

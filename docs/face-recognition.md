@@ -1,11 +1,11 @@
-# Reconocimiento facial — Guía técnica
+# Face Recognition — Technical Guide
 
-Pipeline de procesamiento de fotos enviadas por Telegram: detección de caras, matching contra el registro, descripción de escena y anotación visual.
+Pipeline for processing photos sent via Telegram: face detection, matching against the registry, scene description, and visual annotation.
 
-## Arquitectura general
+## General Architecture
 
 ```
-Telegram foto
+Telegram photo
      │
      ▼
 _handle_photo_message (TelegramBot)
@@ -13,10 +13,10 @@ _handle_photo_message (TelegramBot)
      │  auth check
      │
      ▼
-extract_photo_payload → bytes JPEG (mayor resolución)
+extract_photo_payload → bytes JPEG (highest resolution)
      │
      ▼
-record_photo_message → history_id (fila en history.db)
+record_photo_message → history_id (row in history.db)
      │
      ▼
 ProcessPhotoUseCase.execute(image_bytes, history_id, ...)
@@ -24,13 +24,13 @@ ProcessPhotoUseCase.execute(image_bytes, history_id, ...)
      ├── IVisionPort.detect_and_embed → list[FaceDetection]
      │        InsightFaceVisionAdapter (lazy-load)
      │
-     ├── IFaceRegistryPort.search_nearest → FaceMatch per cara
+     ├── IFaceRegistryPort.search_nearest → FaceMatch per face
      │        SqliteFaceRegistryAdapter (faces.db / sqlite-vec)
      │
-     ├── ISceneDescriberPort.describe → texto de escena
+     ├── ISceneDescriberPort.describe → scene text
      │        AnthropicSceneDescriberAdapter | OpenAI | Groq
      │
-     ├── IPhotoAnnotatorPort.annotate → bytes PNG/JPEG anotado
+     ├── IPhotoAnnotatorPort.annotate → annotated PNG/JPEG bytes
      │        PillowPhotoAnnotator
      │
      └── IMessageFaceMetadataPort.save → message_face_metadata
@@ -40,19 +40,19 @@ ProcessPhotoUseCase.execute(image_bytes, history_id, ...)
 ProcessPhotoResult(text_context, annotated_image, should_skip_run_agent)
      │
      ▼
-RunAgentUseCase.execute(text_context)   ← pipeline LLM normal
+RunAgentUseCase.execute(text_context)   ← normal LLM pipeline
 ```
 
-## Bases de datos
+## Databases
 
-| DB | Ruta | Contenido |
-|----|------|-----------|
-| `faces.db` | `~/.inaki/data/faces.db` | Personas + embeddings (sqlite-vec `FLOAT[512]`) |
-| `history.db` | `~/.inaki/data/history.db` | Historial + `message_face_metadata` side-table |
+| DB | Path | Contents |
+|----|------|----------|
+| `faces.db` | `~/.inaki/data/faces.db` | Persons + embeddings (sqlite-vec `FLOAT[512]`) |
+| `history.db` | `~/.inaki/data/history.db` | History + `message_face_metadata` side-table |
 
-Las dos DBs son independientes: borrar `faces.db` elimina solo el registro facial; el historial de mensajes permanece intacto.
+The two DBs are independent: deleting `faces.db` removes only the face registry; the message history remains intact.
 
-### Esquema faces.db
+### faces.db Schema
 
 ```sql
 CREATE TABLE schema_meta (
@@ -66,7 +66,7 @@ CREATE TABLE persons (
     name        TEXT NOT NULL,
     alias       TEXT,
     notes       TEXT,
-    categoria   VARCHAR,   -- NULL=normal, 'ignorada'=skip permanente
+    categoria   VARCHAR,   -- NULL=normal, 'ignorada'=permanent skip
     created_at  DATETIME,
     updated_at  DATETIME
 );
@@ -79,7 +79,7 @@ CREATE VIRTUAL TABLE face_embeddings USING vec0(
 );
 ```
 
-### Esquema message_face_metadata (en history.db)
+### message_face_metadata Schema (in history.db)
 
 ```sql
 CREATE TABLE message_face_metadata (
@@ -89,13 +89,13 @@ CREATE TABLE message_face_metadata (
 );
 ```
 
-`data` serializa la lista de `FaceRecord` con `face_ref`, `person_id`, `match_score`, `bbox`.
+`data` serializes the list of `FaceRecord` with `face_ref`, `person_id`, `match_score`, `bbox`.
 
-**face_ref format**: `"{history_id}#{face_idx}"` — clave globalmente única para referirse a una cara específica en un mensaje. Las tools la reciben como argumento para operaciones de enrollment posterior.
+**face_ref format**: `"{history_id}#{face_idx}"` — globally unique key to refer to a specific face in a message. Tools receive it as an argument for subsequent enrollment operations.
 
-## Lazy-load de InsightFace
+## InsightFace Lazy-Load
 
-El modelo (~400 MB) **no se carga al arrancar el daemon**. Se carga la primera vez que se recibe una foto. Implementado con un singleton perezoso en `_get_app()` del adapter:
+The model (~400 MB) **is not loaded at daemon startup**. It is loaded the first time a photo is received. Implemented with a lazy singleton in the adapter's `_get_app()`:
 
 ```python
 def _get_app(self) -> FaceAnalysis:
@@ -105,55 +105,55 @@ def _get_app(self) -> FaceAnalysis:
     return self._app
 ```
 
-El primer análisis tarda ~5-10 segundos en Pi 5. Los siguientes son instantáneos.
+The first analysis takes ~5-10 seconds on Pi 5. Subsequent ones are instantaneous.
 
-## Validación de dimensión de embedding
+## Embedding Dimension Validation
 
-Al iniciar, `SqliteFaceRegistryAdapter` verifica que `schema_meta.embedding_dim` coincide con la dimensión real del modelo. Si no coinciden, lanza `EmbeddingDimensionMismatchError` con un mensaje descriptivo.
+On startup, `SqliteFaceRegistryAdapter` verifies that `schema_meta.embedding_dim` matches the actual model dimension. If they don't match, it raises `EmbeddingDimensionMismatchError` with a descriptive message.
 
-**Si cambiás `faces.model`**: la dimensión puede cambiar. Procedimiento:
+**If you change `faces.model`**: the dimension may change. Procedure:
 
 ```bash
 rm ~/.inaki/data/faces.db
-# reiniciar el daemon — se recrea automáticamente
-# re-enrolar todas las personas via register_face / add_photo_to_person
+# restart the daemon — it is recreated automatically
+# re-enroll all persons via register_face / add_photo_to_person
 ```
 
-## Categorías de personas
+## Person Categories
 
-El campo `categoria VARCHAR` en `persons` es extensible sin migraciones:
+The `categoria VARCHAR` field in `persons` is extensible without migrations:
 
-| Valor | Significado |
-|-------|-------------|
-| `NULL` | Persona normal — aparece en matching |
-| `'ignorada'` | Registrada via `skip_face` — filtrada silenciosamente en process_photo |
+| Value | Meaning |
+|-------|---------|
+| `NULL` | Normal person — appears in matching |
+| `'ignorada'` | Registered via `skip_face` — silently filtered out in process_photo |
 
-Futuros valores son posibles con un `ALTER TABLE` simple (o simplemente escribiendo el nuevo valor).
+Future values are possible with a simple `ALTER TABLE` (or just by writing the new value).
 
-## Face tools disponibles
+## Available Face Tools
 
-Todas las tools se registran en el agente cuando `photos.enabled=true`.
+All tools are registered on the agent when `photos.enabled=true`.
 
-| Tool | Descripción |
+| Tool | Description |
 |------|-------------|
-| `register_face` | Registra una cara nueva como persona (face_ref → person_id) |
-| `add_photo_to_person` | Añade un embedding de foto a una persona existente |
-| `update_person_metadata` | Actualiza nombre/alias/notas de una persona |
-| `list_known_persons` | Lista todas las personas en el registro |
-| `forget_person` | Elimina una persona y todos sus embeddings |
-| `skip_face` | Marca una cara para ser ignorada permanentemente |
-| `merge_persons` | Fusiona dos personas en una (deduplica) |
-| `find_duplicate_persons` | Detecta pares de personas con embeddings similares |
+| `register_face` | Registers a new face as a person (face_ref → person_id) |
+| `add_photo_to_person` | Adds a photo embedding to an existing person |
+| `update_person_metadata` | Updates a person's name/alias/notes |
+| `list_known_persons` | Lists all persons in the registry |
+| `forget_person` | Deletes a person and all their embeddings |
+| `skip_face` | Marks a face to be permanently ignored |
+| `merge_persons` | Merges two persons into one (deduplicates) |
+| `find_duplicate_persons` | Detects pairs of persons with similar embeddings |
 
-## Job de deduplicación nocturna
+## Nightly Deduplication Job
 
-Si `photos.dedup.enabled=true`, se siembra la tarea builtin `face_dedup_nightly` (id=2) en el scheduler. Por defecto corre a las 3am (`"0 3 * * *"`). El job envía al primer agente con photos habilitado la tarea:
+If `photos.dedup.enabled=true`, the built-in task `face_dedup_nightly` (id=2) is seeded in the scheduler. By default it runs at 3am (`"0 3 * * *"`). The job sends the first agent with photos enabled the task:
 
-> "Ejecutá la herramienta find_duplicate_persons y reportá los pares de personas duplicadas que encontrés, si hay alguno."
+> "Run the find_duplicate_persons tool and report any duplicate person pairs you find, if any."
 
-Configurable via `photos.dedup.schedule` y `photos.dedup.similarity_threshold`.
+Configurable via `photos.dedup.schedule` and `photos.dedup.similarity_threshold`.
 
-## Configuración mínima
+## Minimal Configuration
 
 ```yaml
 # ~/.inaki/config/global.yaml
@@ -169,19 +169,19 @@ photos:
     api_key: "sk-ant-..."
 ```
 
-Ver la referencia completa de configuración en [`docs/configuracion.md`](configuracion.md).
+See the full configuration reference in [`docs/configuracion.md`](configuracion.md).
 
-## Bootstrap desde cero
+## Bootstrap from Scratch
 
 ```bash
-# 1. Detener el daemon
+# 1. Stop the daemon
 systemctl --user stop inaki
 
-# 2. Agregar bloque photos: en global.yaml (o secrets.yaml para api_key)
-# 3. Reiniciar — faces.db se crea automáticamente al primer uso
+# 2. Add the photos: block in global.yaml (or secrets.yaml for the api_key)
+# 3. Restart — faces.db is created automatically on first use
 systemctl --user start inaki
 
-# 4. Enviar una foto por Telegram
-# 5. El agente detectará la cara y ofrecerá registrarla (en chat privado)
-# 6. Responder con el nombre para enrollar:  register_face
+# 4. Send a photo via Telegram
+# 5. The agent will detect the face and offer to register it (in private chat)
+# 6. Reply with the name to enroll: register_face
 ```

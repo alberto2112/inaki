@@ -1,15 +1,15 @@
-# Modelo de Datos — Inaki v2
+# Data Model — Inaki v2
 
-Todas las entidades del dominio están en `core/domain/` y son **Pydantic BaseModel**.
-El core no importa de `adapters/` ni de librerías de infraestructura.
+All domain entities live in `core/domain/` and are **Pydantic BaseModel**.
+The core never imports from `adapters/` or infrastructure libraries.
 
 ---
 
-## Entidades (`core/domain/entities/`)
+## Entities (`core/domain/entities/`)
 
 ### `Message` — `message.py`
 
-Unidad de conversación. El historial es una `list[Message]`.
+Conversation unit. History is a `list[Message]`.
 
 ```python
 class Role(str, Enum):
@@ -22,35 +22,35 @@ class Role(str, Enum):
 class Message(BaseModel):
     role: Role
     content: str
-    timestamp: datetime | None = None   # UTC; asignado por SQLiteHistoryStore en append()
+    timestamp: datetime | None = None   # UTC; assigned by SQLiteHistoryStore in append()
 ```
 
-> **Regla crítica:** el historial persistido en SQLite solo contiene `USER` y `ASSISTANT`.
-> Los mensajes `TOOL` y `TOOL_RESULT` son efímeros — viven solo durante el loop de tools.
-> `timestamp` se muta en `append()` si es `None`, asignando `datetime.now(UTC)`. Fluye hasta `MemoryEntry.created_at` en la consolidación.
+> **Critical rule:** the history persisted in SQLite only contains `USER` and `ASSISTANT`.
+> `TOOL` and `TOOL_RESULT` messages are ephemeral — they only live during the tool loop.
+> `timestamp` is mutated in `append()` if `None`, assigning `datetime.now(UTC)`. It flows through to `MemoryEntry.created_at` during consolidation.
 
 ---
 
 ### `MemoryEntry` — `memory.py`
 
-Recuerdo a largo plazo extraído por `ConsolidateMemoryUseCase`.
+Long-term memory entry extracted by `ConsolidateMemoryUseCase`.
 
 ```python
 class MemoryEntry(BaseModel):
-    id: str               # UUID autogenerado
-    content: str          # Texto del recuerdo ("Le gusta Python")
-    embedding: list[float] # Vector 384d generado con embed_passage()
-    relevance: float      # 0.0–1.0, estimada por el LLM extractor
-    tags: list[str]       # Etiquetas semánticas ["tech", "preferencias"]
-    created_at: datetime  # UTC — viene del timestamp del mensaje original, no de cuando se consolidó
-    agent_id: str | None  # None = recuerdo global compartido entre todos los agentes
+    id: str               # Auto-generated UUID
+    content: str          # Memory text ("Likes Python")
+    embedding: list[float] # 384d vector generated with embed_passage()
+    relevance: float      # 0.0–1.0, estimated by the LLM extractor
+    tags: list[str]       # Semantic tags ["tech", "preferences"]
+    created_at: datetime  # UTC — comes from the original message timestamp, not from when consolidation ran
+    agent_id: str | None  # None = global memory shared across all agents
 ```
 
-> La memoria es **global y compartida**: `agent_id = None` en todos los recuerdos.
-> El historial de conversación es privado por agente.
-> `created_at` refleja cuándo ocurrió el hecho en la conversación — el LLM extractor lo incluye en el JSON como campo `timestamp`.
+> Memory is **global and shared**: `agent_id = None` for all memory entries.
+> Conversation history is private per agent.
+> `created_at` reflects when the fact occurred in conversation — the LLM extractor includes it in the JSON as a `timestamp` field.
 
-**Schema SQLite de historial** (`data/history.db`):
+**History SQLite schema** (`data/history.db`):
 ```sql
 CREATE TABLE history (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,17 +63,17 @@ CREATE TABLE history (
 CREATE INDEX idx_history_agent ON history(agent_id, archived);
 ```
 
-`archive()` hace soft-delete (`archived=1`). `clear()` hace hard-delete. Base de datos separada de `data/inaki.db` para no interferir con la extensión `sqlite-vec`.
+`archive()` performs a soft-delete (`archived=1`). `clear()` performs a hard-delete. Separate database from `data/inaki.db` to avoid interfering with the `sqlite-vec` extension.
 
 ---
 
-**Schema SQLite de memoria** (`data/inaki.db`):
+**Memory SQLite schema** (`data/inaki.db`):
 ```sql
 CREATE TABLE memories (
     id         TEXT PRIMARY KEY,
     content    TEXT NOT NULL,
     relevance  REAL NOT NULL,
-    tags       TEXT NOT NULL,     -- JSON array serializado
+    tags       TEXT NOT NULL,     -- Serialized JSON array
     created_at TEXT NOT NULL,     -- ISO 8601
     agent_id   TEXT               -- NULL = global
 );
@@ -88,14 +88,14 @@ CREATE VIRTUAL TABLE memory_embeddings USING vec0(
 
 ### `Skill` — `skill.py`
 
-Capacidad o conocimiento especializado cargado desde YAML.
+Specialized capability or knowledge loaded from YAML.
 
 ```python
 class Skill(BaseModel):
     id: str
     name: str
     description: str
-    instructions: str = ""   # Instrucciones detalladas para el LLM
+    instructions: str = ""   # Detailed instructions for the LLM
     tags: list[str] = []
 
 class SkillResult(BaseModel):
@@ -104,7 +104,7 @@ class SkillResult(BaseModel):
     notes: str = ""
 ```
 
-**Formato YAML de una skill** (`skills/*.yaml`):
+**YAML format for a skill** (`skills/*.yaml`):
 ```yaml
 id: "web_search"
 name: "Búsqueda Web"
@@ -120,7 +120,7 @@ tags:
 
 ### `ScheduledTask` — `task.py`
 
-Tarea programada para ejecución futura o periódica.
+Task scheduled for future or periodic execution.
 
 ```python
 class TaskStatus(str, Enum):
@@ -130,7 +130,7 @@ class TaskStatus(str, Enum):
     FAILED  = "failed"
 
 class TaskType(str, Enum):
-    CRON = "cron"    # Expresión cron ("0 8 * * *")
+    CRON = "cron"    # Cron expression ("0 8 * * *")
     ONCE = "once"    # ISO datetime ("2024-12-25T09:00:00")
 
 class ScheduledTask(BaseModel):
@@ -139,8 +139,8 @@ class ScheduledTask(BaseModel):
     name: str
     description: str
     task_type: TaskType
-    schedule: str         # cron expression o ISO datetime
-    prompt: str           # Mensaje a enviar al agente cuando dispare
+    schedule: str         # cron expression or ISO datetime
+    prompt: str           # Message to send to the agent when it fires
     status: TaskStatus    # default: PENDING
     created_at: datetime
     last_run: datetime | None
@@ -155,63 +155,63 @@ class ScheduledTask(BaseModel):
 
 ```python
 class Embedding(BaseModel):
-    vector: list[float]   # 384 dimensiones para e5-small
-    model: str            # "e5_onnx" u otro provider
+    vector: list[float]   # 384 dimensions for e5-small
+    model: str            # "e5_onnx" or another provider
 ```
 
 ---
 
 ### `AgentContext` — `agent_context.py`
 
-Estado de contexto ensamblado por turno. No se persiste — se construye en cada `execute()`.
+Per-turn context state. Not persisted — built fresh on each `execute()`.
 
 ```python
 class AgentContext(BaseModel):
     agent_id: str
-    memories: list[MemoryEntry] = []   # Recuperados via búsqueda vectorial
-    skills: list[Skill] = []           # Recuperados via cosine similarity
+    memories: list[MemoryEntry] = []   # Retrieved via vector search
+    skills: list[Skill] = []           # Retrieved via cosine similarity
 
     def build_system_prompt(self, base_prompt: str) -> str:
         """
-        Construye el system prompt inyectando memoria y skills.
+        Builds the system prompt injecting memory and skills.
 
-        Resultado:
+        Result:
           {base_prompt}
 
-          ## Lo que recuerdas del usuario:
-          - Le gusta Python
-          - Prefiere respuestas concisas
+          ## What you remember about the user:
+          - Likes Python
+          - Prefers concise answers
 
-          ## Skills disponibles:
-          - **Búsqueda Web**: Busca información actualizada...
-            Cuando el usuario pregunte sobre eventos actuales...
+          ## Available skills:
+          - **Web Search**: Searches for up-to-date information...
+            When the user asks about current events...
         """
 ```
 
 ---
 
-## Jerarquía de errores (`core/domain/errors.py`)
+## Error Hierarchy (`core/domain/errors.py`)
 
 ```
 InakiError
-├── AgentNotFoundError     # Agente no existe en el registry
-├── LLMError               # Error al llamar al proveedor LLM
-├── ConsolidationError     # Error durante consolidación (historial intacto garantizado)
-├── EmbeddingError         # Error al generar embeddings
-├── ToolError              # Error al ejecutar una tool
-└── HistoryError           # Error al leer/escribir el historial
+├── AgentNotFoundError     # Agent does not exist in the registry
+├── LLMError               # Error calling the LLM provider
+├── ConsolidationError     # Error during consolidation (history guaranteed intact)
+├── EmbeddingError         # Error generating embeddings
+├── ToolError              # Error executing a tool
+└── HistoryError           # Error reading/writing history
 ```
 
 ---
 
-## Puertos (`core/ports/`)
+## Ports (`core/ports/`)
 
-Los puertos son contratos (ABC) que el core define y los adaptadores implementan.
+Ports are contracts (ABC) that the core defines and adapters implement.
 
-### Outbound (lo que el core necesita del exterior)
+### Outbound (what the core needs from the outside)
 
-| Puerto | Archivo | Métodos principales |
-|--------|---------|---------------------|
+| Port | File | Main Methods |
+|------|------|--------------|
 | `ILLMProvider` | `llm_port.py` | `complete(messages, system_prompt, tools?)`, `stream(...)` |
 | `IMemoryRepository` | `memory_port.py` | `store(entry)`, `search(embedding, top_k)`, `get_recent(limit)` |
 | `IEmbeddingProvider` | `embedding_port.py` | `embed_query(text)`, `embed_passage(text)` |
@@ -219,28 +219,28 @@ Los puertos son contratos (ABC) que el core define y los adaptadores implementan
 | `ISkillRepository` | `skill_port.py` | `retrieve(embedding, top_k)` |
 | `IHistoryStore` | `history_port.py` | `append(agent_id, msg)`, `load(agent_id)`, `load_full(agent_id)`, `archive(agent_id)`, `clear(agent_id)` |
 
-### Inbound (lo que el core expone al exterior)
+### Inbound (what the core exposes to the outside)
 
-| Puerto | Archivo | Métodos |
-|--------|---------|---------|
+| Port | File | Methods |
+|------|------|---------|
 | `IAgentUseCase` | `agent_port.py` | `execute(agent_id, user_input) -> str` |
 | `ISchedulerUseCase` | `scheduler_port.py` | `schedule(task)`, `cancel(task_id)`, `list_tasks(agent_id)` |
 
 ---
 
-## `ToolResult` — resultado de ejecución de tool
+## `ToolResult` — tool execution result
 
 ```python
 class ToolResult(BaseModel):
     tool_name: str
-    output: str      # Output verbatim de la tool
+    output: str      # Verbatim output from the tool
     success: bool
     error: str | None
 ```
 
 ---
 
-## Relaciones entre modelos
+## Relationships Between Models
 
 ```
 AgentConfig ──────────────────► AgentContainer

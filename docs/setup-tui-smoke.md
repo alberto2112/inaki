@@ -1,19 +1,19 @@
-# Smoke Test Manual — `inaki setup` TUI V2 (Pi 5)
+# Manual Smoke Test — `inaki setup` TUI V2 (Pi 5)
 
-Checklist de verificación manual en Raspberry Pi 5 via SSH.
-Correr esta lista en un entorno real después de cada release que toque el TUI de setup.
-
----
-
-## Prerequisitos
-
-- Inaki instalado en el Pi 5 (modo systemd o venv directo).
-- Al menos un agente configurado en `~/.inaki/config/agents/`.
-- Conexión SSH activa con terminal de al menos 80x24.
+Manual verification checklist on Raspberry Pi 5 via SSH.
+Run this list in a real environment after every release that touches the setup TUI.
 
 ---
 
-## 1. Acceso desde SSH y pantalla de menú principal
+## Prerequisites
+
+- Inaki installed on the Pi 5 (systemd mode or direct venv).
+- At least one agent configured in `~/.inaki/config/agents/`.
+- Active SSH connection with a terminal of at least 80x24.
+
+---
+
+## 1. Access via SSH and Main Menu Screen
 
 ```bash
 ssh pi@raspi.local
@@ -22,28 +22,28 @@ source .venv/bin/activate
 inaki setup
 ```
 
-**Esperado:** la TUI abre sin error y muestra `MainMenuPage` con 4 opciones:
-`Global Config`, `Providers`, `Agentes`, `Secrets`.
+**Expected:** the TUI opens without error and shows `MainMenuPage` with 4 options:
+`Global Config`, `Providers`, `Agents`, `Secrets`.
 
-**Si falla:** verificar `textual>=0.80` instalado (`pip show textual`). En Pi 5
-con 4 GB RAM la TUI debe abrir en menos de 3 segundos.
+**If it fails:** verify `textual>=0.80` is installed (`pip show textual`). On Pi 5
+with 4 GB RAM the TUI should open in under 3 seconds.
 
-- [ ] TUI abre sin traceback.
-- [ ] Se muestra el menú principal con las 4 categorías.
-- [ ] Breadcrumb en el top bar muestra `inaki / setup`.
+- [ ] TUI opens without traceback.
+- [ ] Main menu is shown with the 4 categories.
+- [ ] Breadcrumb in the top bar shows `inaki / setup`.
 
 ---
 
-## 2. Modal de bienvenida (primer lanzamiento)
+## 2. Welcome Modal (first launch)
 
-Al abrir la TUI **por primera vez** (sin el flag `~/.inaki/setup_welcome_seen`):
+When opening the TUI **for the first time** (without the `~/.inaki/setup_welcome_seen` flag):
 
-- [ ] Se muestra el modal "inaki setup — TUI" con texto de bienvenida.
-- [ ] El modal menciona `inaki setup secret-key` como alternativa para el wizard Fernet.
-- [ ] Al presionar `Enter` o `Esc` el modal se cierra.
-- [ ] En las aperturas siguientes **no** vuelve a aparecer.
+- [ ] The "inaki setup — TUI" modal with welcome text is shown.
+- [ ] The modal mentions `inaki setup secret-key` as an alternative for the Fernet wizard.
+- [ ] Pressing `Enter` or `Esc` closes the modal.
+- [ ] On subsequent opens it **does not** reappear.
 
-Para resetear:
+To reset:
 
 ```bash
 rm ~/.inaki/setup_welcome_seen
@@ -51,173 +51,173 @@ rm ~/.inaki/setup_welcome_seen
 
 ---
 
-## 3. Navegación con teclado — teclado-first, sin mouse
+## 3. Keyboard Navigation — keyboard-first, no mouse
 
-Desde `MainMenuPage`:
+From `MainMenuPage`:
 
-- [ ] `↓` / `j` baja el cursor; la fila seleccionada se resalta con la barra teal `▎`.
-- [ ] `↑` / `k` sube el cursor.
-- [ ] `Enter` sobre "Global Config" abre `GlobalPage` (breadcrumb cambia a `inaki / config / global`).
-- [ ] `Esc` en `GlobalPage` vuelve a `MainMenuPage`.
-- [ ] `q` en cualquier pantalla sale limpiamente.
+- [ ] `↓` / `j` moves the cursor down; the selected row is highlighted with the teal bar `▎`.
+- [ ] `↑` / `k` moves the cursor up.
+- [ ] `Enter` on "Global Config" opens `GlobalPage` (breadcrumb changes to `inaki / config / global`).
+- [ ] `Esc` in `GlobalPage` returns to `MainMenuPage`.
+- [ ] `q` in any screen exits cleanly.
 
 ---
 
-## 4. GlobalPage — editar un campo global
+## 4. GlobalPage — edit a global field
 
-1. `Enter` sobre "Global Config" → `GlobalPage`.
-2. Navegar con `↓` hasta cualquier campo de la sección `LLM` (ej. `model`).
-3. Presionar `Enter` → se abre `EditScalarModal`.
-4. El modal muestra el valor actual **pre-completado** en el input.
-5. Cambiar el valor (ej. `anthropic/claude-3-5-haiku` → `anthropic/claude-3-haiku`).
-6. Presionar `Enter` para guardar.
+1. `Enter` on "Global Config" → `GlobalPage`.
+2. Navigate with `↓` to any field in the `LLM` section (e.g. `model`).
+3. Press `Enter` → `EditScalarModal` opens.
+4. The modal shows the current value **pre-filled** in the input.
+5. Change the value (e.g. `anthropic/claude-3-5-haiku` → `anthropic/claude-3-haiku`).
+6. Press `Enter` to save.
 
-**Verificar en shell separado:**
+**Verify in a separate shell:**
 
 ```bash
 bat ~/.inaki/config/global.yaml | rg "model"
 ```
 
-- [ ] El modal pre-completa el valor actual.
-- [ ] El valor nuevo aparece en `global.yaml`.
-- [ ] Los **comentarios del archivo original están preservados** (ruamel.yaml).
-- [ ] No hay errores de sintaxis YAML.
-- [ ] Aparece notificación "guardado: model" en la barra de status.
+- [ ] The modal pre-fills the current value.
+- [ ] The new value appears in `global.yaml`.
+- [ ] **Comments from the original file are preserved** (ruamel.yaml).
+- [ ] No YAML syntax errors.
+- [ ] Notification "saved: model" appears in the status bar.
 
 ---
 
-## 5. GlobalPage — escape hatch `<null>`
+## 5. GlobalPage — `<null>` escape hatch
 
-1. En `GlobalPage`, navegar hasta un campo opcional (ej. `LLM → reasoning_effort`).
-2. Presionar `Enter` → `EditScalarModal`.
-3. Borrar el contenido e ingresar `<null>`.
-4. Presionar `Enter`.
+1. In `GlobalPage`, navigate to an optional field (e.g. `LLM → reasoning_effort`).
+2. Press `Enter` → `EditScalarModal`.
+3. Clear the content and type `<null>`.
+4. Press `Enter`.
 
-**Verificar:**
+**Verify:**
 
 ```bash
 bat ~/.inaki/config/global.yaml | rg "reasoning_effort"
 ```
 
-- [ ] El campo aparece como `reasoning_effort: null` en el YAML (no ausente, `null` explícito).
+- [ ] The field appears as `reasoning_effort: null` in the YAML (not absent, explicit `null`).
 
 ---
 
-## 6. ProvidersPage — agregar un nuevo provider
+## 6. ProvidersPage — add a new provider
 
-1. En `MainMenuPage`, Enter sobre "Providers" → `ProvidersPage`.
-2. Presionar `n` (nuevo provider) o el binding disponible.
-3. Ingresar `id: test-provider`, `base_url: https://api.test.com/v1`.
-4. Ingresar una `api_key` de prueba (ej. `sk-test-1234567890`).
-5. Confirmar.
+1. In `MainMenuPage`, Enter on "Providers" → `ProvidersPage`.
+2. Press `n` (new provider) or the available binding.
+3. Enter `id: test-provider`, `base_url: https://api.test.com/v1`.
+4. Enter a test `api_key` (e.g. `sk-test-1234567890`).
+5. Confirm.
 
-**Verificar:**
+**Verify:**
 
 ```bash
 bat ~/.inaki/config/global.yaml | rg -A3 "test-provider"
 bat ~/.inaki/config/global.secrets.yaml | rg "test-provider"
-stat -f "%A" ~/.inaki/config/global.secrets.yaml   # debe ser 600
+stat -f "%A" ~/.inaki/config/global.secrets.yaml   # should be 600
 ```
 
-- [ ] `global.yaml` tiene la entrada `test-provider` con `base_url`.
-- [ ] `global.secrets.yaml` tiene `api_key` del provider.
-- [ ] Permisos de `global.secrets.yaml` son `600`.
+- [ ] `global.yaml` has the `test-provider` entry with `base_url`.
+- [ ] `global.secrets.yaml` has the provider's `api_key`.
+- [ ] Permissions on `global.secrets.yaml` are `600`.
 
 ---
 
-## 7. AgentsPage — crear un nuevo agente
+## 7. AgentsPage — create a new agent
 
-1. En `MainMenuPage`, Enter sobre "Agentes" → `AgentsPage`.
-2. Presionar el binding de crear (ej. `n` o `c`).
-3. Ingresar:
+1. In `MainMenuPage`, Enter on "Agents" → `AgentsPage`.
+2. Press the create binding (e.g. `n` or `c`).
+3. Enter:
    - `id`: `smoke-test`
    - `name`: `Smoke Test Agent`
-   - `description`: `Agente de prueba del TUI`
-   - `system_prompt`: `Sos un agente de prueba.`
-4. Confirmar.
+   - `description`: `Test agent for the TUI`
+   - `system_prompt`: `You are a test agent.`
+4. Confirm.
 
-**Verificar:**
-
-```bash
-bat ~/.inaki/config/agents/smoke-test.yaml
-```
-
-- [ ] El archivo existe con los 4 campos.
-- [ ] Es YAML válido.
-
----
-
-## 8. AgentDetailPage — flujo de edición con tri-estado (memory.llm)
-
-1. En `AgentsPage`, seleccionar `smoke-test` → Enter → `AgentDetailPage`.
-2. Breadcrumb muestra `inaki / config / agents / smoke-test`.
-3. Navegar hasta la sección `MEMORY.LLM`.
-4. Seleccionar el campo `provider`:
-   - Presionar `Enter` → se abre el modal triestado con 3 opciones.
-   - Seleccionar **Heredar** → guardar.
-5. Seleccionar el campo `model`:
-   - Presionar `Enter` → modal triestado.
-   - Seleccionar **Valor propio** → ingresar `gpt-4o` → guardar.
-6. Seleccionar el campo `temperature`:
-   - Presionar `Enter` → modal triestado.
-   - Seleccionar **null explícito** → guardar.
-
-**Verificar:**
+**Verify:**
 
 ```bash
 bat ~/.inaki/config/agents/smoke-test.yaml
 ```
 
-- [ ] `memory.llm.provider` NO aparece en el YAML del agente (heredado).
-- [ ] `memory.llm.model: gpt-4o` aparece explícitamente.
-- [ ] `memory.llm.temperature: null` aparece explícitamente.
+- [ ] The file exists with the 4 fields.
+- [ ] It is valid YAML.
 
 ---
 
-## 9. Validación cross-ref — warning por referencia inválida
+## 8. AgentDetailPage — editing flow with tri-state (memory.llm)
 
-1. En `GlobalPage`, navegar hasta `APP → default_agent`.
-2. Presionar `Enter` → modal.
-3. Ingresar un id inexistente (ej. `agente-fantasma`).
-4. Presionar `Enter` para guardar.
+1. In `AgentsPage`, select `smoke-test` → Enter → `AgentDetailPage`.
+2. Breadcrumb shows `inaki / config / agents / smoke-test`.
+3. Navigate to the `MEMORY.LLM` section.
+4. Select the `provider` field:
+   - Press `Enter` → the tri-state modal opens with 3 options.
+   - Select **Inherit** → save.
+5. Select the `model` field:
+   - Press `Enter` → tri-state modal.
+   - Select **Own value** → enter `gpt-4o` → save.
+6. Select the `temperature` field:
+   - Press `Enter` → tri-state modal.
+   - Select **Explicit null** → save.
 
-**Esperado:**
-- [ ] El valor se guarda (aparece en YAML).
-- [ ] Aparece una notificación de **warning** indicando referencia inválida (`app.default_agent`).
-- [ ] La TUI no se cierra ni rompe.
-5. Corregir el valor volviendo al campo.
-
----
-
-## 10. Preservación de comentarios YAML (ruamel.yaml)
-
-1. Editar manualmente un comentario en `global.yaml`:
+**Verify:**
 
 ```bash
-# Agregar un comentario antes de un campo, guardar
+bat ~/.inaki/config/agents/smoke-test.yaml
 ```
 
-2. Abrir la TUI, editar cualquier campo en la misma sección, guardar.
+- [ ] `memory.llm.provider` does NOT appear in the agent YAML (inherited).
+- [ ] `memory.llm.model: gpt-4o` appears explicitly.
+- [ ] `memory.llm.temperature: null` appears explicitly.
 
-**Verificar:**
+---
+
+## 9. Cross-ref Validation — warning for invalid reference
+
+1. In `GlobalPage`, navigate to `APP → default_agent`.
+2. Press `Enter` → modal.
+3. Enter a nonexistent id (e.g. `ghost-agent`).
+4. Press `Enter` to save.
+
+**Expected:**
+- [ ] The value is saved (appears in YAML).
+- [ ] A **warning** notification appears indicating an invalid reference (`app.default_agent`).
+- [ ] The TUI does not crash or close.
+5. Correct the value by going back to the field.
+
+---
+
+## 10. YAML Comment Preservation (ruamel.yaml)
+
+1. Manually edit a comment in `global.yaml`:
+
+```bash
+# Add a comment before a field, save
+```
+
+2. Open the TUI, edit any field in the same section, save.
+
+**Verify:**
 
 ```bash
 bat ~/.inaki/config/global.yaml
 ```
 
-- [ ] El comentario insertado manualmente sigue presente.
-- [ ] Otros comentarios del archivo original no fueron eliminados.
+- [ ] The manually inserted comment is still present.
+- [ ] Other comments from the original file were not removed.
 
 ---
 
-## 11. `inaki setup secret-key` — wizard Fernet legacy
+## 11. `inaki setup secret-key` — legacy Fernet wizard
 
 ```bash
 inaki setup secret-key
 ```
 
-- [ ] Se abre el wizard interactivo.
-- [ ] No hay traceback ni error de importación.
+- [ ] The interactive wizard opens.
+- [ ] No traceback or import error.
 
 ---
 
@@ -227,39 +227,39 @@ inaki setup secret-key
 inaki setup webui
 ```
 
-- [ ] Imprime: `Próximamente — usá \`inaki setup tui\` por ahora.`
-- [ ] Sale con código 0 (`echo $?` → `0`).
+- [ ] Prints: `Coming soon — use \`inaki setup tui\` for now.`
+- [ ] Exits with code 0 (`echo $?` → `0`).
 
 ---
 
-## 13. Performance en Pi 5 (4 GB RAM)
+## 13. Performance on Pi 5 (4 GB RAM)
 
-- [ ] La TUI abre en ≤ 3 segundos desde el comando hasta primer render.
-- [ ] Navegar entre secciones de `GlobalPage` responde sin lag visible.
-- [ ] Guardar un campo no congela la UI más de 1 segundo.
+- [ ] The TUI opens in <= 3 seconds from command to first render.
+- [ ] Navigating between `GlobalPage` sections responds without visible lag.
+- [ ] Saving a field does not freeze the UI for more than 1 second.
 
-Si hay sluggishness notable, documentar:
-- qué operación fue lenta
-- cuánto tardó aproximadamente
-- si mejora usando `PYTHONOPTIMIZE=1`
+If notable sluggishness occurs, document:
+- which operation was slow
+- approximately how long it took
+- whether it improves using `PYTHONOPTIMIZE=1`
 
 ---
 
-## 14. Cleanup post-smoke
+## 14. Post-smoke Cleanup
 
 ```bash
 rm -f ~/.inaki/config/agents/smoke-test.yaml
-# Restaurar global.yaml si fue modificado
-# Para volver a ver el modal de bienvenida:
+# Restore global.yaml if it was modified
+# To see the welcome modal again:
 rm -f ~/.inaki/setup_welcome_seen
 ```
 
 ---
 
-## Criterio de aceptación
+## Acceptance Criteria
 
-Todos los ítems marcados ✅. Si alguno falla, crear issue con:
-- output de la terminal (o screenshot del TUI)
-- versión de Python (`python --version`)
-- versión de Textual (`pip show textual`)
-- modelo de Pi y cantidad de RAM
+All items marked checked. If any fails, create an issue with:
+- terminal output (or TUI screenshot)
+- Python version (`python --version`)
+- Textual version (`pip show textual`)
+- Pi model and RAM amount

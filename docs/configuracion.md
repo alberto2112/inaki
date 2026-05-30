@@ -1,185 +1,185 @@
-# Configuración — Inaki v2
+# Configuration — Inaki v2
 
-## Edición interactiva con `inaki setup`
+## Interactive editing with `inaki setup`
 
-La forma recomendada de editar la configuración es a través de la TUI interactiva:
+The recommended way to edit the configuration is through the interactive TUI:
 
 ```bash
-inaki setup          # abre la TUI (sin subcomando)
-inaki setup tui      # ídem explícito
+inaki setup          # opens the TUI (no subcommand)
+inaki setup tui      # same, explicit
 ```
 
-La TUI es **offline-only** — no requiere que el daemon esté corriendo. Lee y escribe
-directamente en `~/.inaki/config/` usando `ruamel.yaml`, preservando comentarios y
-formato original de los archivos YAML.
+The TUI is **offline-only** — it does not require the daemon to be running. It reads and writes
+directly to `~/.inaki/config/` using `ruamel.yaml`, preserving comments and
+original formatting of YAML files.
 
-### Navegación (V2 — teclado-first)
+### Navigation (V2 — keyboard-first)
 
-La TUI V2 usa una arquitectura de **una página por categoría** con navegación lineal:
+The V2 TUI uses a **one page per category** architecture with linear navigation:
 
 ```
 MainMenuPage → GlobalPage / AgentsPage / ProvidersPage / SecretsPage
-AgentsPage   → AgentDetailPage (por agente)
+AgentsPage   → AgentDetailPage (per agent)
 ```
 
-| Tecla | Acción |
-|-------|--------|
-| `↑` / `k` | subir una fila |
-| `↓` / `j` | bajar una fila |
-| `Enter` | abrir modal de edición del campo seleccionado |
-| `Esc` | volver a la pantalla anterior |
-| `q` | salir |
-| `?` | ayuda rápida |
+| Key | Action |
+|-----|--------|
+| `↑` / `k` | move up one row |
+| `↓` / `j` | move down one row |
+| `Enter` | open edit modal for the selected field |
+| `Esc` | go back to the previous screen |
+| `q` | quit |
+| `?` | quick help |
 
-No hay navegación con mouse como flujo primario.
+There is no mouse navigation as a primary flow.
 
-### Qué puede editar la TUI
+### What the TUI can edit
 
-| Pantalla | Qué edita |
-|----------|-----------|
-| **GlobalPage** | Todas las secciones de `global.yaml` en forma continua (una lista de secciones con sus campos, sin sub-pantallas) |
-| **ProvidersPage** | Alta/baja/edición de `providers.*` en `global.yaml`; `api_key` siempre a `global.secrets.yaml` |
-| **AgentsPage** | Crear, clonar, eliminar agentes |
-| **AgentDetailPage** | Overrides por agente (mismas secciones que GlobalPage, en la capa del agente) |
-| **SecretsPage** | Vista consolidada de todos los `*.secrets.yaml`; campos enmascarados; reveal individual |
+| Screen | What it edits |
+|--------|---------------|
+| **GlobalPage** | All sections of `global.yaml` in a continuous form (a list of sections with their fields, no sub-screens) |
+| **ProvidersPage** | Add/remove/edit `providers.*` in `global.yaml`; `api_key` always goes to `global.secrets.yaml` |
+| **AgentsPage** | Create, clone, delete agents |
+| **AgentDetailPage** | Per-agent overrides (same sections as GlobalPage, at the agent layer) |
+| **SecretsPage** | Consolidated view of all `*.secrets.yaml` files; masked fields; individual reveal |
 
-### Edición modal — un modal por tipo de campo
+### Modal editing — one modal per field type
 
-Cada edición se hace 100% en modal — sin edición inline. Cuatro tipos de modal:
+Every edit is done 100% in a modal — no inline editing. Four modal types:
 
-| Tipo de campo | Modal | Teclas |
-|--------------|-------|--------|
-| `scalar` (str, int, float) | `EditScalarModal` — Input con valor pre-completado | `Enter` guarda, `Esc` cancela |
-| `enum` (Literal) | `EditEnumModal` — ListView con opciones | `↑↓ + Enter`, `Esc` cancela |
-| `long` (system_prompt, description) | `EditLongModal` — TextArea | `Ctrl+S` guarda, `Esc` cancela |
-| `secret` (api_key, token, auth) | `EditSecretModal` — Input password=True | `Enter` guarda, `Esc` cancela |
+| Field type | Modal | Keys |
+|------------|-------|------|
+| `scalar` (str, int, float) | `EditScalarModal` — Input with pre-filled value | `Enter` saves, `Esc` cancels |
+| `enum` (Literal) | `EditEnumModal` — ListView with options | `↑↓ + Enter`, `Esc` cancels |
+| `long` (system_prompt, description) | `EditLongModal` — TextArea | `Ctrl+S` saves, `Esc` cancels |
+| `secret` (api_key, token, auth) | `EditSecretModal` — Input password=True | `Enter` saves, `Esc` cancels |
 
-Los valores actuales se **pre-completan** en el modal. Si el campo está vacío, se muestra el
-default de Pydantic en dim como referencia.
+Current values are **pre-filled** in the modal. If the field is empty, the
+Pydantic default is shown dimmed as a reference.
 
 ### Escape hatch `<null>`
 
-En cualquier modal de tipo `scalar` o `long`, escribir `<null>` y confirmar guarda
-el campo como `null` en YAML. Útil para deshabilitar un valor heredado (ej.
+In any `scalar` or `long` modal, typing `<null>` and confirming saves
+the field as `null` in YAML. Useful for disabling an inherited value (e.g.
 `llm.reasoning_effort: null`).
 
-### Tri-estado para `memory.llm.*`
+### Tri-state for `memory.llm.*`
 
-Los campos de `memory.llm` en un agente tienen tres modos — accesibles desde un modal
-especializado al presionar `Enter` en cualquier campo de esa sección:
+The `memory.llm` fields on an agent have three modes — accessible from a
+specialized modal by pressing `Enter` on any field in that section:
 
-| Estado | YAML del agente | Significado |
-|--------|----------------|-------------|
-| **Heredar** | campo ausente | usa el valor de `memory.llm.*` del global |
-| **Valor propio** | `memory.llm.campo: valor` | valor explícito del agente |
-| **Override null** | `memory.llm.campo: null` | anula el valor heredado con None |
+| State | Agent YAML | Meaning |
+|-------|------------|---------|
+| **Inherit** | field absent | uses the value from `memory.llm.*` in global |
+| **Own value** | `memory.llm.field: value` | explicit agent value |
+| **Null override** | `memory.llm.field: null` | overrides the inherited value with None |
 
-Campos afectados: `provider`, `model`, `temperature`, `max_tokens`, `reasoning_effort`.
+Affected fields: `provider`, `model`, `temperature`, `max_tokens`, `reasoning_effort`.
 
-### Validación cross-ref post-save
+### Cross-ref validation on save
 
-Después de guardar cualquier campo, la TUI valida referencias cruzadas:
+After saving any field, the TUI validates cross-references:
 
-- `app.default_agent` apunta a un agente que existe
-- `llm.provider`, `embedding.provider`, `memory.llm.provider` apuntan a providers registrados
+- `app.default_agent` points to an agent that exists
+- `llm.provider`, `embedding.provider`, `memory.llm.provider` point to registered providers
 
-Si hay un problema, se muestra una notificación de warning **pero el cambio se preserva** —
-la TUI no deshace el save. El operador debe corregir el campo en cuestión.
+If there's an issue, a warning notification is shown **but the change is preserved** —
+the TUI does not undo the save. The operator must correct the field in question.
 
-### Wizard Fernet legacy
+### Legacy Fernet wizard
 
-El wizard interactivo de `INAKI_SECRET_KEY` (Fernet) está accesible en:
+The interactive `INAKI_SECRET_KEY` (Fernet) wizard is accessible at:
 
 ```bash
 inaki setup secret-key
 ```
 
-**No confundir con `inaki setup`** — ese comando abre la TUI. El wizard de Fernet es el
-comando legacy que existía antes del TUI y solo gestiona `INAKI_SECRET_KEY` en el `.env`.
+**Do not confuse with `inaki setup`** — that command opens the TUI. The Fernet wizard is the
+legacy command that existed before the TUI and only manages `INAKI_SECRET_KEY` in the `.env`.
 
-### Interfaz web (V2)
-
-```bash
-inaki setup webui   # imprime "Próximamente" y sale
-```
-
-La webui está pendiente para una versión futura. Por ahora usá la TUI.
-
-### Nota post-edición
-
-Los cambios en la TUI se escriben a disco de forma atómica. Sin embargo, el daemon
-**no recarga la config automáticamente** — si el daemon está corriendo, reiniciarlo:
+### Web interface (V2)
 
 ```bash
-systemctl restart inaki   # Pi 5 con systemd
-# o
-inaki daemon              # si corrés en foreground
+inaki setup webui   # prints "Coming soon" and exits
 ```
 
-### Funcionalidad no disponible en la TUI (V2)
+The webui is pending for a future version. For now, use the TUI.
 
-- `knowledge.sources` — las fuentes RAG se editan manualmente en `global.yaml` por ahora.
-- Validación de `api_key` en vivo — la TUI no conecta a los providers para verificar que la key sea válida.
-- Vista de logs o estado del daemon — para eso usá `journalctl -u inaki` o `inaki inspect`.
+### Post-edit note
+
+Changes in the TUI are written to disk atomically. However, the daemon
+**does not reload the config automatically** — if the daemon is running, restart it:
+
+```bash
+systemctl restart inaki   # Pi 5 with systemd
+# or
+inaki daemon              # if running in foreground
+```
+
+### Functionality not available in the TUI (V2)
+
+- `knowledge.sources` — RAG sources are edited manually in `global.yaml` for now.
+- Live `api_key` validation — the TUI does not connect to providers to verify that the key is valid.
+- Log viewing or daemon status — for that use `journalctl -u inaki` or `inaki inspect`.
 
 ---
 
-## Sistema de 4 capas de merge
+## 4-layer merge system
 
-La configuración final de cada agente se construye mergeando cuatro ficheros en orden.
-Cada capa sobreescribe solo los campos que define — nunca elimina campos heredados ausentes.
+The final configuration for each agent is built by merging four files in order.
+Each layer overrides only the fields it defines — it never removes inherited fields that are absent.
 
 ```
-config/global.yaml                 (1) config base del sistema
-    ↓ merge campo a campo
-config/global.secrets.yaml         (2) secrets globales (api keys compartidas)
-    ↓ merge campo a campo
-config/agents/{id}.yaml            (3) config del agente (canales, modelo, prompt)
-    ↓ merge campo a campo
-config/agents/{id}.secrets.yaml    (4) secrets del agente (tokens, auth keys)
+config/global.yaml                 (1) system base config
+    ↓ field-by-field merge
+config/global.secrets.yaml         (2) global secrets (shared api keys)
+    ↓ field-by-field merge
+config/agents/{id}.yaml            (3) agent config (channels, model, prompt)
+    ↓ field-by-field merge
+config/agents/{id}.secrets.yaml    (4) agent secrets (tokens, auth keys)
     ↓
-AgentConfig resuelto y completo
+Resolved and complete AgentConfig
 ```
 
-**Regla de secrets:** si un agente no define `llm.api_key`, hereda la del global.
-Un secret ausente en nivel inferior nunca nullifica el del nivel superior.
+**Secrets rule:** if an agent does not define `llm.api_key`, it inherits the one from global.
+A missing secret at a lower level never nullifies the one from a higher level.
 
-**Arranque con secrets ausentes:** si `agents/{id}.secrets.yaml` no existe,
-el sistema arranca con WARNING. Los canales que requieren secrets no levantan.
-El CLI siempre funciona.
-
----
-
-## Archivos de configuración
-
-| Archivo | Commitable | Propósito |
-|---------|-----------|-----------|
-| `config/global.yaml` | ✅ sí | Config base del sistema (proveedor LLM, embeddings, memoria, paths) |
-| `config/global.secrets.yaml` | ❌ no | Registro de credenciales (`providers.<name>.api_key`) |
-| `config/global.secrets.yaml.example` | ✅ sí | Referencia de qué secrets existen |
-| `config/agents/{id}.yaml` | ✅ sí | Config del agente: id, name, description, system_prompt, overrides, channels |
-| `config/agents/{id}.secrets.yaml` | ❌ no | Secrets del agente: tokens, auth_key |
-| `config/agents/{id}.secrets.yaml.example` | ✅ sí | Referencia de secrets del agente |
-| `config/global.example.yaml` | ✅ sí | Referencia canónica con todos los parámetros documentados |
-
-`.gitignore` incluye: `config/*.secrets.yaml` y `config/agents/*.secrets.yaml`
+**Startup with missing secrets:** if `agents/{id}.secrets.yaml` does not exist,
+the system starts with a WARNING. Channels that require secrets will not start.
+The CLI always works.
 
 ---
 
-## `config/global.yaml` — todos los campos
+## Configuration files
+
+| File | Committable | Purpose |
+|------|-------------|---------|
+| `config/global.yaml` | ✅ yes | System base config (LLM provider, embeddings, memory, paths) |
+| `config/global.secrets.yaml` | ❌ no | Credentials registry (`providers.<name>.api_key`) |
+| `config/global.secrets.yaml.example` | ✅ yes | Reference of what secrets exist |
+| `config/agents/{id}.yaml` | ✅ yes | Agent config: id, name, description, system_prompt, overrides, channels |
+| `config/agents/{id}.secrets.yaml` | ❌ no | Agent secrets: tokens, auth_key |
+| `config/agents/{id}.secrets.yaml.example` | ✅ yes | Reference of agent secrets |
+| `config/global.example.yaml` | ✅ yes | Canonical reference with all documented parameters |
+
+`.gitignore` includes: `config/*.secrets.yaml` and `config/agents/*.secrets.yaml`
+
+---
+
+## `config/global.yaml` — all fields
 
 ```yaml
 app:
-  name: "Inaki"           # Nombre del sistema
+  name: "Inaki"           # System name
   log_level: "INFO"       # DEBUG | INFO | WARNING | ERROR
-  default_agent: "general" # Agente usado por CLI sin --agent
+  default_agent: "general" # Agent used by CLI without --agent
 
-# Registro top-level de proveedores externos. Centraliza api_key + base_url
-# por vendor. Las features (llm, embedding, transcription, memory.llm) solo
-# referencian por nombre — NO llevan api_key/base_url propios.
+# Top-level registry of external providers. Centralizes api_key + base_url
+# per vendor. Features (llm, embedding, transcription, memory.llm) only
+# reference by name — they do NOT carry their own api_key/base_url.
 providers:
   openrouter:
-    # type: openrouter      # opcional — default = la key ("openrouter")
+    # type: openrouter      # optional — default = the key ("openrouter")
     api_key: "sk-or-..."    # → global.secrets.yaml
     base_url: "https://openrouter.ai/api/v1"
   openai:
@@ -188,114 +188,115 @@ providers:
     api_key: "gsk_..."
     base_url: "https://api.groq.com/openai/v1"
   ollama:
-    # type: ollama — provider LOCAL, no requiere api_key.
-    # La entrada entera es opcional; si no existe, se usa el default del adapter.
+    # type: ollama — LOCAL provider, does not require api_key.
+    # The entire entry is optional; if missing, the adapter default is used.
     base_url: "http://localhost:11434"
-  # Multi-instancia: dos cuentas del mismo vendor (p. ej. billing mixto)
+  # Multi-instance: two accounts from the same vendor (e.g. mixed billing)
   # groq-work:
-  #   type: groq            # apunta al adapter "groq"
+  #   type: groq            # points to the "groq" adapter
   #   api_key: "gsk_work_..."
 
 llm:
-  provider: "openrouter"  # referencia a providers.openrouter
+  provider: "openrouter"  # references providers.openrouter
   model: "anthropic/claude-3-5-haiku"
   temperature: 0.7
   max_tokens: 2048
 
 embedding:
-  provider: "e5_onnx"     # e5_onnx (local ONNX, no requiere api_key) | openai
-  model_dirname: "models/e5-small"  # Dir con model.onnx + tokenizer.json (relativo a ~/.inaki/)
-  dimension: 384          # Dimensión del vector (384 para e5-small)
+  provider: "e5_onnx"     # e5_onnx (local ONNX, does not require api_key) | openai
+  model_dirname: "models/e5-small"  # Dir with model.onnx + tokenizer.json (relative to ~/.inaki/)
+  dimension: 384          # Vector dimension (384 for e5-small)
 
 memory:
-  db_filename: "data/inaki.db"  # Fichero SQLite con sqlite-vec (relativo a ~/.inaki/)
-                                 # Memoria GLOBAL — compartida entre todos los agentes
-  default_top_k: 5               # Número de recuerdos recuperados por búsqueda vectorial
-  digest_size: 14                # Nº de recuerdos volcados al digest markdown
+  db_filename: "data/inaki.db"  # SQLite file with sqlite-vec (relative to ~/.inaki/)
+                                 # GLOBAL memory — shared across all agents
+  default_top_k: 5               # Number of memories retrieved by vector search
+  digest_size: 14                # Number of memories dumped to the digest markdown
   digest_filename: "mem/digest_{channel}_{chat_id}.md"
-                                 # Template del digest leído por el prompt builder
-                                 # (relativo a ~/.inaki/). Los placeholders `{channel}`
-                                 # y `{chat_id}` se sustituyen sanitizados por scope:
-                                 # cada conversación tiene su propio digest aislado.
-                                 # Ejemplos: `mem/digest_telegram_-1001234.md`,
+                                 # Digest template read by the prompt builder
+                                 # (relative to ~/.inaki/). The `{channel}` and
+                                 # `{chat_id}` placeholders are substituted
+                                 # (sanitized) per scope: each conversation has
+                                 # its own isolated digest.
+                                 # Examples: `mem/digest_telegram_-1001234.md`,
                                  # `mem/digest_cli_default.md`.
-  min_relevance_score: 0.5       # Umbral mínimo (0.0-1.0) para persistir un hecho extraído
-                                 # por el LLM. Filtra ANTES de embedear (ahorra tokens).
-  schedule: "0 3 * * *"          # Cron global: cuándo corre la consolidación nocturna.
-                                 # Una única tarea que itera TODOS los agentes habilitados.
-                                 # Reconciliada al arrancar el daemon: si cambia acá se
-                                 # actualiza la fila en scheduler.db automáticamente.
-  delay_seconds: 2               # Pausa (segundos) entre llamadas al LLM extractor.
-                                 # Aplica TANTO entre agentes (consolidación global) como
-                                 # entre scopes (channel, chat_id) DENTRO de cada agente.
-                                 # Evita rate-limits del proveedor LLM remoto.
-  keep_last_messages: 0          # Mensajes por agente a preservar tras la consolidación.
-                                 # Tras extraer los recuerdos al storage vectorial, el
-                                 # resto del historial se trunca pero SE PRESERVAN los
-                                 # últimos N mensajes como contexto inmediato para el
-                                 # próximo turno. Sentinel: 0 → usar fallback del sistema (84).
-                                 # Cualquier valor > 0 se respeta tal cual.
+  min_relevance_score: 0.5       # Minimum threshold (0.0-1.0) to persist a fact extracted
+                                 # by the LLM. Filters BEFORE embedding (saves tokens).
+  schedule: "0 3 * * *"          # Global cron: when the nightly consolidation runs.
+                                 # A single task that iterates ALL enabled agents.
+                                 # Reconciled on daemon startup: if changed here, the
+                                 # row in scheduler.db is updated automatically.
+  delay_seconds: 2               # Pause (seconds) between LLM extractor calls.
+                                 # Applies BOTH between agents (global consolidation) and
+                                 # between scopes (channel, chat_id) WITHIN each agent.
+                                 # Prevents rate-limits from the remote LLM provider.
+  keep_last_messages: 0          # Messages per agent to preserve after consolidation.
+                                 # After extracting memories to vector storage, the
+                                 # rest of the history is truncated but the last N
+                                 # messages ARE PRESERVED as immediate context for the
+                                 # next turn. Sentinel: 0 → use system fallback (84).
+                                 # Any value > 0 is respected as-is.
 
 tools:
-  semantic_routing_min_tools: 10  # Mínimo de tools registradas para activar semantic routing
-  semantic_routing_top_k: 5       # Nº máximo de tools seleccionadas por routing
-  semantic_routing_min_score: 0.0 # Score mínimo de cosine similarity (0.0-1.0)
-                                  # para incluir una tool. 0.0 = sin filtro.
-  tool_call_max_iterations: 5     # Máx. iteraciones del tool-loop por turno
-  circuit_breaker_threshold: 2    # Fallos consecutivos antes de cortar el loop
+  semantic_routing_min_tools: 10  # Minimum registered tools to activate semantic routing
+  semantic_routing_top_k: 5       # Max number of tools selected by routing
+  semantic_routing_min_score: 0.0 # Minimum cosine similarity score (0.0-1.0)
+                                  # to include a tool. 0.0 = no filter.
+  tool_call_max_iterations: 5     # Max tool-loop iterations per turn
+  circuit_breaker_threshold: 2    # Consecutive failures before cutting the loop
 
 skills:
-  semantic_routing_min_skills: 10  # Mínimo de skills cargadas para activar routing
-  semantic_routing_top_k: 3        # Nº máximo de skills seleccionadas por routing
-  semantic_routing_min_score: 0.0  # Score mínimo de cosine similarity (0.0-1.0)
-                                   # para incluir una skill. 0.0 = sin filtro.
+  semantic_routing_min_skills: 10  # Minimum loaded skills to activate routing
+  semantic_routing_top_k: 3        # Max number of skills selected by routing
+  semantic_routing_min_score: 0.0  # Minimum cosine similarity score (0.0-1.0)
+                                   # to include a skill. 0.0 = no filter.
 
 chat_history:
-  db_filename: "data/history.db"  # Fichero SQLite del historial (relativo a ~/.inaki/)
-                                 # separado de inaki.db (que usa sqlite-vec)
-  max_messages: 21               # Últimos N mensajes inyectados al LLM (0 = sin límite)
+  db_filename: "data/history.db"  # SQLite history file (relative to ~/.inaki/)
+                                 # separate from inaki.db (which uses sqlite-vec)
+  max_messages: 21               # Last N messages injected into the LLM (0 = no limit)
 
 scheduler:
-  enabled: true                  # Arranca el SchedulerService en modo daemon
-  db_filename: "data/scheduler.db"  # Fichero SQLite de tareas programadas (relativo a ~/.inaki/)
+  enabled: true                  # Starts the SchedulerService in daemon mode
+  db_filename: "data/scheduler.db"  # SQLite scheduled tasks file (relative to ~/.inaki/)
   max_retries: 3
   output_truncation_size: 65536
-  channel_fallback:              # Cascada de resolución para dispatch de canales (ver abajo)
-    default: null                # str|null — sink por defecto si no hay override ni nativo
-    overrides: {}                # dict[channel_type, target] — override por canal origen
+  channel_fallback:              # Resolution cascade for channel dispatch (see below)
+    default: null                # str|null — default sink if no override or native match
+    overrides: {}                # dict[channel_type, target] — override per source channel
 
 workspace:
-  path: "~/inaki-workspace"      # Directorio raíz permitido para file tools (default global)
+  path: "~/inaki-workspace"      # Root directory allowed for file tools (global default)
   containment: "strict"          # strict | warn | off
-                                 # strict → bloquea paths fuera del workspace (recomendado)
-                                 # warn   → permite pero loguea WARNING
-                                 # off    → sin restricciones
-                                 # Afecta a read_file, write_file, patch_file, edit_file.
-                                 # shell_exec NO está sujeto a esta config.
-                                 # Overrideable por agente en agents/{id}.yaml.
+                                 # strict → blocks paths outside the workspace (recommended)
+                                 # warn   → allows but logs a WARNING
+                                 # off    → no restrictions
+                                 # Affects read_file, write_file, patch_file, edit_file.
+                                 # shell_exec is NOT subject to this config.
+                                 # Overridable per agent in agents/{id}.yaml.
 
 admin:
-  host: "127.0.0.1"             # Interfaz de escucha del admin server (loopback = más seguro)
-  port: 6497                    # Puerto del admin server
-  chat_timeout: 300.0           # Timeout (segundos) para esperar respuesta del agente
-                                # en POST /admin/chat/turn. Aumentar para modelos lentos.
-  # auth_key → en global.secrets.yaml
+  host: "127.0.0.1"             # Admin server listen interface (loopback = most secure)
+  port: 6497                    # Admin server port
+  chat_timeout: 300.0           # Timeout (seconds) to wait for agent response
+                                # in POST /admin/chat/turn. Increase for slow models.
+  # auth_key → in global.secrets.yaml
 ```
 
-### Admin server — endpoints expuestos
+### Admin server — exposed endpoints
 
-El admin server expone los siguientes endpoints bajo `http://{admin.host}:{admin.port}/`:
+The admin server exposes the following endpoints under `http://{admin.host}:{admin.port}/`:
 
-| Método | Ruta | Descripción |
+| Method | Path | Description |
 |--------|------|-------------|
-| GET | `/health` | Ping de salud (sin auth) |
-| POST | `/inspect` | Inspect del pipeline de prompt para un agente (requiere X-Admin-Key) |
-| POST | `/consolidate` | Consolidar memoria de agente(s) (requiere X-Admin-Key) |
-| POST | `/scheduler/reload` | Recargar scheduler (requiere X-Admin-Key) |
-| POST | `/admin/chat/turn` | Enviar un turno de chat al agente (requiere X-Admin-Key) |
-| GET | `/admin/chat/history` | Obtener historial del agente (requiere X-Admin-Key) |
-| DELETE | `/admin/chat/history` | Limpiar historial del agente (requiere X-Admin-Key) |
-| GET | `/admin/agents` | Listar agentes registrados (requiere X-Admin-Key) |
+| GET | `/health` | Health ping (no auth) |
+| POST | `/inspect` | Inspect the prompt pipeline for an agent (requires X-Admin-Key) |
+| POST | `/consolidate` | Consolidate agent memory (requires X-Admin-Key) |
+| POST | `/scheduler/reload` | Reload scheduler (requires X-Admin-Key) |
+| POST | `/admin/chat/turn` | Send a chat turn to the agent (requires X-Admin-Key) |
+| GET | `/admin/chat/history` | Get agent history (requires X-Admin-Key) |
+| DELETE | `/admin/chat/history` | Clear agent history (requires X-Admin-Key) |
+| GET | `/admin/agents` | List registered agents (requires X-Admin-Key) |
 
 #### POST `/admin/chat/turn`
 
@@ -315,7 +316,7 @@ El admin server expone los siguientes endpoints bajo `http://{admin.host}:{admin
 }
 ```
 
-Errores posibles: `401` (sin X-Admin-Key), `404` (agent_id no registrado), `422` (body inválido), `500` (error interno del agente).
+Possible errors: `401` (missing X-Admin-Key), `404` (agent_id not registered), `422` (invalid body), `500` (internal agent error).
 
 #### GET `/admin/chat/history?agent_id=dev`
 
@@ -332,70 +333,70 @@ Errores posibles: `401` (sin X-Admin-Key), `404` (agent_id no registrado), `422`
 
 #### DELETE `/admin/chat/history?agent_id=dev`
 
-Retorna `204 No Content`. Borra el historial activo del agente (afecta a todos los canales — CLI, Telegram, etc.).
+Returns `204 No Content`. Deletes the active history of the agent (affects all channels — CLI, Telegram, etc.).
 
 ---
 
-## `knowledge:` — Fuentes de conocimiento externas
+## `knowledge:` — External knowledge sources
 
-La sección `knowledge:` vive **solo en `global.yaml`** — no se puede configurar por agente.
-Controla el pipeline de recuperación de conocimiento externo (RAG) que se ejecuta antes de cada turno.
+The `knowledge:` section lives **only in `global.yaml`** — it cannot be configured per agent.
+It controls the external knowledge retrieval pipeline (RAG) that runs before each turn.
 
 ```yaml
 knowledge:
-  enabled: true                    # Si false, el pre-fetch se saltea completamente.
+  enabled: true                    # If false, the pre-fetch is skipped entirely.
                                    # Default: true.
 
-  include_memory: true             # Si true, la memoria SQLite del agente se registra
-                                   # automáticamente como fuente "memory".
+  include_memory: true             # If true, the agent's SQLite memory is automatically
+                                   # registered as a "memory" source.
                                    # Default: true.
 
-  top_k_per_source: 3              # Resultados máximos por fuente (default global).
+  top_k_per_source: 3              # Max results per source (global default).
 
-  min_score: 0.5                   # Score mínimo de coseno para incluir un fragmento.
-                                   # Rango: 0.0-1.0. Default: 0.5.
+  min_score: 0.5                   # Minimum cosine score to include a chunk.
+                                   # Range: 0.0-1.0. Default: 0.5.
 
-  max_total_chunks: 10             # Cap total de fragmentos tras el fan-out a todas
-                                   # las fuentes (ordenados por score desc, se trunca).
+  max_total_chunks: 10             # Total chunk cap after fan-out to all sources
+                                   # (sorted by score desc, then truncated).
 
   token_budget_warn_threshold: 4000
-                                   # Si el estimado de tokens totales
-                                   # (chunks + digest + skills) supera este valor,
-                                   # se emite un WARNING con el desglose.
-                                   # Heurística: len(texto) / 4.
-                                   # 0 = warning deshabilitado.
+                                   # If the estimated total tokens
+                                   # (chunks + digest + skills) exceeds this value,
+                                   # a WARNING is emitted with the breakdown.
+                                   # Heuristic: len(text) / 4.
+                                   # 0 = warning disabled.
 
   sources:
-    - id: docs-proyecto            # ID único de la fuente (usado en CLI y rutas de DB)
-      type: document               # "document" = carpeta de archivos
-      enabled: true                # Si false, la fuente se ignora al arrancar.
-      description: "Project docs"  # Descripción inyectada en el system prompt
-      path: ~/proyecto/docs/       # Carpeta a indexar (soporta ~). Requerido.
-      glob: "**/*.md"              # Glob pattern para seleccionar archivos.
-                                   # Ejemplos: "**/*.md", "**/*.{md,txt,pdf}"
-      chunk_size: 500              # Tamaño de cada chunk en palabras.
-      chunk_overlap: 80            # Solapamiento entre chunks consecutivos (en palabras).
-      top_k: 3                     # Resultados máximos de esta fuente.
-      min_score: 0.5               # Score mínimo de esta fuente (override del global).
+    - id: docs-proyecto            # Unique source ID (used in CLI and DB paths)
+      type: document               # "document" = folder of files
+      enabled: true                # If false, the source is ignored on startup.
+      description: "Project docs"  # Description injected into the system prompt
+      path: ~/proyecto/docs/       # Folder to index (supports ~). Required.
+      glob: "**/*.md"              # Glob pattern to select files.
+                                   # Examples: "**/*.md", "**/*.{md,txt,pdf}"
+      chunk_size: 500              # Size of each chunk in words.
+      chunk_overlap: 80            # Overlap between consecutive chunks (in words).
+      top_k: 3                     # Max results from this source.
+      min_score: 0.5               # Minimum score for this source (overrides global).
 
-    - id: mi-base                  # ID único de la fuente
-      type: sqlite                 # "sqlite" = DB pre-construida por el usuario
+    - id: mi-base                  # Unique source ID
+      type: sqlite                 # "sqlite" = user-built pre-existing DB
       enabled: true
       description: "My knowledge base"
-      path: ~/data/knowledge.db    # Path a la DB SQLite del usuario. Requerido.
+      path: ~/data/knowledge.db    # Path to the user's SQLite DB. Required.
       top_k: 3
       min_score: 0.5
 ```
 
-#### Fuente `type: sqlite` — Base de datos pre-construida por el usuario
+#### Source `type: sqlite` — User-built pre-existing database
 
-Permite conectar una base de datos SQLite que el usuario construyó y gestiona por su cuenta.
-Inaki **no indexa ni escribe** esta DB — solo la consulta para búsquedas vectoriales.
+Allows connecting a SQLite database that the user built and manages on their own.
+Inaki **does not index or write to** this DB — it only queries it for vector searches.
 
-**Schema requerido:**
+**Required schema:**
 
 ```sql
--- Tabla de texto y metadatos (id debe ser la PRIMARY KEY entera)
+-- Text and metadata table (id must be the integer PRIMARY KEY)
 CREATE TABLE chunks (
     id            INTEGER PRIMARY KEY,
     source_path   TEXT NOT NULL,
@@ -403,19 +404,19 @@ CREATE TABLE chunks (
     metadata_json TEXT DEFAULT '{}'
 );
 
--- Tabla virtual vec0 con embeddings de 384 dimensiones (e5-small)
--- El rowid de chunk_embeddings debe coincidir con chunks.id
+-- vec0 virtual table with 384-dimension embeddings (e5-small)
+-- The rowid of chunk_embeddings must match chunks.id
 CREATE VIRTUAL TABLE chunk_embeddings USING vec0(embedding FLOAT[384]);
 ```
 
-**Notas importantes:**
+**Important notes:**
 
-- La dimensión **debe ser exactamente 384** — es la dimensión del modelo e5-small que usa Inaki internamente. Si la DB usa otra dimensión, la fuente se omite al arrancar con un error claro en los logs.
-- `chunk_embeddings.rowid` se usa para el JOIN con `chunks.id` — deben coincidir.
-- `metadata_json` es opcional pero debe ser JSON válido si está presente (o `NULL`/`'{}'`).
-- Inaki valida el schema en la primera búsqueda. Si la validación falla, la fuente se deshabilita para esa sesión y se loguea `ERROR` con el nombre de la fuente y el motivo exacto.
+- The dimension **must be exactly 384** — this is the dimension of the e5-small model used internally by Inaki. If the DB uses a different dimension, the source is skipped on startup with a clear error in the logs.
+- `chunk_embeddings.rowid` is used for the JOIN with `chunks.id` — they must match.
+- `metadata_json` is optional but must be valid JSON if present (or `NULL`/`'{}'`).
+- Inaki validates the schema on the first search. If validation fails, the source is disabled for that session and an `ERROR` is logged with the source name and the exact reason.
 
-**Ejemplo mínimo de inserción:**
+**Minimal insertion example:**
 
 ```python
 import sqlite3, struct, numpy as np
@@ -435,7 +436,7 @@ conn.execute("""
 """)
 
 content = "Texto del chunk a indexar"
-embedding = np.random.randn(384).astype(np.float32)  # reemplazar por tu embedder real
+embedding = np.random.randn(384).astype(np.float32)  # replace with your real embedder
 vec_bytes = struct.pack("384f", *embedding)
 
 conn.execute("INSERT INTO chunks (source_path, content) VALUES (?, ?)", ("/ruta/doc.md", content))
@@ -444,29 +445,29 @@ conn.execute("INSERT INTO chunk_embeddings (rowid, embedding) VALUES (?, ?)", (r
 conn.commit()
 ```
 
-### Indexación de documentos
+### Document indexing
 
-Los documentos se indexan offline con el comando CLI:
+Documents are indexed offline with the CLI command:
 
 ```bash
-inaki knowledge index docs-proyecto   # Indexa o re-indexa la fuente
-inaki knowledge list                   # Lista fuentes configuradas
-inaki knowledge stats docs-proyecto    # Estadísticas del índice
+inaki knowledge index docs-proyecto   # Index or re-index the source
+inaki knowledge list                   # List configured sources
+inaki knowledge stats docs-proyecto    # Index statistics
 ```
 
-La indexación es **incremental**: solo se re-procesan los archivos cuya `mtime` cambió
-desde la última indexación. Los embeddings se persisten en `~/.inaki/knowledge/{id}.db`.
+Indexing is **incremental**: only files whose `mtime` changed since the last
+indexing are re-processed. Embeddings are persisted in `~/.inaki/knowledge/{id}.db`.
 
-### Formatos soportados
+### Supported formats
 
-| Formato | Estrategia de chunking |
-|---------|------------------------|
-| `.md`   | Split por headers (`#`/`##`/`###`), ventana deslizante dentro de cada sección |
-| `.txt`  | Ventana deslizante pura |
-| `.pdf`  | Extracción página a página con `pypdf`, ventana deslizante sobre el texto total |
-| otros   | Ventana deslizante pura (texto plano) |
+| Format | Chunking strategy |
+|--------|-------------------|
+| `.md`  | Split by headers (`#`/`##`/`###`), sliding window within each section |
+| `.txt` | Pure sliding window |
+| `.pdf` | Page-by-page extraction with `pypdf`, sliding window over the total text |
+| other  | Pure sliding window (plain text) |
 
-### Schema de la DB de índice (`~/.inaki/knowledge/{id}.db`)
+### Index DB schema (`~/.inaki/knowledge/{id}.db`)
 
 ```sql
 CREATE TABLE chunks (
@@ -492,8 +493,8 @@ CREATE TABLE files_indexed (
 
 ## `config/global.secrets.yaml`
 
-El registro de credenciales vive bajo `providers:` y se mergea con el `providers:`
-de `global.yaml` (deep-merge campo a campo).
+The credentials registry lives under `providers:` and is merged with the `providers:`
+from `global.yaml` (deep-merge field by field).
 
 ```yaml
 providers:
@@ -505,196 +506,196 @@ providers:
     api_key: "gsk_..."
 ```
 
-Una entrada declarada en `global.yaml` (p. ej. con `base_url`) se completa con
-la `api_key` de este archivo — no hace falta repetir campos.
+An entry declared in `global.yaml` (e.g. with `base_url`) is completed with
+the `api_key` from this file — there is no need to repeat fields.
 
 ---
 
-## `config/agents/{id}.yaml` — estructura completa
+## `config/agents/{id}.yaml` — complete structure
 
 ```yaml
-id: "general"                    # Identificador único del agente (= nombre del archivo)
-name: "Inaki-g"                  # Nombre para mostrar
-description: "Asistente general" # Descripción breve
-system_prompt: |                 # Prompt base del agente (requerido)
+id: "general"                    # Unique agent identifier (= filename)
+name: "Inaki-g"                  # Display name
+description: "Asistente general" # Short description
+system_prompt: |                 # Agent base prompt (required)
   Eres Inaki, un asistente personal inteligente.
   Eres conciso, directo y útil.
 
-# Overrides LLM — solo los campos que cambian, el resto se hereda del global
+# LLM overrides — only the fields that change, the rest is inherited from global
 llm:
   model: "anthropic/claude-3-5-haiku"
-  # provider, base_url, temperature, max_tokens → heredados del global
+  # provider, base_url, temperature, max_tokens → inherited from global
 
-# Overrides de embedding (opcional)
+# Embedding overrides (optional)
 # embedding:
 #   provider: "e5_onnx"
 
-# Memoria — ÚNICO flag válido per-agent
-# El resto de memory.* se define en global.yaml y NO debe overridearse acá.
+# Memory — ONLY valid per-agent flag
+# The rest of memory.* is defined in global.yaml and MUST NOT be overridden here.
 memory:
-  enabled: true        # Si false, este agente NO entra en la consolidación
-                       # nocturna global. Default: true.
-                       # El comando `inaki consolidate --agent {id}` ignora
-                       # este flag y consolida el agente indicado de todas formas.
+  enabled: true        # If false, this agent does NOT participate in the global
+                       # nightly consolidation. Default: true.
+                       # The command `inaki consolidate --agent {id}` ignores
+                       # this flag and consolidates the specified agent anyway.
 
-# Workspace — contención de paths para file tools (read_file, write_file, patch_file, edit_file)
-# shell_exec NO está afectado por esta config.
+# Workspace — path containment for file tools (read_file, write_file, patch_file, edit_file)
+# shell_exec is NOT affected by this config.
 workspace:
-  path: "/Users/alberto/tmp/mi_workspace"  # Directorio raíz permitido (default: cwd del proceso)
+  path: "/Users/alberto/tmp/mi_workspace"  # Allowed root directory (default: process cwd)
   containment: "strict"                    # strict | warn | off (default: strict)
 
-# Canales disponibles para este agente
-# Los valores sensibles (tokens, auth_key) van en {id}.secrets.yaml
+# Channels available for this agent
+# Sensitive values (tokens, auth_key) go in {id}.secrets.yaml
 channels:
   telegram:
-    allowed_user_ids: ["123456789"]  # Lista vacía = todos permitidos
-    reactions: true                  # Reaccionar con emojis a los mensajes
+    allowed_user_ids: ["123456789"]  # Empty list = all allowed
+    reactions: true                  # React with emojis to messages
     debug: false
-    voice_enabled: true              # Acepta voz/audio/video_note (default: true)
-                                     # Requiere bloque [transcription] resuelto
-    add_llm_timestamp: false         # Antepone "[YYYY-MM-DD HH:MM:SS TZ] " al
-                                     # content de cada mensaje USER/ASSISTANT
-                                     # cuando se arma el prompt para el LLM
-                                     # (privados + grupos). Default: false.
+    voice_enabled: true              # Accepts voice/audio/video_note (default: true)
+                                     # Requires resolved [transcription] block
+    add_llm_timestamp: false         # Prepends "[YYYY-MM-DD HH:MM:SS TZ] " to the
+                                     # content of each USER/ASSISTANT message
+                                     # when building the prompt for the LLM
+                                     # (private chats + groups). Default: false.
   rest:
     host: "0.0.0.0"
-    port: 6498                       # Cada agente tiene su propio puerto
+    port: 6498                       # Each agent has its own port
 ```
 
 ---
 
-## `workspace` — contención de paths en file tools
+## `workspace` — path containment for file tools
 
-Cada agente puede declarar un `workspace` para controlar qué paths pueden tocar
-las tools de ficheros. Se configura en `config/agents/{id}.yaml`:
+Each agent can declare a `workspace` to control which paths the file tools
+can access. It is configured in `config/agents/{id}.yaml`:
 
 ```yaml
 workspace:
-  path: "/Users/alberto/tmp/mi_workspace"  # Directorio raíz permitido
+  path: "/Users/alberto/tmp/mi_workspace"  # Allowed root directory
   containment: "strict"                    # strict | warn | off
 ```
 
-**Modos de contención:**
+**Containment modes:**
 
-| Modo | Comportamiento |
-|------|----------------|
-| `strict` | Bloquea cualquier path fuera de `workspace.path`. La tool devuelve error al LLM. **Default.** |
-| `warn` | Permite paths fuera del workspace pero loguea un WARNING. Útil para debug. |
-| `off` | Sin restricciones. La tool accede a cualquier path del sistema. |
+| Mode | Behavior |
+|------|----------|
+| `strict` | Blocks any path outside `workspace.path`. The tool returns an error to the LLM. **Default.** |
+| `warn` | Allows paths outside the workspace but logs a WARNING. Useful for debugging. |
+| `off` | No restrictions. The tool accesses any path on the system. |
 
-**Tools afectadas por `workspace.containment`:**
+**Tools affected by `workspace.containment`:**
 
-| Tool | ¿Sandboxeada? |
-|------|--------------|
-| `read_file` | ✅ sí |
-| `write_file` | ✅ sí |
-| `patch_file` | ✅ sí |
-| `edit_file` | ✅ sí |
-| `shell_exec` | ❌ no — ejecuta comandos sin restricción de paths |
-| `delegate`, `scheduler`, resto de builtins | ❌ no aplica |
+| Tool | Sandboxed? |
+|------|------------|
+| `read_file` | ✅ yes |
+| `write_file` | ✅ yes |
+| `patch_file` | ✅ yes |
+| `edit_file` | ✅ yes |
+| `shell_exec` | ❌ no — executes commands without path restrictions |
+| `delegate`, `scheduler`, rest of builtins | ❌ not applicable |
 
-> **Nota:** `shell_exec` es una extensión en `ext/` y no tiene contención de ningún tipo.
-> Si el LLM puede llamar `shell_exec`, puede operar en cualquier path del sistema.
+> **Note:** `shell_exec` is an extension in `ext/` and has no containment of any kind.
+> If the LLM can call `shell_exec`, it can operate on any path on the system.
 
-Si `workspace.path` no se define en la config del agente, se usa el directorio de trabajo
-del proceso al momento de arrancar. Para evitar ambigüedades en producción (systemd),
-especificar siempre un path absoluto.
+If `workspace.path` is not defined in the agent config, the process working directory
+at startup is used. To avoid ambiguities in production (systemd),
+always specify an absolute path.
 
 ---
 
-## `transcription` — transcripción de voz (Telegram)
+## `transcription` — voice transcription (Telegram)
 
-Habilita la transcripción de mensajes de voz, audio y video_note en Telegram.
-Se define en `config/global.yaml` (o sobrescribible per-agent) y se activa con
+Enables transcription of voice, audio, and video_note messages in Telegram.
+Defined in `config/global.yaml` (or overridable per-agent) and activated with
 `channels.telegram.voice_enabled: true` (default).
 
 ```yaml
 transcription:
-  provider: "groq"                     # referencia a providers.groq
+  provider: "groq"                     # references providers.groq
   model: "whisper-large-v3-turbo"
   language: "es"                        # ISO-639-1; null = autodetect
   timeout_seconds: 60
-  max_audio_mb: 25                      # Límite de Groq; audios mayores se rechazan sin llamar al provider
+  max_audio_mb: 25                      # Groq limit; larger audio files are rejected without calling the provider
 ```
 
-Las credenciales (`api_key`, `base_url`) NO van en este bloque — se resuelven
-desde `providers.groq` en el registro.
+Credentials (`api_key`, `base_url`) do NOT go in this block — they are resolved
+from `providers.groq` in the registry.
 
-**Feature flag en el agente:**
+**Feature flag on the agent:**
 
 ```yaml
 channels:
   telegram:
-    voice_enabled: true   # default — acepta voz/audio/video_note
-    # voice_enabled: false — drop silencioso, el bot ignora audios
+    voice_enabled: true   # default — accepts voice/audio/video_note
+    # voice_enabled: false — silent drop, the bot ignores audio files
 ```
 
-**Flujo del handler de voz:**
+**Voice handler flow:**
 
-1. Usuario autorizado (`allowed_user_ids`) — sino, drop silencioso.
-2. `voice_enabled: true` — sino, drop silencioso.
-3. Tamaño ≤ `max_audio_mb` — sino, reacción ❌ + reply con el tamaño.
-4. Reacción 👂 al inicio.
-5. Transcripción → mismo pipeline que un mensaje de texto (reply HTML + ✅/❌).
+1. Authorized user (`allowed_user_ids`) — otherwise, silent drop.
+2. `voice_enabled: true` — otherwise, silent drop.
+3. Size ≤ `max_audio_mb` — otherwise, ❌ reaction + reply with the size.
+4. 👂 reaction at start.
+5. Transcription → same pipeline as a text message (HTML reply + ✅/❌).
 
-**Errores comunes al arrancar:**
+**Common startup errors:**
 
-- Agente con `voice_enabled: true` y sin bloque `transcription:` resuelto
-  → falla en el bootstrap con un error claro pidiendo añadir `transcription:`
-  o poner `voice_enabled: false`.
-- `providers.<provider>.api_key` ausente para el provider referenciado por
-  `transcription.provider` → `ConfigError` al arranque (fail-fast, antes
-  de instanciar adapters).
+- Agent with `voice_enabled: true` and no resolved `transcription:` block
+  → fails during bootstrap with a clear error asking to add `transcription:`
+  or set `voice_enabled: false`.
+- `providers.<provider>.api_key` missing for the provider referenced by
+  `transcription.provider` → `ConfigError` at startup (fail-fast, before
+  instantiating adapters).
 
-> ⚠ **Privacidad:** el audio se envía al proveedor externo (hoy: Groq). Para
-> contenido sensible poné `voice_enabled: false` en ese agente o esperá a que
-> exista un proveedor local. La app NO persiste el audio; sí queda el texto
-> transcripto en el chat_history y puede alimentar la memoria.
+> ⚠ **Privacy:** the audio is sent to the external provider (currently: Groq). For
+> sensitive content set `voice_enabled: false` on that agent or wait for a
+> local provider to become available. The app does NOT persist the audio; the transcribed
+> text does remain in chat_history and can feed into memory.
 
 ---
 
-## `broadcast` — canal de difusión entre instancias de Inaki
+## `broadcast` — broadcast channel between Inaki instances
 
-Permite que dos o más instancias de Inaki (p. ej. una en cada Raspberry Pi)
-compartan el contexto conversacional de un grupo de Telegram en tiempo real.
-Una instancia actúa como **servidor** (escucha conexiones) y el resto como
-**clientes** (se conectan al servidor). Topología en estrella: un servidor, N clientes.
+Allows two or more Inaki instances (e.g. one on each Raspberry Pi) to
+share the conversational context of a Telegram group in real time.
+One instance acts as the **server** (listens for connections) and the rest as
+**clients** (connect to the server). Star topology: one server, N clients.
 
-### Bloques de config
+### Config blocks
 
-**`allowed_chat_ids`** — grupos autorizados (se suma a la config existente del canal):
+**`allowed_chat_ids`** — authorized groups (added to the existing channel config):
 
 ```yaml
 channels:
   telegram:
     api_key: "..."
     allowed_user_ids: [12345]
-    allowed_chat_ids: [-1001234567890]  # lista de grupos permitidos; enteros negativos
+    allowed_chat_ids: [-1001234567890]  # list of allowed groups; negative integers
 ```
 
-Si `allowed_chat_ids` está vacío o ausente, solo se admiten chats privados de usuarios en
-`allowed_user_ids`. Para habilitar grupos hay que listar sus chat_ids explícitamente.
+If `allowed_chat_ids` is empty or absent, only private chats from users in
+`allowed_user_ids` are admitted. To enable groups, their chat_ids must be explicitly listed.
 
 ---
 
-**`channels.telegram.broadcast`** — modo servidor (esta instancia escucha conexiones entrantes):
+**`channels.telegram.broadcast`** — server mode (this instance listens for incoming connections):
 
 ```yaml
 channels:
   telegram:
     api_key: "..."
     broadcast:
-      port: 1234                          # puerto TCP de escucha (1024..65535)
-      auth: "shared-secret-entre-agentes" # secreto compartido HMAC-SHA256
-      bot_username: "inaki_a_bot"         # username del bot sin @, para detección de menciones
+      port: 1234                          # TCP listen port (1024..65535)
+      auth: "shared-secret-entre-agentes" # HMAC-SHA256 shared secret
+      bot_username: "inaki_a_bot"         # bot username without @, for mention detection
       behavior: mention                   # listen | mention | autonomous
-      rate_limiter: 5                     # máx. respuestas proactivas por ventana por chat
-      rate_limiter_window: 30             # duración de la ventana en segundos (default 30)
+      rate_limiter: 5                     # max proactive responses per window per chat
+      rate_limiter_window: 30             # window duration in seconds (default 30)
 ```
 
 ---
 
-**`channels.telegram.broadcast`** — modo cliente (esta instancia conecta al servidor):
+**`channels.telegram.broadcast`** — client mode (this instance connects to the server):
 
 ```yaml
 channels:
@@ -702,20 +703,20 @@ channels:
     api_key: "..."
     broadcast:
       remote:
-        host: "192.168.1.10:1234"           # ip:port del servidor
-        auth: "shared-secret-entre-agentes" # debe coincidir con el servidor
+        host: "192.168.1.10:1234"           # server ip:port
+        auth: "shared-secret-entre-agentes" # must match the server
       bot_username: "inaki_b_bot"
       behavior: autonomous
       rate_limiter: 5
-      rate_limiter_window: 300            # ⚠ recomendado 300s (5min) para autonomous
+      rate_limiter_window: 300            # ⚠ recommended 300s (5min) for autonomous
 ```
 
 ---
 
-### `broadcast.emit` — qué tipos de eventos emite cada bot
+### `broadcast.emit` — what event types each bot emits
 
-Cada bot tiene flags por `event_type` que controlan **qué** emite al canal. Defaults
-diseñados para mantener backward-compat y evitar duplicados accidentales:
+Each bot has flags per `event_type` that control **what** it emits to the channel. Defaults
+designed to maintain backward-compat and avoid accidental duplicates:
 
 ```yaml
 channels:
@@ -724,120 +725,120 @@ channels:
       port: 1234
       auth: "..."
       emit:
-        assistant_response: true   # default true — respuestas del LLM tras turno en grupo
-        user_input_voice: false    # default false — transcripciones de audio
-        user_input_photo: false    # default false — descripciones de foto procesadas
+        assistant_response: true   # default true — LLM responses after group turn
+        user_input_voice: false    # default false — audio transcriptions
+        user_input_photo: false    # default false — processed photo descriptions
 ```
 
-**Cuándo activar `user_input_voice` / `user_input_photo`:**
+**When to enable `user_input_voice` / `user_input_photo`:**
 
-Estos events son útiles cuando hay **múltiples bots en el mismo grupo Telegram** y solo
-algunos tienen las capacidades correspondientes (transcripción de audio, reconocimiento
-visual). Activarlos permite que el bot con la capacidad **comparta el resultado procesado**
-para que los otros bots tengan ese contexto en sus buffers.
+These events are useful when there are **multiple bots in the same Telegram group** and only
+some have the corresponding capabilities (audio transcription, visual recognition).
+Enabling them allows the bot with the capability to **share the processed result**
+so that the other bots have that context in their buffers.
 
-**Regla de configuración**: activá cada flag en **un único bot** del grupo — el que
-posee la capacidad. Si dos bots emiten el mismo evento, el receptor lo verá dos veces
-(no hay deduplicación; es decisión del admin).
+**Configuration rule**: enable each flag on **a single bot** in the group — the one
+that owns the capability. If two bots emit the same event, the receiver will see it twice
+(there is no deduplication; it's an admin decision).
 
-`assistant_response` queda en `true` por default para mantener el comportamiento del
-broadcast existente (los bots ven las respuestas de los otros bots).
+`assistant_response` stays `true` by default to maintain the behavior of the
+existing broadcast (bots see the responses from other bots).
 
 ---
 
-**`memory.channels_infused`** — limitar qué canales alimentan la consolidación de memoria:
+**`memory.channels_infused`** — limit which channels feed into memory consolidation:
 
 ```yaml
 memory:
-  channels_infused: ["telegram"]  # null o ausente = todos los canales se consolidan
+  channels_infused: ["telegram"]  # null or absent = all channels are consolidated
 ```
 
-Útil cuando tenés un agente activo en CLI y Telegram pero solo querés que las
-conversaciones de Telegram entren en la memoria a largo plazo.
+Useful when you have an agent active on both CLI and Telegram but only want
+Telegram conversations to enter long-term memory.
 
 ---
 
-### Modos de comportamiento (`behavior`)
+### Behavior modes (`behavior`)
 
-| Modo | Descripción |
+| Mode | Description |
 |------|-------------|
-| `listen` | El bot nunca responde. Solo absorbe contexto en el buffer de broadcast. Útil para un agente "observador". |
-| `mention` | El bot responde solo cuando alguien lo menciona con `@bot_username`. **Default en grupos.** |
-| `autonomous` | El LLM decide si responder. Si no tiene nada útil que aportar, responde `[SKIP]` internamente y el sistema no envía nada al grupo. Además, el bot dispara su pipeline ante **cualquier mensaje broadcast** (bot-to-bot): el user_input se inyecta con un prefijo `[<origen>]` y el LLM decide si responder o emitir `[SKIP]`. Permite que dos bots dialoguen entre sí en un grupo. |
+| `listen` | The bot never responds. It only absorbs context in the broadcast buffer. Useful for an "observer" agent. |
+| `mention` | The bot responds only when someone mentions it with `@bot_username`. **Default in groups.** |
+| `autonomous` | The LLM decides whether to respond. If it has nothing useful to contribute, it responds with `[SKIP]` internally and the system sends nothing to the group. Additionally, the bot triggers its pipeline on **any broadcast message** (bot-to-bot): the user_input is injected with a `[<source>]` prefix and the LLM decides whether to respond or emit `[SKIP]`. Allows two bots to converse with each other in a group. |
 
-El **rate limiter** (`rate_limiter: 5`) aplica en modo `autonomous` para ambas vías:
-mensajes entrantes de Telegram **y** triggers broadcast bot-to-bot. Permite exactamente
-N mensajes por ventana fija (configurable vía `rate_limiter_window`, default `30` segundos),
-por combinación `(agente, chat_id)`. La emisión N+1 dentro de la misma ventana se descarta
-hasta que la ventana se resetea.
+The **rate limiter** (`rate_limiter: 5`) applies in `autonomous` mode for both paths:
+incoming Telegram messages **and** bot-to-bot broadcast triggers. It allows exactly
+N messages per fixed window (configurable via `rate_limiter_window`, default `30` seconds),
+per `(agent, chat_id)` combination. The N+1th emission within the same window is discarded
+until the window resets.
 
-> ⚠ **Aviso para `behavior: autonomous`**: un ciclo bot-to-bot completo (delay de flush
-> de 7-21s + LLM + red) suele tomar entre 15 y 40 segundos. Si `rate_limiter_window` es
-> menor que el ciclo, el contador se resetea entre intercambios y el limiter es **inefectivo**:
-> los bots pueden hablar indefinidamente. Para grupos con varios bots autónomos, configurar
-> al menos `rate_limiter_window: 300` (5 minutos).
+> ⚠ **Warning for `behavior: autonomous`**: a full bot-to-bot cycle (flush delay
+> of 7-21s + LLM + network) typically takes between 15 and 40 seconds. If `rate_limiter_window` is
+> shorter than the cycle, the counter resets between exchanges and the limiter is **ineffective**:
+> bots can talk indefinitely. For groups with multiple autonomous bots, configure
+> at least `rate_limiter_window: 300` (5 minutes).
 
-#### Override en runtime — `/ratelimit`
+#### Runtime override — `/ratelimit`
 
-Para tunear el rate limiter sin reiniciar el daemon, cualquier usuario en `allowed_user_ids`
-puede usar el comando `/ratelimit`:
+To tune the rate limiter without restarting the daemon, any user in `allowed_user_ids`
+can use the `/ratelimit` command:
 
 ```text
-/ratelimit                  → muestra count y window actuales
-/ratelimit <count>          → cambia el count (clamp 1..99)
-/ratelimit <count> <window> → cambia ambos (count 1..99, window 1..900s)
-/ratelimit reset            → vuelve a los valores de config
+/ratelimit                  → shows current count and window
+/ratelimit <count>          → changes the count (clamped 1..99)
+/ratelimit <count> <window> → changes both (count 1..99, window 1..900s)
+/ratelimit reset            → reverts to config values
 ```
 
-El cambio aplica al bot completo (todos los chats donde participa) y persiste **solo en
-memoria** — al reiniciar el daemon se vuelven a leer los valores de
-`~/.inaki/config/agents/{id}.yaml`. Útil para cortar al vuelo un loop bot-to-bot que se
-está descontrolando o para subir el límite temporalmente durante una conversación activa.
+The change applies to the entire bot (all chats it participates in) and persists **only in
+memory** — on daemon restart, values are read again from
+`~/.inaki/config/agents/{id}.yaml`. Useful for quickly stopping a runaway bot-to-bot loop
+or temporarily raising the limit during an active conversation.
 
 ---
 
-### Obtener el `chat_id` de un grupo — bootstrap con `/chatid`
+### Getting a group's `chat_id` — bootstrap with `/chatid`
 
-Para autorizar un grupo en `allowed_chat_ids` necesitás saber su `chat_id` numérico.
-Las interfaces de Telegram no lo muestran. El flujo de bootstrap es:
+To authorize a group in `allowed_chat_ids` you need to know its numeric `chat_id`.
+Telegram's interfaces do not show it. The bootstrap flow is:
 
-1. Agregá el bot al grupo como administrador.
-2. Desde tu cuenta (que ya está en `allowed_user_ids`), enviá el mensaje `/chatid` en
-   el grupo.
-3. El bot responde con el `chat_id` numérico del grupo (p. ej. `-1001234567890`).
-4. Copiá ese número en `allowed_chat_ids` de la config del agente.
-5. Reiniciá el daemon: `systemctl restart inaki`.
+1. Add the bot to the group as an administrator.
+2. From your account (which is already in `allowed_user_ids`), send the message `/chatid` in
+   the group.
+3. The bot replies with the group's numeric `chat_id` (e.g. `-1001234567890`).
+4. Copy that number into `allowed_chat_ids` in the agent config.
+5. Restart the daemon: `systemctl restart inaki`.
 
-**¿Por qué `/chatid` no requiere `allowed_chat_ids`?** Precisamente para resolver el
-huevo y la gallina: el grupo no puede estar en la whitelist si todavía no sabés su id.
-Por eso el comando saltea la validación de `allowed_chat_ids`.
+**Why doesn't `/chatid` require `allowed_chat_ids`?** Precisely to solve the
+chicken-and-egg problem: the group can't be in the whitelist if you don't know its id yet.
+That's why the command bypasses `allowed_chat_ids` validation.
 
-El comando **sí respeta `allowed_user_ids`** — solo usuarios autorizados pueden consultarlo.
-Un atacante que logre poner al bot en un grupo desconocido no puede hacer nada útil
-solo con el chat_id.
+The command **does respect `allowed_user_ids`** — only authorized users can query it.
+An attacker who manages to add the bot to an unknown group cannot do anything useful
+with just the chat_id.
 
 ---
 
-### Requisito de NTP — sincronización de relojes
+### NTP requirement — clock synchronization
 
-El canal de broadcast usa **HMAC-SHA256** con una ventana de frescura de **60 segundos**.
-Al validar un mensaje entrante, el receptor calcula `|now − timestamp_mensaje| > 60s` y si
-es verdadero lo descarta silenciosamente.
+The broadcast channel uses **HMAC-SHA256** with a freshness window of **60 seconds**.
+When validating an incoming message, the receiver computes `|now − message_timestamp| > 60s` and if
+true, silently discards it.
 
-**Ambas Raspberry Pi (o cualquier par de agentes) deben tener el reloj sincronizado
-por NTP.** El cliente NTP por defecto de Raspberry Pi OS (`systemd-timesyncd` o `chrony`)
-es suficiente. No requiere configuración adicional si el Pi tiene acceso a internet.
+**Both Raspberry Pis (or any pair of agents) must have their clocks synchronized
+via NTP.** The default NTP client in Raspberry Pi OS (`systemd-timesyncd` or `chrony`)
+is sufficient. No additional configuration is needed if the Pi has internet access.
 
-**Modo de falla:** si los relojes derivan más de ~60 segundos entre sí, **todos los
-mensajes de broadcast se descartan** sin ningún aviso visible al usuario. El único
-indicio son las entradas de log con el evento `broadcast.message.dropped.stale_timestamp`.
-Esta condición es operativamente invisible si no se monitorean los logs, por eso el
-requisito es crítico.
+**Failure mode:** if the clocks drift more than ~60 seconds apart, **all
+broadcast messages are discarded** without any visible warning to the user. The only
+indication is log entries with the event `broadcast.message.dropped.stale_timestamp`.
+This condition is operationally invisible if logs are not monitored, which is why this
+requirement is critical.
 
-Para verificar que NTP está activo:
+To verify that NTP is active:
 ```bash
-timedatectl status          # ver "NTP service: active"
-systemctl status systemd-timesyncd  # o chrony
+timedatectl status          # see "NTP service: active"
+systemctl status systemd-timesyncd  # or chrony
 ```
 
 ---
@@ -847,12 +848,12 @@ systemctl status systemd-timesyncd  # o chrony
 ```yaml
 channels:
   telegram:
-    token: "7xxxxxxx:AAF..."     # Bot token de BotFather
+    token: "7xxxxxxx:AAF..."     # Bot token from BotFather
   rest:
-    auth_key: "sxc-0123456"      # Clave para header X-API-Key
+    auth_key: "sxc-0123456"      # Key for X-API-Key header
 
-# providers no definido aquí → hereda de global + global.secrets.
-# Si el agente necesita una api_key distinta (p. ej. otra cuenta de Groq):
+# providers not defined here → inherits from global + global.secrets.
+# If the agent needs a different api_key (e.g. another Groq account):
 # providers:
 #   groq:
 #     api_key: "gsk_agent_specific_..."
@@ -860,51 +861,51 @@ channels:
 
 ---
 
-## Reglas de merge por campo
+## Field merge rules
 
-| Campo | Comportamiento |
-|-------|----------------|
-| `llm` (bloque) | Merge campo a campo. Ausentes se heredan. Sin `api_key`/`base_url` (viven en `providers`). |
-| `providers` (bloque) | Merge campo a campo por key. Una capa inferior puede completar una entrada declarada arriba. |
-| `providers.<name>.api_key` | Solo en `*.secrets.yaml`. Un agente puede redefinir un provider entero. |
-| `embedding` | Merge campo a campo si se define. Sin `api_key`/`base_url`. |
-| `transcription` (bloque) | Merge campo a campo. Sin `api_key`/`base_url` (viven en `providers`). |
-| `channels.telegram.voice_enabled` | Per-agent. Default `true`. Si `true` requiere bloque `transcription:`. |
-| `memory.db_filename` / `digest_filename` / `default_top_k` / `min_relevance_score` / `schedule` / `delay_seconds` / `keep_last_messages` | **Solo en `global.yaml`**. Un agente no puede overridearlos (semánticamente no tiene sentido: la memoria es global compartida). |
-| `memory.enabled` | **Solo per-agent en `agents/{id}.yaml`**. Default `true`. Filtra qué agentes participan en la consolidación nocturna global. |
-| `channels` | Solo en el agente. No existe en global. |
-| `channels.*.token` / `auth_key` | Solo en `*.secrets.yaml`. |
-| `system_prompt` | Requerido en cada agente. Sin valor por defecto. |
-| `id`, `name`, `description` | Requeridos en cada agente. |
+| Field | Behavior |
+|-------|----------|
+| `llm` (block) | Field-by-field merge. Absent fields are inherited. No `api_key`/`base_url` (they live in `providers`). |
+| `providers` (block) | Field-by-field merge by key. A lower layer can complete an entry declared above. |
+| `providers.<name>.api_key` | Only in `*.secrets.yaml`. An agent can redefine an entire provider. |
+| `embedding` | Field-by-field merge if defined. No `api_key`/`base_url`. |
+| `transcription` (block) | Field-by-field merge. No `api_key`/`base_url` (they live in `providers`). |
+| `channels.telegram.voice_enabled` | Per-agent. Default `true`. If `true`, requires a `transcription:` block. |
+| `memory.db_filename` / `digest_filename` / `default_top_k` / `min_relevance_score` / `schedule` / `delay_seconds` / `keep_last_messages` | **Only in `global.yaml`**. An agent cannot override them (semantically it makes no sense: the memory is globally shared). |
+| `memory.enabled` | **Only per-agent in `agents/{id}.yaml`**. Default `true`. Filters which agents participate in the global nightly consolidation. |
+| `channels` | Only in the agent. Does not exist in global. |
+| `channels.*.token` / `auth_key` | Only in `*.secrets.yaml`. |
+| `system_prompt` | Required on each agent. No default value. |
+| `id`, `name`, `description` | Required on each agent. |
 
 ---
 
-## Resolución de paths
+## Path resolution
 
-Los campos de path de runtime (`*_filename`, `*_dirname`) se resuelven así:
+Runtime path fields (`*_filename`, `*_dirname`) are resolved as follows:
 
-- **Paths relativos** (p. ej. `"data/inaki.db"`) se anclan bajo `~/.inaki/`.
-- **Paths absolutos** (p. ej. `"/srv/inaki/data/inaki.db"`) se usan tal cual.
-- **Tildes** (`~/...`) se expanden al home del usuario.
-- El valor SQLite especial `:memory:` pasa sin interpretarse como path.
+- **Relative paths** (e.g. `"data/inaki.db"`) are anchored under `~/.inaki/`.
+- **Absolute paths** (e.g. `"/srv/inaki/data/inaki.db"`) are used as-is.
+- **Tildes** (`~/...`) are expanded to the user's home directory.
+- The special SQLite value `:memory:` passes through without being interpreted as a path.
 
-La raíz `~/.inaki/` está fija — es la misma que usan config/agents/secrets —
-siguiendo el principio de separación entre datos de usuario y árbol del proyecto.
+The root `~/.inaki/` is fixed — it is the same one used by config/agents/secrets —
+following the principle of separation between user data and the project tree.
 
-Layout por defecto:
+Default layout:
 ```
 ~/.inaki/
-├── config/            # YAMLs de global + secrets
-├── agents/            # YAMLs por agente + secrets
-├── data/              # DBs SQLite (inaki.db, history.db, scheduler.db, embedding_cache.db)
-├── models/            # Modelos ONNX (e.g. e5-small/)
-├── mem/               # Digest markdown — un archivo por scope (digest_{channel}_{chat_id}.md)
-├── ext/               # Extensiones del usuario
+├── config/            # Global + secrets YAMLs
+├── agents/            # Per-agent YAMLs + secrets
+├── data/              # SQLite DBs (inaki.db, history.db, scheduler.db, embedding_cache.db)
+├── models/            # ONNX models (e.g. e5-small/)
+├── mem/               # Digest markdown — one file per scope (digest_{channel}_{chat_id}.md)
+├── ext/               # User extensions
 └── .env               # INAKI_SECRET_KEY
 ```
 
-Si necesitás mover el storage a otra raíz (p. ej. disco dedicado en Pi 5), pasá
-paths absolutos en `~/.inaki/config/global.yaml`:
+If you need to move storage to a different root (e.g. dedicated disk on Pi 5), pass
+absolute paths in `~/.inaki/config/global.yaml`:
 ```yaml
 embedding:
   model_dirname: "/srv/inaki/models/e5-small"
@@ -923,127 +924,127 @@ scheduler:
 
 ---
 
-## Añadir un nuevo agente
+## Adding a new agent
 
-1. Crear `config/agents/miagente.yaml` con `id`, `name`, `description`, `system_prompt`
-2. Crear `config/agents/miagente.secrets.yaml` con los tokens necesarios
-3. Reiniciar el daemon: `systemctl restart inaki`
+1. Create `config/agents/miagente.yaml` with `id`, `name`, `description`, `system_prompt`
+2. Create `config/agents/miagente.secrets.yaml` with the required tokens
+3. Restart the daemon: `systemctl restart inaki`
 
-El `AgentRegistry` escanea automáticamente `config/agents/*.yaml` al arrancar.
-No hay registro manual ni reinicio del código.
+The `AgentRegistry` automatically scans `config/agents/*.yaml` on startup.
+No manual registration or code restart is needed.
 
 ---
 
-## Consolidación de memoria — configuración
+## Memory consolidation — configuration
 
-La memoria a largo plazo se alimenta desde una única tarea programada global que
-se dispara según `memory.schedule` (cron en `global.yaml`). Esa tarea itera todos
-los agentes con `memory.enabled = true` y llama a cada uno en secuencia con una
-pausa de `memory.delay_seconds` segundos entre ellos.
+Long-term memory is fed from a single global scheduled task that
+fires according to `memory.schedule` (cron in `global.yaml`). That task iterates all
+agents with `memory.enabled = true` and calls each one in sequence with a
+`memory.delay_seconds` pause between them.
 
-### Reconciliación al arrancar el daemon
+### Reconciliation on daemon startup
 
-Al iniciar, `AppContainer.startup()` reconcilia el estado de la tarea builtin
-`consolidate_memory` (id=1) con la config:
+On startup, `AppContainer.startup()` reconciles the state of the builtin
+`consolidate_memory` task (id=1) with the config:
 
-| Situación | Acción |
+| Situation | Action |
 |-----------|--------|
-| La tarea no existe en `scheduler.db` | Se crea con el schedule de la config y `next_run` computado con croniter. |
-| El `schedule` de la DB no coincide con el de la config | Se actualiza el schedule y se recomputa `next_run`. |
-| La tarea está en `FAILED` (resto de corridas viejas) | Se resetea a `pending`, `retry_count=0` y se recomputa `next_run`. |
-| `next_run` está en `NULL` | Se recomputa con croniter. |
+| The task does not exist in `scheduler.db` | Created with the config schedule and `next_run` computed via croniter. |
+| The `schedule` in the DB does not match the one in config | The schedule is updated and `next_run` is recomputed. |
+| The task is in `FAILED` state (leftover from old runs) | Reset to `pending`, `retry_count=0` and `next_run` is recomputed. |
+| `next_run` is `NULL` | Recomputed via croniter. |
 
-Esto significa que **cambiar `memory.schedule` en `global.yaml` y reiniciar el
-daemon basta** para aplicar el nuevo horario. No hay que editar `scheduler.db`
-a mano.
+This means that **changing `memory.schedule` in `global.yaml` and restarting the
+daemon is enough** to apply the new schedule. There is no need to edit `scheduler.db`
+manually.
 
-### Trigger manual
+### Manual trigger
 
-| Comando | Efecto |
+| Command | Effect |
 |---------|--------|
-| `inaki consolidate` | Ejecuta el use case global — itera todos los agentes con `memory.enabled=true` respetando `delay_seconds`. |
-| `inaki consolidate --agent dev` | Consolida solo `dev`, ignora el flag `enabled`. |
+| `inaki consolidate` | Runs the global use case — iterates all agents with `memory.enabled=true` respecting `delay_seconds`. |
+| `inaki consolidate --agent dev` | Consolidates only `dev`, ignores the `enabled` flag. |
 
-Ambos arrancan `AppContainer`, corren la consolidación one-shot e imprimen el
-resultado por stdout. No arrancan el scheduler ni los canales.
+Both start `AppContainer`, run the consolidation as a one-shot, and print the
+result to stdout. They do not start the scheduler or the channels.
 
-### Filtro por relevance
+### Relevance filter
 
-El `ConsolidateMemoryUseCase` descarta los hechos extraídos por el LLM cuya
-`relevance` sea menor a `memory.min_relevance_score`. El filtro se aplica
-**antes** de generar embeddings, así que descartar ahorra llamadas al
-embedder y storage en `inaki.db`.
+The `ConsolidateMemoryUseCase` discards facts extracted by the LLM whose
+`relevance` is below `memory.min_relevance_score`. The filter is applied
+**before** generating embeddings, so discarding saves embedder calls
+and storage in `inaki.db`.
 
-### Retención del historial tras la consolidación
+### History retention after consolidation
 
-Tras una consolidación exitosa (extracción + persistencia de recuerdos OK),
-el use case llama a `history.mark_infused(agent_id)` + `history.trim(agent_id,
-keep_last=N)` donde `N` sale de `memory.keep_last_messages` con el sentinel
-`0 → 84`. Esto significa:
+After a successful consolidation (extraction + memory persistence OK),
+the use case calls `history.mark_infused(agent_id)` + `history.trim(agent_id,
+keep_last=N)` where `N` comes from `memory.keep_last_messages` with the sentinel
+`0 → 84`. This means:
 
-- Los **últimos N mensajes** del agente quedan en `history.db` como contexto
-  inmediato para el próximo turno (el prompt builder los inyecta normal).
-- El **resto** se borra — los hechos relevantes ya están en la memoria
-  vectorial (`inaki.db`) y los recuerdos recientes en los digests por scope
-  bajo `~/.inaki/mem/digest_{channel}_{chat_id}.md`.
-- Los **N preservados** quedan marcados con `infused=1` para que la próxima
-  consolidación **no los vuelva a procesar** (evita duplicados en la memoria
-  vectorial por re-extracción).
+- The **last N messages** from the agent remain in `history.db` as immediate
+  context for the next turn (the prompt builder injects them normally).
+- The **rest** is deleted — the relevant facts are already in the vector
+  memory (`inaki.db`) and the recent memories in the per-scope digests
+  under `~/.inaki/mem/digest_{channel}_{chat_id}.md`.
+- The **N preserved messages** are marked with `infused=1` so that the next
+  consolidation **does not reprocess them** (avoids duplicates in vector
+  memory from re-extraction).
 
-**Transaccionalidad:** si cualquier paso falla (LLM, parseo, embedding,
-persistencia, mark_infused), `trim` NO se llama. El historial queda intacto
-y la próxima corrida reintenta el mismo contenido. No hay estado intermedio.
+**Transactionality:** if any step fails (LLM, parsing, embedding,
+persistence, mark_infused), `trim` is NOT called. The history stays intact
+and the next run retries the same content. There is no intermediate state.
 
-**Idempotencia:** ejecutar `/consolidate` dos veces seguidas es un no-op
-la segunda vez: `load_uninfused` devuelve vacío y el use case retorna
-"No hay mensajes nuevos para consolidar." sin tocar nada.
+**Idempotency:** running `/consolidate` twice in a row is a no-op
+the second time: `load_uninfused` returns empty and the use case returns
+"No new messages to consolidate." without touching anything.
 
-### Flag `infused` — gate contra reprocesamiento
+### `infused` flag — gate against reprocessing
 
-La tabla `history` lleva una columna `infused INTEGER NOT NULL DEFAULT 0`:
+The `history` table has a column `infused INTEGER NOT NULL DEFAULT 0`:
 
-- **`0`** — mensaje pendiente de extracción
-- **`1`** — mensaje ya procesado por el extractor en una corrida previa
+- **`0`** — message pending extraction
+- **`1`** — message already processed by the extractor in a previous run
 
-El flujo de consolidación es:
+The consolidation flow is:
 
-1. `load_uninfused(agent_id)` — SELECT sobre `WHERE infused = 0`
-2. Si vacío → no-op (return early)
-3. Extracción + persistencia (si falla en cualquier paso, no se toca el flag)
+1. `load_uninfused(agent_id)` — SELECT on `WHERE infused = 0`
+2. If empty → no-op (return early)
+3. Extraction + persistence (if any step fails, the flag is not touched)
 4. `mark_infused(agent_id)` — `UPDATE SET infused = 1 WHERE infused = 0`
-5. `trim(agent_id, keep_last=N)` — DELETE all except last N (los N que
-   quedan incluyen las filas marcadas en el paso 4)
+5. `trim(agent_id, keep_last=N)` — DELETE all except last N (the N that
+   remain include the rows marked in step 4)
 
-`load()` y `load_full()` ignoran el flag — el prompt builder y `/history`
-siempre ven el contexto completo, esté procesado o no.
+`load()` and `load_full()` ignore the flag — the prompt builder and `/history`
+always see the full context, whether processed or not.
 
-**Migración automática:** DBs creadas antes de este cambio se migran en el
-primer `_ensure_schema` vía `ALTER TABLE ADD COLUMN infused INTEGER NOT NULL
-DEFAULT 0` seguido de `UPDATE history SET infused = 1` (se asume que las
-filas preexistentes formaban parte de un estado estable).
+**Automatic migration:** DBs created before this change are migrated on the
+first `_ensure_schema` via `ALTER TABLE ADD COLUMN infused INTEGER NOT NULL
+DEFAULT 0` followed by `UPDATE history SET infused = 1` (it is assumed that
+pre-existing rows were part of a stable state).
 
-`/clear` (slash command) sigue haciendo wipe total — es el mecanismo manual
-para descartar el hilo. Separado de la consolidación.
+`/clear` (slash command) still does a full wipe — it is the manual mechanism
+to discard the thread. Separate from consolidation.
 
-### LLM dedicado para consolidación — `memory.llm`
+### Dedicated LLM for consolidation — `memory.llm`
 
-Por defecto, el `ConsolidateMemoryUseCase` usa el mismo `ILLMProvider` que el
-agente (`llm.*`). Esto es conveniente, pero tiene un pitfall concreto: si el LLM
-del agente es un **reasoning model** con `reasoning_effort` alto (p. ej.
-`openai/gpt-oss-120b` en Groq), el modelo consume el presupuesto de
-`max_tokens` entero razonando internamente y devuelve `content: ""`. El parser
-de consolidación explota con `ConsolidationError: "El LLM no devolvió JSON
-válido. Respuesta: "` (vacía) y los recuerdos nunca se extraen.
+By default, the `ConsolidateMemoryUseCase` uses the same `ILLMProvider` as the
+agent (`llm.*`). This is convenient, but has a concrete pitfall: if the agent's
+LLM is a **reasoning model** with high `reasoning_effort` (e.g.
+`openai/gpt-oss-120b` on Groq), the model consumes the entire `max_tokens`
+budget reasoning internally and returns `content: ""`. The consolidation parser
+fails with `ConsolidationError: "El LLM no devolvió JSON válido. Respuesta: "`
+(empty) and memories are never extracted.
 
-El sub-bloque `memory.llm` permite **override parcial** de `llm.*` SOLO para
-consolidación, sin tocar el LLM conversacional:
+The `memory.llm` sub-block allows **partial override** of `llm.*` ONLY for
+consolidation, without touching the conversational LLM:
 
 ```yaml
 providers:
   groq:   { api_key: KEY_GROQ, base_url: https://api.groq.com/openai/v1 }
   openai: { api_key: KEY_OPENAI }
 
-llm:                          # Base (chat del agente)
+llm:                          # Base (agent chat)
   provider: groq
   model: openai/gpt-oss-120b
   reasoning_effort: high
@@ -1051,78 +1052,78 @@ llm:                          # Base (chat del agente)
 
 memory:
   enabled: true
-  llm:                        # Override SOLO para consolidación
-    provider: openai          # distinto vendor — creds se resuelven desde providers.openai
+  llm:                        # Override ONLY for consolidation
+    provider: openai          # different vendor — creds resolved from providers.openai
     model: gpt-4o-mini
-    reasoning_effort: null    # apaga el reasoning
+    reasoning_effort: null    # turns off reasoning
     max_tokens: 8192
-    # temperature → heredado de llm.*
+    # temperature → inherited from llm.*
 ```
 
-**Semántica del merge (field-by-field):**
+**Merge semantics (field-by-field):**
 
-| YAML de `memory.llm.*` | Comportamiento |
-|------------------------|----------------|
-| Clave AUSENTE | Hereda el valor de `llm.*`. |
-| Clave con valor concreto (ej. `max_tokens: 8192`) | Pisa al base. |
-| Clave con valor `null` explícito (ej. `reasoning_effort: null`) | Pisa al base con `None` (override, no herencia). |
+| `memory.llm.*` YAML | Behavior |
+|----------------------|----------|
+| Key ABSENT | Inherits the value from `llm.*`. |
+| Key with concrete value (e.g. `max_tokens: 8192`) | Overrides the base. |
+| Key with explicit `null` value (e.g. `reasoning_effort: null`) | Overrides the base with `None` (override, not inheritance). |
 
-**Validación al arrancar:** si el override apunta a un `provider` que no existe
-en el registro `providers:` y el adapter correspondiente requiere credenciales,
-el daemon falla al arranque con `ConfigError` — no silenciosamente durante la
-siguiente consolidación.
+**Startup validation:** if the override points to a `provider` that does not exist
+in the `providers:` registry and the corresponding adapter requires credentials,
+the daemon fails at startup with `ConfigError` — not silently during the
+next consolidation.
 
-**Wiring:** `AgentContainer` compara la `LLMConfig` mergeada contra `llm.*`;
-si son idénticas, **reusa** la misma instancia de provider (sin duplicación de
-HTTP clients). Si difieren, instancia un provider dedicado vía
-`LLMProviderFactory.create_from_resolved(resolved)`, donde el `ResolvedLLMConfig`
-compone el override con las credenciales del registry.
+**Wiring:** `AgentContainer` compares the merged `LLMConfig` against `llm.*`;
+if they are identical, it **reuses** the same provider instance (no HTTP client
+duplication). If they differ, it instantiates a dedicated provider via
+`LLMProviderFactory.create_from_resolved(resolved)`, where the `ResolvedLLMConfig`
+composes the override with the registry credentials.
 
-**Cuándo usarlo:**
+**When to use it:**
 
-- Tu LLM de chat es un reasoning model y la consolidación se rompe → caso
-  canónico. Apuntá a un modelo no-reasoning (`llama-3.3-70b-versatile`,
+- Your chat LLM is a reasoning model and consolidation is broken → canonical
+  case. Point to a non-reasoning model (`llama-3.3-70b-versatile`,
   `gpt-4o-mini`, etc.).
-- Querés un modelo más **barato** para consolidación — es extracción
-  estructurada, no necesita el modelo más potente.
-- El chat tira de un provider y la memoria de otro (p. ej. chat en Ollama
-  local, consolidación en Groq para rapidez nocturna).
+- You want a **cheaper** model for consolidation — it's structured extraction,
+  it doesn't need the most powerful model.
+- Chat uses one provider and memory uses another (e.g. chat on local Ollama,
+  consolidation on Groq for overnight speed).
 
-**Cuándo NO usarlo:** si tu LLM base ya funciona bien para consolidación,
-omití el bloque entero. El comportamiento por defecto (`memory.llm` ausente)
-reusa el provider del agente.
+**When NOT to use it:** if your base LLM already works well for consolidation,
+omit the entire block. The default behavior (`memory.llm` absent)
+reuses the agent's provider.
 
-## Scheduler — `channel_fallback` (routing de canales)
+## Scheduler — `channel_fallback` (channel routing)
 
-El scheduler puede agendar tareas desde cualquier canal inbound (CLI, REST,
-daemon, Telegram). Al dispararse, el `ChannelRouter` resuelve el `target` del
-mensaje contra una cascada de fallbacks. Nunca falla por "canal no soportado":
-si nada matchea, el mensaje se escribe en un archivo hardcoded.
+The scheduler can schedule tasks from any inbound channel (CLI, REST,
+daemon, Telegram). When triggered, the `ChannelRouter` resolves the message's `target`
+against a fallback cascade. It never fails due to "unsupported channel":
+if nothing matches, the message is written to a hardcoded file.
 
-### Cascada de resolución
+### Resolution cascade
 
-Dado un `target` de forma `<prefix>:<destino>` (p. ej. `cli:local`, `telegram:12345`):
+Given a `target` of the form `<prefix>:<destination>` (e.g. `cli:local`, `telegram:12345`):
 
-1. **Sink nativo** — si el `prefix` tiene un sink registrado en el container
-   (hoy: `telegram`), usa ese sink directamente.
-2. **Override** — si `channel_fallback.overrides[<prefix>]` existe, se
-   redirige al target ahí configurado.
-3. **Default** — si `channel_fallback.default` está seteado, se redirige ahí.
-4. **Hardcoded** — último recurso: `file:///tmp/inaki-schedule-output.log`.
-   Siempre funciona (crea el archivo y directorio si no existe).
+1. **Native sink** — if the `prefix` has a registered sink in the container
+   (currently: `telegram`), that sink is used directly.
+2. **Override** — if `channel_fallback.overrides[<prefix>]` exists,
+   it is redirected to the target configured there.
+3. **Default** — if `channel_fallback.default` is set, it is redirected there.
+4. **Hardcoded** — last resort: `file:///tmp/inaki-schedule-output.log`.
+   Always works (creates the file and directory if they don't exist).
 
-### Sinks soportados
+### Supported sinks
 
-| Prefix | Descripción | Ejemplo target |
+| Prefix | Description | Example target |
 |--------|-------------|----------------|
-| `telegram:` | Envía vía el bot de Telegram registrado. | `telegram:12345` |
-| `file://` | Append a archivo. Crea dir padre. Sin sandbox. | `file:///var/log/inaki.log` |
-| `null:` | Descarta silenciosamente. | `null:` |
+| `telegram:` | Sends via the registered Telegram bot. | `telegram:12345` |
+| `file://` | Appends to a file. Creates parent dir. No sandbox. | `file:///var/log/inaki.log` |
+| `null:` | Silently discards. | `null:` |
 
-### Ejemplos de config
+### Config examples
 
 ```yaml
-# Ejemplo 1: mandar todo lo que venga de CLI/REST/daemon a Telegram.
+# Example 1: send everything from CLI/REST/daemon to Telegram.
 scheduler:
   channel_fallback:
     overrides:
@@ -1132,48 +1133,48 @@ scheduler:
 ```
 
 ```yaml
-# Ejemplo 2: default uniforme — lo que no sea nativo va a un archivo.
+# Example 2: uniform default — anything not native goes to a file.
 scheduler:
   channel_fallback:
     default: "file:///home/pi/.inaki/data/schedule-output.log"
 ```
 
 ```yaml
-# Ejemplo 3: silenciar un canal específico, resto al default.
+# Example 3: silence a specific channel, rest goes to default.
 scheduler:
   channel_fallback:
     default: "telegram:99999"
     overrides:
-      daemon: "null:"    # daemon no notifica a nadie
+      daemon: "null:"    # daemon does not notify anyone
 ```
 
-### Trazabilidad
+### Traceability
 
-Cada envío persiste en `task_logs.metadata` (JSON) un par
-`{original_target, resolved_target}`. Ejemplo de query:
+Each send persists in `task_logs.metadata` (JSON) a pair
+`{original_target, resolved_target}`. Example query:
 
 ```sql
 SELECT task_id, metadata FROM task_logs WHERE status = 'success';
 -- → {"original_target":"cli:local","resolved_target":"file:///tmp/inaki-schedule-output.log"}
 ```
 
-Útil para auditar dónde cayó realmente un mensaje cuando hubo un fallback.
+Useful for auditing where a message actually ended up when there was a fallback.
 
-### FileSink — formato de línea
+### FileSink — line format
 
 ```
 2026-04-15T03:00:00+00:00 | texto del mensaje
 ```
 
-Una línea por envío, timestamp ISO8601 UTC. Append-only.
+One line per send, ISO8601 UTC timestamp. Append-only.
 
 ---
 
-## `photos` — Pipeline de reconocimiento facial
+## `photos` — Facial recognition pipeline
 
-Controla el procesamiento de fotos enviadas por Telegram: detección de caras (InsightFace), matching contra el registro, descripción de escena (LLM multimodal) y anotación visual.
+Controls the processing of photos sent via Telegram: face detection (InsightFace), matching against the registry, scene description (multimodal LLM), and visual annotation.
 
-`photos: null` (por defecto) deshabilita la feature completa. No se carga ningún modelo ni se crea `faces.db`.
+`photos: null` (by default) disables the entire feature. No model is loaded and `faces.db` is not created.
 
 ```yaml
 photos:
@@ -1181,67 +1182,67 @@ photos:
   enrollment_chats: private   # private | none
 
   faces:
-    provider: insightface       # único soportado
+    provider: insightface       # only supported provider
     model: buffalo_sc           # buffalo_sc | buffalo_s | buffalo_l
-    match_threshold: 0.55       # coseno ≥ threshold → MATCHED
-    ambiguous_threshold: 0.40   # entre ambiguous y match → AMBIGUOUS
+    match_threshold: 0.55       # cosine ≥ threshold → MATCHED
+    ambiguous_threshold: 0.40   # between ambiguous and match → AMBIGUOUS
 
   scene:
     provider: anthropic         # anthropic | openai | groq
     model: claude-haiku-4-5-20251001
-    prompt_template: null       # null = prompt built-in en español
-    api_key: null               # conviene en global.secrets.yaml
+    prompt_template: null       # null = built-in prompt in Spanish
+    api_key: null               # best placed in global.secrets.yaml
 
   dedup:
     enabled: true
-    schedule: "0 3 * * *"      # cron — job nocturno de deduplicación
-    similarity_threshold: 0.70  # similitud entre centroides para reportar par
+    schedule: "0 3 * * *"      # cron — nightly deduplication job
+    similarity_threshold: 0.70  # similarity between centroids to report a duplicate pair
 ```
 
-### Campos
+### Fields
 
-| Campo | Tipo | Default | Descripción |
+| Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | bool | `true` | Si false, el bot ignora fotos con warning. No carga modelos. |
-| `enrollment_chats` | enum | `private` | Tipos de chat donde el agente ofrece registrar caras. |
+| `enabled` | bool | `true` | If false, the bot ignores photos with a warning. Models are not loaded. |
+| `enrollment_chats` | enum | `private` | Chat types where the agent offers to register faces. |
 
 #### `faces.*`
 
-| Campo | Tipo | Default | Descripción |
+| Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `provider` | string | `insightface` | Único proveedor soportado. |
-| `model` | enum | `buffalo_sc` | Modelo InsightFace. Ver tabla de modelos abajo. |
-| `match_threshold` | float | `0.55` | Score de similitud coseno para MATCHED. |
-| `ambiguous_threshold` | float | `0.40` | Score para AMBIGUOUS (entre ambiguous y match). |
+| `provider` | string | `insightface` | Only supported provider. |
+| `model` | enum | `buffalo_sc` | InsightFace model. See model table below. |
+| `match_threshold` | float | `0.55` | Cosine similarity score for MATCHED. |
+| `ambiguous_threshold` | float | `0.40` | Score for AMBIGUOUS (between ambiguous and match). |
 
-**Modelos InsightFace disponibles:**
+**Available InsightFace models:**
 
-| Modelo | Tamaño | Precisión | Recomendado para |
-|--------|--------|-----------|------------------|
-| `buffalo_sc` | ~80 MB | Media | Raspberry Pi 5 (por defecto) |
-| `buffalo_s` | ~150 MB | Alta | Dispositivos con más RAM |
-| `buffalo_l` | ~400 MB | Muy alta | Servidores / GPU |
+| Model | Size | Accuracy | Recommended for |
+|-------|------|----------|-----------------|
+| `buffalo_sc` | ~80 MB | Medium | Raspberry Pi 5 (default) |
+| `buffalo_s` | ~150 MB | High | Devices with more RAM |
+| `buffalo_l` | ~400 MB | Very high | Servers / GPU |
 
-> **Cambiar `faces.model` invalida `faces.db`**. Procedimiento: detener daemon → `rm ~/.inaki/data/faces.db` → reiniciar → re-enrolar personas. Ver [`docs/face-recognition.md`](face-recognition.md).
+> **Changing `faces.model` invalidates `faces.db`**. Procedure: stop daemon → `rm ~/.inaki/data/faces.db` → restart → re-enroll people. See [`docs/face-recognition.md`](face-recognition.md).
 
 #### `scene.*`
 
-| Campo | Tipo | Default | Descripción |
+| Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `provider` | enum | `anthropic` | Proveedor LLM multimodal para describir la escena. |
-| `model` | string | `claude-haiku-4-5-20251001` | Modelo del proveedor. |
-| `prompt_template` | string\|null | `null` | Prompt personalizado. `null` usa el prompt built-in. |
-| `api_key` | string\|null | `null` | API key. Conviene en `global.secrets.yaml`. |
+| `provider` | enum | `anthropic` | Multimodal LLM provider for scene description. |
+| `model` | string | `claude-haiku-4-5-20251001` | Provider model. |
+| `prompt_template` | string\|null | `null` | Custom prompt. `null` uses the built-in prompt. |
+| `api_key` | string\|null | `null` | API key. Best placed in `global.secrets.yaml`. |
 
 #### `dedup.*`
 
-| Campo | Tipo | Default | Descripción |
+| Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | bool | `true` | Habilita el job nocturno de deduplicación. |
-| `schedule` | cron | `"0 3 * * *"` | Cuándo corre el job (3am por defecto). |
-| `similarity_threshold` | float | `0.70` | Score mínimo entre centroides para reportar par duplicado. |
+| `enabled` | bool | `true` | Enables the nightly deduplication job. |
+| `schedule` | cron | `"0 3 * * *"` | When the job runs (3am by default). |
+| `similarity_threshold` | float | `0.70` | Minimum score between centroids to report a duplicate pair. |
 
-### Configuración mínima
+### Minimal configuration
 
 ```yaml
 # global.yaml
@@ -1260,11 +1261,11 @@ photos:
 ### Bootstrap
 
 ```bash
-# Primera vez
+# First time
 systemctl --user stop inaki
-# agregar bloque photos: en global.yaml
+# add photos: block in global.yaml
 systemctl --user start inaki
-# faces.db se crea automáticamente en ~/.inaki/data/faces.db al primer uso
+# faces.db is created automatically in ~/.inaki/data/faces.db on first use
 ```
 
-Ver guía completa en [`docs/face-recognition.md`](face-recognition.md).
+See the full guide at [`docs/face-recognition.md`](face-recognition.md).

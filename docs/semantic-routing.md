@@ -1,54 +1,54 @@
-# Mecanismo de semantic routing de Inaki
+# Inaki's Semantic Routing Mechanism
 
-Documentación del pipeline de **semantic routing** para selección dinámica de skills y tools.
+Documentation of the **semantic routing** pipeline for dynamic skill and tool selection.
 
-> **Nota**: este mecanismo NO es RAG. Selecciona capacidades (skills/tools) disponibles por similitud semántica con la query. El RAG real — recuperación de conocimiento externo (documentos, bases de datos) para inyectar en el prompt — vive en `knowledge:` y se documenta aparte.
-
----
-
-## ¿Qué es y para qué sirve?
-
-Cuando el agente tiene muchas skills o tools disponibles, enviárselas todas al LLM en cada turno es costoso e ineficiente. El semantic routing resuelve este problema: en lugar de mandar la lista completa, genera un embedding de la consulta del usuario y selecciona solo las skills/tools más similares semánticamente.
-
-El resultado: el LLM recibe un contexto más chico y preciso, lo que mejora la calidad de respuesta y reduce tokens.
+> **Note**: this mechanism is NOT RAG. It selects available capabilities (skills/tools) by semantic similarity with the query. The actual RAG — retrieval of external knowledge (documents, databases) to inject into the prompt — lives in `knowledge:` and is documented separately.
 
 ---
 
-## Flujo general
+## What Is It and What Is It For?
+
+When the agent has many available skills or tools, sending all of them to the LLM on every turn is costly and inefficient. Semantic routing solves this problem: instead of sending the full list, it generates an embedding of the user's query and selects only the most semantically similar skills/tools.
+
+The result: the LLM receives a smaller and more precise context, which improves response quality and reduces tokens.
+
+---
+
+## General Flow
 
 ```
-Usuario escribe consulta
+User writes query
         │
         ▼
 RunAgentUseCase.execute()
         │
-        ├── list_all_skills()     → ¿Hay más de semantic_routing_min_skills? → skills_routing_active
-        ├── get_all_schemas()     → ¿Hay más de semantic_routing_min_tools?  → tools_routing_active
+        ├── list_all_skills()     → more than semantic_routing_min_skills? → skills_routing_active
+        ├── get_all_schemas()     → more than semantic_routing_min_tools?  → tools_routing_active
         │
-        ├── ¿input corto (< semantic_routing.min_words_threshold) Y hay sticky previo?
-        │       ├── SÍ → short-input bypass:
-        │       │         heredar selección del sticky previo intacta
+        ├── short input (< semantic_routing.min_words_threshold) AND previous sticky exists?
+        │       ├── YES → short-input bypass:
+        │       │         inherit previous sticky selection intact
         │       │         (no embed, no TTL decay, no persist)
-        │       └── NO → seguir flujo normal:
+        │       └── NO → follow normal flow:
         │                 └── embed_query(user_input) → query_vec
         │
-        ├── (si skills_routing_active y NO bypass)
+        ├── (if skills_routing_active and NOT bypass)
         │       └── skills.retrieve(query_vec, top_k, min_score) → retrieved_skills
         │
-        ├── (si tools_routing_active y NO bypass)
+        ├── (if tools_routing_active and NOT bypass)
         │       └── tools.get_schemas_relevant(query_vec, top_k, min_score) → tool_schemas
         │
         ▼
 AgentContext(skills=retrieved_skills)
         │
-        └── build_system_prompt() → sistema con solo las skills relevantes
+        └── build_system_prompt() → system prompt with only the relevant skills
 ```
 
-El embedding de la consulta se genera **una sola vez** aunque ambos routings estén activos.
+The query embedding is generated **once** even if both routings are active.
 
 ---
 
-## Flujo de selección de skills
+## Skill Selection Flow
 
 ```
 add_file(path) → YamlSkillRepository._extra_files[]
@@ -57,48 +57,48 @@ list_all() / retrieve()
         │
         └── _ensure_loaded()
                 │
-                ├── para cada archivo YAML:
+                ├── for each YAML file:
                 │       │
                 │       ├── read_bytes() → raw_bytes
                 │       ├── md5(raw_bytes) → content_hash
                 │       │
                 │       ├── cache.get(content_hash, provider, dimension)
-                │       │       ├── HIT  → embedding del cache (sin llamar al modelo)
-                │       │       └── MISS → embedder.embed_passage(nombre + desc + tags)
+                │       │       ├── HIT  → embedding from cache (without calling the model)
+                │       │       └── MISS → embedder.embed_passage(name + desc + tags)
                 │       │                       └── cache.put(content_hash, ...)
                 │       │
                 │       └── append(skill, embedding)
                 │
-                └── _loaded = True  (no se recarga hasta add_file nuevo)
+                └── _loaded = True  (not reloaded until a new add_file)
 
 retrieve(query_vec, top_k, min_score)
         │
-        ├── cosine_similarity(query_vec, emb) para cada skill
-        ├── sort desc por score
-        ├── filtrar score < min_score (si min_score > 0.0)
-        └── top_k skills → inject en system prompt
+        ├── cosine_similarity(query_vec, emb) for each skill
+        ├── sort desc by score
+        ├── filter score < min_score (if min_score > 0.0)
+        └── top_k skills → inject into system prompt
 ```
 
-**Clave del hash**: el hash MD5 se calcula sobre los bytes crudos del archivo YAML completo, no sobre campos individuales. Si el archivo cambia (cualquier campo), el hash cambia y se descarta el embedding cacheado.
+**Hash key**: the MD5 hash is computed over the raw bytes of the entire YAML file, not over individual fields. If the file changes (any field), the hash changes and the cached embedding is discarded.
 
 ---
 
-## Flujo de selección de tools
+## Tool Selection Flow
 
 ```
 register(tool) → ToolRegistry._tools{}
-                   └── _embeddings_ready = False (invalidar)
+                   └── _embeddings_ready = False (invalidate)
 
 get_schemas_relevant(query_vec, top_k, min_score)
         │
         └── _ensure_embeddings()
                 │
-                ├── para cada tool no embeddeada aún:
+                ├── for each tool not yet embedded:
                 │       │
                 │       ├── md5(tool.description.encode()) → content_hash
                 │       │
                 │       ├── cache.get(content_hash, provider, dimension)
-                │       │       ├── HIT  → embedding del cache
+                │       │       ├── HIT  → embedding from cache
                 │       │       └── MISS → embedder.embed_passage(description)
                 │       │                       └── cache.put(content_hash, ...)
                 │       │
@@ -106,127 +106,127 @@ get_schemas_relevant(query_vec, top_k, min_score)
                 │
                 └── _embeddings_ready = True
 
-scored = cosine_similarity(query_vec, emb) para cada tool
-filtrar score < min_score (si min_score > 0.0)
-top_k nombres → schemas de esas tools
+scored = cosine_similarity(query_vec, emb) for each tool
+filter score < min_score (if min_score > 0.0)
+top_k names → schemas for those tools
 ```
 
-**Diferencia clave con skills**: el hash de una tool se calcula sobre `tool.description` (string), no sobre bytes de archivo. Si la descripción no cambia entre reinicios, el embedding se reutiliza del cache.
+**Key difference from skills**: a tool's hash is computed over `tool.description` (string), not over file bytes. If the description doesn't change between restarts, the embedding is reused from cache.
 
 ---
 
-## Similitud coseno
+## Cosine Similarity
 
-Implementada en `core/domain/services/similarity.py`:
+Implemented in `core/domain/services/similarity.py`:
 
 ```
 cos_sim(a, b) = dot(a, b) / (||a|| * ||b||)
 ```
 
-- Usa `numpy` internamente (float32)
-- Retorna 0.0 si alguno de los vectores tiene norma cero (vector nulo)
-- Escala: −1.0 (opuesto) → 0.0 (ortogonal) → 1.0 (idéntico)
-- Umbral configurable: `semantic_routing_min_score` filtra resultados por debajo del threshold antes de aplicar top_k (default 0.0 = sin filtro)
+- Uses `numpy` internally (float32)
+- Returns 0.0 if either vector has zero norm (null vector)
+- Scale: -1.0 (opposite) → 0.0 (orthogonal) → 1.0 (identical)
+- Configurable threshold: `semantic_routing_min_score` filters results below the threshold before applying top_k (default 0.0 = no filter)
 
 ---
 
-## Caché de embeddings
+## Embedding Cache
 
-### Puerto (interfaz)
+### Port (interface)
 
-`core/ports/outbound/embedding_cache_port.py` define `IEmbeddingCache`:
+`core/ports/outbound/embedding_cache_port.py` defines `IEmbeddingCache`:
 
 ```
 get(content_hash, provider, dimension) → list[float] | None
 put(content_hash, provider, dimension, embedding) → None
 ```
 
-### Implementación SQLite
+### SQLite Implementation
 
 `adapters/outbound/embedding/sqlite_embedding_cache.py` — `SqliteEmbeddingCache`:
 
-**Schema de la tabla:**
+**Table schema:**
 
 ```sql
 CREATE TABLE embedding_cache (
     content_hash  TEXT    NOT NULL,
     provider      TEXT    NOT NULL,
     dimension     INTEGER NOT NULL,
-    embedding     TEXT    NOT NULL,   -- JSON serializado: "[0.1, 0.2, ...]"
+    embedding     TEXT    NOT NULL,   -- JSON serialized: "[0.1, 0.2, ...]"
     created_at    TEXT    NOT NULL,
     PRIMARY KEY (content_hash, provider, dimension)
 );
 ```
 
-**Clave compuesta triple**: `(content_hash, provider, dimension)`. Esto permite:
-- Cambiar de proveedor de embeddings (e.g. de `e5_onnx` a `openai`) sin conflictos
-- Cambiar la dimensión del modelo sin conflictos
-- Coexistir múltiples configuraciones en el mismo archivo `.db`
+**Triple composite key**: `(content_hash, provider, dimension)`. This allows:
+- Changing embedding providers (e.g. from `e5_onnx` to `openai`) without conflicts
+- Changing the model dimension without conflicts
+- Multiple configurations coexisting in the same `.db` file
 
-**Comportamiento hit/miss:**
+**Hit/miss behavior:**
 
 ```
 get(hash, provider, dim)
-    ├── HIT  → deserializa JSON → list[float] (sin llamar al modelo)
+    ├── HIT  → deserialize JSON → list[float] (without calling the model)
     └── MISS → None
 
 put(hash, provider, dim, embedding)
     └── INSERT OR REPLACE (upsert)
 ```
 
-**Robustez**: errores de SQLite en `get()` retornan `None` (comportamiento de miss). Errores en `put()` se loggean como WARNING pero no propagan excepción. El sistema funciona degradado si el cache falla.
+**Robustness**: SQLite errors in `get()` return `None` (miss behavior). Errors in `put()` are logged as WARNING but do not propagate exceptions. The system operates in degraded mode if the cache fails.
 
-**WAL mode**: la conexión usa `PRAGMA journal_mode=WAL` para mejor concurrencia en lecturas simultáneas.
+**WAL mode**: the connection uses `PRAGMA journal_mode=WAL` for better concurrency on simultaneous reads.
 
-**Nota**: el cache es **opcional**. Tanto `YamlSkillRepository` como `ToolRegistry` aceptan `cache=None`, en cuyo caso siempre llaman al embedder.
+**Note**: the cache is **optional**. Both `YamlSkillRepository` and `ToolRegistry` accept `cache=None`, in which case they always call the embedder.
 
 ---
 
-## Configuración
+## Configuration
 
-### `EmbeddingConfig` (en `infrastructure/config.py`)
+### `EmbeddingConfig` (in `infrastructure/config.py`)
 
-| Campo | Default | Descripción |
+| Field | Default | Description |
 |-------|---------|-------------|
-| `provider` | `"e5_onnx"` | Proveedor de embeddings |
-| `model_dirname` | `"models/e5-small"` | Directorio del modelo ONNX (relativo a `~/.inaki/`, solo e5_onnx) |
-| `model` | `"text-embedding-3-small"` | Nombre de modelo (solo openai) |
-| `dimension` | `384` | Dimensión del vector de embedding |
-| `cache_filename` | `"data/embedding_cache.db"` | Fichero SQLite del cache (relativo a `~/.inaki/`) |
+| `provider` | `"e5_onnx"` | Embedding provider |
+| `model_dirname` | `"models/e5-small"` | ONNX model directory (relative to `~/.inaki/`, e5_onnx only) |
+| `model` | `"text-embedding-3-small"` | Model name (openai only) |
+| `dimension` | `384` | Embedding vector dimension |
+| `cache_filename` | `"data/embedding_cache.db"` | SQLite cache file (relative to `~/.inaki/`) |
 
 ### `SkillsConfig`
 
-| Campo | Default | Descripción |
+| Field | Default | Description |
 |-------|---------|-------------|
-| `semantic_routing_min_skills` | `10` | Mínimo de skills para activar routing. Con ≤10 skills, se mandan todas |
-| `semantic_routing_top_k` | `3` | Cuántas skills devuelve el retrieve |
-| `semantic_routing_min_score` | `0.0` | Score mínimo de cosine similarity (0.0-1.0). Skills por debajo se descartan ANTES de aplicar top_k. 0.0 = sin filtro |
+| `semantic_routing_min_skills` | `10` | Minimum skills to activate routing. With 10 or fewer skills, all are sent |
+| `semantic_routing_top_k` | `3` | How many skills the retrieve returns |
+| `semantic_routing_min_score` | `0.0` | Minimum cosine similarity score (0.0-1.0). Skills below this are discarded BEFORE applying top_k. 0.0 = no filter |
 
 ### `ToolsConfig`
 
-| Campo | Default | Descripción |
+| Field | Default | Description |
 |-------|---------|-------------|
-| `semantic_routing_min_tools` | `10` | Mínimo de tools para activar routing |
-| `semantic_routing_top_k` | `5` | Cuántas tools devuelve el retrieve |
-| `semantic_routing_min_score` | `0.0` | Score mínimo de cosine similarity (0.0-1.0). Tools por debajo se descartan ANTES de aplicar top_k. 0.0 = sin filtro |
-| `tool_call_max_iterations` | `5` | Iteraciones máximas del tool loop |
-| `circuit_breaker_threshold` | `2` | Fallos consecutivos antes de cortar |
+| `semantic_routing_min_tools` | `10` | Minimum tools to activate routing |
+| `semantic_routing_top_k` | `5` | How many tools the retrieve returns |
+| `semantic_routing_min_score` | `0.0` | Minimum cosine similarity score (0.0-1.0). Tools below this are discarded BEFORE applying top_k. 0.0 = no filter |
+| `tool_call_max_iterations` | `5` | Maximum tool loop iterations |
+| `circuit_breaker_threshold` | `2` | Consecutive failures before cutting off |
 
 ### `SemanticRoutingConfig`
 
-| Campo | Default | Descripción |
+| Field | Default | Description |
 |-------|---------|-------------|
-| `min_words_threshold` | `0` | Mínimo de palabras del user_input para re-correr el routing. Por debajo de este umbral (y si hay sticky previo) se saltea embedding y se hereda la selección del turno anterior intacta. `0` = feature deshabilitada (comportamiento histórico) |
+| `min_words_threshold` | `0` | Minimum words in user_input to re-run routing. Below this threshold (and if a previous sticky exists) embedding is skipped and the previous turn's selection is inherited intact. `0` = feature disabled (historical behavior) |
 
 ---
 
-## Gate por cantidad de palabras (short-input bypass)
+## Word Count Gate (short-input bypass)
 
-Parámetro: `semantic_routing.min_words_threshold` (ver `SemanticRoutingConfig`).
+Parameter: `semantic_routing.min_words_threshold` (see `SemanticRoutingConfig`).
 
-**Motivación.** En follow-ups cortos — "sí", "dale", "y eso?" — el embedding tiene poca señal semántica y normalmente el contexto sigue siendo el del turno anterior. Recalcular el routing en cada turno corto (a) gasta una llamada al embedder y (b) puede "resetear" skills/tools relevantes que ya estaban seleccionadas.
+**Motivation.** In short follow-ups — "yes", "go ahead", "and that?" — the embedding has little semantic signal and usually the context is still the same as the previous turn. Recomputing routing on every short turn (a) spends an embedder call and (b) can "reset" relevant skills/tools that were already selected.
 
-**Semántica.** Al arrancar `execute()` se evalúa:
+**Semantics.** At the start of `execute()` the following is evaluated:
 
 ```
 is_short = (
@@ -236,73 +236,73 @@ is_short = (
 )
 ```
 
-Si `is_short` es `True`:
+If `is_short` is `True`:
 
-- NO se llama a `embed_query` → ahorra latencia y cuota del embedder
-- NO se corre `apply_sticky` → el TTL del sticky queda **congelado** (no decrementa)
-- `retrieved_skills` / `tool_schemas` se reconstruyen desde `prev_state.sticky_*` (filtrando ids que ya no existan en el catálogo actual)
-- `state_dirty = False` → NO se persiste estado
+- `embed_query` is NOT called → saves latency and embedder quota
+- `apply_sticky` is NOT run → the sticky TTL stays **frozen** (does not decrement)
+- `retrieved_skills` / `tool_schemas` are reconstructed from `prev_state.sticky_*` (filtering ids that no longer exist in the current catalog)
+- `state_dirty = False` → state is NOT persisted
 
-Si `is_short` es `False`, el pipeline original corre sin cambios.
+If `is_short` is `False`, the original pipeline runs without changes.
 
-**Casos de borde.**
+**Edge cases.**
 
-- Primer turno (sticky vacío) con input corto → el routing **corre normalmente**. Sin sticky previo no hay contexto del cual heredar.
-- Routing desactivado por umbrales de pool (`semantic_routing_min_skills` / `semantic_routing_min_tools` no superados) → irrelevante, ya se mandaban todas las skills/tools.
-- `tools_override` activo (p. ej. scheduler `agent_send`) → el override siempre manda; el gate solo afecta skills.
-- Umbral estricto: un input con exactamente `min_words_threshold` palabras **no** es corto (comparación `<`, no `<=`).
+- First turn (empty sticky) with short input → routing **runs normally**. Without a previous sticky there's no context to inherit from.
+- Routing deactivated by pool thresholds (`semantic_routing_min_skills` / `semantic_routing_min_tools` not exceeded) → irrelevant, all skills/tools were already being sent.
+- `tools_override` active (e.g. scheduler `agent_send`) → the override always takes precedence; the gate only affects skills.
+- Strict threshold: an input with exactly `min_words_threshold` words is **not** short (comparison is `<`, not `<=`).
 
-**Intención.** Política del caller del routing, no del embedder. `EmbeddingConfig` describe "cómo se calcula un embedding"; `SemanticRoutingConfig` describe "cuándo activar el pipeline de routing". Por eso no vive dentro de `EmbeddingConfig`.
+**Intent.** Policy of the routing caller, not of the embedder. `EmbeddingConfig` describes "how an embedding is computed"; `SemanticRoutingConfig` describes "when to activate the routing pipeline". That's why it doesn't live inside `EmbeddingConfig`.
 
-**Visibilidad.** `inspect()` aplica el mismo gate que `execute()` — si el input es corto y hay sticky previo, muestra la selección heredada (no la que saldría de re-correr el routing). Así el debug refleja lo que realmente vería el LLM.
+**Visibility.** `inspect()` applies the same gate as `execute()` — if the input is short and there's a previous sticky, it shows the inherited selection (not what would result from re-running routing). This way the debug reflects what the LLM would actually see.
 
 ---
 
-## Inyección de skills en el system prompt
+## Skill Injection into the System Prompt
 
-`AgentContext.build_system_prompt()` en `core/domain/value_objects/agent_context.py`:
+`AgentContext.build_system_prompt()` in `core/domain/value_objects/agent_context.py`:
 
 ```
 system_prompt = base_prompt
-    + memory_digest (si existe)
-    + "## Skills disponibles:\n\n### Nombre\ndescripción\n\ninstrucciones"
-    + extra_sections (e.g. agent discovery para delegación)
+    + memory_digest (if it exists)
+    + "## Available skills:\n\n### Name\ndescription\n\ninstructions"
+    + extra_sections (e.g. agent discovery for delegation)
 ```
 
-Cada skill se renderiza como un bloque markdown con heading `###`, descripción como primer párrafo, e instructions separadas por línea en blanco:
+Each skill is rendered as a markdown block with a `###` heading, description as the first paragraph, and instructions separated by a blank line:
 
 ```markdown
-## Skills disponibles:
+## Available skills:
 
-### Búsqueda Web
-Busca información en internet usando DuckDuckGo
+### Web Search
+Searches for information on the internet using DuckDuckGo
 
-Cuando el usuario pregunta sobre eventos actuales o necesita información...
+When the user asks about current events or needs information...
 
-### Calculadora
-Realiza cálculos matemáticos
+### Calculator
+Performs mathematical calculations
 
-Usa esta skill cuando el usuario pide operaciones numéricas...
+Use this skill when the user asks for numeric operations...
 ```
 
-Solo las skills recuperadas por routing (o todas si el routing está inactivo) aparecen en el prompt.
+Only skills retrieved by routing (or all if routing is inactive) appear in the prompt.
 
 ---
 
-## Arquitectura hexagonal
+## Hexagonal Architecture
 
-| Capa | Archivo | Rol |
-|------|---------|-----|
-| **Core — Puerto** | `core/ports/outbound/embedding_cache_port.py` | Interfaz `IEmbeddingCache` |
-| **Core — Puerto** | `core/ports/outbound/embedding_port.py` | Interfaz `IEmbeddingProvider` |
-| **Core — Puerto** | `core/ports/outbound/skill_port.py` | Interfaz `ISkillRepository` |
-| **Core — Servicio** | `core/domain/services/similarity.py` | Función `cosine_similarity` |
-| **Core — Value Object** | `core/domain/value_objects/agent_context.py` | Construcción del system prompt |
-| **Core — Use Case** | `core/use_cases/run_agent.py` | Orquestación del pipeline de routing |
-| **Adapter** | `adapters/outbound/embedding/sqlite_embedding_cache.py` | Implementación SQLite del cache |
-| **Adapter** | `adapters/outbound/skills/yaml_skill_repo.py` | Carga de skills + routing |
-| **Adapter** | `adapters/outbound/tools/tool_registry.py` | Registro de tools + routing |
-| **Infraestructura** | `infrastructure/container.py` | Wiring: instancia y conecta todo |
+| Layer | File | Role |
+|-------|------|------|
+| **Core — Port** | `core/ports/outbound/embedding_cache_port.py` | `IEmbeddingCache` interface |
+| **Core — Port** | `core/ports/outbound/embedding_port.py` | `IEmbeddingProvider` interface |
+| **Core — Port** | `core/ports/outbound/skill_port.py` | `ISkillRepository` interface |
+| **Core — Service** | `core/domain/services/similarity.py` | `cosine_similarity` function |
+| **Core — Value Object** | `core/domain/value_objects/agent_context.py` | System prompt construction |
+| **Core — Use Case** | `core/use_cases/run_agent.py` | Routing pipeline orchestration |
+| **Adapter** | `adapters/outbound/embedding/sqlite_embedding_cache.py` | SQLite cache implementation |
+| **Adapter** | `adapters/outbound/skills/yaml_skill_repo.py` | Skill loading + routing |
+| **Adapter** | `adapters/outbound/tools/tool_registry.py` | Tool registration + routing |
+| **Infrastructure** | `infrastructure/container.py` | Wiring: instantiates and connects everything |
 | **Config** | `infrastructure/config.py` | `EmbeddingConfig`, `SkillsConfig`, `ToolsConfig`, `SemanticRoutingConfig` |
 
-La regla hexagonal se respeta: el core no conoce SQLite ni YAML. Solo depende de las interfaces (`IEmbeddingCache`, `IEmbeddingProvider`, `ISkillRepository`).
+The hexagonal rule is respected: the core doesn't know about SQLite or YAML. It only depends on the interfaces (`IEmbeddingCache`, `IEmbeddingProvider`, `ISkillRepository`).

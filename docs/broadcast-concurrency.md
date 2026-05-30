@@ -1,111 +1,111 @@
-# Concurrencia en grupos multi-agente — problema y solución pendiente
+# Concurrency in Multi-Agent Groups — Problem and Pending Solution
 
-> **Nota**: este documento describe el timing del **broadcast como contexto** (buffer
-> que alimenta el system prompt del siguiente turno). Con la incorporación del
-> **broadcast como trigger** (bot-to-bot), un bot también dispara su pipeline ante
-> cualquier mensaje broadcast recibido — el LLM decide si responder o emitir `[SKIP]`.
-> Esa vía NO pasa por el flujo de Telegram privacy — es independiente y se describe al final.
+> **Note**: this document describes the timing of **broadcast as context** (buffer
+> that feeds the system prompt of the next turn). With the addition of
+> **broadcast as trigger** (bot-to-bot), a bot also fires its pipeline upon
+> any received broadcast message — the LLM decides whether to respond or emit `[SKIP]`.
+> That path does NOT go through the Telegram privacy flow — it is independent and described at the end.
 
-## El problema: timing del broadcast context
+## The problem: broadcast context timing
 
-Cuando dos instancias de Inaki (`A` y `B`) están en el mismo grupo Telegram con
-`behavior: autonomous`, ambas reciben el mismo mensaje del usuario casi al mismo tiempo.
-
-```
-Usuario → mensaje → [Telegram]
-                        ├── → Bot A (empieza a procesar)
-                        └── → Bot B (empieza a procesar)
-```
-
-Cada bot lee el `BroadcastBuffer` al inicio de `_run_pipeline` para construir el
-`extra_sections` del system prompt. En ese momento el buffer del otro bot aún está vacío
-(o contiene contexto de turnos anteriores, no del actual). Los dos bots producen sus
-respuestas sin verse mutuamente.
-
-Después de responder, cada uno emite vía TCP al otro:
+When two Inaki instances (`A` and `B`) are in the same Telegram group with
+`behavior: autonomous`, both receive the same user message almost at the same time.
 
 ```
-Bot A responde → emit(BroadcastMessage) → Bot B buffer
-Bot B responde → emit(BroadcastMessage) → Bot A buffer
+User → message → [Telegram]
+                    ├── → Bot A (starts processing)
+                    └── → Bot B (starts processing)
 ```
 
-Resultado: el primer mensaje simultáneo carece de contexto cruzado. Los mensajes
-siguientes sí lo tienen, porque el buffer ya está populado del turno anterior.
+Each bot reads the `BroadcastBuffer` at the start of `_run_pipeline` to build the
+`extra_sections` of the system prompt. At that point the other bot's buffer is still empty
+(or contains context from previous turns, not the current one). Both bots produce their
+responses without seeing each other.
 
-## Por qué no hay bucle infinito
+After responding, each one emits via TCP to the other:
 
-Tres mecanismos lo evitan:
+```
+Bot A responds → emit(BroadcastMessage) → Bot B buffer
+Bot B responds → emit(BroadcastMessage) → Bot A buffer
+```
 
-1. **Anti-loop en el TCP adapter**: `TcpBroadcastAdapter` descarta cualquier mensaje cuyo
-   `agent_id` coincida con el propio. Un bot nunca ve su propio broadcast.
-2. **Mensajes de bot ignorados por Telegram**: la Bot API no entrega a un bot los mensajes
-   de OTRO bot (limitación de plataforma). El broadcast lateral existe precisamente para
-   compensar esto — pero también significa que los bots no se "responden" entre sí desde
-   el punto de vista de Telegram.
-3. **`[SKIP]` en modo autonomous**: cuando el LLM considera que no tiene nada útil que
-   aportar, responde exactamente `[SKIP]`. El pipeline detecta el marcador y no envía
-   nada ni emite broadcast.
+Result: the first simultaneous message lacks cross-context. Subsequent messages
+do have it, because the buffer is already populated from the previous turn.
 
-## Estado actual: opción C (aceptar el primer turno sin contexto cruzado)
+## Why there is no infinite loop
 
-Se eligió no hacer nada. Razonamiento:
+Three mechanisms prevent it:
 
-- El buffer siempre tiene el contexto del turno **anterior** del otro bot — solo el primer
-  mensaje simultáneo queda "ciego".
-- En una conversación fluida, el impacto es mínimo: los bots se ven a partir del segundo
-  intercambio.
-- No agrega latencia perceptible al usuario.
-- Cero complejidad extra.
+1. **Anti-loop in the TCP adapter**: `TcpBroadcastAdapter` discards any message whose
+   `agent_id` matches its own. A bot never sees its own broadcast.
+2. **Bot messages ignored by Telegram**: the Bot API does not deliver to a bot the messages
+   from ANOTHER bot (platform limitation). The lateral broadcast exists precisely to
+   compensate for this — but it also means bots don't "reply" to each other from
+   Telegram's perspective.
+3. **`[SKIP]` in autonomous mode**: when the LLM considers it has nothing useful to
+   contribute, it responds exactly `[SKIP]`. The pipeline detects the marker and sends
+   nothing nor emits a broadcast.
 
-## Opción B: semáforo por `chat_id` (NO implementado)
+## Current state: option C (accept the first turn without cross-context)
+
+The decision was to do nothing. Reasoning:
+
+- The buffer always has the context from the **previous** turn of the other bot — only the first
+  simultaneous message is "blind."
+- In a fluid conversation, the impact is minimal: the bots see each other starting from the second
+  exchange.
+- It adds no perceptible latency for the user.
+- Zero extra complexity.
+
+## Option B: semaphore per `chat_id` (NOT implemented)
 
 ### Idea
 
-Un `asyncio.Semaphore(1)` por `chat_id` de grupo. Mientras un bot procesa un mensaje
-del grupo, el siguiente mensaje del mismo grupo espera a que termine. Esto serializa el
-procesamiento por chat.
+An `asyncio.Semaphore(1)` per group `chat_id`. While one bot processes a message
+from the group, the next message from the same group waits for it to finish. This serializes
+processing per chat.
 
-### Cómo funcionaría
+### How it would work
 
-En `_handle_group_message`, antes de entrar al pipeline:
+In `_handle_group_message`, before entering the pipeline:
 
 ```python
-# En __init__:
+# In __init__:
 self._group_semaphores: dict[int, asyncio.Semaphore] = {}
 
-# En _handle_group_message:
+# In _handle_group_message:
 sem = self._group_semaphores.setdefault(chat_id, asyncio.Semaphore(1))
 async with sem:
     await self._run_pipeline(update, contenido_grupo, chat_type=chat_type)
 ```
 
-### Por qué esto mejora el timing
+### Why this improves timing
 
-Si bot A adquiere el semáforo primero:
+If bot A acquires the semaphore first:
 
 ```
-Bot A adquiere semáforo → procesa → responde → emite broadcast → libera semáforo
-Bot B esperaba          → adquiere semáforo → buffer YA tiene la respuesta de A → procesa con contexto
+Bot A acquires semaphore → processes → responds → emits broadcast → releases semaphore
+Bot B was waiting        → acquires semaphore → buffer ALREADY has A's response → processes with context
 ```
 
-Bot B ahora VE la respuesta de A antes de generar la suya.
+Bot B now SEES A's response before generating its own.
 
 ### Tradeoffs
 
-| Aspecto | Impacto |
-|---------|---------|
-| Latencia percibida | El segundo bot espera que el primero termine (~2-5s de inferencia LLM). El usuario ve las dos respuestas con un pequeño delay entre ellas en lugar de casi simultáneas. |
-| Complejidad | ~10 líneas. Dict de semáforos crece con el número de grupos activos — no es un problema práctico. |
-| Timeout | Si el pipeline del primer bot falla sin liberar el semáforo, el segundo se bloquea. Mitigación: `asyncio.wait_for` con timeout configurable (`broadcast_pipeline_timeout_seconds: 30`). |
-| Fairness | PTB encola updates internamente — si llegan muchos mensajes seguidos al mismo grupo, se procesan de a uno. En grupos activos puede introducir backpressure visible. |
-| Efecto en `[SKIP]` | Si bot A responde `[SKIP]`, libera el semáforo sin emitir broadcast. Bot B adquiere el semáforo pero el buffer de A sigue vacío para ese turno. Comportamiento correcto — no hay nada que ver. |
+| Aspect | Impact |
+|--------|--------|
+| Perceived latency | The second bot waits for the first to finish (~2-5s of LLM inference). The user sees both responses with a small delay between them instead of nearly simultaneously. |
+| Complexity | ~10 lines. Semaphore dict grows with the number of active groups — not a practical problem. |
+| Timeout | If the first bot's pipeline fails without releasing the semaphore, the second one blocks. Mitigation: `asyncio.wait_for` with configurable timeout (`broadcast_pipeline_timeout_seconds: 30`). |
+| Fairness | PTB queues updates internally — if many messages arrive in quick succession to the same group, they are processed one at a time. In active groups this can introduce visible backpressure. |
+| Effect on `[SKIP]` | If bot A responds `[SKIP]`, it releases the semaphore without emitting a broadcast. Bot B acquires the semaphore but A's buffer remains empty for that turn. Correct behavior — there is nothing to see. |
 
-### Implementación sugerida cuando se decida
+### Suggested implementation when decided
 
-Archivo a tocar: `adapters/inbound/telegram/bot.py`
+File to modify: `adapters/inbound/telegram/bot.py`
 
-1. Agregar `self._group_semaphores: dict[int, asyncio.Semaphore] = {}` en `__init__`.
-2. En `_handle_group_message`, después de validar `allowed_chat_ids` y antes de `await self._run_pipeline(...)`:
+1. Add `self._group_semaphores: dict[int, asyncio.Semaphore] = {}` in `__init__`.
+2. In `_handle_group_message`, after validating `allowed_chat_ids` and before `await self._run_pipeline(...)`:
 
 ```python
 _sem = self._group_semaphores.setdefault(chat_id, asyncio.Semaphore(1))
@@ -113,7 +113,7 @@ try:
     await asyncio.wait_for(_sem.acquire(), timeout=30.0)
 except asyncio.TimeoutError:
     logger.warning(
-        "Timeout esperando semáforo de grupo (chat_id=%s, agent=%s) — procesando sin serializar",
+        "Timeout waiting for group semaphore (chat_id=%s, agent=%s) — processing without serialization",
         chat_id,
         self._agent_cfg.id,
     )
@@ -123,68 +123,68 @@ else:
         return
     finally:
         _sem.release()
-# Fallback si timeout: procesar sin semáforo
+# Fallback if timeout: process without semaphore
 await self._run_pipeline(update, contenido_grupo, chat_type=chat_type, extra_sections=extra_sections)
 ```
 
-3. Considerar limpiar entradas viejas del dict con un TTL si hay muchos grupos.
+3. Consider cleaning old dict entries with a TTL if there are many groups.
 
-## Decisión
+## Decision
 
-**Fecha**: 2026-04-23  
-**Elegida**: Opción C (sin semáforo).  
-**Revisitar si**: el contexto cruzado faltante en el primer turno se vuelve molesto en la
-práctica, o si se agregan más de dos bots al mismo grupo (la ventana de colisión aumenta).
+**Date**: 2026-04-23  
+**Chosen**: Option C (no semaphore).  
+**Revisit if**: the missing cross-context on the first turn becomes annoying in
+practice, or if more than two bots are added to the same group (the collision window increases).
 
 ---
 
-## Broadcast-as-Trigger — bot-to-bot directo
+## Broadcast-as-Trigger — direct bot-to-bot
 
-Además del buffer de contexto (descripto arriba), el canal broadcast también actúa
-como **trigger**: si un bot A emite un broadcast, B dispara el pipeline completo y
-decide (vía LLM) si responde al grupo o no — sin esperar un mensaje del usuario.
+In addition to the context buffer (described above), the broadcast channel also acts
+as a **trigger**: if bot A emits a broadcast, B fires the complete pipeline and
+decides (via LLM) whether to respond to the group or not — without waiting for a user message.
 
-El user_input que recibe B se construye prefijando el agent_id de origen:
+The user_input that B receives is constructed by prefixing the origin agent_id:
 
 ```
 [anacleto] che inaki, qué hora es?
 ```
 
-El LLM decide si responder o emitir exactamente `[SKIP]`. No hay filtros de
-mención en el adapter — la decisión es 100% del modelo.
+The LLM decides whether to respond or emit exactly `[SKIP]`. There are no
+mention filters in the adapter — the decision is 100% the model's.
 
-### Por qué hace falta
+### Why it is needed
 
-La Bot API de Telegram no entrega mensajes de OTROS bots. Sin este mecanismo, B no
-podría reaccionar nunca a una llamada de A aunque A lo mencione explícitamente en el
-grupo. El trigger por broadcast compensa esa limitación de plataforma.
+The Telegram Bot API does not deliver messages from OTHER bots. Without this mechanism, B could
+never react to a call from A even if A explicitly mentions it in the
+group. The broadcast trigger compensates for this platform limitation.
 
-### Anti-loop en dos bots
+### Anti-loop with two bots
 
-Con dos bots `A` y `B`, el bucle infinito se evita porque:
+With two bots `A` and `B`, the infinite loop is prevented because:
 
-1. **`[SKIP]` es la primera defensa**: el prompt autonomous instruye al LLM a
-   responder `[SKIP]` cuando no tiene nada útil que aportar. Si el modelo respeta
-   la instrucción, corta el turno sin emitir broadcast.
-2. **Rate limiter compartido**: el mismo `FixedWindowRateLimiter` (30s, por
-   `(agent_id, chat_id)`) limita también los triggers bot-to-bot. Si el LLM se
-   desmadra, el rate limiter corta.
-3. **Anti-loop del adapter TCP**: un bot nunca recibe su propio broadcast
-   (filtrado por `agent_id` en `TcpBroadcastAdapter`).
-4. **Jitter aleatorio (1-3s)**: antes de procesar cada broadcast, el bot espera
-   un delay aleatorio. Distribuye las respuestas simultáneas en el tiempo, da
-   margen para que el `BroadcastBuffer` cruce contexto del otro bot, y rompe
-   ráfagas. Constantes `BROADCAST_TRIGGER_JITTER_{MIN,MAX}_SEC` en
+1. **`[SKIP]` is the first defense**: the autonomous prompt instructs the LLM to
+   respond `[SKIP]` when it has nothing useful to contribute. If the model respects
+   the instruction, it cuts the turn without emitting a broadcast.
+2. **Shared rate limiter**: the same `FixedWindowRateLimiter` (30s, per
+   `(agent_id, chat_id)`) also limits bot-to-bot triggers. If the LLM goes wild,
+   the rate limiter cuts it.
+3. **TCP adapter anti-loop**: a bot never receives its own broadcast
+   (filtered by `agent_id` in `TcpBroadcastAdapter`).
+4. **Random jitter (1-3s)**: before processing each broadcast, the bot waits
+   a random delay. This distributes simultaneous responses over time, gives
+   room for the `BroadcastBuffer` to cross-pollinate context from the other bot, and breaks
+   bursts. Constants `BROADCAST_TRIGGER_JITTER_{MIN,MAX}_SEC` in
    `adapters/inbound/telegram/bot.py`.
 
-### Con 3+ bots — revisar
+### With 3+ bots — review
 
-Con tres bots o más, la ventana de colisión aumenta y una conversación cruzada puede
-converger en un loop lento si el LLM no respeta `[SKIP]`. Mitigaciones a considerar
-cuando eso suceda:
+With three or more bots, the collision window increases and a cross-conversation can
+converge into a slow loop if the LLM doesn't respect `[SKIP]`. Mitigations to consider
+when that happens:
 
-- **Hops counter**: propagar un contador en `BroadcastMessage` y cortar a N saltos.
-- **Jitter previo a respuesta**: pequeño delay aleatorio para romper la simultaneidad.
-- **Decaimiento del rate limiter**: bajar N respuestas/ventana de 5 a 2 o 3.
+- **Hops counter**: propagate a counter in `BroadcastMessage` and cut at N hops.
+- **Pre-response jitter**: small random delay to break simultaneity.
+- **Rate limiter decay**: lower N responses/window from 5 to 2 or 3.
 
-Ninguna está implementada — se agregan si empieza a pasar en la práctica.
+None of these are implemented — they will be added if it starts happening in practice.

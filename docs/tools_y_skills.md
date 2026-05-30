@@ -1,32 +1,32 @@
-# Tools y Skills — Estructura y Convenios
+# Tools and Skills — Structure and Conventions
 
-Este documento cubre los dos mecanismos de extensión del agente: **tools** (funciones invocables por el LLM) y **skills** (instrucciones inyectadas en el system prompt). Son conceptos distintos con ciclos de vida distintos.
+This document covers the two agent extension mechanisms: **tools** (functions invocable by the LLM) and **skills** (instructions injected into the system prompt). They are distinct concepts with distinct lifecycles.
 
 ---
 
-## Tabla comparativa
+## Comparison Table
 
-| Aspecto | Tools | Skills |
-|---------|-------|--------|
-| Ubicación | `adapters/outbound/tools/` (Python) | `skills/` (YAML) |
-| Interfaz base | `ITool` + `IToolExecutor` | `ISkillRepository` |
-| Registro | Manual en `AgentContainer._register_tools()` | Automático por glob `*.yaml` |
-| Invocables por el LLM | Sí (function calling) | No (solo texto en el prompt) |
-| Semantic routing | Sí (cosine similarity) | Sí (cosine similarity) |
-| Configuración | Hardcodeada en la clase | `config/global.yaml` |
+| Aspect | Tools | Skills |
+|--------|-------|--------|
+| Location | `adapters/outbound/tools/` (Python) | `skills/` (YAML) |
+| Base interface | `ITool` + `IToolExecutor` | `ISkillRepository` |
+| Registration | Manual in `AgentContainer._register_tools()` | Automatic via glob `*.yaml` |
+| Invocable by the LLM | Yes (function calling) | No (text only in the prompt) |
+| Semantic routing | Yes (cosine similarity) | Yes (cosine similarity) |
+| Configuration | Hardcoded in the class | `config/global.yaml` |
 
 ---
 
 ## Tools
 
-### Interfaz
+### Interface
 
 ```python
 # core/ports/outbound/tool_port.py
 
 class ITool(ABC):
-    name: str              # snake_case, ej: "shell_exec"
-    description: str       # Qué hace — lo lee el LLM
+    name: str              # snake_case, e.g.: "shell_exec"
+    description: str       # What it does — read by the LLM
     parameters_schema: dict  # JSON Schema (OpenAI function calling format)
 
     async def execute(self, **kwargs) -> ToolResult: ...
@@ -39,15 +39,15 @@ class ToolResult(BaseModel):
     error: str | None = None
 ```
 
-### Convenios de naming
+### Naming Conventions
 
-| Elemento | Convención | Ejemplo |
-|----------|-----------|---------|
-| Archivo | `<nombre>_tool.py` | `shell_tool.py` |
-| Clase | `<Nombre>Tool` | `ShellTool` |
+| Element | Convention | Example |
+|---------|-----------|---------|
+| File | `<name>_tool.py` | `shell_tool.py` |
+| Class | `<Name>Tool` | `ShellTool` |
 | `ITool.name` | snake_case | `"shell_exec"` |
 
-### Ejemplo mínimo
+### Minimal Example
 
 ```python
 # adapters/outbound/tools/echo_tool.py
@@ -77,11 +77,11 @@ class EchoTool(ITool):
         )
 ```
 
-Siempre aceptar `**kwargs` en `execute` para ignorar parámetros desconocidos sin romper.
+Always accept `**kwargs` in `execute` to silently ignore unknown parameters without breaking.
 
-### Registro
+### Registration
 
-Las tools se registran manualmente en el container. Después de crear la clase, agregarla en:
+Tools are registered manually in the container. After creating the class, add it in:
 
 ```python
 # infrastructure/container.py
@@ -91,17 +91,17 @@ def _register_tools(self) -> None:
     self._tools.register(EchoTool())
 ```
 
-No hay descubrimiento automático. Si no se registra, no existe.
+There is no automatic discovery. If it's not registered, it doesn't exist.
 
-### Semantic routing de tools
+### Tool Semantic Routing
 
-Cuando el número de tools supera `tools.semantic_routing_min_tools` (config), el registry embede la descripción de cada tool y usa cosine similarity para seleccionar las más relevantes para la query actual. Por debajo del umbral, se envían todas. Esto NO es RAG — es selección dinámica de capacidades; el RAG real (recuperación de conocimiento externo) vive en `knowledge:`.
+When the number of tools exceeds `tools.semantic_routing_min_tools` (config), the registry embeds each tool's description and uses cosine similarity to select the most relevant ones for the current query. Below the threshold, all tools are sent. This is NOT RAG — it is dynamic capability selection; real RAG (external knowledge retrieval) lives under `knowledge:`.
 
 ```yaml
 # config/global.yaml
 tools:
-  semantic_routing_min_tools: 10   # Activa routing si hay más de N tools
-  semantic_routing_top_k: 5        # Cuántas tools enviar al LLM
+  semantic_routing_min_tools: 10   # Activates routing if there are more than N tools
+  semantic_routing_top_k: 5        # How many tools to send to the LLM
   tool_call_max_iterations: 5
 ```
 
@@ -109,9 +109,9 @@ tools:
 
 ## Skills
 
-Las skills son instrucciones para el LLM, no funciones. Se inyectan en el system prompt como texto. El LLM las lee para saber qué herramientas tiene disponibles o cómo comportarse en ciertos contextos.
+Skills are instructions for the LLM, not functions. They are injected into the system prompt as text. The LLM reads them to know what tools it has available or how to behave in certain contexts.
 
-### Estructura YAML
+### YAML Structure
 
 ```yaml
 # skills/echo.yaml
@@ -126,22 +126,22 @@ tags:
   - "testing"
 ```
 
-Todos los campos son obligatorios. `instructions` admite Markdown.
+All fields are required. `instructions` supports Markdown.
 
-### Convenios de naming
+### Naming Conventions
 
-| Elemento | Convención | Ejemplo |
-|----------|-----------|---------|
-| Archivo | `<nombre>.yaml` | `echo.yaml` |
+| Element | Convention | Example |
+|---------|-----------|---------|
+| File | `<name>.yaml` | `echo.yaml` |
 | `id` | snake_case | `"echo"` |
 
-### Descubrimiento
+### Discovery
 
-`YamlSkillRepository` se carga vía `add_file()` desde los `manifest.py` de las extensiones del usuario (`ext/` local o `~/.inaki/ext/` en producción). El core no define skills built-in: todo saber de dominio vive en extensiones.
+`YamlSkillRepository` loads via `add_file()` from the user extension `manifest.py` files (`ext/` local or `~/.inaki/ext/` in production). The core does not define built-in skills: all domain knowledge lives in extensions.
 
-### Semantic routing de skills
+### Skill Semantic Routing
 
-Mismo mecanismo que tools: cuando hay más skills que `skills.semantic_routing_min_skills`, se seleccionan las más similares a la query.
+Same mechanism as tools: when there are more skills than `skills.semantic_routing_min_skills`, the most similar ones to the query are selected.
 
 ```yaml
 # config/global.yaml
@@ -150,9 +150,9 @@ skills:
   semantic_routing_top_k: 3
 ```
 
-### Cómo llegan al LLM
+### How They Reach the LLM
 
-Las skills seleccionadas se inyectan en el system prompt como sección de texto:
+Selected skills are injected into the system prompt as a text section:
 
 ```
 ## Skills disponibles:
@@ -162,7 +162,7 @@ Las skills seleccionadas se inyectan en el system prompt como sección de texto:
 
 ---
 
-## Flujo completo
+## Full Flow
 
 ```
 User input
@@ -175,33 +175,33 @@ Skills routing                                      Tools routing
 skills.retrieve(embedding)                     tools.get_schemas_relevant(embedding)
     │                                                    │
     ▼                                                    ▼
-system_prompt += skills como texto           tool_schemas → LLM (function calling)
+system_prompt += skills as text              tool_schemas → LLM (function calling)
     │                                                    │
     └───────────────────────┬────────────────────────────┘
                             ▼
                      LLM.complete(messages, system_prompt, tools=tool_schemas)
                             │
-                     ¿tool_call en respuesta?
+                     tool_call in response?
                             │
-                     YES ───┼─── NO → respuesta final
+                     YES ───┼─── NO → final response
                             │
                      tools.execute(name, **args)
                             │
-                     append result → re-llamar LLM
-                     (máx tool_call_max_iterations veces)
+                     append result → re-call LLM
+                     (max tool_call_max_iterations times)
 ```
 
 ---
 
-## Archivos de referencia
+## Reference Files
 
-| Rol | Archivo |
-|-----|---------|
-| Puerto tool | `core/ports/outbound/tool_port.py` |
-| Puerto skill | `core/ports/outbound/skill_port.py` |
-| Implementación registry | `adapters/outbound/tools/tool_registry.py` |
-| Tool concreta (referencia) | `adapters/outbound/tools/shell_tool.py` |
-| Tool concreta (referencia) | `adapters/outbound/tools/web_search_tool.py` |
-| Implementación skills | `adapters/outbound/skills/yaml_skill_repo.py` |
-| Registro manual | `infrastructure/container.py` |
-| Uso en el pipeline | `core/use_cases/run_agent.py` |
+| Role | File |
+|------|------|
+| Tool port | `core/ports/outbound/tool_port.py` |
+| Skill port | `core/ports/outbound/skill_port.py` |
+| Registry implementation | `adapters/outbound/tools/tool_registry.py` |
+| Concrete tool (reference) | `adapters/outbound/tools/shell_tool.py` |
+| Concrete tool (reference) | `adapters/outbound/tools/web_search_tool.py` |
+| Skills implementation | `adapters/outbound/skills/yaml_skill_repo.py` |
+| Manual registration | `infrastructure/container.py` |
+| Usage in the pipeline | `core/use_cases/run_agent.py` |

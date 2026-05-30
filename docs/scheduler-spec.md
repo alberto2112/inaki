@@ -1,35 +1,35 @@
-# Scheduler — Especificación Técnica
+# Scheduler — Technical Specification
 
-## Índice
+## Table of Contents
 
-1. [Propósito y arquitectura](#1-propósito-y-arquitectura)
-2. [Casos de uso](#2-casos-de-uso)
-3. [Flujo de ejecución](#3-flujo-de-ejecución)
-4. [Comandos CLI](#4-comandos-cli)
-5. [Tipos de trigger](#5-tipos-de-trigger)
-6. [Tipos de acción (TaskKind)](#6-tipos-de-acción-taskkind)
-7. [Modelos de dominio](#7-modelos-de-dominio)
-8. [Configuración](#8-configuración)
-9. [Tareas builtin](#9-tareas-builtin)
-10. [Manejo de errores](#10-manejo-de-errores)
-11. [Esquema SQLite](#11-esquema-sqlite)
-12. [Arquitectura de capas](#12-arquitectura-de-capas)
+1. [Purpose and architecture](#1-purpose-and-architecture)
+2. [Use cases](#2-use-cases)
+3. [Execution flow](#3-execution-flow)
+4. [CLI commands](#4-cli-commands)
+5. [Trigger types](#5-trigger-types)
+6. [Action types (TaskKind)](#6-action-types-taskkind)
+7. [Domain models](#7-domain-models)
+8. [Configuration](#8-configuration)
+9. [Builtin tasks](#9-builtin-tasks)
+10. [Error handling](#10-error-handling)
+11. [SQLite schema](#11-sqlite-schema)
+12. [Layer architecture](#12-layer-architecture)
 
 ---
 
-## 1. Propósito y arquitectura
+## 1. Purpose and architecture
 
-El scheduler es un motor de ejecución de tareas en background que corre de forma continua dentro del ciclo de vida del daemon. Permite:
+The scheduler is a background task execution engine that runs continuously within the daemon's lifecycle. It provides:
 
-- **Despachar agentes** con prompts y herramientas personalizadas en horarios definidos
-- **Enviar mensajes** a canales (Telegram, etc.) en forma programada
-- **Ejecutar comandos shell** con timeout y control de entorno
-- **Consolidar memorias** de todos los agentes habilitados periódicamente
-- **Scheduling flexible**: expresiones cron para tareas recurrentes, ISO datetime para tareas one-shot
-- **Rastreo de ejecución**: logs con estado, output, errores y contador de reintentos
-- **Ciclo de vida de tareas**: `PENDING → RUNNING → [COMPLETED | FAILED | MISSED]`
+- **Agent dispatching** with custom prompts and tools at defined schedules
+- **Message sending** to channels (Telegram, etc.) on a programmed basis
+- **Shell command execution** with timeout and environment control
+- **Memory consolidation** for all enabled agents periodically
+- **Flexible scheduling**: cron expressions for recurring tasks, ISO datetime for one-shot tasks
+- **Execution tracking**: logs with status, output, errors, and retry counter
+- **Task lifecycle**: `PENDING → RUNNING → [COMPLETED | FAILED | MISSED]`
 
-### Arquitectura
+### Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -52,7 +52,7 @@ El scheduler es un motor de ejecución de tareas en background que corre de form
 │  └──────────────────────────────────────────────────┘   │
 │                                                         │
 │  SchedulerDispatchPorts:                                │
-│    ChannelSenderAdapter  →  Telegram / otros gateways   │
+│    ChannelSenderAdapter  →  Telegram / other gateways   │
 │    LLMDispatcherAdapter  →  AgentContainer.run_agent    │
 │    ConsolidationAdapter  →  ConsolidateAllAgentsUC      │
 └─────────────────────────────────────────────────────────┘
@@ -60,19 +60,19 @@ El scheduler es un motor de ejecución de tareas en background que corre de form
 
 ---
 
-## 2. Casos de uso
+## 2. Use cases
 
-### 2.1 Consolidación diaria de memoria
+### 2.1 Daily memory consolidation
 
-Caso builtin. El scheduler ejecuta la consolidación de memoria de todos los agentes habilitados según el cron configurado en `memory.schedule` (default: `0 3 * * *` = 3 AM UTC todos los días).
+Builtin case. The scheduler runs memory consolidation for all enabled agents according to the cron configured in `memory.schedule` (default: `0 3 * * *` = 3 AM UTC every day).
 
 **Trigger**: `consolidate_memory`  
-**Frecuencia**: recurrente, cron configurable  
-**Protección**: ID fijo `1`, no puede eliminarse ni sobrescribirse accidentalmente
+**Frequency**: recurring, configurable cron  
+**Protection**: Fixed ID `1`, cannot be deleted or accidentally overwritten
 
-### 2.2 Reporte periódico a Telegram
+### 2.2 Periodic report to Telegram
 
-Enviar un mensaje diario/semanal a un canal de Telegram. Ejemplo: resumen de actividad del agente, recordatorio, notificación de estado.
+Send a daily/weekly message to a Telegram channel. Example: agent activity summary, reminder, status notification.
 
 ```yaml
 trigger_type: channel_send
@@ -80,13 +80,13 @@ trigger_payload:
   type: channel_send
   target: "telegram:123456789"
   text: "Buenos días. Este es el resumen del día."
-schedule: "0 9 * * 1-5"   # lunes a viernes 9 AM UTC
+schedule: "0 9 * * 1-5"   # Monday to Friday 9 AM UTC
 task_kind: recurrent
 ```
 
-### 2.3 Ejecución de script shell
+### 2.3 Shell script execution
 
-Correr un script de Python o bash en forma programada. El scheduler captura stdout y lo almacena en los logs.
+Run a Python or bash script on a schedule. The scheduler captures stdout and stores it in the logs.
 
 ```yaml
 trigger_type: shell_exec
@@ -96,12 +96,12 @@ trigger_payload:
   working_dir: "/home/user/project"
   timeout: 120
 task_kind: recurrent
-schedule: "0 2 * * 0"   # domingos 2 AM
+schedule: "0 2 * * 0"   # Sundays 2 AM
 ```
 
-### 2.4 Despacho de agente en horario
+### 2.4 Scheduled agent dispatch
 
-Lanzar un agente con un prompt específico en forma programada. El resultado puede enviarse a un canal o almacenarse en los logs.
+Launch an agent with a specific prompt on a schedule. The result can be sent to a channel or stored in the logs.
 
 ```yaml
 trigger_type: agent_send
@@ -111,12 +111,12 @@ trigger_payload:
   task: "Genera el reporte semanal de actividad."
   output_channel: "telegram:987654321"
 task_kind: recurrent
-schedule: "0 8 * * 1"   # lunes 8 AM
+schedule: "0 8 * * 1"   # Monday 8 AM
 ```
 
-### 2.5 Tarea one-shot programada
+### 2.5 Scheduled one-shot task
 
-Ejecutar una tarea exactamente una vez en una fecha/hora específica. Después pasa a `COMPLETED`.
+Execute a task exactly once at a specific date/time. Afterwards it transitions to `COMPLETED`.
 
 ```yaml
 task_kind: oneshot
@@ -128,14 +128,14 @@ trigger_payload:
   text: "¡Feliz año nuevo!"
 ```
 
-### 2.6 Tarea recurrente con límite de ejecuciones
+### 2.6 Recurring task with execution limit
 
-Ejecutar N veces y luego completar automáticamente.
+Execute N times and then automatically complete.
 
 ```yaml
 task_kind: recurrent
 schedule: "0 10 * * *"
-executions_remaining: 5    # se ejecuta 5 veces, luego COMPLETED
+executions_remaining: 5    # runs 5 times, then COMPLETED
 trigger_type: agent_send
 trigger_payload:
   type: agent_send
@@ -145,9 +145,9 @@ trigger_payload:
 
 ---
 
-## 3. Flujo de ejecución
+## 3. Execution flow
 
-### 3.1 Loop principal (`SchedulerService._loop()`)
+### 3.1 Main loop (`SchedulerService._loop()`)
 
 ```
 while running:
@@ -168,9 +168,9 @@ while running:
     _execute_task(task)
 ```
 
-**`invalidate()`** es llamado por `ScheduleTaskUseCase` cada vez que se hace un CRUD (create, update, delete, enable, disable). Esto despierta el loop inmediatamente para re-evaluar sin esperar el timeout de 60s.
+**`invalidate()`** is called by `ScheduleTaskUseCase` every time a CRUD operation occurs (create, update, delete, enable, disable). This wakes the loop immediately to re-evaluate without waiting for the 60s timeout.
 
-### 3.2 Ejecución de tarea (`_execute_task()`)
+### 3.2 Task execution (`_execute_task()`)
 
 ```
 task.status → RUNNING
@@ -188,20 +188,20 @@ for attempt in range(0, max_retries + 1):
             save TaskLog(status="failed", error=str(e))
 
 else:
-    # todos los reintentos agotados
+    # all retries exhausted
     task.status → FAILED
 ```
 
-### 3.3 Dispatch por tipo de trigger
+### 3.3 Dispatch by trigger type
 
-| Trigger | Acción |
+| Trigger | Action |
 |---------|--------|
-| `channel_send` | `channel_router.send_message(target, text)` → `DispatchResult(original_target, resolved_target)` — el router aplica cascada de fallbacks (nativo → override → default → hardcoded `/tmp/inaki-schedule-output.log`). Ver [configuracion.md — `channel_fallback`](configuracion.md#scheduler--channel_fallback-routing-de-canales). El par `{original_target, resolved_target}` se persiste en `task_logs.metadata` (JSON) para trazabilidad. |
-| `agent_send` | `llm_dispatcher.dispatch(agent_id, prompt, tools)` → str resultado; si `output_channel` definido, envía resultado al canal |
-| `shell_exec` | subprocess con command/working_dir/env_vars/timeout → stdout; RuntimeError si exit code != 0 |
-| `consolidate_memory` | `consolidator.consolidate_all()` → str resultado |
+| `channel_send` | `channel_router.send_message(target, text)` → `DispatchResult(original_target, resolved_target)` — the router applies a fallback cascade (native → override → default → hardcoded `/tmp/inaki-schedule-output.log`). See [configuracion.md — `channel_fallback`](configuracion.md#scheduler--channel_fallback-routing-de-canales). The `{original_target, resolved_target}` pair is persisted in `task_logs.metadata` (JSON) for traceability. |
+| `agent_send` | `llm_dispatcher.dispatch(agent_id, prompt, tools)` → str result; if `output_channel` is defined, sends result to the channel |
+| `shell_exec` | subprocess with command/working_dir/env_vars/timeout → stdout; RuntimeError if exit code != 0 |
+| `consolidate_memory` | `consolidator.consolidate_all()` → str result |
 
-### 3.4 Finalización (`_finalize_task()`)
+### 3.4 Finalization (`_finalize_task()`)
 
 ```
 output = truncate(output, config.output_truncation_size)   # default 65536 bytes
@@ -231,9 +231,9 @@ else:  # RECURRENT
         task.status remains PENDING
 ```
 
-### 3.5 Arranque: tareas perdidas (`_handle_missed_on_startup()`)
+### 3.5 Startup: missed tasks (`_handle_missed_on_startup()`)
 
-Al iniciar el servicio, se revisan tareas que debieron haberse ejecutado mientras el daemon estaba detenido:
+On service startup, tasks that should have run while the daemon was stopped are reviewed:
 
 ```
 tasks = repo.list_due_pending(now)
@@ -244,82 +244,82 @@ for task in tasks:
         task.status → MISSED
         save TaskLog(status="missed", error="Task was not running when...")
     else:  # RECURRENT
-        # Salta la ejecución perdida, recalcula próxima fecha
+        # Skip the missed execution, recalculate next date
         next_run = croniter(schedule, now).get_next()
         repo.update_after_execution(success=True, output=None, next_run=next_run)
 ```
 
-Las tareas recurrentes perdidas **no se re-ejecutan**; se avanza al próximo slot del cron. Las one-shot perdidas quedan como `MISSED`.
+Missed recurring tasks **are not re-executed**; they advance to the next cron slot. Missed one-shot tasks remain as `MISSED`.
 
 ---
 
-## 4. Comandos CLI
+## 4. CLI commands
 
-Todos los comandos están bajo el subcomando `inaki scheduler`.
+All commands are under the `inaki scheduler` subcommand.
 
 ### `inaki scheduler list`
 
-Lista todas las tareas en tabla formateada.
+Lists all tasks in a formatted table.
 
 ```
 inaki scheduler list [--json] [--enabled-only]
 ```
 
-| Opción | Descripción |
+| Option | Description |
 |--------|-------------|
-| `--json` | Output JSON con todos los campos |
-| `--enabled-only` | Filtra solo tareas no deshabilitadas (status != DISABLED) |
+| `--json` | JSON output with all fields |
+| `--enabled-only` | Filters only non-disabled tasks (status != DISABLED) |
 
-**Columnas**: ID, Nombre, Kind, Trigger, Habilitada, Próxima ejecución
+**Columns**: ID, Name, Kind, Trigger, Enabled, Next execution
 
 ---
 
 ### `inaki scheduler show <ID>`
 
-Muestra detalle completo de una tarea.
+Shows full detail of a task.
 
 ```
 inaki scheduler show <ID> [--json]
 ```
 
-| Opción | Descripción |
+| Option | Description |
 |--------|-------------|
-| `--json` | Output JSON completo (model dump) |
+| `--json` | Full JSON output (model dump) |
 
-Sin `--json` muestra YAML con todos los campos: id, name, description, task_kind, trigger_type, trigger_payload, schedule, enabled, status, retry_count, executions_remaining, log_enabled, created_at, last_run, next_run.
+Without `--json` it shows YAML with all fields: id, name, description, task_kind, trigger_type, trigger_payload, schedule, enabled, status, retry_count, executions_remaining, log_enabled, created_at, last_run, next_run.
 
 ---
 
 ### `inaki scheduler edit <ID>`
 
-Edición interactiva en `$EDITOR` mediante YAML round-trip.
+Interactive editing in `$EDITOR` via YAML round-trip.
 
 ```
 inaki scheduler edit <ID>
 ```
 
-- Abre el editor con los **campos editables** en YAML
-- Valida el schema Pydantic al guardar; hasta 3 intentos
-- Imprime `"Task <ID> updated."` al confirmar
+- Opens the editor with **editable fields** in YAML
+- Validates the Pydantic schema on save; up to 3 attempts
+- Prints `"Task <ID> updated."` on confirmation
 
-**Campos editables**:
+**Editable fields**:
 ```
 name, description, task_kind, trigger_type, trigger_payload,
 schedule, enabled, executions_remaining, log_enabled
 ```
 
-**Campos no editables** (manejados por el runtime):
+**Non-editable fields** (managed by the runtime):
 ```
 id, status, next_run, last_run, created_at, retry_count
 ```
 
-> **Importante**: al cambiar `trigger_type`, también actualizar `trigger_payload.type` con el mismo valor — es una unión discriminada.
+> **Important**: when changing `trigger_type`, also update `trigger_payload.type` with the same value — it is a discriminated union.
 
 ---
 
 ### `inaki scheduler enable <ID>`
 
-Activa una tarea (status → `PENDING`).
+Activates a task (status → `PENDING`).
 
 ```
 inaki scheduler enable <ID>
@@ -329,7 +329,7 @@ inaki scheduler enable <ID>
 
 ### `inaki scheduler disable <ID>`
 
-Desactiva una tarea (status → `DISABLED`). El loop la saltea.
+Deactivates a task (status → `DISABLED`). The loop skips it.
 
 ```
 inaki scheduler disable <ID>
@@ -339,32 +339,32 @@ inaki scheduler disable <ID>
 
 ### `inaki scheduler rm <ID>`
 
-Elimina una tarea de la base de datos.
+Deletes a task from the database.
 
 ```
 inaki scheduler rm <ID>
 ```
 
-> **Protección**: tareas con `id < 100` son builtin y no pueden eliminarse. Lanza `BuiltinTaskProtectedError`.
+> **Protection**: tasks with `id < 100` are builtin and cannot be deleted. Raises `BuiltinTaskProtectedError`.
 
 ---
 
-## 5. Tipos de trigger
+## 5. Trigger types
 
-Los tipos de trigger determinan qué hace el scheduler cuando una tarea se dispara.
+Trigger types determine what the scheduler does when a task fires.
 
 ### `channel_send`
 
-Envía un mensaje de texto a un canal.
+Sends a text message to a channel.
 
 ```python
 class ChannelSendPayload(BaseModel):
     type: Literal["channel_send"] = "channel_send"
-    target: str    # formato: "telegram:<user_id>" (prefijo:destino)
-    text: str          # texto del mensaje
+    target: str    # format: "telegram:<user_id>" (prefix:destination)
+    text: str          # message text
 ```
 
-**Ejemplo**:
+**Example**:
 ```json
 {
   "type": "channel_send",
@@ -377,19 +377,19 @@ class ChannelSendPayload(BaseModel):
 
 ### `agent_send`
 
-Despacha un agente con prompt y/o tools opcionales. El resultado puede redirigirse a un canal.
+Dispatches an agent with a prompt and optional tools. The result can be redirected to a channel.
 
 ```python
 class AgentSendPayload(BaseModel):
     type: Literal["agent_send"] = "agent_send"
-    agent_id: str                           # ID del agente a despachar
-    task: str                               # Mensaje/tarea a enviar al agente
-    system: str | None = None               # Override del system prompt; None = usa el default del agente
-    tools_override: list[dict] | None = None  # Tools disponibles; None = todas
-    output_channel: str | None = None       # Si definido, envía resultado al canal
+    agent_id: str                           # ID of the agent to dispatch
+    task: str                               # Message/task to send to the agent
+    system: str | None = None               # System prompt override; None = use agent's default
+    tools_override: list[dict] | None = None  # Available tools; None = all
+    output_channel: str | None = None       # If defined, sends result to the channel
 ```
 
-**Ejemplo**:
+**Example**:
 ```json
 {
   "type": "agent_send",
@@ -403,18 +403,18 @@ class AgentSendPayload(BaseModel):
 
 ### `shell_exec`
 
-Ejecuta un comando shell. Captura stdout. Falla si el exit code != 0.
+Executes a shell command. Captures stdout. Fails if exit code != 0.
 
 ```python
 class ShellExecPayload(BaseModel):
     type: Literal["shell_exec"] = "shell_exec"
-    command: str                     # Comando a ejecutar
-    working_dir: str | None = None   # Directorio de trabajo; None = cwd actual
-    env_vars: dict[str, str] = {}    # Variables de entorno adicionales
-    timeout: int | None = None       # Timeout en segundos; None = usa config (default 300)
+    command: str                     # Command to execute
+    working_dir: str | None = None   # Working directory; None = current cwd
+    env_vars: dict[str, str] = {}    # Additional environment variables
+    timeout: int | None = None       # Timeout in seconds; None = use config (default 300)
 ```
 
-**Ejemplo**:
+**Example**:
 ```json
 {
   "type": "shell_exec",
@@ -429,15 +429,15 @@ class ShellExecPayload(BaseModel):
 
 ### `consolidate_memory`
 
-Ejecuta la consolidación de memoria de todos los agentes habilitados. No requiere parámetros.
+Runs memory consolidation for all enabled agents. Requires no parameters.
 
 ```python
 class ConsolidateMemoryPayload(BaseModel):
     type: Literal["consolidate_memory"] = "consolidate_memory"
-    # Sin campos — el consolidador lee el registry en runtime
+    # No fields — the consolidator reads the registry at runtime
 ```
 
-**Ejemplo**:
+**Example**:
 ```json
 {
   "type": "consolidate_memory"
@@ -446,58 +446,58 @@ class ConsolidateMemoryPayload(BaseModel):
 
 ---
 
-## 6. Tipos de acción (TaskKind)
+## 6. Action types (TaskKind)
 
 ### `recurrent`
 
-La tarea se repite según una expresión cron. Después de cada ejecución se recalcula el próximo `next_run`.
+The task repeats according to a cron expression. After each execution, the next `next_run` is recalculated.
 
-- `schedule`: expresión cron estándar (5 campos, UTC)
-- `executions_remaining`: `null` = infinito; `N` = ejecuta N veces y pasa a `COMPLETED`
+- `schedule`: standard cron expression (5 fields, UTC)
+- `executions_remaining`: `null` = infinite; `N` = execute N times then transition to `COMPLETED`
 
-**Ejemplos de cron**:
+**Cron examples**:
 
-| Expresión | Significado |
-|-----------|-------------|
-| `0 3 * * *` | Todos los días a las 3:00 AM UTC |
-| `0 9 * * 1-5` | Lunes a viernes, 9:00 AM UTC |
-| `*/15 * * * *` | Cada 15 minutos |
-| `0 0 1 * *` | Primer día de cada mes, medianoche UTC |
+| Expression | Meaning |
+|-----------|---------|
+| `0 3 * * *` | Every day at 3:00 AM UTC |
+| `0 9 * * 1-5` | Monday to Friday, 9:00 AM UTC |
+| `*/15 * * * *` | Every 15 minutes |
+| `0 0 1 * *` | First day of each month, midnight UTC |
 
 ---
 
 ### `oneshot`
 
-La tarea se ejecuta exactamente una vez en una fecha/hora específica, luego pasa a `COMPLETED`.
+The task executes exactly once at a specific date/time, then transitions to `COMPLETED`.
 
-- `schedule`: ISO datetime con timezone (ej. `"2025-06-01T10:00:00+00:00"`)
-- Si el daemon no estaba corriendo en el momento programado, la tarea queda como `MISSED`
+- `schedule`: ISO datetime with timezone (e.g. `"2025-06-01T10:00:00+00:00"`)
+- If the daemon was not running at the scheduled time, the task remains as `MISSED`
 
 ---
 
-## 7. Modelos de dominio
+## 7. Domain models
 
 ### `ScheduledTask`
 
-Entidad principal. Archivo: [core/domain/entities/task.py](../core/domain/entities/task.py)
+Main entity. File: [core/domain/entities/task.py](../core/domain/entities/task.py)
 
 ```python
 class ScheduledTask(BaseModel):
-    id: int = 0                              # 0 = sin asignar; repo asigna en save; id<100 = builtin
-    name: str                                # Nombre descriptivo
-    description: str = ""                   # Descripción opcional
+    id: int = 0                              # 0 = unassigned; repo assigns on save; id<100 = builtin
+    name: str                                # Descriptive name
+    description: str = ""                   # Optional description
     task_kind: TaskKind                      # RECURRENT | ONESHOT
-    trigger_type: TriggerType                # Tipo de trigger
-    trigger_payload: TriggerPayload          # Payload (unión discriminada por "type")
-    schedule: str                            # Cron o ISO datetime
-    enabled: bool = True                     # False = saltea el loop
-    executions_remaining: int | None = None  # Sólo RECURRENT: None=∞, N=cuenta regresiva
+    trigger_type: TriggerType                # Trigger type
+    trigger_payload: TriggerPayload          # Payload (discriminated union by "type")
+    schedule: str                            # Cron or ISO datetime
+    enabled: bool = True                     # False = skipped by the loop
+    executions_remaining: int | None = None  # RECURRENT only: None=∞, N=countdown
     status: TaskStatus = PENDING
-    retry_count: int = 0                     # Contador de reintentos del intento actual
-    log_enabled: bool = True                 # Si True, guarda TaskLog por ejecución
+    retry_count: int = 0                     # Retry counter for the current attempt
+    log_enabled: bool = True                 # If True, saves TaskLog per execution
     created_at: datetime                     # UTC
-    last_run: datetime | None = None         # Última ejecución exitosa
-    next_run: datetime | None = None         # Próxima ejecución programada (UTC)
+    last_run: datetime | None = None         # Last successful execution
+    next_run: datetime | None = None         # Next scheduled execution (UTC)
 ```
 
 ---
@@ -506,24 +506,24 @@ class ScheduledTask(BaseModel):
 
 ```python
 class TaskStatus(str, Enum):
-    """Estado runtime de ejecución. Ortogonal al flag `enabled` (intención del
-    usuario). El loop filtra por `enabled=1 AND status='pending'`: ambos hacen falta."""
-    PENDING   = "pending"    # Esperando su próxima ejecución
-    RUNNING   = "running"    # Ejecutando en este momento
-    COMPLETED = "completed"  # Terminó (oneshot completada o countdown=0)
-    FAILED    = "failed"     # Agotó reintentos, último intento falló
-    MISSED    = "missed"     # Oneshot que no se ejecutó (daemon estaba detenido)
+    """Runtime execution state. Orthogonal to the `enabled` flag (user intent).
+    The loop filters by `enabled=1 AND status='pending'`: both are required."""
+    PENDING   = "pending"    # Waiting for next execution
+    RUNNING   = "running"    # Currently executing
+    COMPLETED = "completed"  # Finished (oneshot completed or countdown=0)
+    FAILED    = "failed"     # Exhausted retries, last attempt failed
+    MISSED    = "missed"     # Oneshot that did not execute (daemon was stopped)
 ```
 
-> **Nota**: el valor `disabled` fue eliminado porque mezclaba dos dimensiones
-> ortogonales (intención del usuario + estado runtime). La intención de
-> "no quiero que corra" se modela únicamente via `ScheduledTask.enabled=False`.
+> **Note**: the `disabled` value was removed because it mixed two orthogonal
+> dimensions (user intent + runtime state). The intent of "I don't want this
+> to run" is modeled solely via `ScheduledTask.enabled=False`.
 
 ---
 
 ### `TaskLog`
 
-Registro de cada ejecución. Archivo: [core/domain/entities/task_log.py](../core/domain/entities/task_log.py)
+Record of each execution. File: [core/domain/entities/task_log.py](../core/domain/entities/task_log.py)
 
 ```python
 class TaskLog(BaseModel):
@@ -532,91 +532,91 @@ class TaskLog(BaseModel):
     started_at: datetime
     finished_at: datetime | None = None
     status: str                      # "success" | "failed" | "missed"
-    output: str | None = None        # stdout capturado (truncado a output_truncation_size)
-    error: str | None = None         # Mensaje de excepción si falló
+    output: str | None = None        # captured stdout (truncated to output_truncation_size)
+    error: str | None = None         # Exception message if failed
 ```
 
 ---
 
-## 8. Configuración
+## 8. Configuration
 
-Archivo de configuración global: `~/.inaki/config/global.yaml`
+Global configuration file: `~/.inaki/config/global.yaml`
 
-### Bloque `scheduler`
+### `scheduler` block
 
 ```yaml
 scheduler:
-  enabled: true                    # Habilita/deshabilita el scheduler al arrancar
-  db_filename: "data/scheduler.db" # Fichero SQLite relativo a ~/.inaki/ (o absoluto)
-  max_retries: 3                   # Reintentos máximos por tarea fallida
-  output_truncation_size: 65536    # Bytes máximos a almacenar en task_logs.output
+  enabled: true                    # Enable/disable the scheduler on startup
+  db_filename: "data/scheduler.db" # SQLite file relative to ~/.inaki/ (or absolute)
+  max_retries: 3                   # Maximum retries per failed task
+  output_truncation_size: 65536    # Maximum bytes to store in task_logs.output
 ```
 
-### Bloque `memory` (afecta tarea builtin)
+### `memory` block (affects builtin task)
 
 ```yaml
 memory:
-  schedule: "0 3 * * *"    # Cron para la tarea builtin consolidate_memory
-  delay_seconds: 2          # Pausa entre agentes durante consolidación
+  schedule: "0 3 * * *"    # Cron for the builtin consolidate_memory task
+  delay_seconds: 2          # Pause between agents during consolidation
 ```
 
-Si `memory.schedule` cambia, el scheduler detecta el cambio al arrancar y actualiza la tarea builtin (ID 1) automáticamente.
+If `memory.schedule` changes, the scheduler detects the change on startup and automatically updates the builtin task (ID 1).
 
 ---
 
-## 9. Tareas builtin
+## 9. Builtin tasks
 
-Las tareas builtin tienen `id < 100` y están **protegidas**: no pueden eliminarse ni sobre-escribirse con CRUD normal.
+Builtin tasks have `id < 100` and are **protected**: they cannot be deleted or overwritten via normal CRUD.
 
 ### ID 1 — `consolidate_memory`
 
 ```
 id:           1
 name:         consolidate_memory
-description:  Consolidación global de memoria (todos los agentes habilitados)
+description:  Global memory consolidation (all enabled agents)
 task_kind:    RECURRENT
 trigger_type: consolidate_memory
-schedule:     configurable vía memory.schedule (default: "0 3 * * *")
-executions_remaining: null (infinito)
+schedule:     configurable via memory.schedule (default: "0 3 * * *")
+executions_remaining: null (infinite)
 ```
 
-**Reconciliación al arrancar** (`AppContainer._reconcile_consolidate_memory_task`):
+**Reconciliation on startup** (`AppContainer._reconcile_consolidate_memory_task`):
 
-1. Lee `memory.schedule` del config
-2. Consulta la tarea en la DB
-3. Si no existe → la crea (`seed_builtin`)
-4. Si el schedule cambió → actualiza + recalcula `next_run`
-5. Si `status == FAILED` → reset a `PENDING`
-6. Si `next_run == NULL` → recalcula
-7. Si el payload está corrupto (`ValidationError`) → elimina y re-crea limpia
+1. Reads `memory.schedule` from config
+2. Queries the task in the DB
+3. If it doesn't exist → creates it (`seed_builtin`)
+4. If the schedule changed → updates + recalculates `next_run`
+5. If `status == FAILED` → resets to `PENDING`
+6. If `next_run == NULL` → recalculates
+7. If the payload is corrupt (`ValidationError`) → deletes and re-creates clean
 
 ---
 
-## 10. Manejo de errores
+## 10. Error handling
 
-Archivo: [core/domain/errors.py](../core/domain/errors.py)
+File: [core/domain/errors.py](../core/domain/errors.py)
 
-| Error | Cuándo se lanza |
-|-------|-----------------|
-| `TaskNotFoundError` | `get_task(id)` con ID inexistente |
-| `BuiltinTaskProtectedError` | Intento de modificar/eliminar tarea con `id < 100` |
-| `InvalidTriggerTypeError` | Payload con tipo de trigger desconocido en dispatch |
-| `SchedulerError` | Base para todos los errores del scheduler |
+| Error | When raised |
+|-------|-------------|
+| `TaskNotFoundError` | `get_task(id)` with non-existent ID |
+| `BuiltinTaskProtectedError` | Attempt to modify/delete a task with `id < 100` |
+| `InvalidTriggerTypeError` | Payload with unknown trigger type in dispatch |
+| `SchedulerError` | Base for all scheduler errors |
 
-### Reintentos
+### Retries
 
 - Configurable: `scheduler.max_retries` (default: 3)
-- El retry_count se resetea a 0 en cada ejecución exitosa
-- Al agotar reintentos → status `FAILED`, no se vuelve a ejecutar hasta intervención manual
-- Para reactivar una tarea fallida: `inaki scheduler enable <ID>`
+- The retry_count resets to 0 on each successful execution
+- When retries are exhausted → status `FAILED`, will not run again until manual intervention
+- To reactivate a failed task: `inaki scheduler enable <ID>`
 
 ---
 
-## 11. Esquema SQLite
+## 11. SQLite schema
 
-Base de datos: `~/.inaki/data/scheduler.db` (o la ruta configurada en `scheduler.db_filename`)
+Database: `~/.inaki/data/scheduler.db` (or the path configured in `scheduler.db_filename`)
 
-### Tabla `scheduled_tasks`
+### `scheduled_tasks` table
 
 ```sql
 CREATE TABLE IF NOT EXISTS scheduled_tasks (
@@ -624,64 +624,64 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
     name                  TEXT NOT NULL,
     description           TEXT NOT NULL DEFAULT '',
     task_kind             TEXT NOT NULL,           -- "recurrent" | "oneshot"
-    trigger_type          TEXT NOT NULL,           -- ver TriggerType enum
-    trigger_payload       TEXT NOT NULL,           -- JSON con campo "type" discriminador
-    schedule              TEXT NOT NULL,           -- cron o ISO datetime
-    next_run              REAL,                    -- UNIX timestamp (float UTC), NULL = nunca calculado
+    trigger_type          TEXT NOT NULL,           -- see TriggerType enum
+    trigger_payload       TEXT NOT NULL,           -- JSON with "type" discriminator field
+    schedule              TEXT NOT NULL,           -- cron or ISO datetime
+    next_run              REAL,                    -- UNIX timestamp (float UTC), NULL = never calculated
     status                TEXT NOT NULL DEFAULT 'pending',
     enabled               INTEGER NOT NULL DEFAULT 1,  -- 0=false, 1=true
-    executions_remaining  INTEGER,                 -- NULL o countdown
+    executions_remaining  INTEGER,                 -- NULL or countdown
     retry_count           INTEGER NOT NULL DEFAULT 0,
     log_enabled           INTEGER NOT NULL DEFAULT 1,
     created_at            TEXT NOT NULL,           -- ISO string UTC
-    last_run              TEXT                     -- ISO string UTC o NULL
+    last_run              TEXT                     -- ISO string UTC or NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_due
     ON scheduled_tasks(enabled, status, next_run);
 ```
 
-### Tabla `task_logs`
+### `task_logs` table
 
 ```sql
 CREATE TABLE IF NOT EXISTS task_logs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id     INTEGER NOT NULL REFERENCES scheduled_tasks(id),
     started_at  TEXT NOT NULL,     -- ISO string UTC
-    finished_at TEXT,              -- ISO string UTC o NULL
+    finished_at TEXT,              -- ISO string UTC or NULL
     status      TEXT NOT NULL,     -- "success" | "failed" | "missed"
-    output      TEXT,              -- stdout capturado (truncado)
-    error       TEXT               -- mensaje de excepción si falló
+    output      TEXT,              -- captured stdout (truncated)
+    error       TEXT               -- exception message if failed
 );
 ```
 
-> `next_run` se guarda como UNIX timestamp (`REAL`) para permitir comparaciones eficientes con `WHERE next_run <= ?`. Las demás fechas se guardan como ISO strings.
+> `next_run` is stored as a UNIX timestamp (`REAL`) to allow efficient comparisons with `WHERE next_run <= ?`. All other dates are stored as ISO strings.
 
 ---
 
-## 12. Arquitectura de capas
+## 12. Layer architecture
 
-### Archivos clave
+### Key files
 
-| Componente | Archivo | Clase/Función |
-|-----------|---------|---------------|
-| CLI | [adapters/inbound/cli/scheduler_cli.py](../adapters/inbound/cli/scheduler_cli.py) | `scheduler_app` (Typer), comandos: `list_cmd`, `show_cmd`, `edit_cmd`, `enable_cmd`, `disable_cmd`, `rm_cmd` |
+| Component | File | Class/Function |
+|-----------|------|----------------|
+| CLI | [adapters/inbound/cli/scheduler_cli.py](../adapters/inbound/cli/scheduler_cli.py) | `scheduler_app` (Typer), commands: `list_cmd`, `show_cmd`, `edit_cmd`, `enable_cmd`, `disable_cmd`, `rm_cmd` |
 | Use Case | [core/use_cases/schedule_task.py](../core/use_cases/schedule_task.py) | `ScheduleTaskUseCase`, `ISchedulerUseCase` |
 | Service | [core/domain/services/scheduler_service.py](../core/domain/services/scheduler_service.py) | `SchedulerService` |
-| Entidades | [core/domain/entities/task.py](../core/domain/entities/task.py) | `ScheduledTask`, `TaskKind`, `TriggerType`, `TaskStatus`, payloads |
+| Entities | [core/domain/entities/task.py](../core/domain/entities/task.py) | `ScheduledTask`, `TaskKind`, `TriggerType`, `TaskStatus`, payloads |
 | Task logs | [core/domain/entities/task_log.py](../core/domain/entities/task_log.py) | `TaskLog` |
-| Puerto inbound | [core/ports/inbound/scheduler_port.py](../core/ports/inbound/scheduler_port.py) | `ISchedulerUseCase` |
-| Puerto outbound | [core/ports/outbound/scheduler_port.py](../core/ports/outbound/scheduler_port.py) | `ISchedulerRepository` (Protocol) |
-| Repositorio | [adapters/outbound/scheduler/sqlite_scheduler_repo.py](../adapters/outbound/scheduler/sqlite_scheduler_repo.py) | `SQLiteSchedulerRepo` |
+| Inbound port | [core/ports/inbound/scheduler_port.py](../core/ports/inbound/scheduler_port.py) | `ISchedulerUseCase` |
+| Outbound port | [core/ports/outbound/scheduler_port.py](../core/ports/outbound/scheduler_port.py) | `ISchedulerRepository` (Protocol) |
+| Repository | [adapters/outbound/scheduler/sqlite_scheduler_repo.py](../adapters/outbound/scheduler/sqlite_scheduler_repo.py) | `SQLiteSchedulerRepo` |
 | Dispatch adapters | [adapters/outbound/scheduler/dispatch_adapters.py](../adapters/outbound/scheduler/dispatch_adapters.py) | `ChannelRouter`, `LLMDispatcherAdapter`, `ConsolidationDispatchAdapter`, `HttpCallerAdapter`, `SchedulerDispatchPorts` |
-| Outbound sinks | [adapters/outbound/sinks/](../adapters/outbound/sinks/) | `TelegramSink`, `FileSink`, `NullSink`, `SinkFactory` (puerto: `core/ports/outbound/outbound_sink_port.py::IOutboundSink`) |
+| Outbound sinks | [adapters/outbound/sinks/](../adapters/outbound/sinks/) | `TelegramSink`, `FileSink`, `NullSink`, `SinkFactory` (port: `core/ports/outbound/outbound_sink_port.py::IOutboundSink`) |
 | Value objects | [core/domain/value_objects/dispatch_result.py](../core/domain/value_objects/dispatch_result.py) | `DispatchResult(original_target, resolved_target)` |
-| Tareas builtin | [adapters/outbound/scheduler/builtin_tasks.py](../adapters/outbound/scheduler/builtin_tasks.py) | `build_consolidate_memory_task()`, `CONSOLIDATE_MEMORY_TASK_ID` |
+| Builtin tasks | [adapters/outbound/scheduler/builtin_tasks.py](../adapters/outbound/scheduler/builtin_tasks.py) | `build_consolidate_memory_task()`, `CONSOLIDATE_MEMORY_TASK_ID` |
 | Config | [infrastructure/config.py](../infrastructure/config.py) | `SchedulerConfig`, `GlobalConfig` |
 | DI Container | [infrastructure/container.py](../infrastructure/container.py) | `AppContainer` |
-| Errores | [core/domain/errors.py](../core/domain/errors.py) | `SchedulerError`, `BuiltinTaskProtectedError`, `InvalidTriggerTypeError`, `TaskNotFoundError` |
+| Errors | [core/domain/errors.py](../core/domain/errors.py) | `SchedulerError`, `BuiltinTaskProtectedError`, `InvalidTriggerTypeError`, `TaskNotFoundError` |
 
-### Flujo de dependencias
+### Dependency flow
 
 ```
 CLI ──► ScheduleTaskUseCase ──► ISchedulerRepository
@@ -697,7 +697,7 @@ CLI ──► ScheduleTaskUseCase ──► ISchedulerRepository
          └── ConsolidationAdapter  → ConsolidateAllAgentsUseCase
 ```
 
-### Wiring en AppContainer
+### Wiring in AppContainer
 
 ```python
 # infrastructure/container.py

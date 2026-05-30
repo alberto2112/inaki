@@ -1,252 +1,251 @@
-# Smoke test manual — broadcast multi-agente
+# Manual Smoke Test — Multi-Agent Broadcast
 
-Plan de prueba end-to-end para verificar el canal de broadcast entre dos instancias
-de Inaki en la misma LAN. Se ejecuta manualmente antes de dar por buena una puesta
-en producción nueva o tras cualquier cambio en `adapters/broadcast/` o el handler
-Telegram.
-
----
-
-## Setup requerido
-
-- **Dos Raspberry Pi** en la misma red local (o dos procesos en la misma máquina
-  con IPs/puertos distintos).
-- **Dos bots de Telegram distintos** con sus tokens (obtenidos de @BotFather).
-  Llamémoslos `inaki_a_bot` y `inaki_b_bot`.
-- **Un grupo de Telegram** con ambos bots agregados como administradores.
-- Ambos Pi con NTP activo (`timedatectl status` muestra `NTP service: active`).
+End-to-end test plan to verify the broadcast channel between two Inaki instances
+on the same LAN. Run manually before greenlighting a new production deployment or
+after any change in `adapters/broadcast/` or the Telegram handler.
 
 ---
 
-## Pasos de clean-rebuild (hacer SIEMPRE antes del primer test)
+## Required Setup
 
-1. Detener el daemon en ambos Pi:
+- **Two Raspberry Pis** on the same local network (or two processes on the same machine
+  with different IPs/ports).
+- **Two separate Telegram bots** with their tokens (obtained from @BotFather).
+  Let's call them `inaki_a_bot` and `inaki_b_bot`.
+- **A Telegram group** with both bots added as administrators.
+- Both Pis with active NTP (`timedatectl status` shows `NTP service: active`).
+
+---
+
+## Clean-Rebuild Steps (ALWAYS do this before the first test)
+
+1. Stop the daemon on both Pis:
    ```bash
    sudo systemctl stop inaki
    ```
 
-2. Eliminar las DBs de historia y memoria en ambos Pi:
+2. Delete the history and memory DBs on both Pis:
    ```bash
    rm ~/.inaki/data/history.db ~/.inaki/data/inaki.db
    ```
-   Esto fuerza la creación del schema nuevo con columnas `channel` y `chat_id`.
+   This forces creation of the new schema with `channel` and `chat_id` columns.
 
-3. Configurar `~/.inaki/config/agents/<id>.yaml` en el **Pi servidor** (inaki_a):
+3. Configure `~/.inaki/config/agents/<id>.yaml` on the **server Pi** (inaki_a):
    ```yaml
    channels:
      telegram:
-       allowed_user_ids: [TU_USER_ID]
-       allowed_chat_ids: []          # se llenará después del Escenario D
+       allowed_user_ids: [YOUR_USER_ID]
+       allowed_chat_ids: []          # will be filled after Scenario D
        broadcast:
          port: 1234
-         auth: "shared-secret-entre-agentes"
+         auth: "shared-secret-between-agents"
          bot_username: "inaki_a_bot"
          behavior: mention
          rate_limiter: 5
    ```
 
-4. Configurar `~/.inaki/config/agents/<id>.yaml` en el **Pi cliente** (inaki_b):
+4. Configure `~/.inaki/config/agents/<id>.yaml` on the **client Pi** (inaki_b):
    ```yaml
    channels:
      telegram:
-       allowed_user_ids: [TU_USER_ID]
+       allowed_user_ids: [YOUR_USER_ID]
        allowed_chat_ids: []
        broadcast:
          remote:
-           host: "192.168.1.10:1234"           # IP del Pi servidor
-           auth: "shared-secret-entre-agentes"
+           host: "192.168.1.10:1234"           # Server Pi IP
+           auth: "shared-secret-between-agents"
          bot_username: "inaki_b_bot"
          behavior: mention
          rate_limiter: 5
    ```
-   El secreto `auth` **debe ser idéntico** en ambos lados.
+   The `auth` secret **must be identical** on both sides.
 
-5. Iniciar el daemon en ambos Pi (primero el servidor, luego el cliente):
+5. Start the daemon on both Pis (server first, then client):
    ```bash
    sudo systemctl start inaki
    ```
 
-6. Verificar que no haya errores de arranque:
+6. Verify no startup errors:
    ```bash
    journalctl -u inaki -n 50 --no-pager
    ```
-   Esperado: ningún `ERROR` ni `CRITICAL`. El cliente loguea algo como
-   `broadcast.client.connected` cuando establece la conexión TCP.
+   Expected: no `ERROR` or `CRITICAL`. The client logs something like
+   `broadcast.client.connected` when the TCP connection is established.
 
 ---
 
-## Escenario A — modo `listen`
+## Scenario A — `listen` mode
 
-**Objetivo:** ningún bot responde. Ambos ingresan los mensajes al buffer de broadcast.
+**Objective:** no bot responds. Both ingest messages into the broadcast buffer.
 
-**Preparación:** poner `behavior: listen` en ambos lados. Reiniciar ambos daemons.
+**Preparation:** set `behavior: listen` on both sides. Restart both daemons.
 
-**Pasos:**
+**Steps:**
 
-1. Desde tu cuenta (en `allowed_user_ids`), escribí un mensaje en el grupo.
-2. **Esperado:** ningún bot responde en Telegram.
-3. En los logs del Pi_A:
+1. From your account (in `allowed_user_ids`), send a message in the group.
+2. **Expected:** no bot responds in Telegram.
+3. In the Pi_A logs:
    ```
    journalctl -u inaki -f
    ```
-   **Esperado:** entrada de log mostrando que el mensaje fue recibido e ingresado
-   al buffer (evento `broadcast.buffer.append` o equivalente). Sin `reply_text`.
-4. En los logs del Pi_B:
-   **Esperado:** ídem — el mensaje llegó vía TCP y fue procesado.
-5. Escribí un segundo mensaje en el grupo.
-6. **Esperado:** sigue sin respuesta en Telegram. El buffer crece.
+   **Expected:** log entry showing the message was received and ingested
+   into the buffer (`broadcast.buffer.append` event or equivalent). No `reply_text`.
+4. In the Pi_B logs:
+   **Expected:** same — the message arrived via TCP and was processed.
+5. Send a second message in the group.
+6. **Expected:** still no response in Telegram. The buffer grows.
 
 ---
 
-## Escenario B — modo `mention`
+## Scenario B — `mention` mode
 
-**Objetivo:** un bot responde solo cuando se le menciona. El otro absorbe la respuesta
-en su buffer.
+**Objective:** a bot responds only when mentioned. The other absorbs the response
+into its buffer.
 
-**Preparación:** `behavior: mention` en ambos lados (es el default). Reiniciar daemons.
+**Preparation:** `behavior: mention` on both sides (this is the default). Restart daemons.
 
-**Pasos:**
+**Steps:**
 
-1. Escribí un mensaje sin menciones en el grupo.
-   **Esperado:** ningún bot responde.
-2. Escribí `@inaki_a_bot hola` en el grupo.
-   **Esperado:** solo `inaki_a_bot` responde. `inaki_b_bot` no responde.
-3. En los logs del Pi_B verificar que la respuesta de A llegó por broadcast:
-   **Esperado:** entrada de log con `broadcast.buffer.append` con `agent_id=inaki_a`.
-4. Escribí `@inaki_b_bot hola` en el grupo.
-   **Esperado:** solo `inaki_b_bot` responde. La respuesta de B aparece en el buffer de A.
-5. Verificar en logs de Pi_A que recibió la respuesta de B.
-
----
-
-## Escenario C — modo `autonomous` con rate limiter
-
-**Objetivo:** los bots responden por su cuenta. El rate limiter corta tras N respuestas
-en 30 segundos.
-
-**Preparación:** `behavior: autonomous` y `rate_limiter: 3` en ambos lados. Reiniciar.
-
-**Pasos:**
-
-1. Escribí un mensaje en el grupo.
-   **Esperado:** uno o ambos bots pueden responder (el LLM decide). Si el LLM responde
-   `[SKIP]` internamente, no aparece nada en Telegram.
-2. Escribí 4 mensajes seguidos en menos de 30 segundos.
-   **Esperado:** después de 3 respuestas de algún bot, los mensajes siguientes se
-   silencian. En los logs del Pi correspondiente aparece un evento de límite alcanzado
-   (p. ej. `rate_limiter.breach`).
-3. Esperá 30 segundos y escribí otro mensaje.
-   **Esperado:** el bot vuelve a estar habilitado para responder.
+1. Send a message without mentions in the group.
+   **Expected:** no bot responds.
+2. Send `@inaki_a_bot hola` in the group.
+   **Expected:** only `inaki_a_bot` responds. `inaki_b_bot` does not respond.
+3. In the Pi_B logs verify that A's response arrived via broadcast:
+   **Expected:** log entry with `broadcast.buffer.append` with `agent_id=inaki_a`.
+4. Send `@inaki_b_bot hola` in the group.
+   **Expected:** only `inaki_b_bot` responds. B's response appears in A's buffer.
+5. Verify in Pi_A logs that it received B's response.
 
 ---
 
-## Escenario D — bootstrap de `chat_id` con `/chatid`
+## Scenario C — `autonomous` mode with rate limiter
 
-**Objetivo:** obtener el `chat_id` del grupo para rellenar `allowed_chat_ids`.
+**Objective:** bots respond on their own. The rate limiter cuts off after N responses
+within 30 seconds.
 
-**Preparación:** dejar `allowed_chat_ids: []` (lista vacía) en la config de ambos
-agentes. Reiniciar daemons.
+**Preparation:** `behavior: autonomous` and `rate_limiter: 3` on both sides. Restart.
 
-**Pasos:**
+**Steps:**
 
-1. Desde tu cuenta, enviá `/chatid` en el grupo.
-   **Esperado:** el bot responde con el `chat_id` numérico del grupo
-   (un entero negativo grande, p. ej. `-1001234567890`).
-2. Verificar que el comando funciona aunque `allowed_chat_ids` esté vacío — eso
-   confirma que `/chatid` bypasea la validación de grupos.
-3. Intentar escribir un mensaje normal (sin menciones) en el grupo.
-   **Esperado (si el grupo no está en `allowed_chat_ids`):** el bot ignora el mensaje.
-   En logs: `telegram.mensaje.grupo_no_autorizado` o similar.
-4. Agregar el `chat_id` a `allowed_chat_ids` en la config de ambos lados y reiniciar.
-5. Repetir los escenarios anteriores — ahora los mensajes del grupo pasan el filtro.
-
----
-
-## Escenario E — HMAC incorrecto (auth mismatch)
-
-**Objetivo:** verificar que un mensaje con auth incorrecto se descarta.
-
-**Preparación:** cambiar el `auth` del Pi_B a un valor distinto (sin reiniciar Pi_A).
-Reiniciar solo el daemon de Pi_B.
-
-**Pasos:**
-
-1. Enviar un mensaje en el grupo para que Pi_B lo emita por broadcast con auth incorrecto.
-2. En los logs del Pi_A verificar:
-   **Esperado:** entrada de log con evento `broadcast.message.dropped.hmac_mismatch`.
-   Pi_A no procesa el mensaje.
-3. Restaurar el `auth` correcto en Pi_B y reiniciar. La comunicación vuelve a funcionar.
+1. Send a message in the group.
+   **Expected:** one or both bots may respond (the LLM decides). If the LLM responds
+   `[SKIP]` internally, nothing appears in Telegram.
+2. Send 4 messages in a row within 30 seconds.
+   **Expected:** after 3 responses from a bot, subsequent messages are
+   silenced. In the logs of the corresponding Pi a rate limit reached event appears
+   (e.g., `rate_limiter.breach`).
+3. Wait 30 seconds and send another message.
+   **Expected:** the bot is enabled to respond again.
 
 ---
 
-## Escenario F — NTP drift (relojes desincronizados)
+## Scenario D — `chat_id` bootstrap with `/chatid`
 
-**Objetivo:** verificar que mensajes con timestamp fuera de la ventana de 60s se descartan.
+**Objective:** obtain the group's `chat_id` to populate `allowed_chat_ids`.
 
-**Preparación:** en el Pi_B, adelantar el reloj 2 minutos manualmente (requiere deshabilitar
-NTP temporalmente):
+**Preparation:** leave `allowed_chat_ids: []` (empty list) in both agents' config.
+Restart daemons.
+
+**Steps:**
+
+1. From your account, send `/chatid` in the group.
+   **Expected:** the bot replies with the group's numeric `chat_id`
+   (a large negative integer, e.g., `-1001234567890`).
+2. Verify the command works even though `allowed_chat_ids` is empty — this
+   confirms that `/chatid` bypasses group validation.
+3. Try sending a normal message (without mentions) in the group.
+   **Expected (if the group is not in `allowed_chat_ids`):** the bot ignores the message.
+   In logs: `telegram.mensaje.grupo_no_autorizado` or similar.
+4. Add the `chat_id` to `allowed_chat_ids` in both sides' config and restart.
+5. Repeat the previous scenarios — now group messages pass the filter.
+
+---
+
+## Scenario E — Incorrect HMAC (auth mismatch)
+
+**Objective:** verify that a message with incorrect auth is discarded.
+
+**Preparation:** change Pi_B's `auth` to a different value (without restarting Pi_A).
+Restart only Pi_B's daemon.
+
+**Steps:**
+
+1. Send a message in the group so Pi_B broadcasts it with incorrect auth.
+2. In Pi_A's logs verify:
+   **Expected:** log entry with event `broadcast.message.dropped.hmac_mismatch`.
+   Pi_A does not process the message.
+3. Restore the correct `auth` on Pi_B and restart. Communication works again.
+
+---
+
+## Scenario F — NTP drift (desynchronized clocks)
+
+**Objective:** verify that messages with timestamps outside the 60s window are discarded.
+
+**Preparation:** on Pi_B, advance the clock 2 minutes manually (requires temporarily
+disabling NTP):
 
 ```bash
 sudo systemctl stop systemd-timesyncd
 sudo date -s "+2 minutes"
 ```
 
-**Pasos:**
+**Steps:**
 
-1. Enviar un mensaje en el grupo.
-2. Pi_B emite el mensaje por broadcast con un timestamp 2 minutos en el futuro.
-3. En los logs del Pi_A verificar:
-   **Esperado:** entrada de log con evento `broadcast.message.dropped.stale_timestamp`.
-   Pi_A descarta el mensaje silenciosamente (no aparece en el buffer ni en el contexto del LLM).
-4. Restaurar el reloj en Pi_B:
+1. Send a message in the group.
+2. Pi_B broadcasts the message with a timestamp 2 minutes in the future.
+3. In Pi_A's logs verify:
+   **Expected:** log entry with event `broadcast.message.dropped.stale_timestamp`.
+   Pi_A silently discards the message (it does not appear in the buffer or in the LLM context).
+4. Restore the clock on Pi_B:
    ```bash
    sudo systemctl start systemd-timesyncd
    ```
-   Esperar unos segundos a que NTP resincronice. El broadcast vuelve a funcionar.
+   Wait a few seconds for NTP to resync. Broadcast works again.
 
 ---
 
-## Escenario E: Eventos tipificados — `user_input_voice` y `user_input_photo`
+## Scenario E: Typed Events — `user_input_voice` and `user_input_photo`
 
-**Setup adicional**: en Pi_A activar `broadcast.emit.user_input_voice: true` y
-`broadcast.emit.user_input_photo: true` en el YAML. En Pi_B dejarlos en `false` (default).
-Reiniciar ambos daemons. Pi_A debe tener `voice_enabled: true` y un `process_photo` wired
-(secciones de transcripción y `photos:` en config global).
+**Additional setup**: on Pi_A enable `broadcast.emit.user_input_voice: true` and
+`broadcast.emit.user_input_photo: true` in the YAML. On Pi_B leave them at `false` (default).
+Restart both daemons. Pi_A must have `voice_enabled: true` and a `process_photo` wired
+(transcription and `photos:` sections in global config).
 
-### E1 — Audio: Pi_A transcribe y comparte la transcripción
+### E1 — Audio: Pi_A transcribes and shares the transcription
 
-**Objetivo:** que Pi_B reciba la transcripción del audio que solo Pi_A procesó.
+**Objective:** have Pi_B receive the audio transcription that only Pi_A processed.
 
-1. Desde tu cuenta humana, mandá un mensaje de voz al grupo.
-2. Pi_A reacciona 🔊, transcribe el audio y dispara su pipeline normal.
-3. **Esperado en logs de Pi_A**: entrada con evento `broadcast.message.received` o
-   equivalente que liste `event_type=user_input_voice` con la transcripción en `content`
-   y el username humano en `sender`.
-4. **Esperado en buffer de Pi_B**: render del contexto incluye `[HH:MM:SS] {sender}
-   (audio): {transcripción}` cuando Pi_B sea mencionado en un turno posterior.
-5. Pi_B no transcribe el audio raw (no tiene la capacidad activa) pero ve el resultado.
+1. From your human account, send a voice message to the group.
+2. Pi_A reacts with 🔊, transcribes the audio and triggers its normal pipeline.
+3. **Expected in Pi_A logs**: entry with event `broadcast.message.received` or
+   equivalent listing `event_type=user_input_voice` with the transcription in `content`
+   and the human username in `sender`.
+4. **Expected in Pi_B's buffer**: context render includes `[HH:MM:SS] {sender}
+   (audio): {transcription}` when Pi_B is mentioned in a subsequent turn.
+5. Pi_B does not transcribe the raw audio (it doesn't have the capability active) but sees the result.
 
-### E2 — Foto: Pi_A describe y comparte la descripción
+### E2 — Photo: Pi_A describes and shares the description
 
-**Objetivo:** que Pi_B reciba la descripción de escena de una foto que solo Pi_A procesó.
+**Objective:** have Pi_B receive the scene description of a photo that only Pi_A processed.
 
-1. Mandá una foto al grupo.
-2. Pi_A reacciona 👁, corre `process_photo` y dispara el pipeline normal.
-3. **Esperado en logs de Pi_A**: `event_type=user_input_photo` con la descripción en
-   `content`. El evento se emite **antes** del `assistant_response`.
-4. **Esperado en buffer de Pi_B**: línea `[HH:MM:SS] {sender} (foto): {descripción}`.
-5. **Edge case modo `!`**: si la foto va con caption `!transcribí esto`, Pi_A escribe
-   directo al chat sin pasar por LLM y emite **solo** `user_input_photo` (no
-   `assistant_response`). Pi_B ve el evento de foto pero no una respuesta de agente.
+1. Send a photo to the group.
+2. Pi_A reacts with 👁, runs `process_photo` and triggers the normal pipeline.
+3. **Expected in Pi_A logs**: `event_type=user_input_photo` with the description in
+   `content`. The event is emitted **before** the `assistant_response`.
+4. **Expected in Pi_B's buffer**: line `[HH:MM:SS] {sender} (photo): {description}`.
+5. **Edge case `!` mode**: if the photo has caption `!transcribí esto`, Pi_A writes
+   directly to chat without going through the LLM and emits **only** `user_input_photo` (not
+   `assistant_response`). Pi_B sees the photo event but not an agent response.
 
-### E3 — Versiones desincronizadas (wire format breaking change)
+### E3 — Desynchronized Versions (wire format breaking change)
 
-**Setup**: actualizar Pi_A pero **no** Pi_B (downgrade pre-cambio).
+**Setup**: update Pi_A but **not** Pi_B (downgrade to pre-change).
 
-1. Pi_A emite con el wire format nuevo (campos `event_type`, `sender`, `content`).
-2. Pi_B parsea con código viejo: el HMAC canonical es distinto → mismatch → mensaje
-   descartado silenciosamente.
-3. **Esperado en Pi_B**: log `broadcast.message.dropped.hmac_mismatch`.
+1. Pi_A emits with the new wire format (fields `event_type`, `sender`, `content`).
+2. Pi_B parses with old code: the HMAC canonical is different → mismatch → message
+   silently discarded.
+3. **Expected on Pi_B**: log `broadcast.message.dropped.hmac_mismatch`.
 
-**Mitigación**: este change es upgrade-en-bloque. Detener daemon en TODOS los Pis del
-LAN, actualizar código simultáneo, restart. Sin DB schema changes — solo wire format.
+**Mitigation**: this change is an all-at-once upgrade. Stop the daemon on ALL Pis in the
+LAN, update code simultaneously, restart. No DB schema changes — wire format only.

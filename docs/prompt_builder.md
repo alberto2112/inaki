@@ -1,100 +1,100 @@
-# Prompt Builder — Construcción del Prompt Final
+# Prompt Builder — Final Prompt Construction
 
-## Visión general
+## Overview
 
-El prompt que recibe el LLM en cada turno **no es estático**. Se construye dinámicamente en tiempo de ejecución combinando:
+The prompt the LLM receives on each turn **is not static**. It is built dynamically at runtime by combining:
 
-1. El system prompt base del agente (definido en su YAML)
-2. Memorias relevantes recuperadas por búsqueda vectorial
-3. Skills relevantes seleccionadas por semantic routing
-4. Los schemas de las tools seleccionadas (filtradas o no por semantic routing)
+1. The agent's base system prompt (defined in its YAML)
+2. Relevant memories retrieved via vector search
+3. Relevant skills selected via semantic routing
+4. The schemas of selected tools (filtered or not by semantic routing)
 
-El historial de conversación se envía como lista de mensajes separada del system prompt, **truncado al máximo configurado** antes de enviarse al LLM.
+The conversation history is sent as a separate message list from the system prompt, **truncated to the configured maximum** before being sent to the LLM.
 
 ---
 
-## Flujo completo de construcción
+## Full Construction Flow
 
 ```
 RunAgentUseCase.execute(user_input)
 │
 ├── 1. _history.load(agent_id, channel, chat_id, limit=max_messages)
-│       → list[Message]  ← historial scoped desde SQLite (history.db)
-│       → solo los últimos N mensajes (si max_messages > 0)
-│       → scoped por (agent_id, channel, chat_id)
+│       → list[Message]  ← scoped history from SQLite (history.db)
+│       → only the last N messages (if max_messages > 0)
+│       → scoped by (agent_id, channel, chat_id)
 │
 ├── 2. _embedder.embed_query(user_input)
 │       → query_vec: list[float]
 │
 ├── 3. _memory.search(query_vec, top_k)
-│       → list[MemoryEntry]  ← memorias relevantes (cosine sim en SQLite)
+│       → list[MemoryEntry]  ← relevant memories (cosine sim in SQLite)
 │
 ├── 4. _skills.list_all() → all_skills
-│   ├── Si len(all_skills) > cfg.skills.semantic_routing_min_skills:
+│   ├── If len(all_skills) > cfg.skills.semantic_routing_min_skills:
 │   │       _skills.retrieve(query_vec, top_k=cfg.skills.semantic_routing_top_k)
-│   │       → list[Skill]  ← solo las skills relevantes
-│   └── Si no:
-│           retrieved_skills = all_skills  ← todas las skills
+│   │       → list[Skill]  ← only relevant skills
+│   └── Otherwise:
+│           retrieved_skills = all_skills  ← all skills
 │
 ├── 5. AgentContext.build_system_prompt(base_prompt)
-│       → system_prompt: str  ← secciones unidas + sustitución de {{WORKSPACE}}, {{DATE}}, etc.
+│       → system_prompt: str  ← joined sections + substitution of {{WORKSPACE}}, {{DATE}}, etc.
 │
 ├── 6. _tools.get_schemas() → all_schemas
-│   ├── Si len(all_schemas) > cfg.tools.semantic_routing_min_tools:
+│   ├── If len(all_schemas) > cfg.tools.semantic_routing_min_tools:
 │   │       _tools.get_schemas_relevant(query_vec, top_k=cfg.tools.semantic_routing_top_k)
-│   │       → tool_schemas: list[dict]  ← solo las tools relevantes
-│   └── Si no:
-│           tool_schemas = all_schemas  ← todas las tools
+│   │       → tool_schemas: list[dict]  ← only relevant tools
+│   └── Otherwise:
+│           tool_schemas = all_schemas  ← all tools
 │
 └── 7. _llm.complete(messages, system_prompt, tools=tool_schemas)
         ↑                ↑                          ↑
-    historial        prompt dinámico          schemas filtrados
-    truncado
+    truncated        dynamic prompt          filtered schemas
+    history
 ```
 
 ---
 
-## Truncado del historial para el prompt
+## History Truncation for the Prompt
 
-`chat_history.max_messages` controla cuántos mensajes se inyectan en el prompt. El truncado se aplica directamente en la query SQL (`LIMIT`).
+`chat_history.max_messages` controls how many messages are injected into the prompt. Truncation is applied directly in the SQL query (`LIMIT`).
 
 ```
 max_messages = 21  →  SELECT ... ORDER BY id DESC LIMIT 21
-                      → últimos 21 mensajes del scope (agent_id, channel, chat_id)
+                      → last 21 messages from the scope (agent_id, channel, chat_id)
 
-max_messages = 0   →  sin truncado, historial completo del scope
+max_messages = 0   →  no truncation, full history for the scope
 ```
 
-Configurable en `global.yaml`:
+Configurable in `global.yaml`:
 
 ```yaml
 chat_history:
   db_filename: "data/history.db"
-  max_messages: 21  # 0 = sin límite
+  max_messages: 21  # 0 = no limit
 ```
 
 ---
 
-## Construcción del system prompt (`AgentContext.build_system_prompt`)
+## System Prompt Construction (`AgentContext.build_system_prompt`)
 
-**Archivo:** `core/domain/value_objects/agent_context.py`
+**File:** `core/domain/value_objects/agent_context.py`
 
-El prompt se construye concatenando secciones. Solo se incluyen las secciones con contenido:
+The prompt is built by concatenating sections. Only sections with content are included:
 
 ```
 [base_prompt]
 
-## Lo que recuerdas del usuario:         ← solo si hay memorias
-- <memoria 1>
-- <memoria 2>
+## What you remember about the user:         ← only if there are memories
+- <memory 1>
+- <memory 2>
 - ...
 
-## Skills disponibles:                    ← solo si hay skills
-- **<nombre>**: <descripción>
-  <instrucciones>
+## Available skills:                          ← only if there are skills
+- **<name>**: <description>
+  <instructions>
 ```
 
-### Ejemplo de prompt final generado
+### Example of a generated final prompt
 
 ```
 Sos Inaki, un asistente personal ágil y directo.
@@ -109,25 +109,25 @@ Respondés en español rioplatense. Usás las tools cuando hace falta.
   Cuando el usuario pregunta sobre eventos actuales, usá esta skill...
 ```
 
-### Variables sustituidas (`{{...}}`)
+### Variable Substitution (`{{...}}`)
 
-Tras concatenar todas las secciones (prompt base, contexto de usuario, digest de memoria, bloques de skills y `extra_sections`), se ejecuta una pasada de sustitución sobre el **texto completo** (`_resolve_vars` en el mismo módulo). Las coincidencias usan la forma `{{NOMBRE}}` y son **insensibles a mayúsculas** (`{{date}}` equivale a `{{DATE}}`).
+After concatenating all sections (base prompt, user context, memory digest, skill blocks, and `extra_sections`), a substitution pass is run over the **complete text** (`_resolve_vars` in the same module). Matches use the `{{NAME}}` form and are **case-insensitive** (`{{date}}` is equivalent to `{{DATE}}`).
 
-| Placeholder | Resultado | Origen y notas |
-|-------------|-----------|----------------|
-| `{{WORKSPACE}}` | Ruta absoluta del directorio de trabajo del agente | Misma resolución que las tools de filesystem: `Path(workspace.path).expanduser().resolve()` desde la configuración. Si no se inyecta raíz (caso excepcional), el texto **no se modifica**. |
-| `{{TIMEZONE}}` | Etiqueta de zona horaria | Si `AgentContext.timezone` es una zona IANA válida (p. ej. `Europe/Madrid`), se muestra ese nombre. Si está vacía o es inválida, se usa la abreviatura local del sistema (`%Z`) al calcular la hora. |
-| `{{DATETIME}}` | Fecha y hora local | Formato fijo `YYYY-MM-DD HH:MM` en la zona ya resuelta (IANA del contexto o fallback al reloj local del host si la IANA falla). |
-| `{{DATE}}` | Fecha local | `YYYY-MM-DD`. |
-| `{{TIME}}` | Hora local | `HH:MM` (24 h). |
-| `{{WEEKDAY}}` | Nombre del día de la semana | Sin subíndice: `strftime("%A")` según **locale del sistema**. Con idioma de dos letras: `{{WEEKDAY[EN]}}`, `{{WEEKDAY[ES]}}`, `{{WEEKDAY[FR]}}` → nombres fijos en inglés, español o francés. Cualquier otro código (p. ej. `{{WEEKDAY[DE]}}`) se trata como sin bandera (mismo fallback que locale). La bandera es insensible a mayúsculas (`[en]`, `[FR]`). |
-| `{{WEEKDAY_NUMBER}}` | Día ISO 8601 | Cadena `1`–`7`: lunes = 1, …, domingo = 7. |
+| Placeholder | Result | Source and Notes |
+|-------------|--------|------------------|
+| `{{WORKSPACE}}` | Absolute path of the agent's working directory | Same resolution as filesystem tools: `Path(workspace.path).expanduser().resolve()` from the config. If no root is injected (exceptional case), the text **is not modified**. |
+| `{{TIMEZONE}}` | Timezone label | If `AgentContext.timezone` is a valid IANA zone (e.g., `Europe/Madrid`), that name is shown. If empty or invalid, the system's local abbreviation (`%Z`) is used when computing the time. |
+| `{{DATETIME}}` | Local date and time | Fixed format `YYYY-MM-DD HH:MM` in the already-resolved zone (IANA from context or fallback to the host's local clock if the IANA fails). |
+| `{{DATE}}` | Local date | `YYYY-MM-DD`. |
+| `{{TIME}}` | Local time | `HH:MM` (24h). |
+| `{{WEEKDAY}}` | Day of the week name | Without suffix: `strftime("%A")` per **system locale**. With two-letter language: `{{WEEKDAY[EN]}}`, `{{WEEKDAY[ES]}}`, `{{WEEKDAY[FR]}}` → fixed names in English, Spanish, or French. Any other code (e.g., `{{WEEKDAY[DE]}}`) is treated as no flag (same fallback as locale). The flag is case-insensitive (`[en]`, `[FR]`). |
+| `{{WEEKDAY_NUMBER}}` | ISO 8601 day | String `1`–`7`: Monday = 1, …, Sunday = 7. |
 
-**Zona horaria del contexto:** `RunAgentUseCase` rellena `AgentContext.timezone` con la preferencia de usuario (config global); si no hay valor útil, los placeholders de fecha/hora usan la zona local del proceso.
+**Context timezone:** `RunAgentUseCase` fills `AgentContext.timezone` with the user preference (global config); if there is no useful value, the date/time placeholders use the process's local timezone.
 
-**Cualquier otro `{{ALGO}}`** que no encaje en la tabla anterior **se deja tal cual** en el prompt (no hay motor de plantillas genérico).
+**Any other `{{SOMETHING}}`** that doesn't match the table above **is left as-is** in the prompt (there is no generic template engine).
 
-Ejemplos válidos en el YAML del agente:
+Valid examples in the agent's YAML:
 
 ```text
 Hoy es {{WEEKDAY[ES]}} {{DATE}} ({{TIME}}). Tu workspace es {{WORKSPACE}}.
@@ -136,30 +136,30 @@ Zona configurada: {{TIMEZONE}}
 
 ---
 
-## Qué se le manda al LLM
+## What Gets Sent to the LLM
 
-La llamada final a `llm.complete()` recibe tres piezas:
+The final call to `llm.complete()` receives three pieces:
 
-| Parámetro | Contenido | Origen |
-|-----------|-----------|--------|
-| `messages` | Historial truncado + mensaje actual del usuario | `SQLiteHistoryStore` → `load(limit=max_messages)` → `+ user_msg` |
-| `system_prompt` | Base + memorias + skills | `AgentContext.build_system_prompt()` |
-| `tools` | Schemas JSON de tools seleccionadas | `ToolRegistry.get_schemas[_relevant]()` |
+| Parameter | Content | Source |
+|-----------|---------|--------|
+| `messages` | Truncated history + current user message | `SQLiteHistoryStore` → `load(limit=max_messages)` → `+ user_msg` |
+| `system_prompt` | Base + memories + skills | `AgentContext.build_system_prompt()` |
+| `tools` | JSON schemas of selected tools | `ToolRegistry.get_schemas[_relevant]()` |
 
 ---
 
-## Selección de skills por semantic routing
+## Skill Selection via Semantic Routing
 
-> Esto NO es RAG — es selección dinámica de capacidades (skills/tools disponibles). El RAG real (recuperación de conocimiento externo) se configura en `knowledge:`.
+> This is NOT RAG — it is dynamic selection of capabilities (available skills/tools). Real RAG (external knowledge retrieval) is configured under `knowledge:`.
 
 ```
-len(todas las skills) > skills.semantic_routing_min_skills (default: 5)
+len(all skills) > skills.semantic_routing_min_skills (default: 5)
 │
-├── SÍ → retrieve(query_vec, top_k=semantic_routing_top_k)
-│         Cosine similarity entre query_vec y embeddings pre-indexados de cada skill
-│         → Solo las top_k skills más relevantes para el mensaje actual
+├── YES → retrieve(query_vec, top_k=semantic_routing_top_k)
+│         Cosine similarity between query_vec and pre-indexed embeddings of each skill
+│         → Only the top_k most relevant skills for the current message
 │
-└── NO → list_all() → todas las skills sin filtrar
+└── NO → list_all() → all skills unfiltered
 ```
 
 ```yaml
@@ -170,71 +170,71 @@ skills:
 
 ---
 
-## Selección de tools por semantic routing
+## Tool Selection via Semantic Routing
 
 ```
-len(todas las tools) > tools.semantic_routing_min_tools (default: 10)
+len(all tools) > tools.semantic_routing_min_tools (default: 10)
 │
-├── SÍ → get_schemas_relevant(query_vec, top_k=semantic_routing_top_k)
-│         Cosine similarity entre query_vec y embedding de cada tool.description
-│         → Solo las top_k tools más relevantes para el mensaje actual
+├── YES → get_schemas_relevant(query_vec, top_k=semantic_routing_top_k)
+│         Cosine similarity between query_vec and each tool.description embedding
+│         → Only the top_k most relevant tools for the current message
 │
-└── NO → get_schemas() → todas las tools sin filtrar
+└── NO → get_schemas() → all tools unfiltered
 ```
 
 ```yaml
 tools:
   semantic_routing_min_tools: 10
   semantic_routing_top_k: 5
-  tool_call_max_iterations: 5  # máximo de reintentos en el loop de tool calls
+  tool_call_max_iterations: 5  # maximum retries in the tool call loop
 ```
 
 ---
 
-## Ciclo de vida de los embeddings
+## Embedding Lifecycle
 
-| Embedding | Cuándo se calcula | Quién lo calcula | Para qué |
-|-----------|-------------------|------------------|----------|
-| `embed_query(user_input)` | Cada turno | `RunAgentUseCase` | Buscar memorias, skills y tools relevantes |
-| `embed_passage(skill description)` | Al arrancar (lazy) | `YamlSkillRepository` | Índice de skills |
-| `embed_passage(tool.description)` | Antes del primer semantic routing de tools (lazy) | `ToolRegistry` | Índice de tools |
-| `embed_passage(fact.content)` | Durante consolidación | `ConsolidateMemoryUseCase` | Guardar memoria a largo plazo |
+| Embedding | When Computed | Who Computes It | Purpose |
+|-----------|---------------|-----------------|---------|
+| `embed_query(user_input)` | Each turn | `RunAgentUseCase` | Search for relevant memories, skills, and tools |
+| `embed_passage(skill description)` | On startup (lazy) | `YamlSkillRepository` | Skill index |
+| `embed_passage(tool.description)` | Before the first tool semantic routing (lazy) | `ToolRegistry` | Tool index |
+| `embed_passage(fact.content)` | During consolidation | `ConsolidateMemoryUseCase` | Save long-term memory |
 
-Los embeddings de skills y tools se calculan **una sola vez** al primer uso y se cachean en memoria. No se persisten a disco.
+Skill and tool embeddings are computed **once** on first use and cached in memory. They are not persisted to disk.
 
 ---
 
-## Historial: qué se guarda y qué no
+## History: What Gets Saved and What Doesn't
 
-Solo los mensajes `user` y `assistant` se persisten en `history.db` (tabla `history`, scoped por `agent_id, channel, chat_id`).
+Only `user` and `assistant` messages are persisted in `history.db` (`history` table, scoped by `agent_id, channel, chat_id`).
 
-Los mensajes de tool calls y tool results son **efímeros** — existen solo en `working_messages` durante el loop de ejecución y nunca se persisten en el historial.
+Tool call and tool result messages are **ephemeral** — they exist only in `working_messages` during the execution loop and are never persisted to history.
 
 ```
-Persiste en history.db:     Solo en memoria durante el turno:
-───────────────────────     ──────────────────────────────────
-role=user: ...              tool_call: { name: "shell", args: ... }
-role=assistant: ...         tool_result: "[shell]: output..."
+Persisted in history.db:        Only in memory during the turn:
+───────────────────────         ──────────────────────────────────
+role=user: ...                  tool_call: { name: "shell", args: ... }
+role=assistant: ...             tool_result: "[shell]: output..."
 role=user: ...
 role=assistant: ...
 ```
 
 ---
 
-## Cómo inspeccionar el prompt en tiempo real
+## How to Inspect the Prompt at Runtime
 
 ```bash
-# One-shot desde terminal
+# One-shot from terminal
 inaki inspect "busca el precio del dolar"
 inaki inspect "ejecuta los tests" --agent dev
 
-# Interactivo dentro del chat CLI
+# Interactive inside CLI chat
 /inspect busca el precio del dolar
 ```
 
-El comando `inspect` corre el pipeline completo (embedding → búsqueda en memoria → semantic routing → truncado → construcción del prompt → selección de tools) **sin llamar al LLM ni persistir nada**, e imprime:
+The `inspect` command runs the complete pipeline (embedding → memory search → semantic routing → truncation → prompt construction → tool selection) **without calling the LLM or persisting anything**, and prints:
 
-- Memorias recuperadas
-- Skills seleccionadas (con indicación de si el semantic routing de skills está activo)
-- Tools enviadas al LLM (con indicación de si el semantic routing de tools está activo)
-- System prompt final completo
+- Retrieved memories
+- Selected skills (with indication of whether skill semantic routing is active)
+- Tools sent to the LLM (with indication of whether tool semantic routing is active)
+- Complete final system prompt

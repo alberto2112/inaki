@@ -1,58 +1,58 @@
 # Tool: exchange_calendar
 
-Integración con Microsoft Exchange para gestión de calendario vía EWS (Exchange Web Services).
-Permite leer, buscar, crear, actualizar y eliminar eventos del calendario de Outlook desde el agente.
+Integration with Microsoft Exchange for calendar management via EWS (Exchange Web Services).
+Allows reading, searching, creating, updating, and deleting Outlook calendar events from the agent.
 
 ---
 
-## Archivos relevantes
+## Relevant Files
 
-| Archivo | Rol |
-|---------|-----|
-| `adapters/outbound/tools/exchange_calendar_tool.py` | Facade: validación, schema, routing hacia el engine |
-| `adapters/outbound/tools/exchange_calendar/engine.py` | Lógica central: cuentas, dispatch de operaciones |
-| `adapters/outbound/tools/exchange_calendar/config_store.py` | Persistencia de credenciales (`~/.config/inaki/exchange_config.yaml`) |
-| `adapters/outbound/tools/exchange_calendar/calendar_env.py` | Carga de `.env`, resolución del mailbox map |
-| `adapters/outbound/tools/exchange_calendar/reader.py` | Operaciones de lectura (read, search) |
-| `adapters/outbound/tools/exchange_calendar/writer.py` | Operaciones de escritura (create, update, delete) |
-| `core/services/crypto_service.py` | Cifrado simétrico Fernet para el campo `password` |
+| File | Role |
+|------|------|
+| `adapters/outbound/tools/exchange_calendar_tool.py` | Facade: validation, schema, routing to the engine |
+| `adapters/outbound/tools/exchange_calendar/engine.py` | Core logic: accounts, operation dispatch |
+| `adapters/outbound/tools/exchange_calendar/config_store.py` | Credential persistence (`~/.config/inaki/exchange_config.yaml`) |
+| `adapters/outbound/tools/exchange_calendar/calendar_env.py` | `.env` loading, mailbox map resolution |
+| `adapters/outbound/tools/exchange_calendar/reader.py` | Read operations (read, search) |
+| `adapters/outbound/tools/exchange_calendar/writer.py` | Write operations (create, update, delete) |
+| `core/services/crypto_service.py` | Fernet symmetric encryption for the `password` field |
 
 ---
 
-## Configuración
+## Configuration
 
-### Primera vez — wizard interactivo
+### First time — interactive wizard
 
 ```bash
 python main.py setup
 ```
 
-El wizard genera `INAKI_SECRET_KEY` (clave Fernet) y la escribe en `.env`.
-Esta clave se usa para cifrar el campo `password` en el archivo de configuración.
+The wizard generates `INAKI_SECRET_KEY` (Fernet key) and writes it to `.env`.
+This key is used to encrypt the `password` field in the configuration file.
 
-> **Importante:** guarda `INAKI_SECRET_KEY` en un lugar seguro.
-> Sin ella no podrás descifrar las credenciales guardadas.
+> **Important:** store `INAKI_SECRET_KEY` in a safe place.
+> Without it you won't be able to decrypt the saved credentials.
 
-### Configuración desde el chat
+### Configuration from the chat
 
-Una vez generada la clave, el usuario puede configurar Exchange directamente en la conversación:
+Once the key is generated, the user can configure Exchange directly in the conversation:
 
 ```
-tú > configurá Exchange: usuario dominio\alberto, contraseña ****, servidor mail.empresa.com
+you > configure Exchange: user domain\alberto, password ****, server mail.company.com
 ```
 
-El LLM invoca `operation=configure` y las credenciales se persisten en `~/.config/inaki/exchange_config.yaml`.
+The LLM invokes `operation=configure` and the credentials are persisted in `~/.config/inaki/exchange_config.yaml`.
 
-### Archivo de configuración
+### Configuration file
 
-Ubicación: `~/.config/inaki/exchange_config.yaml`
+Location: `~/.config/inaki/exchange_config.yaml`
 
 ```yaml
 # Inaki — Exchange Calendar configuration
-# El campo password está cifrado. No lo edites manualmente.
+# The password field is encrypted. Do not edit it manually.
 
 username: dominio\alberto
-password: "enc:gAAAAABh..."   # cifrado con Fernet
+password: "enc:gAAAAABh..."   # encrypted with Fernet
 mail: alberto@empresa.com
 ews_url: https://mail.empresa.com/EWS/Exchange.asmx
 timezone: Europe/Madrid
@@ -62,46 +62,46 @@ calendars:
     email: juan@empresa.com
 ```
 
-Solo `password` está cifrado. El resto es texto plano y auditable.
+Only `password` is encrypted. Everything else is plain text and auditable.
 
-### Fallback a variables de entorno
+### Fallback to environment variables
 
-Si no existe `~/.config/inaki/exchange_config.yaml`, el engine lee las variables de entorno como fallback (útil para desarrollo):
+If `~/.config/inaki/exchange_config.yaml` does not exist, the engine reads environment variables as a fallback (useful for development):
 
-| Variable | Descripción |
+| Variable | Description |
 |----------|-------------|
-| `EXCHANGE_USERNAME` | Usuario de login (dominio\usuario o UPN) |
-| `EXCHANGE_PASSWORD` | Contraseña |
-| `EXCHANGE_MAIL` | Dirección SMTP primaria del buzón |
-| `EXCHANGE_EWS_URL` | URL del endpoint EWS (opcional si autodiscover está activo) |
-| `EXCHANGE_TIMEZONE` | Zona horaria IANA (default: `UTC`) |
-| `EXCHANGE_CALENDAR_MAILBOX_MAP` | Mapa alias→email (ver sección *Resolución de calendarios*) |
+| `EXCHANGE_USERNAME` | Login user (domain\user or UPN) |
+| `EXCHANGE_PASSWORD` | Password |
+| `EXCHANGE_MAIL` | Primary SMTP address of the mailbox |
+| `EXCHANGE_EWS_URL` | EWS endpoint URL (optional if autodiscover is active) |
+| `EXCHANGE_TIMEZONE` | IANA timezone (default: `UTC`) |
+| `EXCHANGE_CALENDAR_MAILBOX_MAP` | Alias→email map (see *Calendar resolution* section) |
 
-Prioridad: **config store > variables de entorno**.
+Priority: **config store > environment variables**.
 
 ### Docker
 
 ```dockerfile
-# Montar el directorio de configuración del usuario como volumen
+# Mount the user's configuration directory as a volume
 -v ~/.config/inaki:/root/.config/inaki
 
-# Pasar la clave de cifrado via env
---env INAKI_SECRET_KEY=<tu_clave>
+# Pass the encryption key via env
+--env INAKI_SECRET_KEY=<your_key>
 ```
 
-Con esta configuración el archivo `exchange_config.yaml` persiste entre reinicios del contenedor y la clave de cifrado se inyecta de forma segura sin incluirla en la imagen.
+With this configuration the `exchange_config.yaml` file persists across container restarts and the encryption key is injected securely without including it in the image.
 
 ---
 
-## Operaciones
+## Operations
 
-### `configure` — guardar credenciales
+### `configure` — save credentials
 
-Persiste las credenciales en `~/.config/inaki/exchange_config.yaml`.
-Hace merge con la configuración existente: solo sobrescribe los campos que se proveen.
+Persists credentials in `~/.config/inaki/exchange_config.yaml`.
+Merges with existing configuration: only overwrites the fields that are provided.
 
-**Parámetros requeridos:** `username`, `password`, `mail`
-**Parámetros opcionales:** `ews_url`, `timezone`
+**Required parameters:** `username`, `password`, `mail`
+**Optional parameters:** `ews_url`, `timezone`
 
 ```json
 {
@@ -114,7 +114,7 @@ Hace merge con la configuración existente: solo sobrescribe los campos que se p
 }
 ```
 
-Respuesta:
+Response:
 ```json
 {
   "success": true,
@@ -125,15 +125,15 @@ Respuesta:
 
 ---
 
-### `show_config` — ver configuración actual
+### `show_config` — view current configuration
 
-Muestra la configuración activa con el campo `password` enmascarado (`***`).
+Shows the active configuration with the `password` field masked (`***`).
 
 ```json
 { "operation": "show_config" }
 ```
 
-Respuesta (configurado):
+Response (configured):
 ```json
 {
   "success": true,
@@ -148,7 +148,7 @@ Respuesta (configurado):
 }
 ```
 
-Respuesta (sin configurar):
+Response (not configured):
 ```json
 {
   "success": true,
@@ -159,9 +159,9 @@ Respuesta (sin configurar):
 
 ---
 
-### `resolve` — resolver nombre a email
+### `resolve` — resolve name to email
 
-Resuelve un nombre o alias al email exacto de Exchange antes de operar sobre su calendario.
+Resolves a name or alias to the exact Exchange email before operating on their calendar.
 
 ```json
 {
@@ -170,7 +170,7 @@ Resuelve un nombre o alias al email exacto de Exchange antes de operar sobre su 
 }
 ```
 
-Respuesta:
+Response:
 ```json
 {
   "success": true,
@@ -182,7 +182,7 @@ Respuesta:
 
 ---
 
-### `read` — leer eventos de un período
+### `read` — read events for a period
 
 ```json
 {
@@ -193,11 +193,11 @@ Respuesta:
 }
 ```
 
-Si `calendar` se omite, usa el buzón propio. Si se omiten las fechas, el engine aplica una ventana por defecto.
+If `calendar` is omitted, the user's own mailbox is used. If dates are omitted, the engine applies a default window.
 
 ---
 
-### `search` — buscar eventos por asunto
+### `search` — search events by subject
 
 ```json
 {
@@ -211,9 +211,9 @@ Si `calendar` se omite, usa el buzón propio. Si se omiten las fechas, el engine
 
 ---
 
-### `create` — crear evento
+### `create` — create event
 
-**Parámetros requeridos:** `subject`, `start_date`, `end_date`
+**Required parameters:** `subject`, `start_date`, `end_date`
 
 ```json
 {
@@ -229,9 +229,9 @@ Si `calendar` se omite, usa el buzón propio. Si se omiten las fechas, el engine
 
 ---
 
-### `update` — actualizar evento
+### `update` — update event
 
-Requiere `item_id` y `changekey` de una operación `read` o `search` previa.
+Requires `item_id` and `changekey` from a previous `read` or `search` operation.
 
 ```json
 {
@@ -246,9 +246,9 @@ Requiere `item_id` y `changekey` de una operación `read` o `search` previa.
 
 ---
 
-### `delete` — eliminar evento
+### `delete` — delete event
 
-Requiere `item_id` y `changekey` de una operación `read` o `search` previa.
+Requires `item_id` and `changekey` from a previous `read` or `search` operation.
 
 ```json
 {
@@ -260,13 +260,13 @@ Requiere `item_id` y `changekey` de una operación `read` o `search` previa.
 
 ---
 
-## Resolución de calendarios
+## Calendar Resolution
 
-La tool soporta un mapa de alias para resolver nombres a emails sin que el LLM necesite conocer la dirección exacta.
+The tool supports an alias map to resolve names to emails without the LLM needing to know the exact address.
 
-### Vía config store (recomendado)
+### Via config store (recommended)
 
-Editar directamente `~/.config/inaki/exchange_config.yaml`:
+Edit `~/.config/inaki/exchange_config.yaml` directly:
 
 ```yaml
 calendars:
@@ -276,49 +276,49 @@ calendars:
     email: maria@empresa.com
 ```
 
-### Vía variable de entorno (fallback)
+### Via environment variable (fallback)
 
 ```
 EXCHANGE_CALENDAR_MAILBOX_MAP=juan|juancho:juan@empresa.com,maria|mary:maria@empresa.com
 ```
 
-Formato por entrada: `alias1|alias2|...:email@dominio.com`, separadas por comas.
+Format per entry: `alias1|alias2|...:email@domain.com`, separated by commas.
 
-### Algoritmo de resolución (prioridad)
+### Resolution algorithm (priority)
 
-1. Coincidencia exacta (alias o email)
-2. Un único resultado con prefijo coincidente
-3. Un único resultado que contiene la cadena buscada
-4. Error con candidatos y lista conocida
-
----
-
-## Modelo de seguridad
-
-| Elemento | Dónde vive | Cifrado |
-|----------|-----------|---------|
-| `INAKI_SECRET_KEY` | `.env` | No (es la clave maestra) |
-| `password` de Exchange | `~/.config/inaki/exchange_config.yaml` | Sí (Fernet AES-128-CBC) |
-| Resto de credenciales | `~/.config/inaki/exchange_config.yaml` | No (texto plano legible) |
-
-El prefijo `enc:` en el valor del campo `password` indica que está cifrado.
-Si editás el archivo manualmente y borrás ese prefijo, el sistema asumirá que el valor es texto plano y lo re-cifrará al próximo guardado.
+1. Exact match (alias or email)
+2. Single result with matching prefix
+3. Single result containing the search string
+4. Error with candidates and known list
 
 ---
 
-## Flujo de arranque del engine
+## Security Model
+
+| Element | Where it lives | Encrypted |
+|---------|---------------|-----------|
+| `INAKI_SECRET_KEY` | `.env` | No (it's the master key) |
+| Exchange `password` | `~/.config/inaki/exchange_config.yaml` | Yes (Fernet AES-128-CBC) |
+| Other credentials | `~/.config/inaki/exchange_config.yaml` | No (readable plain text) |
+
+The `enc:` prefix in the `password` field value indicates it is encrypted.
+If you manually edit the file and remove that prefix, the system will assume the value is plain text and will re-encrypt it on the next save.
+
+---
+
+## Engine Startup Flow
 
 ```
 ExchangeCalendarEngine.__init__()
   ├── CryptoService()
-  │     └── Lee INAKI_SECRET_KEY de .env
-  │           └── Si no existe → genera, escribe en .env, loggea WARNING
+  │     └── Reads INAKI_SECRET_KEY from .env
+  │           └── If missing → generates, writes to .env, logs WARNING
   ├── ExchangeConfigStore(crypto)
   │     └── path: ~/.config/inaki/exchange_config.yaml
   └── _build_config()
-        ├── config_store.load()  → descifra password
-        └── fallback a env vars para campos ausentes
+        ├── config_store.load()  → decrypts password
+        └── fallback to env vars for missing fields
 ```
 
-Los objetos `Account` de exchangelib se cachean por email en la instancia del engine.
-Al llamar `operation=configure`, el cache se invalida automáticamente para forzar reconexión con las nuevas credenciales.
+The exchangelib `Account` objects are cached by email in the engine instance.
+When `operation=configure` is called, the cache is automatically invalidated to force reconnection with the new credentials.

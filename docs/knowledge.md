@@ -1,27 +1,27 @@
-# Knowledge — Cómo darle conocimiento a Inaki
+# Knowledge — How to Give Inaki Knowledge
 
-Este documento explica cómo añadir fuentes de conocimiento externas al agente. Para la referencia completa de parámetros YAML ver `docs/configuracion.md`.
-
----
-
-## Conceptos clave
-
-Inaki tiene dos formas de "recordar" cosas:
-
-| Mecanismo | Qué es | Cuándo se usa |
-|-----------|--------|---------------|
-| **Memoria** | Hechos del usuario aprendidos durante conversaciones | Automático, siempre activo |
-| **Knowledge** | Documentos o bases de datos que el usuario provee | Requiere configuración explícita |
-
-Las fuentes de knowledge se consultan en cada turno (pre-fetch automático) y también están disponibles vía la tool `knowledge_search` para búsquedas explícitas.
+This document explains how to add external knowledge sources to the agent. For the full YAML parameter reference see `docs/configuracion.md`.
 
 ---
 
-## Caso 1 — Tengo una carpeta con documentos
+## Key Concepts
 
-El caso más común: tenés archivos `.md`, `.txt` o `.pdf` y querés que Inaki los entienda.
+Inaki has two ways of "remembering" things:
 
-**Paso 1 — Configurar la fuente en `~/.inaki/config/global.yaml`:**
+| Mechanism | What It Is | When It's Used |
+|-----------|------------|----------------|
+| **Memory** | User facts learned during conversations | Automatic, always active |
+| **Knowledge** | Documents or databases provided by the user | Requires explicit configuration |
+
+Knowledge sources are queried on each turn (automatic pre-fetch) and are also available via the `knowledge_search` tool for explicit searches.
+
+---
+
+## Case 1 — I Have a Folder with Documents
+
+The most common case: you have `.md`, `.txt`, or `.pdf` files and you want Inaki to understand them.
+
+**Step 1 — Configure the source in `~/.inaki/config/global.yaml`:**
 
 ```yaml
 knowledge:
@@ -32,51 +32,51 @@ knowledge:
       glob: "**/*.md"
 ```
 
-**Paso 2 — Indexar:**
+**Step 2 — Index:**
 
 ```bash
 inaki knowledge index mis-docs
 ```
 
-Salida esperada:
+Expected output:
 ```
 Indexing source 'mis-docs'...
   Indexed 12 files, 48 chunks
 Done.
 ```
 
-**Paso 3 — Verificar:**
+**Step 3 — Verify:**
 
 ```bash
-inaki knowledge list          # muestra todas las fuentes y su estado
-inaki knowledge stats mis-docs  # archivos, chunks, última indexación, dimensión
+inaki knowledge list          # shows all sources and their status
+inaki knowledge stats mis-docs  # files, chunks, last indexing, dimension
 ```
 
-A partir de aquí, en cada conversación Inaki recupera los fragmentos más relevantes para la pregunta actual y los inyecta en el contexto antes de responder.
+From here on, in every conversation Inaki retrieves the most relevant fragments for the current question and injects them into the context before responding.
 
-### Formatos soportados
+### Supported Formats
 
-| Formato | Estrategia de chunking |
-|---------|------------------------|
-| `.md`   | Split por headers (`#`/`##`/`###`), ventana deslizante dentro de cada sección |
-| `.txt`  | Ventana deslizante pura |
-| `.pdf`  | Extracción página a página, ventana deslizante sobre el texto total |
-| otros   | Ventana deslizante pura |
+| Format | Chunking Strategy |
+|--------|-------------------|
+| `.md`  | Split by headers (`#`/`##`/`###`), sliding window within each section |
+| `.txt` | Pure sliding window |
+| `.pdf` | Page-by-page extraction, sliding window over the total text |
+| other  | Pure sliding window |
 
-### Actualizar el índice
+### Updating the Index
 
-La indexación es **incremental**: solo re-procesa archivos cuya `mtime` cambió desde la última vez. Para añadir o actualizar un documento, alcanza con:
+Indexing is **incremental**: it only re-processes files whose `mtime` changed since the last run. To add or update a document, simply:
 
-1. Copiar o modificar el archivo en la carpeta configurada
-2. Volver a correr `inaki knowledge index <id>`
+1. Copy or modify the file in the configured folder
+2. Run `inaki knowledge index <id>` again
 
-El índice se guarda en `~/.inaki/knowledge/<id>.db` — no en el proyecto.
+The index is stored in `~/.inaki/knowledge/<id>.db` — not in the project.
 
 ---
 
-## Caso 2 — Tengo una base de datos SQLite propia
+## Case 2 — I Have My Own SQLite Database
 
-Si ya tenés embeddings calculados en SQLite (por ejemplo, generados con otro pipeline), podés conectarla directamente sin que Inaki la re-indexe.
+If you already have embeddings computed in SQLite (for example, generated with another pipeline), you can connect it directly without Inaki re-indexing it.
 
 ```yaml
 knowledge:
@@ -86,15 +86,15 @@ knowledge:
       path: ~/data/knowledge.db
 ```
 
-Inaki **no escribe** esta DB — solo la consulta. La DB debe tener el schema que Inaki espera (tabla `chunks` + tabla virtual `chunk_embeddings` con vectores de 384 dimensiones). Ver `docs/configuracion.md` para el schema exacto y un ejemplo de inserción.
+Inaki **does not write** to this DB — it only queries it. The DB must have the schema Inaki expects (`chunks` table + `chunk_embeddings` virtual table with 384-dimension vectors). See `docs/configuracion.md` for the exact schema and an insertion example.
 
-**Requisito crítico**: los embeddings deben ser de 384 dimensiones (e5-small ONNX o texto equivalente). Si la DB usa otra dimensión, la fuente falla al arrancar con un error claro en los logs.
+**Critical requirement**: embeddings must be 384 dimensions (e5-small ONNX or equivalent). If the DB uses a different dimension, the source fails on startup with a clear error in the logs.
 
 ---
 
-## Caso 3 — Fuente personalizada vía extensión
+## Case 3 — Custom Source via Extension
 
-Si ninguno de los dos tipos anteriores sirve (por ejemplo, querés consultar una API externa, una DB PostgreSQL, o un índice Elasticsearch), podés implementar tu propia fuente en `ext/`:
+If neither of the two previous types works (for example, you want to query an external API, a PostgreSQL DB, or an Elasticsearch index), you can implement your own source in `ext/`:
 
 ```python
 # ext/mi_extension/manifest.py
@@ -106,48 +106,48 @@ def _build_mi_fuente(agent_config, global_config, embedder):
 KNOWLEDGE_SOURCES = [_build_mi_fuente]
 ```
 
-La factory recibe `(agent_config, global_config, embedder)` y debe retornar un objeto que implemente `IKnowledgeSource` (`core/ports/outbound/knowledge_port.py`). Si la factory lanza una excepción, se loguea como WARNING y el resto de fuentes sigue funcionando.
+The factory receives `(agent_config, global_config, embedder)` and must return an object that implements `IKnowledgeSource` (`core/ports/outbound/knowledge_port.py`). If the factory raises an exception, it is logged as WARNING and the remaining sources continue working.
 
-El orden de registro garantizado es: **(1) memoria** → **(2) fuentes en config** → **(3) fuentes de extensiones**.
-
----
-
-## ¿Puedo enviarle un documento directamente en el chat?
-
-No existe ese mecanismo hoy. No podés pegar un `.md` en el chat y que quede indexado. El flujo siempre es:
-
-```
-Copiar archivo a la carpeta → inaki knowledge index <id> → consulta activa
-```
-
-Una tool `knowledge_add_document` que automatice esto sería una extensión natural del pipeline actual pero no está implementada.
+The guaranteed registration order is: **(1) memory** → **(2) config sources** → **(3) extension sources**.
 
 ---
 
-## Control del pre-fetch
+## Can I Send a Document Directly in Chat?
 
-Por defecto Inaki hace un pre-fetch automático en cada turno. Podés ajustarlo:
+That mechanism does not exist today. You cannot paste a `.md` in the chat and have it indexed. The flow is always:
+
+```
+Copy file to the folder → inaki knowledge index <id> → active querying
+```
+
+A `knowledge_add_document` tool that automates this would be a natural extension of the current pipeline but is not implemented.
+
+---
+
+## Pre-fetch Control
+
+By default Inaki performs an automatic pre-fetch on each turn. You can adjust it:
 
 ```yaml
 knowledge:
-  enabled: false          # Deshabilita el pre-fetch automático.
-                          # Las fuentes siguen disponibles vía knowledge_search.
-  top_k_per_source: 3     # Fragmentos máximos por fuente.
-  min_score: 0.5          # Score mínimo de similitud (0.0 – 1.0).
-  max_total_chunks: 10    # Cap total de fragmentos tras el fan-out.
+  enabled: false          # Disables automatic pre-fetch.
+                          # Sources remain available via knowledge_search.
+  top_k_per_source: 3     # Maximum fragments per source.
+  min_score: 0.5          # Minimum similarity score (0.0 – 1.0).
+  max_total_chunks: 10    # Total fragment cap after fan-out.
 ```
 
-Si `enabled: false`, el pre-fetch se saltea pero el usuario puede seguir invocando `knowledge_search` explícitamente para buscar en las fuentes.
+If `enabled: false`, pre-fetch is skipped but the user can still invoke `knowledge_search` explicitly to search the sources.
 
 ---
 
-## Archivos de referencia
+## Reference Files
 
-| Rol | Archivo |
-|-----|---------|
-| Referencia YAML completa | `docs/configuracion.md` — sección `knowledge:` |
-| Puerto `IKnowledgeSource` | `core/ports/outbound/knowledge_port.py` |
-| Adaptador para documentos | `adapters/outbound/knowledge/document_knowledge_source.py` |
-| Adaptador para SQLite | `adapters/outbound/knowledge/sqlite_knowledge_source.py` |
-| Tool de búsqueda explícita | `adapters/outbound/tools/knowledge_search_tool.py` |
-| CLI de gestión | `adapters/inbound/cli/knowledge_cli.py` |
+| Role | File |
+|------|------|
+| Full YAML reference | `docs/configuracion.md` — `knowledge:` section |
+| `IKnowledgeSource` port | `core/ports/outbound/knowledge_port.py` |
+| Document adapter | `adapters/outbound/knowledge/document_knowledge_source.py` |
+| SQLite adapter | `adapters/outbound/knowledge/sqlite_knowledge_source.py` |
+| Explicit search tool | `adapters/outbound/tools/knowledge_search_tool.py` |
+| Management CLI | `adapters/inbound/cli/knowledge_cli.py` |

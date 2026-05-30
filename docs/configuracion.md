@@ -270,7 +270,7 @@ workspace:
                                  # strict → bloquea paths fuera del workspace (recomendado)
                                  # warn   → permite pero loguea WARNING
                                  # off    → sin restricciones
-                                 # Afecta a read_file, write_file, patch_file.
+                                 # Afecta a read_file, write_file, patch_file, edit_file.
                                  # shell_exec NO está sujeto a esta config.
                                  # Overrideable por agente en agents/{id}.yaml.
 
@@ -537,7 +537,7 @@ memory:
                        # El comando `inaki consolidate --agent {id}` ignora
                        # este flag y consolida el agente indicado de todas formas.
 
-# Workspace — contención de paths para file tools (read_file, write_file, patch_file)
+# Workspace — contención de paths para file tools (read_file, write_file, patch_file, edit_file)
 # shell_exec NO está afectado por esta config.
 workspace:
   path: "/Users/alberto/tmp/mi_workspace"  # Directorio raíz permitido (default: cwd del proceso)
@@ -589,6 +589,7 @@ workspace:
 | `read_file` | ✅ sí |
 | `write_file` | ✅ sí |
 | `patch_file` | ✅ sí |
+| `edit_file` | ✅ sí |
 | `shell_exec` | ❌ no — ejecuta comandos sin restricción de paths |
 | `delegate`, `scheduler`, resto de builtins | ❌ no aplica |
 

@@ -2,67 +2,83 @@
 
 ## Arranque del sistema
 
-### Modo CLI (`python main.py [chat] [--agent id]`)
+### Modo CLI (`inaki [chat] [--agent id]`)
 
 ```
-main.py
+inaki (cli.py → app)
 │
-├── _bootstrap(config_dir)
+├── _bootstrap(config_dir, agents_dir)
 │   ├── load_global_config(config_dir)
-│   │   ├── _load_yaml_safe("config/global.yaml")
-│   │   ├── _load_yaml_safe("config/global.secrets.yaml")
+│   │   ├── _load_yaml_safe("~/.inaki/config/global.yaml")
+│   │   ├── _load_yaml_safe("~/.inaki/config/global.secrets.yaml")
 │   │   ├── _deep_merge(global, secrets) → merged_dict
 │   │   └── return GlobalConfig, global_raw
 │   │
 │   ├── setup_logging(log_level)
 │   │
-│   └── AgentRegistry(config_dir, global_raw)
-│       ├── glob("config/agents/*.yaml") — excluye .secrets y .example
+│   └── AgentRegistry(agents_dir, global_raw)
+│       ├── glob("~/.inaki/config/agents/*.yaml") — excluye .secrets y .example
 │       ├── Para cada agente:
-│       │   ├── load_agent_config(id, config_dir, global_raw)
-│       │   │   ├── _load_yaml_safe("config/agents/{id}.yaml")
-│       │   │   ├── _load_yaml_safe("config/agents/{id}.secrets.yaml")  [WARNING si no existe]
+│       │   ├── load_agent_config(id, agents_dir, global_raw)
+│       │   │   ├── _load_yaml_safe("~/.inaki/config/agents/{id}.yaml")
+│       │   │   ├── _load_yaml_safe("~/.inaki/config/agents/{id}.secrets.yaml")  [WARNING si no existe]
 │       │   │   ├── _deep_merge(global_raw, agent_raw)
-│       │   │   └── return AgentConfig(id, name, llm, embedding, memory, history, channels)
+│       │   │   └── return AgentConfig resuelto (4 capas mergeadas)
 │       │   └── registry[id] = AgentConfig
 │       └── log "N agente(s) cargado(s)"
 │
 ├── AppContainer(global_config, registry)
-│   ├── Para cada AgentConfig en registry:
-│   │   └── AgentContainer(agent_cfg, global_config)
+│   ├── InMemoryScopeRegistryAdapter() — instancia ÚNICA compartida por todos los agentes
+│   │
+│   ├── Primera pasada — Para cada AgentConfig en registry:
+│   │   └── AgentContainer(agent_cfg, global_config, scope_registry)
 │   │       ├── EmbeddingProviderFactory.create(cfg) → IEmbeddingProvider
+│   │       ├── SqliteEmbeddingCache(cache_filename)
 │   │       ├── SQLiteMemoryRepository(db_filename, embedder)
 │   │       ├── LLMProviderFactory.create(cfg) → ILLMProvider
-│   │       ├── YamlSkillRepository(embedder)
+│   │       ├── (si memory.llm difiere:) LLMProviderFactory separado para consolidación
+│   │       ├── YamlSkillRepository(embedder, cache)
 │   │       ├── SQLiteHistoryStore(history_cfg)
-│   │       ├── ToolRegistry() + register(web_search, read_file, write_file, patch_file)
-│   │       ├── _register_extensions(global_config.app.ext_dirs)
-│   │       ├── RunAgentUseCase(llm, memory, embedder, skills, history, tools, cfg)
+│   │       ├── ToolRegistry() + register(builtin tools)
+│   │       ├── _register_extensions(ext_dirs) → tools, skills, knowledge_sources
+│   │       ├── KnowledgeOrchestrator(sources) si knowledge habilitado
+│   │       ├── (si photos habilitado:) vision + face_registry + scene_describer
+│   │       ├── (si transcription configurado:) TranscriptionProviderFactory.create(cfg)
+│   │       ├── RunAgentUseCase(llm, memory, embedder, skills, history, tools, cfg, ...)
+│   │       ├── RunAgentOneShotUseCase(llm, tools, cfg)
 │   │       └── ConsolidateMemoryUseCase(llm, memory, embedder, history, agent_id, memory_cfg)
+│   │
+│   ├── Segunda pasada — wire_delegation:
+│   │   └── Registra tool `delegate` en cada container con refs a los demás
+│   │       (los containers deben existir antes de las referencias cruzadas)
 │   │
 │   ├── Build enabled_agents = {id: container.consolidate_memory
 │   │                           for each container where agent_config.memory.enabled}
 │   ├── ConsolidateAllAgentsUseCase(enabled_agents, delay_seconds)
 │   │
+│   ├── LLMDispatcherAdapter(agents) — instancia ÚNICA compartida (lock-per-scope)
+│   ├── BackgroundDelegationQueueAdapter(dispatcher, semaphore=3)
+│   │
 │   └── Scheduler wiring:
 │       ├── SQLiteSchedulerRepo(scheduler_cfg.db_filename)
 │       ├── ScheduleTaskUseCase(repo, on_mutation)
 │       ├── SchedulerDispatchPorts(
-│       │       channel_sender=ChannelSenderAdapter(self),
-│       │       llm_dispatcher=LLMDispatcherAdapter(agents),
-│       │       consolidator=ConsolidationDispatchAdapter(consolidate_all_agents))
+│       │       channel_router=ChannelRouter(native_sinks, fallback_cfg),
+│       │       llm_dispatcher=LLMDispatcherAdapter (misma instancia),
+│       │       consolidator=ConsolidationDispatchAdapter(consolidate_all_agents),
+│       │       http_caller=HttpCallerAdapter())
 │       └── SchedulerService(repo, dispatch_ports, scheduler_cfg)
 │
 └── cli_runner.run(global_config, registry, agent_id)
     └── asyncio.run(run_cli(app, agent_id))
 ```
 
-### Modo Daemon (`python main.py daemon`)
+### Modo Daemon (`inaki daemon`)
 
 ```
-main.py daemon
+inaki daemon
 │
-├── _bootstrap(config_dir)      [igual que CLI]
+├── _bootstrap(config_dir, agents_dir)      [igual que CLI]
 │
 ├── AppContainer(global_config, registry)   [igual que CLI]
 │
@@ -93,12 +109,12 @@ main.py daemon
     └── On shutdown: app_container.shutdown() → cancel tasks → gather → log
 ```
 
-### Modo Consolidación one-shot (`python main.py consolidate [--agent id]`)
+### Modo Consolidación one-shot (`inaki consolidate [--agent id]`)
 
 ```
-main.py consolidate
+inaki consolidate
 │
-├── _bootstrap(config_dir)
+├── _bootstrap(config_dir, agents_dir)
 ├── AppContainer(global_config, registry)   ← NO arranca scheduler ni canales
 │
 └── _run_consolidate(global_config, registry, agent)
@@ -144,28 +160,51 @@ Mismo mecanismo para `EmbeddingProviderFactory` apuntando a `adapters/outbound/e
 ## Ciclo de vida de un AgentContainer
 
 ```
-AgentContainer.__init__
+AgentContainer.__init__(agent_config, global_config, scope_registry)
 │
-├── EmbeddingProviderFactory.create(cfg)
+├── EmbeddingProviderFactory.create(cfg) → IEmbeddingProvider
 │   └── E5OnnxProvider(embedding_cfg)
 │       └── _ensure_loaded() — carga model.onnx y tokenizer.json en primer uso (lazy)
+│
+├── SqliteEmbeddingCache(cache_filename) → IEmbeddingCache
 │
 ├── SQLiteMemoryRepository(db_filename, embedder)
 │   └── _ensure_schema() — CREATE TABLE IF NOT EXISTS en primer uso (lazy)
 │
-├── LLMProviderFactory.create(cfg)
-│   └── OpenRouterProvider(llm_cfg) — valida que api_key no sea None
+├── LLMProviderFactory.create(cfg) → ILLMProvider
+│   └── Provider según cfg.llm.provider (openrouter, groq, ollama, openai, deepseek)
 │
-├── YamlSkillRepository(embedder)
+├── (si memory.llm difiere de llm:) LLMProviderFactory separado para consolidación
+│
+├── YamlSkillRepository(embedder, cache)
 │   └── _ensure_loaded() — carga y embeds los YAML registrados vía add_file() en primer uso (lazy)
 │
 ├── SQLiteHistoryStore(history_cfg)
-│   └── mkdir(parent de db_filename) si no existe — schema creado lazy en primer uso
+│   └── _ensure_schema() — migración automática de columnas si schema legacy
 │
-└── ToolRegistry()
-    ├── register(ShellTool())
-    └── register(WebSearchTool())
+├── ToolRegistry() + register(builtin tools: web_search, read_file, write_file,
+│                              patch_file, edit_file, scheduler, memory_tools,
+│                              knowledge_search, face_tools)
+│
+├── _register_extensions(ext_dirs) → tools, skills, knowledge_sources adicionales
+│
+├── KnowledgeOrchestrator(sources) si knowledge habilitado
+│
+├── (si photos habilitado:)
+│   ├── InsightFaceAdapter (lazy-load en primera foto, ~400MB RAM)
+│   ├── SqliteFaceRegistry(faces.db)
+│   └── SceneDescriber (anthropic/openai/groq)
+│
+├── (si transcription configurado:)
+│   └── TranscriptionProviderFactory.create(cfg) → ITranscriptionProvider
+│
+├── RunAgentUseCase(llm, memory, embedder, skills, history, tools, cfg, knowledge, ...)
+├── RunAgentOneShotUseCase(llm, tools, cfg) — para el scheduler (sin historial)
+└── ConsolidateMemoryUseCase(llm/memory_llm, memory, embedder, history, agent_id, memory_cfg)
 ```
+
+**Nota:** la tool `delegate` NO se registra en `__init__` — se conecta en la segunda pasada
+de `AppContainer` vía `wire_delegation()`, porque necesita que TODOS los containers ya existan.
 
 ---
 
@@ -232,13 +271,15 @@ Wipe total para el agente.
 
 | Comando | Acción |
 |---------|--------|
-| `python main.py` | Chat CLI con agente por defecto |
-| `python main.py chat --agent dev` | Chat CLI con agente 'dev' |
-| `python main.py chat --agent list` | Lista todos los agentes |
-| `python main.py daemon` | Modo servicio (todos los canales + scheduler) |
-| `python main.py consolidate` | Consolida todos los agentes habilitados con delay y sale |
-| `python main.py consolidate --agent dev` | Consolida solo el agente indicado y sale |
-| `python main.py inspect "msg"` | Inspecciona el pipeline de prompt (routing + memoria) sin llamar al LLM |
+| `inaki` | Chat CLI con agente por defecto |
+| `inaki chat --agent dev` | Chat CLI con agente 'dev' |
+| `inaki chat --agent list` | Lista todos los agentes |
+| `inaki daemon` | Modo servicio (todos los canales + scheduler) |
+| `inaki consolidate` | Consolida todos los agentes habilitados con delay y sale |
+| `inaki consolidate --agent dev` | Consolida solo el agente indicado y sale |
+| `inaki inspect "msg"` | Inspecciona el pipeline de prompt (routing + memoria) sin llamar al LLM |
+| `inaki setup` | TUI interactiva de configuración (offline) |
+| `inaki reload` | Hot-reload del daemon |
 | `/consolidate` (en chat) | Extrae recuerdos y archiva historial del agente actual |
 | `/history` (en chat) | Muestra el historial actual |
 | `/clear` (en chat) | Limpia historial sin archivar |

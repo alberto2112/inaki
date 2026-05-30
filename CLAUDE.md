@@ -301,8 +301,7 @@ en vez de toda la historia del scope.
 
 ## References
 
-- **Tech Spec**: `docs/inaki_spec_v2.md`
-- **Architecture**: `docs/estructura.md`
+- **Tech Spec**: `docs/inaki_spec.md`
 - **Execution Flow**: `docs/flujo_ejecucion.md`
 - **Config Reference**: `docs/configuracion.md`
 - **Scheduler Spec**: `docs/scheduler-spec.md`

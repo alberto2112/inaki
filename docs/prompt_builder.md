@@ -18,11 +18,10 @@ El historial de conversación se envía como lista de mensajes separada del syst
 ```
 RunAgentUseCase.execute(user_input)
 │
-├── 1. _history.load(agent_id)
-│       → list[Message]  ← historial completo de data/history/active/{agent_id}.txt
-│   └── trim: history[-(max_messages * 2):]
-│       → solo los últimos N mensajes por participante (si max_messages > 0)
-│       → el fichero en disco NO se modifica
+├── 1. _history.load(agent_id, channel, chat_id, limit=max_messages)
+│       → list[Message]  ← historial scoped desde SQLite (history.db)
+│       → solo los últimos N mensajes (si max_messages > 0)
+│       → scoped por (agent_id, channel, chat_id)
 │
 ├── 2. _embedder.embed_query(user_input)
 │       → query_vec: list[float]
@@ -57,19 +56,20 @@ RunAgentUseCase.execute(user_input)
 
 ## Truncado del historial para el prompt
 
-`chat_history.max_messages` controla cuántos mensajes de cada participante se inyectan en el prompt. El fichero en disco nunca se toca.
+`chat_history.max_messages` controla cuántos mensajes se inyectan en el prompt. El truncado se aplica directamente en la query SQL (`LIMIT`).
 
 ```
-max_messages = 21  →  history[-(21 * 2):]  →  últimos 42 mensajes
-                                                (21 del usuario + 21 del asistente)
+max_messages = 21  →  SELECT ... ORDER BY id DESC LIMIT 21
+                      → últimos 21 mensajes del scope (agent_id, channel, chat_id)
 
-max_messages = 0   →  sin truncado, historial completo
+max_messages = 0   →  sin truncado, historial completo del scope
 ```
 
 Configurable en `global.yaml`:
 
 ```yaml
 chat_history:
+  db_filename: "data/history.db"
   max_messages: 21  # 0 = sin límite
 ```
 
@@ -142,7 +142,7 @@ La llamada final a `llm.complete()` recibe tres piezas:
 
 | Parámetro | Contenido | Origen |
 |-----------|-----------|--------|
-| `messages` | Historial truncado + mensaje actual del usuario | `FileHistoryStore` → trim → `+ user_msg` |
+| `messages` | Historial truncado + mensaje actual del usuario | `SQLiteHistoryStore` → `load(limit=max_messages)` → `+ user_msg` |
 | `system_prompt` | Base + memorias + skills | `AgentContext.build_system_prompt()` |
 | `tools` | Schemas JSON de tools seleccionadas | `ToolRegistry.get_schemas[_relevant]()` |
 
@@ -206,17 +206,17 @@ Los embeddings de skills y tools se calculan **una sola vez** al primer uso y se
 
 ## Historial: qué se guarda y qué no
 
-Solo los mensajes `user` y `assistant` se persisten en `data/history/active/{agent_id}.txt`.
+Solo los mensajes `user` y `assistant` se persisten en `history.db` (tabla `history`, scoped por `agent_id, channel, chat_id`).
 
-Los mensajes de tool calls y tool results son **efímeros** — existen solo en `working_messages` durante el loop de ejecución y nunca se escriben a disco. Esto mantiene el historial limpio y legible.
+Los mensajes de tool calls y tool results son **efímeros** — existen solo en `working_messages` durante el loop de ejecución y nunca se persisten en el historial.
 
 ```
-Persiste en disco:          Solo en memoria durante el turno:
-─────────────────           ──────────────────────────────────
-user: ...                   tool_call: { name: "shell", args: ... }
-assistant: ...              tool_result: "[shell]: output..."
-user: ...
-assistant: ...
+Persiste en history.db:     Solo en memoria durante el turno:
+───────────────────────     ──────────────────────────────────
+role=user: ...              tool_call: { name: "shell", args: ... }
+role=assistant: ...         tool_result: "[shell]: output..."
+role=user: ...
+role=assistant: ...
 ```
 
 ---
@@ -225,8 +225,8 @@ assistant: ...
 
 ```bash
 # One-shot desde terminal
-python main.py inspect "busca el precio del dolar"
-python main.py inspect "ejecuta los tests" --agent dev
+inaki inspect "busca el precio del dolar"
+inaki inspect "ejecuta los tests" --agent dev
 
 # Interactivo dentro del chat CLI
 /inspect busca el precio del dolar

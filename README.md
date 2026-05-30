@@ -273,9 +273,8 @@ Shared fixtures in [`tests/conftest.py`](tests/conftest.py): `agent_config`, `mo
 
 | Doc | What it covers |
 |-----|---------------|
-| [`docs/inaki_spec_v2.md`](docs/inaki_spec_v2.md) | Full technical spec |
-| [`docs/estructura.md`](docs/estructura.md) | Directory structure and architecture |
-| [`docs/flujo_ejecucion.md`](docs/flujo_ejecucion.md) | Request execution flow |
+| [`docs/inaki_spec.md`](docs/inaki_spec.md) | Full technical spec |
+| [`docs/flujo_ejecucion.md`](docs/flujo_ejecucion.md) | Execution flow and bootstrap |
 | [`docs/configuracion.md`](docs/configuracion.md) | Config reference |
 | [`docs/scheduler-spec.md`](docs/scheduler-spec.md) | Scheduler design |
 | [`docs/face-recognition.md`](docs/face-recognition.md) | Face recognition pipeline |

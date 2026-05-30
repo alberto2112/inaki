@@ -160,7 +160,7 @@ El CLI siempre funciona.
 | `config/agents/{id}.yaml` | ✅ sí | Config del agente: id, name, description, system_prompt, overrides, channels |
 | `config/agents/{id}.secrets.yaml` | ❌ no | Secrets del agente: tokens, auth_key |
 | `config/agents/{id}.secrets.yaml.example` | ✅ sí | Referencia de secrets del agente |
-| `config.yaml` (raíz) | ✅ sí | Referencia completa con todos los parámetros documentados |
+| `config/global.example.yaml` | ✅ sí | Referencia canónica con todos los parámetros documentados |
 
 `.gitignore` incluye: `config/*.secrets.yaml` y `config/agents/*.secrets.yaml`
 

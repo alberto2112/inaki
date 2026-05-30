@@ -57,13 +57,20 @@ def _make_container(tmp_path: Path) -> AgentContainer:
 
 
 def test_builtin_tools_present(tmp_path: Path) -> None:
-    """knowledge_search, web_search, read_file, write_file, patch_file presentes con ext_dirs=[]."""
+    """knowledge_search, web_search, read_file, write_file, patch_file, edit_file presentes con ext_dirs=[]."""
     container = _make_container(tmp_path)
     container._register_tools()
     container._register_extensions([])
 
     registered = set(container._tools._tools.keys())
-    for expected in ("knowledge_search", "web_search", "read_file", "write_file", "patch_file"):
+    for expected in (
+        "knowledge_search",
+        "web_search",
+        "read_file",
+        "write_file",
+        "patch_file",
+        "edit_file",
+    ):
         assert expected in registered, f"Built-in '{expected}' no registrada"
 
 

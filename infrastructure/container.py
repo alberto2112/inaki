@@ -406,6 +406,7 @@ class AgentContainer:
         """Registra tools built-in del núcleo. Las extensiones se cargan aparte."""
         from pathlib import Path
 
+        from adapters.outbound.tools.edit_file_tool import EditFileTool
         from adapters.outbound.tools.knowledge_search_tool import KnowledgeSearchTool
         from adapters.outbound.tools.memory_tools import (
             DeleteMemoryTool,
@@ -467,6 +468,9 @@ class AgentContainer:
         )
         self._tools.register(
             PatchFileTool(workspace=workspace_path, containment=ws_cfg.containment)
+        )
+        self._tools.register(
+            EditFileTool(workspace=workspace_path, containment=ws_cfg.containment)
         )
 
     @staticmethod

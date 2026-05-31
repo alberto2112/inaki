@@ -81,6 +81,7 @@ async def run_tool_loop(
     thinking_indicator: bool = False,
     history_store: IHistoryStore | None = None,
     scope: Scope | None = None,
+    initial_db_user_count: int | None = None,
 ) -> str:
     """
     Ejecuta el loop LLM + tool-dispatch hasta obtener respuesta final o
@@ -102,6 +103,14 @@ async def run_tool_loop(
             comportamiento legacy (loop ciego al historial externo).
         scope: Tupla ``(agent_id, channel, chat_id)`` del turno. Requerido junto
             con ``history_store`` para activar la drainage. Default ``None``.
+        initial_db_user_count: Cantidad de mensajes ``role=user`` que YA están
+            en history.db al inicio del turno. Si se provee, se usa como baseline
+            del drain en vez de contar desde ``messages``. Esto es necesario
+            cuando ``messages`` viene coalesced (``_coalesce_consecutive_same_role``)
+            y su conteo NO refleja la realidad de la DB — sin este parámetro, el
+            drain re-introduce mensajes que ya están dentro del bloque coalesced,
+            produciendo duplicación visible al LLM. Default ``None`` →
+            fallback al conteo desde ``messages`` (correcto cuando no hay coalesce).
 
     Returns:
         El texto de respuesta final del LLM (sin tool calls).
@@ -121,7 +130,15 @@ async def run_tool_loop(
     # mientras este loop está corriendo (in-flight-message-injection). Si el
     # caller no pasó history_store/scope, estas variables existen pero el
     # helper _drain_new_user_messages no las usa (devuelve [] inmediato).
-    initial_user_count = sum(1 for m in messages if m.role == Role.USER)
+    #
+    # `initial_db_user_count` permite al caller pasar el conteo real de la DB
+    # cuando `messages` está coalesced (modo history-derived). Fallback al
+    # conteo desde messages para callers legacy (run_agent_one_shot).
+    initial_user_count = (
+        initial_db_user_count
+        if initial_db_user_count is not None
+        else sum(1 for m in messages if m.role == Role.USER)
+    )
     already_drained = 0
 
     # Indicador "Thinking..." una sola vez por turno cuando el provider activa

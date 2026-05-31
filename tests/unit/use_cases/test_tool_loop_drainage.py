@@ -328,6 +328,96 @@ async def test_drained_messages_are_not_re_drained():
     assert user_contents.count("ya estaba") == 1
 
 
+async def test_initial_db_user_count_respeta_coalesce():
+    """Cuando ``messages`` viene coalesced, ``initial_db_user_count`` evita el drain
+    falso de mensajes que ya están dentro del bloque coalesced.
+
+    Escenario history-derived (modo flush de grupo):
+    - DB tiene 3 user-msgs consecutivos [u1, u2, u3].
+    - `_coalesce_consecutive_same_role` los une en `[user("u1\\nu2\\nu3")]`.
+    - SIN initial_db_user_count: el loop cuenta 1 user_msg en messages,
+      pero la DB tiene 3 → drain reinyecta [u2, u3] como duplicados visibles
+      al LLM ("historial clonado").
+    - CON initial_db_user_count=3: drain compara 3 vs 3 → no drena nada.
+    """
+    u1 = Message(role=Role.USER, content="u1")
+    u2 = Message(role=Role.USER, content="u2")
+    u3 = Message(role=Role.USER, content="u3")
+    history = _FakeHistoryStore(initial=[u1, u2, u3])
+    coalesced = Message(role=Role.USER, content="u1\nu2\nu3")
+
+    seen_user_msgs: list[str] = []
+
+    async def llm_complete(messages, system_prompt, tools=None):  # noqa: ARG001
+        seen_user_msgs.extend(m.content for m in messages if m.role == Role.USER)
+        return LLMResponse.of_text("ok")
+
+    llm = AsyncMock()
+    llm.complete = AsyncMock(side_effect=llm_complete)
+    llm.thinking_active = False
+
+    await run_tool_loop(
+        llm=llm,
+        tools=_make_tools(),
+        messages=[coalesced],  # lo que ve el LLM tras coalesce
+        system_prompt="x",
+        tool_schemas=[],
+        max_iterations=5,
+        circuit_breaker_threshold=3,
+        agent_id="agent1",
+        history_store=history,
+        scope=_SCOPE,
+        initial_db_user_count=3,  # el caller (execute()) cuenta sobre history crudo
+    )
+
+    # El LLM solo debería ver el bloque coalesced — sin re-inyecciones de u2/u3.
+    assert seen_user_msgs == ["u1\nu2\nu3"]
+
+
+async def test_initial_db_user_count_permite_drenar_nuevo_msg_post_coalesce():
+    """Con coalesce + baseline correcto, los mensajes GENUINAMENTE nuevos siguen drenándose."""
+    u1 = Message(role=Role.USER, content="u1")
+    u2 = Message(role=Role.USER, content="u2")
+    history = _FakeHistoryStore(initial=[u1, u2])
+    coalesced = Message(role=Role.USER, content="u1\nu2")
+
+    call_count = 0
+    seen_messages_iter_2: list[str] = []
+
+    async def llm_complete(messages, system_prompt, tools=None):  # noqa: ARG001
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # Durante iter 1, llega un mensaje genuinamente nuevo.
+            history.messages.append(Message(role=Role.USER, content="cancela todo"))
+            return _tool_call_response()
+        # iter 2: checkpoint A drenó "cancela todo".
+        seen_messages_iter_2.extend(m.content for m in messages if m.role == Role.USER)
+        return LLMResponse.of_text("entendido, cancelado")
+
+    llm = AsyncMock()
+    llm.complete = AsyncMock(side_effect=llm_complete)
+    llm.thinking_active = False
+
+    result = await run_tool_loop(
+        llm=llm,
+        tools=_make_tools(),
+        messages=[coalesced],
+        system_prompt="x",
+        tool_schemas=[],
+        max_iterations=5,
+        circuit_breaker_threshold=3,
+        agent_id="agent1",
+        history_store=history,
+        scope=_SCOPE,
+        initial_db_user_count=2,
+    )
+
+    assert result == "entendido, cancelado"
+    # iter 2 ve el bloque coalesced ORIGINAL + el nuevo drenado, sin duplicar u1/u2.
+    assert seen_messages_iter_2 == ["u1\nu2", "cancela todo"]
+
+
 async def test_drain_at_checkpoint_b_after_tools():
     """Push DURANTE la ejecución de tools (entre LLM call y checkpoint B) se drena en B."""
     initial_msg = Message(role=Role.USER, content="hola")

@@ -228,6 +228,40 @@ async def test_skip_marker_con_whitespace(emit_mock):
 
 
 # ---------------------------------------------------------------------------
+# Test: __SKIP__ con texto alrededor (detección tolerante)
+# ---------------------------------------------------------------------------
+
+
+async def test_skip_marker_con_preamble_o_postamble(emit_mock):
+    """Si el LLM emite el marcador con pre/post-amble ('Ok, __SKIP__ no aporto nada'),
+    también suprimimos reply_text y emit. Los LLMs no siempre siguen 'respondé
+    EXACTAMENTE con __SKIP__' al pie de la letra — antes de la detección
+    tolerante este caso filtraba __SKIP__ visible al grupo."""
+    agent_cfg = _make_agent_cfg(behavior="autonomous")
+    container = _make_container(respuesta_llm="Ok, __SKIP__ no aporto nada relevante.")
+    emitter = MagicMock()
+    emitter.emit = emit_mock
+
+    with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
+        mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = MagicMock()
+
+        bot = TelegramBot(
+            agent_cfg=agent_cfg,
+            container=container,
+            broadcast_emitter=emitter,
+            broadcast_receiver=None,
+        )
+
+    update = _make_update(chat_type="supergroup")
+
+    await bot._run_pipeline(update, "pregunta al grupo", chat_type="supergroup")
+    await asyncio.sleep(0.05)
+
+    update.message.reply_text.assert_not_called()
+    emit_mock.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # Test: chat privado NO emite broadcast
 # ---------------------------------------------------------------------------
 

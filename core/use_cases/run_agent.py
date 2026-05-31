@@ -413,11 +413,14 @@ class RunAgentUseCase:
             ephemeral: si True, carga el historial para contexto pero NO persiste
                 el turno ni actualiza el estado sticky. Usado por ``--task``.
                 Solo aplica cuando ``user_input`` es provisto.
-            skip_marker: si la respuesta del LLM (tras strip) coincide exactamente
-                con este string, NO se persiste el turno (ni user_msg ni assistant
-                ni state). Útil para markers como ``__SKIP__`` que indican
-                "no aportar nada en este turno" en flujos broadcast/autonomous.
-                Default ``None`` → siempre se persiste (comportamiento actual).
+            skip_marker: si este string aparece en CUALQUIER parte de la respuesta
+                del LLM (comparación case-insensitive), NO se persiste el turno
+                (ni user_msg ni assistant ni state). Útil para markers como
+                ``__SKIP__`` que indican "no aportar nada en este turno" en flujos
+                broadcast/autonomous. La detección es tolerante a propósito: los
+                LLMs no siempre cumplen "respondé EXACTAMENTE con __SKIP__" y
+                suelen agregar pre/post-amble — antes era estricto y dejaba pasar
+                el marker al chat. Default ``None`` → siempre se persiste.
         """
         agent_id = self._cfg.id
 
@@ -656,6 +659,17 @@ class RunAgentUseCase:
         if not ephemeral and user_msg is not None:
             await self._history.append(agent_id, user_msg, channel=channel, chat_id=chat_id)
 
+        # Baseline del drain del tool loop. Contamos sobre `history` (crudo,
+        # pre-coalesce) + 1 si vamos a persistir user_msg ANTES del loop. Sin
+        # esto, en el flujo history-derived el `messages` coalesced reporta
+        # menos user-msgs que la DB y el drain en checkpoint A reinyecta
+        # mensajes que ya están dentro del bloque coalesced → duplicación
+        # visible al LLM como "historial clonado" (regresión introducida al
+        # combinar in-flight-injection con el coalesce del buffer de grupos).
+        initial_db_user_count = sum(1 for m in history if m.role == Role.USER) + (
+            1 if user_msg is not None and not ephemeral else 0
+        )
+
         try:
             response = await run_tool_loop(
                 llm=self._llm,
@@ -673,6 +687,7 @@ class RunAgentUseCase:
                 # entre iteraciones y drenará mensajes role=user nuevos.
                 history_store=self._history,
                 scope=(agent_id, channel, chat_id),
+                initial_db_user_count=initial_db_user_count,
             )
         except ToolLoopMaxIterationsError as e:
             response = e.last_response or (
@@ -680,7 +695,13 @@ class RunAgentUseCase:
                 "iteraciones de tools sin obtener una respuesta final."
             )
 
-        skip_persist = skip_marker is not None and response.strip() == skip_marker
+        # Detección tolerante del skip_marker: aceptamos que aparezca en cualquier
+        # parte de la respuesta (case-insensitive) — los LLMs no siempre cumplen
+        # "respondé EXACTAMENTE con __SKIP__" al pie de la letra y suelen agregar
+        # pre/post-amble. Si está presente, descartamos persistencia.
+        skip_persist = (
+            skip_marker is not None and skip_marker.upper() in response.upper()
+        )
 
         if not ephemeral and not skip_persist:
             if state_dirty:

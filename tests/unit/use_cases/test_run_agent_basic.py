@@ -563,3 +563,63 @@ async def test_execute_tools_override_empty_list_disables_all_tools(
 
     mock_tools.get_schemas_relevant.assert_not_called()
     assert mock_loop.call_args.kwargs["tool_schemas"] == []
+
+
+# ---------------------------------------------------------------------------
+# skip_marker: no se persiste la respuesta assistant cuando aparece el marker
+# ---------------------------------------------------------------------------
+
+
+async def test_skip_marker_no_persiste_assistant_response(use_case, mock_history):
+    """Si la respuesta contiene el ``skip_marker``, el assistant NO se appendea a
+    history. Solo el user_msg queda persistido (para que el bot tenga contexto
+    en el próximo turno). Garantiza que ``skip_persist`` corta el path correcto."""
+    with patch(
+        "core.use_cases.run_agent.run_tool_loop",
+        new=AsyncMock(return_value="__SKIP__"),
+    ):
+        await use_case.execute("pregunta al grupo", skip_marker="__SKIP__")
+
+    # Solo el user_msg debería haberse persistido — el assistant SKIP no.
+    appended_roles = [call.args[1].role for call in mock_history.append.call_args_list]
+    assert Role.ASSISTANT not in appended_roles
+    assert appended_roles.count(Role.USER) == 1
+
+
+async def test_skip_marker_tolerante_no_persiste_aunque_haya_preamble(use_case, mock_history):
+    """Detección case-insensitive + posicional: 'Ok, __SKIP__ no aporto nada'
+    también suprime persistencia del assistant."""
+    with patch(
+        "core.use_cases.run_agent.run_tool_loop",
+        new=AsyncMock(return_value="Ok, __SKIP__ no aporto nada relevante."),
+    ):
+        await use_case.execute("pregunta al grupo", skip_marker="__SKIP__")
+
+    appended_roles = [call.args[1].role for call in mock_history.append.call_args_list]
+    assert Role.ASSISTANT not in appended_roles
+
+
+async def test_skip_marker_no_persiste_state(use_case, mock_history):
+    """Cuando skip_persist se activa, save_state tampoco debe ser invocado —
+    no contaminamos sticky_skills/sticky_tools con un turno que el bot decidió
+    ignorar."""
+    with patch(
+        "core.use_cases.run_agent.run_tool_loop",
+        new=AsyncMock(return_value="__SKIP__"),
+    ):
+        await use_case.execute("pregunta al grupo", skip_marker="__SKIP__")
+
+    mock_history.save_state.assert_not_called()
+
+
+async def test_sin_skip_marker_si_persiste_response(use_case, mock_history):
+    """Control: sin ``skip_marker`` o con respuesta limpia, el assistant SÍ se
+    persiste (garantiza que el guard no rompe el flow normal)."""
+    with patch(
+        "core.use_cases.run_agent.run_tool_loop",
+        new=AsyncMock(return_value="respuesta normal"),
+    ):
+        await use_case.execute("hola", skip_marker="__SKIP__")
+
+    appended_roles = [call.args[1].role for call in mock_history.append.call_args_list]
+    assert Role.ASSISTANT in appended_roles

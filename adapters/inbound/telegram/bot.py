@@ -1430,9 +1430,16 @@ class TelegramBot:
             )
 
             # Verificar marcador __SKIP__ — solo aplica en modo autónomo en grupos.
-            # La respuesta contiene SOLO el marcador → no enviar nada ni emitir broadcast.
-            # El use case ya descartó la persistencia gracias a skip_marker.
-            if self._behavior == "autonomous" and es_grupo and response.strip() == "__SKIP__":
+            # Detección TOLERANTE: el marcador puede aparecer en cualquier parte
+            # de la respuesta (los LLMs suelen agregar pre/post-amble incluso ante
+            # la instrucción "respondé EXACTAMENTE con __SKIP__"). Cualquier
+            # ocurrencia suprime el envío al chat y el broadcast. El use case
+            # aplica la misma regla para descartar la persistencia.
+            if (
+                self._behavior == "autonomous"
+                and es_grupo
+                and "__SKIP__" in response.upper()
+            ):
                 logger.debug(
                     "autonomous_skip detectado (agent=%s, chat_id=%s)",
                     self._agent_cfg.id,
@@ -1669,9 +1676,11 @@ class TelegramBot:
                 # Puede pasar si otro flush concurrente ya consumió el batch.
                 return
 
-            # Marcador __SKIP__ — solo aplica en modo autónomo. La persistencia
-            # ya se descartó arriba vía skip_marker.
-            if self._behavior == "autonomous" and response.strip() == "__SKIP__":
+            # Marcador __SKIP__ — solo aplica en modo autónomo. Detección
+            # TOLERANTE (mismo criterio que `_run_pipeline`): aceptamos la
+            # ocurrencia en cualquier parte de la respuesta. La persistencia
+            # ya se descartó arriba vía skip_marker con la misma regla.
+            if self._behavior == "autonomous" and "__SKIP__" in response.upper():
                 logger.debug(
                     "autonomous_skip detectado (agent=%s, chat_id=%s)",
                     self._agent_cfg.id,

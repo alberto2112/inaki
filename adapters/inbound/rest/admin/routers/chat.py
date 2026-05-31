@@ -82,7 +82,16 @@ async def chat_turn(body: ChatTurnRequest, request: Request) -> ChatTurnResponse
     )
 
     agent_container = _resolver_agente(request, body.agent_id)
-    ctx = ChannelContext(channel_type="cli", user_id=body.session_id)
+    # Username opcional desde la config del agente — habilita el lookup de
+    # ``~/.inaki/users/cli/{username}.md``. Si no está configurado queda None
+    # y el resolver de user_context cae al fallback por user_id (session_id).
+    cli_cfg = agent_container.agent_config.channels.get("cli", {})
+    cli_user = cli_cfg.get("user") if isinstance(cli_cfg, dict) else None
+    ctx = ChannelContext(
+        channel_type="cli",
+        user_id=body.session_id,
+        username=cli_user if cli_user else None,
+    )
     sink = BufferingIntermediateSink()
 
     # Routing in-flight-message-injection: si el scope tiene un turno en curso,

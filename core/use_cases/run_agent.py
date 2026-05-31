@@ -294,12 +294,39 @@ class RunAgentUseCase:
         return (ctx.sender_name, ctx.username, ctx.first_name, ctx.last_name)
 
     def _read_user_context(self) -> str:
-        """Lee ~/.inaki/USER.md. Retorna '' si no existe."""
-        path = Path("~/.inaki/USER.md").expanduser()
-        try:
-            return path.read_text(encoding="utf-8")
-        except (FileNotFoundError, OSError):
+        """Lee el contexto per-user para el sender del turno actual.
+
+        Resuelve en este orden y devuelve el contenido del primer archivo que
+        existe (o ``""`` si ninguno):
+
+          1. ``~/.inaki/users/{channel_type}/{username}.md``
+          2. ``~/.inaki/users/{channel_type}/{user_id}.md``
+
+        Scope por canal: ``alberto`` en telegram ≠ ``alberto`` en cli — cada canal
+        tiene su propio directorio. Username preferente porque es el handle humano
+        legible; fallback a ``user_id`` para usuarios sin ``@username`` configurado
+        (Telegram lo permite). El nombre se sanitiza: si contiene separadores de
+        path o ``..`` se descarta el lookup (defensa básica contra path traversal,
+        aunque los valores vienen del canal — paranoia barata).
+
+        Sin ``ChannelContext`` (ej: scheduler triggers que no pasan por un adapter
+        inbound) o ningún archivo presente → ``""``. Mismo criterio que el digest.
+        """
+        if self._get_channel_context is None:
             return ""
+        ctx = self._get_channel_context()
+        if ctx is None:
+            return ""
+
+        base = Path("~/.inaki/users").expanduser() / ctx.channel_type
+        for candidate in (ctx.username, ctx.user_id):
+            if not candidate or any(sep in candidate for sep in ("/", "\\", "..")):
+                continue
+            try:
+                return (base / f"{candidate}.md").read_text(encoding="utf-8")
+            except (FileNotFoundError, OSError):
+                continue
+        return ""
 
     def _read_digest(self, channel: str | None = None, chat_id: str | None = None) -> str:
         """

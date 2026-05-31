@@ -122,8 +122,17 @@ After concatenating all sections (base prompt, user context, memory digest, skil
 | `{{TIME}}` | Local time | `HH:MM` (24h). |
 | `{{WEEKDAY}}` | Day of the week name | Without suffix: `strftime("%A")` per **system locale**. With two-letter language: `{{WEEKDAY[EN]}}`, `{{WEEKDAY[ES]}}`, `{{WEEKDAY[FR]}}` → fixed names in English, Spanish, or French. Any other code (e.g., `{{WEEKDAY[DE]}}`) is treated as no flag (same fallback as locale). The flag is case-insensitive (`[en]`, `[FR]`). |
 | `{{WEEKDAY_NUMBER}}` | ISO 8601 day | String `1`–`7`: Monday = 1, …, Sunday = 7. |
+| `{{CHANNEL}}` | Channel name | Alias of `{{CHANNEL.NAME}}`. E.g., `telegram`, `cli`, `rest`. If `None`, left as-is. |
+| `{{CHANNEL.NAME}}` | Channel name | Same as `{{CHANNEL}}`. |
+| `{{CHANNEL.CHATID}}` | Chat ID within the channel | E.g., `123456789` (Telegram private), `-1001234567890` (Telegram group), `default` (CLI). If `None`, left as-is. |
+| `{{CHANNEL.SENDER}}` | Sender display name | Full name of the human who sent the message (e.g., `Alberto García`). Populated by the inbound adapter from `ChannelContext`. In group chats, stays `None` (identity is embedded in message content). If `None`, left as-is. |
+| `{{CHANNEL.USERNAME}}` | Sender username | Telegram username without `@` (e.g., `alberto2112`). `None` if the user has no username set. If `None`, left as-is. |
+| `{{CHANNEL.FIRST_NAME}}` | Sender first name | E.g., `Alberto`. `None` if not available. If `None`, left as-is. |
+| `{{CHANNEL.LAST_NAME}}` | Sender last name | E.g., `García`. `None` if not available. If `None`, left as-is. |
 
 **Context timezone:** `RunAgentUseCase` fills `AgentContext.timezone` with the user preference (global config); if there is no useful value, the date/time placeholders use the process's local timezone.
+
+**Channel and sender identity:** The inbound adapter (Telegram, CLI, REST) populates `ChannelContext` with channel, chat_id, and sender fields. `RunAgentUseCase` passes them through to `AgentContext`. In group chats, sender fields are `None` — the sender identity is embedded in the message content by `format_group_message` instead. Any variable whose value is `None` is left as-is in the prompt (same criterion as `{{WORKSPACE}}`).
 
 **Any other `{{SOMETHING}}`** that doesn't match the table above **is left as-is** in the prompt (there is no generic template engine).
 
@@ -132,6 +141,8 @@ Valid examples in the agent's YAML:
 ```text
 Hoy es {{WEEKDAY[ES]}} {{DATE}} ({{TIME}}). Tu workspace es {{WORKSPACE}}.
 Zona configurada: {{TIMEZONE}}
+Canal: {{CHANNEL}} | Chat: {{CHANNEL.CHATID}}
+Usuario: {{CHANNEL.SENDER}} (@{{CHANNEL.USERNAME}})
 ```
 
 ---

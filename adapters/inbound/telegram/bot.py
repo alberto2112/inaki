@@ -88,6 +88,18 @@ _DEFAULT_EXT_BY_TYPE: dict[str, str] = {
 }
 
 
+def _safe_optional_str(val: object) -> str | None:
+    """Devuelve ``val`` solo si es ``str`` no vacío; en cualquier otro caso ``None``.
+
+    Filtra ``MagicMock`` (tests que stub ``update = MagicMock()`` no setean estos
+    campos), ``None`` y strings vacíos/blank. ``ChannelContext`` rechaza strings
+    vacíos vía validator — convertir a ``None`` acá evita el ValueError aguas abajo.
+    """
+    if isinstance(val, str) and val.strip():
+        return val
+    return None
+
+
 def _extension_for(content_type: str, mime_type: str | None) -> str:
     """Adivina la extensión apropiada para un media. Replica la lógica de la tool download_from_telegram."""
     import mimetypes
@@ -185,6 +197,15 @@ class TelegramBot:
         # mientras está vivo, los mensajes que lleguen se acumulan en el historial
         # vía record_user_message y se procesan todos juntos cuando el delay vence.
         self._pending_tasks: dict[str, asyncio.Task] = {}
+
+        # Último emisor humano por chat_id (grupos). Se actualiza en cada paso por
+        # ``_handle_group_message`` y se lee en ``_run_group_pipeline`` para resolver
+        # ``{{CHANNEL.SENDER}}/USERNAME/FIRST_NAME/LAST_NAME}}`` al flushear el buffer.
+        # Heurística: el más reciente del batch gana. Se persiste in-memory; un
+        # restart del daemon lo pierde (mismo trade-off que ``_pending_tasks``).
+        # No se limpia tras el flush — la próxima ronda lo sobreescribe, y mientras
+        # tanto refleja "la última persona que habló en este chat".
+        self._last_group_sender: dict[str, dict[str, str | None]] = {}
 
         if not self._token:
             raise ValueError(f"Agente '{agent_cfg.id}': channels.telegram.token no configurado")
@@ -887,6 +908,19 @@ class TelegramBot:
             channel="telegram",
             chat_id=chat_id_str,
         )
+        # Snapshot del último emisor humano del chat: lo lee ``_run_group_pipeline``
+        # al flushear para resolver ``{{CHANNEL.SENDER}}/USERNAME/FIRST_NAME/LAST_NAME}}``.
+        # Se hace SIEMPRE (mention o autonomous): la heurística es "quien acaba de
+        # hablar" sin distinguir behavior. Bots (broadcasts vía egress, no por acá)
+        # no actualizan este dict — solo humanos que escriben en el grupo.
+        from_user = getattr(update.message, "from_user", None)
+        if from_user is not None and not getattr(from_user, "is_bot", False):
+            self._last_group_sender[chat_id_str] = {
+                "sender_name": _safe_optional_str(compose_sender_identity(update.message)),
+                "username": _safe_optional_str(getattr(from_user, "username", None)),
+                "first_name": _safe_optional_str(getattr(from_user, "first_name", None)),
+                "last_name": _safe_optional_str(getattr(from_user, "last_name", None)),
+            }
         await self._set_group_reaction(update, "👀")
 
         if behavior == "autonomous" and self._rate_limiter is not None:
@@ -1334,33 +1368,28 @@ class TelegramBot:
         secciones_no_vacias = [s for s in secciones if s]
         self._container.run_agent.set_extra_system_sections(secciones_no_vacias)
 
-        # Identidad del remitente — solo se puebla en chats privados, donde hay
-        # exactamente un único humano por turno y las variables {{CHANNEL.SENDER}}/
-        # {{CHANNEL.USERNAME}}/{{CHANNEL.FIRST_NAME}}/{{CHANNEL.LAST_NAME}} tienen un
-        # valor unívoco. En grupos los 4 campos quedan en None: la identidad por
-        # mensaje ya va embebida en el contenido (format_group_message agrega el
-        # prefijo "@sender said: ..." y los flushes pueden mezclar varios autores en
-        # un mismo turno). Resolver las variables a una sola persona en ese contexto
-        # sería incorrecto.
-        def _safe_str(val: object) -> str | None:
-            """Solo devuelve ``val`` si es un str no vacío. Filtra MagicMocks (tests con
-            ``update = MagicMock()`` no setean estos campos) y cualquier no-string defensivo
-            del lado de telegram. ``ChannelContext`` rechaza strings vacíos vía validator."""
-            if isinstance(val, str) and val.strip():
-                return val
-            return None
-
+        # Identidad del remitente — se puebla siempre que haya un ``update.message``
+        # concreto detrás del turno, ya sea chat privado, mention/respuesta dirigida
+        # al bot en grupo, o voice/foto en grupo (estos no pasan por el buffer).
+        # En todos esos casos hay UN único humano emisor que disparó este
+        # ``execute()``, así que ``{{CHANNEL.SENDER}}/USERNAME/FIRST_NAME/LAST_NAME}}``
+        # tienen valor unívoco.
+        #
+        # El path autonomous-flush de grupos (``_run_group_pipeline``) cubre el
+        # caso "texto plano sin mention en grupo": ahí el sender se resuelve a
+        # partir de ``self._last_group_sender[chat_id]`` (heurística: último
+        # emisor humano del batch).
         sender_name: str | None = None
         sender_username: str | None = None
         sender_first_name: str | None = None
         sender_last_name: str | None = None
-        if not es_grupo and update.message is not None:
+        if update.message is not None:
             from_user = getattr(update.message, "from_user", None)
             if from_user is not None:
-                sender_username = _safe_str(getattr(from_user, "username", None))
-                sender_first_name = _safe_str(getattr(from_user, "first_name", None))
-                sender_last_name = _safe_str(getattr(from_user, "last_name", None))
-            sender_name = _safe_str(compose_sender_identity(update.message))
+                sender_username = _safe_optional_str(getattr(from_user, "username", None))
+                sender_first_name = _safe_optional_str(getattr(from_user, "first_name", None))
+                sender_last_name = _safe_optional_str(getattr(from_user, "last_name", None))
+            sender_name = _safe_optional_str(compose_sender_identity(update.message))
 
         self._container.set_channel_context(
             ChannelContext(
@@ -1657,11 +1686,24 @@ class TelegramBot:
             )
 
         self._container.run_agent.set_extra_system_sections([s for s in secciones if s])
+        # Heurística "último emisor del batch": ``_handle_group_message`` snapshotea
+        # el ``from_user`` de cada mensaje humano que entra en el chat, sobrescribiendo
+        # el slot por chat_id. Al flushear, este dict refleja "la última persona que
+        # habló en este chat" — la elegimos como sender canónica del turno. Si el
+        # buffer trae varios autores, gana el más reciente. Si el dict no tiene
+        # entrada para este chat (primer flush sin mensajes humanos previos, ej.
+        # disparo por broadcast), los 4 campos quedan en ``None`` y las variables
+        # ``{{CHANNEL.SENDER}}/USERNAME/FIRST_NAME/LAST_NAME}}`` se dejan literales.
+        last_sender = self._last_group_sender.get(chat_id_str, {})
         self._container.set_channel_context(
             ChannelContext(
                 channel_type="telegram",
                 user_id=self._agent_cfg.id,
                 chat_id=chat_id_str,
+                sender_name=last_sender.get("sender_name"),
+                username=last_sender.get("username"),
+                first_name=last_sender.get("first_name"),
+                last_name=last_sender.get("last_name"),
             )
         )
         try:

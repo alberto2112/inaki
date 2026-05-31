@@ -122,8 +122,26 @@ After concatenating all sections (base prompt, user context, memory digest, skil
 | `{{TIME}}` | Local time | `HH:MM` (24h). |
 | `{{WEEKDAY}}` | Day of the week name | Without suffix: `strftime("%A")` per **system locale**. With two-letter language: `{{WEEKDAY[EN]}}`, `{{WEEKDAY[ES]}}`, `{{WEEKDAY[FR]}}` → fixed names in English, Spanish, or French. Any other code (e.g., `{{WEEKDAY[DE]}}`) is treated as no flag (same fallback as locale). The flag is case-insensitive (`[en]`, `[FR]`). |
 | `{{WEEKDAY_NUMBER}}` | ISO 8601 day | String `1`–`7`: Monday = 1, …, Sunday = 7. |
+| `{{CHANNEL}}` | Channel name | Alias of `{{CHANNEL.NAME}}`. E.g., `telegram`, `cli`, `rest`. If `None`, left as-is. |
+| `{{CHANNEL.NAME}}` | Channel name | Same as `{{CHANNEL}}`. |
+| `{{CHANNEL.CHATID}}` | Chat ID within the channel | E.g., `123456789` (Telegram private), `-1001234567890` (Telegram group), `default` (CLI). If `None`, left as-is. |
+| `{{CHANNEL.SENDER}}` | Sender display name | Full name of the human who sent the message (e.g., `Alberto García`). Populated by the inbound adapter from `ChannelContext`. In Telegram, populated for **every** turn that has a human author: private chats, mention/reply in groups, voice/photo in groups, and **autonomous flushes in groups** (resolved to the most recent human author of the buffered batch). Stays `None` only when no human has spoken since the bot started (rare — typically only the first flush triggered exclusively by a broadcast). If `None`, left as-is. |
+| `{{CHANNEL.USERNAME}}` | Sender username | Telegram username without `@` (e.g., `alberto2112`). `None` if the user has no username set. Resolution scope identical to `{{CHANNEL.SENDER}}`. If `None`, left as-is. |
+| `{{CHANNEL.FIRST_NAME}}` | Sender first name | E.g., `Alberto`. `None` if not available. Resolution scope identical to `{{CHANNEL.SENDER}}`. If `None`, left as-is. |
+| `{{CHANNEL.LAST_NAME}}` | Sender last name | E.g., `García`. `None` if not available. Resolution scope identical to `{{CHANNEL.SENDER}}`. If `None`, left as-is. |
 
 **Context timezone:** `RunAgentUseCase` fills `AgentContext.timezone` with the user preference (global config); if there is no useful value, the date/time placeholders use the process's local timezone.
+
+**Channel and sender identity:** The inbound adapter (Telegram, CLI, REST) populates `ChannelContext` with channel, chat_id, and sender fields. `RunAgentUseCase` passes them through to `AgentContext`. Sender resolution per source:
+
+- **Telegram private chats** — populated from `update.message.from_user`.
+- **Telegram groups, immediate paths** (voice, photo, mention/reply targeting the bot) — populated from the triggering message's `from_user`.
+- **Telegram groups, autonomous flush** (text plain or buffered mentions) — populated from the *most recent human author* of the buffered batch. The bot snapshots `from_user` on every group message arrival (`self._last_group_sender[chat_id]`) and the flush reads that snapshot. If the buffer triggers without any prior human message (rare; only when a broadcast is the sole trigger), sender stays `None`.
+- **CLI / REST admin chat** — stay `None` (no human-identity binding implemented today).
+
+The sender identity also remains embedded in group message content via `format_group_message` (e.g., `"juan said: hola"`), independent of the variable resolution above. That embedded form lets the LLM disambiguate authorship turn-by-turn even when the canonical `{{CHANNEL.SENDER}}` resolves to "the most recent" author.
+
+Any variable whose value is `None` is left as-is in the prompt (same criterion as `{{WORKSPACE}}`).
 
 **Any other `{{SOMETHING}}`** that doesn't match the table above **is left as-is** in the prompt (there is no generic template engine).
 
@@ -132,6 +150,8 @@ Valid examples in the agent's YAML:
 ```text
 Hoy es {{WEEKDAY[ES]}} {{DATE}} ({{TIME}}). Tu workspace es {{WORKSPACE}}.
 Zona configurada: {{TIMEZONE}}
+Canal: {{CHANNEL}} | Chat: {{CHANNEL.CHATID}}
+Usuario: {{CHANNEL.SENDER}} (@{{CHANNEL.USERNAME}})
 ```
 
 ---

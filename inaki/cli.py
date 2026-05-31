@@ -101,8 +101,16 @@ def _run_daemon(config_dir: Path, agents_dir: Path, global_config, registry) -> 
 
     initial_container = AppContainer(global_config, registry)
 
+    # Crea ~/.inaki/users/{channel}/ por cada canal configurado en cualquier agente.
+    # Lazy + idempotente: cero costo si ya existen. Habilita la convención per-user
+    # (ver docs/configuracion.md → "Per-user context files").
+    from infrastructure.config import ensure_user_channel_dirs
+
+    ensure_user_channel_dirs(Path.home(), registry.list_all())
+
     def bootstrap_fn():
         gc, reg = _bootstrap(config_dir, agents_dir)
+        ensure_user_channel_dirs(Path.home(), reg.list_all())
         return AppContainer(gc, reg), reg
 
     asyncio.run(run_daemon(bootstrap_fn, initial=(initial_container, registry)))

@@ -560,7 +560,75 @@ channels:
   rest:
     host: "0.0.0.0"
     port: 6498                       # Each agent has its own port
+
+  # `cli` y `rest` admiten un campo opcional `user:` que enlaza un perfil
+  # per-user del directorio `~/.inaki/users/{channel}/`. Ver la sección
+  # "Per-user context files" más abajo para el detalle.
+  cli:
+    user: "alberto"                  # Carga ~/.inaki/users/cli/alberto.md
 ```
+
+---
+
+## Per-user context files — `~/.inaki/users/`
+
+Cada turno del agente inyecta un bloque opcional de "contexto del remitente" en
+el system prompt. Antes existía un único `~/.inaki/USER.md` global; ahora se
+resuelve por canal y por usuario:
+
+```
+~/.inaki/users/{channel_type}/{username}.md   ← preferente
+~/.inaki/users/{channel_type}/{user_id}.md    ← fallback
+(nada)                                        ← si ninguno existe
+```
+
+- **Scope por canal**: `alberto` en Telegram ≠ `alberto` en CLI. Cada canal
+  tiene su propio subdirectorio.
+- **Preferencia por `username`**: el handle humano (sin `@`) es más legible y
+  estable que un ID numérico. Cuando el usuario no tiene username configurado
+  (Telegram lo permite), cae al `user_id`.
+- **Sin archivo → contexto vacío**. No hay fallback global ni warning. Pensado
+  para uso doméstico: si un usuario no tiene archivo, el agente lo trata sin
+  contexto previo.
+
+### Cómo cada canal resuelve `channel_type` y los identificadores
+
+| Canal | `channel_type` | `username` | `user_id` |
+|-------|----------------|------------|-----------|
+| Telegram (privado) | `telegram` | `@username` del remitente (sin `@`) | `from_user.id` |
+| Telegram (grupo)   | `telegram` | siempre `None` — la identidad va en el contenido | `agent_id` del flush |
+| CLI (admin chat)   | `cli`      | `channels.cli.user` del YAML del agente (opcional) | `session_id` del cliente |
+| REST `/chat/turn`  | `cli`      | igual que CLI                                       | `session_id` |
+
+### Ejemplo de archivo
+
+`~/.inaki/users/telegram/alberto.md`:
+
+```markdown
+Hablás con Alberto, el operador del sistema.
+- Stack preferido: Python + hexagonal architecture.
+- Idioma: español rioplatense (voseo).
+- Evitá disclaimers innecesarios.
+```
+
+### Auto-creación de subdirectorios
+
+El daemon, al arrancar, crea `~/.inaki/users/{channel}/` por cada canal
+configurado en cualquier agente (`AgentConfig.channels.keys()`). No hace falta
+hacer `mkdir` manual — basta entrar a `~/.inaki/users/` y aparecen los
+subdirectorios listos para depositar archivos per-user.
+
+### Migración desde `USER.md`
+
+El path legacy `~/.inaki/USER.md` ya **no se lee**. Migrar:
+
+```bash
+mv ~/.inaki/USER.md ~/.inaki/users/telegram/{tu_username}.md
+```
+
+Si querés el mismo contexto en CLI/REST, copiá el archivo a
+`~/.inaki/users/cli/{tu_user}.md` y configurá `channels.cli.user: {tu_user}`
+en el YAML del agente.
 
 ---
 

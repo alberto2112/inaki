@@ -224,6 +224,55 @@ los dos paths y vuelve a aparecer el race condition que mitigamos.
 de `delegate` deben pasar `wait=true` explícitamente para preservar el path
 legacy. Tests existentes ya actualizados en `tests/unit/use_cases/test_delegation_integration.py`.
 
+### `per-user-context-files`
+
+El archivo global `~/.inaki/USER.md` se reemplaza por archivos per-user scopeados
+por canal. `RunAgentUseCase._read_user_context` ahora resuelve contra el
+`ChannelContext` del turno:
+
+```
+~/.inaki/users/{channel_type}/{username}.md   ← preferente
+~/.inaki/users/{channel_type}/{user_id}.md    ← fallback
+(nada)                                        ← si ninguno existe
+```
+
+**Razón**: el bot va pisando dirección multiusuario (Telegram con varios
+remitentes humanos), y un único `USER.md` global mezclaba contexto. Ahora cada
+`(channel, identidad)` carga su propio archivo.
+
+**Sin auto-detección de legacy**. El soporte a `~/.inaki/USER.md` se borra sin
+warning ni fallback — coherente con "no sobreingeniar" para uso doméstico.
+Migración manual del operador:
+
+```bash
+mv ~/.inaki/USER.md ~/.inaki/users/telegram/{tu_username}.md
+# Para chat por CLI/REST opcionalmente:
+cp ~/.inaki/users/telegram/{tu_username}.md ~/.inaki/users/cli/{tu_user}.md
+```
+
+**Auto-creación de subdirs por canal**: el daemon, al arrancar, ejecuta
+`ensure_user_channel_dirs(home, registry.list_all())` y crea
+`~/.inaki/users/{channel}/` por cada canal configurado en cualquier agente.
+Idempotente, errores de OS loguean WARNING sin abortar arranque. Se invoca
+también en cada reload (`bootstrap_fn` del daemon) para captar canales nuevos.
+Sin sentido detectar "canal con humanos" vs "canal interno" — el costo es
+nulo y simplifica.
+
+**Wiring CLI/REST**: el admin chat router (`/admin/chat/turn`) lee
+`channels.cli.user` del YAML del agente y lo inyecta como `username` en el
+`ChannelContext`. Sin esa entrada, el lookup cae al fallback por `user_id`
+(`session_id` del cliente) que normalmente no tiene archivo → sin contexto.
+
+**Telegram ya estaba listo**: el bot pobla `username` y `user_id` en el
+`ChannelContext` desde `update.message.from_user` (privados). En grupos
+`username=None` y `user_id=agent_id` → no se carga contexto per-user, lo cual es
+correcto (la identidad por mensaje va embebida en el contenido vía
+`format_group_message`).
+
+**Defensa contra path traversal**: si `username` o `user_id` contienen `/`, `\`
+o `..`, ese candidato se descarta. Paranoia barata — los valores vienen del
+canal, pero no costaba nada chequear.
+
 ### `in-flight-message-injection`
 
 Mensajes nuevos del usuario sobre un scope `(agent_id, channel, chat_id)` que ya

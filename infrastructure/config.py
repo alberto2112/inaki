@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Iterable, Literal, Protocol
 
 import yaml
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
@@ -1095,6 +1095,41 @@ def ensure_user_config(config_dir: Path, agents_dir: Path) -> None:
             logger.error("No se pudo escribir %s: %s", secrets_yaml, exc)
             raise
         logger.info("Secrets file creado: %s", secrets_yaml)
+
+
+class _HasChannels(Protocol):
+    """Subset estructural de ``AgentConfig`` que ``ensure_user_channel_dirs``
+    necesita. Declarado como Protocol para que tests puedan pasar stubs sin
+    construir un ``AgentConfig`` completo."""
+
+    channels: dict[str, dict[str, Any]]
+
+
+def ensure_user_channel_dirs(home: Path, agent_configs: Iterable[_HasChannels]) -> None:
+    """Crea ``~/.inaki/users/{channel}/`` por cada canal configurado en cualquier agente.
+
+    Soporta la convención de archivos per-user (ver ``RunAgentUseCase._read_user_context``).
+    El operador no tiene que hacer ``mkdir`` manual: la primera vez que un agente
+    declara, por ejemplo, ``channels.telegram``, se crea ``~/.inaki/users/telegram/``
+    vacío. La discoverability sale gratis: ``ls ~/.inaki/users/`` muestra dónde van
+    los archivos.
+
+    Idempotente — se ejecuta en cada arranque del daemon (y en reloads). Errores
+    de permisos no abortan el arranque: log warning y seguir. Si el canal no
+    tiene humanos detrás (ej. broadcast interno) igual se crea el dir; aceptable
+    porque el costo es nulo y evita lógica de "qué canal merece subdir".
+    """
+    base = home / ".inaki" / "users"
+    canales: set[str] = set()
+    for cfg in agent_configs:
+        canales.update(cfg.channels.keys())
+
+    for canal in sorted(canales):
+        path = base / canal
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            logger.warning("No se pudo crear %s: %s", path, exc)
 
 
 # ---------------------------------------------------------------------------

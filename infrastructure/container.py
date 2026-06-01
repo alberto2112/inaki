@@ -545,10 +545,14 @@ class AgentContainer:
 
         targets = sub_agent_ids or []
 
+        if self.agent_config.delegation.allowed_targets:
+            allowed = set(self.agent_config.delegation.allowed_targets)
+            targets = [t for t in targets if t in allowed]
+
         if not targets:
             self._delegation_wired = True
             logger.debug(
-                "AgentContainer '%s': wire_delegation no-op (sin sub-agentes configurados)",
+                "AgentContainer '%s': wire_delegation no-op (sin sub-agentes elegibles)",
                 self.agent_config.id,
             )
             return

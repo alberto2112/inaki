@@ -817,3 +817,63 @@ def test_wire_delegation_does_not_replace_one_shot_use_case(tmp_path) -> None:
         "wire_delegation must NOT replace run_agent_one_shot — "
         "the instance from __init__ must survive wiring unchanged"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 15 — allowed_targets in config filters sub_agent_ids
+# ---------------------------------------------------------------------------
+
+
+def test_wire_delegation_allowed_targets_filters_sub_agent_ids(tmp_path) -> None:
+    """
+    When delegation.allowed_targets is non-empty, wire_delegation must pass only
+    the intersection of sub_agent_ids and allowed_targets to DelegateTool.
+
+    Regression guard: previously allowed_targets was read from config but never
+    applied — DelegateTool always received ALL sub_agent_ids regardless.
+    """
+    global_cfg = _make_global_config()
+
+    parent_cfg = _make_agent_config(
+        agent_id="coordinator",
+        delegation_enabled=True,
+        allowed_targets=["agent-a"],  # only agent-a is allowed
+    )
+    parent = _build_minimal_container(parent_cfg, global_cfg, tmp_path)
+
+    # Registry has two sub-agents; only agent-a is in allowed_targets
+    parent.wire_delegation(lambda _: None, sub_agent_ids=["agent-a", "agent-b"])
+
+    delegate_tool = parent._tools._tools.get("delegate")
+    assert delegate_tool is not None, "delegate tool must be registered"
+    assert isinstance(delegate_tool, DelegateTool)
+    assert delegate_tool._allowed_targets == ["agent-a"], (
+        "DelegateTool must only receive targets permitted by delegation.allowed_targets"
+    )
+    assert "agent-b" not in delegate_tool._allowed_targets, (
+        "agent-b must be filtered out — it is not in delegation.allowed_targets"
+    )
+
+
+def test_wire_delegation_empty_allowed_targets_allows_all(tmp_path) -> None:
+    """
+    When delegation.allowed_targets is empty (default), no filter is applied —
+    DelegateTool receives all sub_agent_ids.
+    """
+    global_cfg = _make_global_config()
+
+    parent_cfg = _make_agent_config(
+        agent_id="coordinator",
+        delegation_enabled=True,
+        allowed_targets=[],  # empty = no restriction
+    )
+    parent = _build_minimal_container(parent_cfg, global_cfg, tmp_path)
+
+    parent.wire_delegation(lambda _: None, sub_agent_ids=["agent-a", "agent-b"])
+
+    delegate_tool = parent._tools._tools.get("delegate")
+    assert delegate_tool is not None, "delegate tool must be registered"
+    assert isinstance(delegate_tool, DelegateTool)
+    assert set(delegate_tool._allowed_targets) == {"agent-a", "agent-b"}, (
+        "With empty allowed_targets, all sub_agent_ids must be wired"
+    )

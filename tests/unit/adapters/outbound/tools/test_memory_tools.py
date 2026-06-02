@@ -93,14 +93,30 @@ async def test_delete_memory_happy_path(mock_memory):
     assert "borradito" in result.output
 
 
-async def test_delete_memory_not_found_is_success_no_op(mock_memory):
+async def test_delete_memory_already_deleted_is_success_no_op(mock_memory):
+    """Entry existe pero ya estaba borrada → no-op con success=True."""
+    already_deleted = _entry("borrada", deleted=True)
     mock_memory.delete.return_value = None
-    tool = DeleteMemoryTool(memory=mock_memory)
+    mock_memory.get_by_id.return_value = already_deleted
 
+    tool = DeleteMemoryTool(memory=mock_memory)
     result = await tool.execute(memory_id="ghost")
 
     assert result.success is True
-    assert "No active memory" in result.output or "no-op" in result.output.lower()
+    assert "already deleted" in result.output.lower()
+
+
+async def test_delete_memory_id_not_in_db_returns_error(mock_memory):
+    """ID no existe en la DB → error con mensaje que guía al LLM."""
+    mock_memory.delete.return_value = None
+    mock_memory.get_by_id.return_value = None
+
+    tool = DeleteMemoryTool(memory=mock_memory)
+    result = await tool.execute(memory_id="ghost")
+
+    assert result.success is False
+    assert "not found" in result.output.lower()
+    assert "search_memory" in result.output
 
 
 async def test_delete_memory_empty_id_fails(mock_memory):

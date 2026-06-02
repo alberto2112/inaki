@@ -196,11 +196,24 @@ class DeleteMemoryTool(ITool):
             )
 
         if entry is None:
+            existing = await self._memory.get_by_id(memory_id)
+            if existing is None:
+                return ToolResult(
+                    tool_name=self.name,
+                    output=(
+                        f"Memory id '{memory_id}' not found in database. "
+                        "Make sure to call search_memory first and use the exact "
+                        "UUID from those results — never invent or reuse IDs from "
+                        "other sources."
+                    ),
+                    success=False,
+                    error="not found",
+                    retryable=False,
+                )
             return ToolResult(
                 tool_name=self.name,
                 output=(
-                    f"No active memory with id '{memory_id}' (already deleted "
-                    "or never existed). No-op."
+                    f"Memory id '{memory_id}' was already deleted. No-op."
                 ),
                 success=True,
             )

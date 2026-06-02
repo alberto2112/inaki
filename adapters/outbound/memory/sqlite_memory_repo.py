@@ -242,6 +242,20 @@ class SQLiteMemoryRepository(IMemoryRepository):
             rows = await conn.execute_fetchall(sql, tuple(params))
         return [self._row_to_entry(row) for row in rows]
 
+    async def get_by_id(self, memory_id: str) -> MemoryEntry | None:
+        """Devuelve la entry por id ignorando deleted, o None si no existe."""
+        async with self._conn() as conn:
+            await self._ensure_schema(conn)
+            row = await (
+                await conn.execute(
+                    "SELECT id, content, relevance, tags, created_at, "
+                    "agent_id, channel, chat_id, deleted "
+                    "FROM memories WHERE id = ?",
+                    (memory_id,),
+                )
+            ).fetchone()
+        return self._row_to_entry(row) if row is not None else None
+
     async def delete(self, memory_id: str) -> MemoryEntry | None:
         """
         Soft-delete: marca ``deleted=1`` en la fila. La memoria deja de aparecer

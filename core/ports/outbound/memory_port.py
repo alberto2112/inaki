@@ -57,6 +57,15 @@ class IMemoryRepository(Protocol):
         """
         ...
 
+    async def get_by_id(self, memory_id: str) -> MemoryEntry | None:
+        """
+        Devuelve la entry por id ignorando el flag ``deleted``, o ``None`` si
+        el id no existe en absoluto. Útil para diagnosticar delete fallido:
+        distingue "ya borrada" (returns entry con deleted=True) de "nunca
+        existió" (returns None).
+        """
+        ...
+
     async def delete(self, memory_id: str) -> MemoryEntry | None:
         """
         Soft-delete por id. La entry deja de aparecer en ``search`` y

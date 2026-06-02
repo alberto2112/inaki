@@ -52,6 +52,9 @@ class FakeMemory:
     async def get_all(self, *args, **kwargs):
         return []
 
+    async def get_by_id(self, *args, **kwargs):
+        return None
+
     async def delete(self, *args, **kwargs):
         return None
 

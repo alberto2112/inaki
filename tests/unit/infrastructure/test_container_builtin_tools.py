@@ -30,6 +30,9 @@ class FakeMemory:
     async def get_recent(self, limit=10, agent_id=None, channel=None, chat_id=None):
         return []
 
+    async def get_by_id(self, memory_id):
+        return None
+
     async def delete(self, memory_id):
         return None
 

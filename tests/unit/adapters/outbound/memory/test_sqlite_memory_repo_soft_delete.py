@@ -125,6 +125,39 @@ async def test_search_excludes_soft_deleted(repo):
 
 
 # ---------------------------------------------------------------------------
+# get_by_id
+# ---------------------------------------------------------------------------
+
+
+async def test_get_by_id_returns_active_entry(repo):
+    e = _entry("activa")
+    await repo.store(e)
+
+    result = await repo.get_by_id(e.id)
+
+    assert result is not None
+    assert result.id == e.id
+    assert result.deleted is False
+
+
+async def test_get_by_id_returns_deleted_entry(repo):
+    e = _entry("borrada")
+    await repo.store(e)
+    await repo.delete(e.id)
+
+    result = await repo.get_by_id(e.id)
+
+    assert result is not None
+    assert result.id == e.id
+    assert result.deleted is True
+
+
+async def test_get_by_id_unknown_id_returns_none(repo):
+    result = await repo.get_by_id("00000000-0000-0000-0000-000000000000")
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
 # update
 # ---------------------------------------------------------------------------
 

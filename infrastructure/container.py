@@ -669,11 +669,17 @@ class AgentContainer:
         from adapters.outbound.file_transport.telegram_file_sender import (
             TelegramFileSender,
         )
+        from adapters.outbound.messaging.telegram_message_sender import (
+            TelegramMessageSender,
+        )
         from adapters.inbound.telegram.tools.download_from_telegram_tool import (
             DownloadFromTelegramTool,
         )
         from adapters.inbound.telegram.tools.send_to_telegram_tool import (
             SendToTelegramTool,
+        )
+        from adapters.inbound.telegram.tools.send_telegram_message_tool import (
+            SendTelegramMessageTool,
         )
 
         ws_cfg = self.agent_config.workspace
@@ -684,6 +690,7 @@ class AgentContainer:
         self.telegram_file_repo = telegram_file_repo
 
         sender = TelegramFileSender(get_telegram_bot=get_telegram_bot)
+        message_sender = TelegramMessageSender(get_telegram_bot=get_telegram_bot)
         downloader = TelegramFileDownloader(get_telegram_bot=get_telegram_bot)
         self.telegram_file_downloader = downloader
 
@@ -693,6 +700,13 @@ class AgentContainer:
                 workspace=workspace_path,
                 containment=ws_cfg.containment,
                 get_channel_context=self.get_channel_context,
+                history=self._history,
+                agent_id=self.agent_config.id,
+            )
+        )
+        self._tools.register(
+            SendTelegramMessageTool(
+                sender=message_sender,
                 history=self._history,
                 agent_id=self.agent_config.id,
             )
@@ -708,7 +722,8 @@ class AgentContainer:
         )
         self._telegram_tools_wired = True
         logger.info(
-            "AgentContainer '%s': send_to_telegram + download_from_telegram registradas",
+            "AgentContainer '%s': send_to_telegram + send_telegram_message + "
+            "download_from_telegram registradas",
             self.agent_config.id,
         )
 

@@ -40,7 +40,19 @@ class ToolRegistry(IToolExecutor):
         for tool in self._tools.values():
             if tool.name in self._embeddings:
                 continue
-            content_hash = hashlib.md5(tool.description.encode("utf-8")).hexdigest()
+            # El texto a embeber combina la descripción (lo que ve el LLM) con los
+            # routing_keywords (disparadores multilingües solo para el retrieval).
+            # Si routing_keywords está vacío, el texto es solo la descripción → 100%
+            # backward-compat con tools que no definen keywords.
+            routing_keywords = getattr(tool, "routing_keywords", "") or ""
+            embed_text = (
+                f"{tool.description}\n\n{routing_keywords}".strip()
+                if routing_keywords
+                else tool.description
+            )
+            # El hash incluye el texto combinado: si cambian description O keywords,
+            # el cache se invalida y se recalcula el embedding.
+            content_hash = hashlib.md5(embed_text.encode("utf-8")).hexdigest()
 
             embedding: list[float] | None = None
             if self._cache is not None:
@@ -49,7 +61,7 @@ class ToolRegistry(IToolExecutor):
                 )
 
             if embedding is None:
-                embedding = await self._embedder.embed_passage(tool.description)
+                embedding = await self._embedder.embed_passage(embed_text)
                 if self._cache is not None:
                     await self._cache.put(
                         content_hash, self._provider_name, self._dimension, embedding

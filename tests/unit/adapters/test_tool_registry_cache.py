@@ -5,12 +5,67 @@ from unittest.mock import AsyncMock, MagicMock
 from adapters.outbound.tools.tool_registry import ToolRegistry
 
 
-def _make_tool(name: str = "test_tool", description: str = "Herramienta de test") -> MagicMock:
+def _make_tool(
+    name: str = "test_tool",
+    description: str = "Herramienta de test",
+    routing_keywords: str = "",
+) -> MagicMock:
     tool = MagicMock()
     tool.name = name
     tool.description = description
+    tool.routing_keywords = routing_keywords
     tool.parameters_schema = {"type": "object", "properties": {}}
     return tool
+
+
+async def test_routing_keywords_se_incluyen_en_texto_embebido():
+    """El texto que se embebe combina description + routing_keywords."""
+    embedder = AsyncMock()
+    embedder.embed_passage.return_value = [0.1] * 384
+
+    registry = ToolRegistry(embedder)  # sin cache
+    registry.register(
+        _make_tool(description="Search the web", routing_keywords="buscar, recherche")
+    )
+    await registry.get_schemas_relevant([0.1] * 384)
+
+    embedded_text = embedder.embed_passage.call_args.args[0]
+    assert "Search the web" in embedded_text
+    assert "buscar, recherche" in embedded_text
+
+
+async def test_routing_keywords_vacio_embebe_solo_description():
+    """Sin routing_keywords, el texto embebido es exactamente la description."""
+    embedder = AsyncMock()
+    embedder.embed_passage.return_value = [0.1] * 384
+
+    registry = ToolRegistry(embedder)  # sin cache
+    registry.register(_make_tool(description="Solo descripción", routing_keywords=""))
+    await registry.get_schemas_relevant([0.1] * 384)
+
+    embedded_text = embedder.embed_passage.call_args.args[0]
+    assert embedded_text == "Solo descripción"
+
+
+async def test_keywords_cambiados_generan_miss():
+    """Cambiar routing_keywords (con misma description) invalida el cache."""
+    embedder = AsyncMock()
+    embedder.embed_passage.return_value = [0.1] * 384
+    cache = AsyncMock()
+    cache.get.return_value = None  # siempre miss
+
+    registry = ToolRegistry(embedder, cache=cache, dimension=384)
+    registry.register(_make_tool(description="igual", routing_keywords="kw v1"))
+    await registry.get_schemas_relevant([0.1] * 384)
+
+    registry._tools.clear()
+    registry._embeddings.clear()
+    registry._embeddings_ready = False
+    registry.register(_make_tool(description="igual", routing_keywords="kw v2"))
+    await registry.get_schemas_relevant([0.1] * 384)
+
+    hashes = [call.args[0] for call in cache.get.call_args_list]
+    assert hashes[0] != hashes[1]
 
 
 async def test_cache_miss_llama_embed_y_put():

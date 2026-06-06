@@ -5,6 +5,12 @@ El agente hijo emite un bloque fenced ```json ... ``` al final de su respuesta.
 Esta función extrae el ÚLTIMO bloque de ese tipo, lo parsea como JSON y lo
 valida como DelegationResult.
 
+Fallback de contenido: si el JSON parseado tiene ``details`` nulo o vacío, la función
+captura el texto en prosa que precede al último bloque ```json``` y lo usa como
+``details``. Esto permite que el agente hijo escriba su output naturalmente en prosa
+(artículos, código, planes) y lo entregue completo al padre aunque no lo haya
+copiado explícitamente en el campo ``details`` del JSON.
+
 En cualquier fallo (sin bloque, JSON inválido, campos faltantes) devuelve un
 DelegationResult de error con reason="result_parse_error". NUNCA lanza.
 """
@@ -27,9 +33,27 @@ _JSON_FENCE_RE = re.compile(r"```json\s*(.*?)\s*```", re.DOTALL)
 _PARSE_ERROR_REASON = "result_parse_error"
 
 
+def _extract_prose_before_last_json_block(text: str) -> str | None:
+    """Retorna el texto antes del último bloque ```json```, o None si no hay prosa.
+
+    Se usa como fallback para ``details`` cuando el agente hijo no copió su output
+    en el campo ``details`` del JSON (el caso típico: escribe el artículo en prosa
+    y luego añade el bloque JSON con un resumen en ``details``).
+    """
+    last_fence = text.rfind("```json")
+    if last_fence <= 0:
+        return None
+    prose = text[:last_fence].strip()
+    return prose if prose else None
+
+
 def parse_delegation_result(text: str) -> DelegationResult:
     """
     Extrae el último bloque ```json ... ``` del texto y lo valida como DelegationResult.
+
+    Si el campo ``details`` del JSON está ausente o vacío, se usa como fallback el
+    texto en prosa que precede al bloque JSON — así el agente padre recibe siempre
+    el output completo del hijo, aunque éste no lo haya copiado en ``details``.
 
     Args:
         text: Respuesta completa del agente hijo.
@@ -61,6 +85,20 @@ def parse_delegation_result(text: str) -> DelegationResult:
             reason=_PARSE_ERROR_REASON,
             details=text,
         )
+
+    # Fallback: si details está ausente o vacío, usar la prosa previa al bloque JSON.
+    # El LLM hijo escribe el output completo en prosa; si no lo copió en details,
+    # lo rescatamos aquí para que el padre lo reciba íntegro.
+    # Nota: si data no es dict (ej. array, null), la ValidationError lo rechazará
+    # más abajo; no intentamos el fallback en ese caso.
+    if isinstance(data, dict) and not data.get("details"):
+        prose = _extract_prose_before_last_json_block(text)
+        if prose:
+            data["details"] = prose
+            logger.debug(
+                "parse_delegation_result: details vacío en JSON — usando prosa previa (%d chars)",
+                len(prose),
+            )
 
     try:
         return DelegationResult.model_validate(data)

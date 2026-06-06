@@ -116,7 +116,12 @@ class SchedulerTool(ITool):
 
     name = "scheduler"
     description = (
-        "Manage scheduled tasks. Operations: create, list, get, update, delete, logs, log_get. "
+        "Set reminders, alarms, and recurring or one-time scheduled tasks. "
+        "Use this whenever the user wants something to happen later or on a repeating basis: "
+        "a reminder ('remind me tomorrow at 9'), a recurring action ('every Monday', 'every day at 8am'), "
+        "a one-time future action ('in one hour', 'next Friday'), or an alert/notification at a given time. "
+        "Also use it to review or change existing scheduled tasks. "
+        "Operations: create, list, get, update, delete, logs, log_get. "
         "Use 'create' to schedule a future action (one_shot or recurring). "
         "REQUIRED for 'create': name, task_kind, trigger_type, trigger_payload, schedule. "
         "trigger_payload is ALWAYS required for 'create' — it is the object that describes "
@@ -130,6 +135,18 @@ class SchedulerTool(ITool):
         "Omit task_id to list the latest logs across all tasks; include task_id to filter by task. "
         "Use 'log_get' to fetch a single log by id with the FULL untruncated output/error. "
         "Builtin tasks (id < 100) cannot be modified or deleted."
+    )
+    # Disparadores multilingües solo para el embedding del semantic routing.
+    routing_keywords = (
+        "recordame, recordarme, acordate de avisarme, avisame, agendá, agenda, programá una tarea, "
+        "poné un recordatorio, alarma, despertador, recordatorio, todos los días, todas las semanas, "
+        "cada lunes, cada día, en una hora, en diez minutos, mañana a las, esta noche, la semana que viene, "
+        "tarea recurrente, tarea programada, recurrente, periódico. "
+        "remind me, set a reminder, set an alarm, schedule, scheduled task, recurring task, every day, "
+        "every Monday, every week, in one hour, in ten minutes, tomorrow at, tonight, next week, later, "
+        "wake me up, notify me at, alert me, cron job, periodic task. "
+        "rappelle-moi, mets un rappel, planifie, tâche récurrente, tous les jours, chaque lundi, "
+        "dans une heure, demain à, rappel, alarme, réveille-moi, plus tard."
     )
     parameters_schema = {
         "type": "object",

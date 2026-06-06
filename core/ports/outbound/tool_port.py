@@ -15,6 +15,20 @@ class ITool(ABC):
     description: str
     parameters_schema: dict  # JSON Schema
 
+    # Disparadores adicionales SOLO para el embedding del semantic routing.
+    # NO se muestran al LLM (no van al schema): el LLM recibe únicamente
+    # `description`. Su único propósito es enriquecer el texto que se embebe
+    # para el matching coseno, mejorando el retrieval cross-lingual.
+    #
+    # Patrón recomendado: `description` en inglés (comprensión óptima del LLM)
+    # y `routing_keywords` con disparadores MULTILINGÜES (es/en/fr) que reflejen
+    # cómo un humano expresa la intención de usar la tool. multilingual-e5-small
+    # matchea mucho mejor query↔texto dentro del mismo idioma que cruzando idiomas.
+    #
+    # Default "" → tools que no lo definan se comportan como antes (solo
+    # `description` se embebe). 100% backward-compat.
+    routing_keywords: str = ""
+
     @abstractmethod
     async def execute(self, **kwargs) -> ToolResult: ...
 

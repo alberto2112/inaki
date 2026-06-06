@@ -38,7 +38,10 @@ _VALID_RESULT_FULL = {
 
 
 def test_happy_path_single_valid_block():
-    """Texto con un único bloque ```json``` válido → DelegationResult parseado."""
+    """Texto con un único bloque ```json``` válido → DelegationResult parseado.
+
+    Como el JSON no incluye ``details``, la prosa previa se usa como fallback.
+    """
     text = f"Hice la tarea.\n\n{_json_block(_VALID_RESULT)}"
 
     result = parse_delegation_result(text)
@@ -46,8 +49,19 @@ def test_happy_path_single_valid_block():
     assert isinstance(result, DelegationResult)
     assert result.status == "success"
     assert result.summary == "Tarea completada exitosamente."
-    assert result.details is None
+    # Fallback: prosa anterior al bloque JSON capturada como details
+    assert result.details == "Hice la tarea."
     assert result.reason is None
+
+
+def test_happy_path_no_prose_details_stays_none():
+    """JSON válido sin prosa previa y sin details → details permanece None."""
+    text = _json_block(_VALID_RESULT)  # solo el bloque, sin texto previo
+
+    result = parse_delegation_result(text)
+
+    assert result.status == "success"
+    assert result.details is None
 
 
 def test_happy_path_all_fields_present():
@@ -288,3 +302,77 @@ def test_never_raises_on_arbitrary_text():
         assert isinstance(result, DelegationResult)
         assert result.status == "failed"
         assert result.reason == "result_parse_error"
+
+
+# ---------------------------------------------------------------------------
+# Prose fallback — el agente hijo escribió el output en prosa, no en details
+# ---------------------------------------------------------------------------
+
+
+def test_prose_fallback_when_details_absent():
+    """Si el JSON no tiene details, se usa la prosa previa al bloque como fallback."""
+    article = "Este es el artículo completo.\n\nSegundo párrafo con mucho contenido."
+    data = {"status": "success", "summary": "Artículo redactado."}
+    text = f"{article}\n\n{_json_block(data)}"
+
+    result = parse_delegation_result(text)
+
+    assert result.status == "success"
+    assert result.details == article
+
+
+def test_prose_fallback_when_details_null():
+    """Si el JSON tiene details=null, se usa la prosa previa como fallback."""
+    prose = "Contenido generado por el subagente."
+    data = {"status": "success", "summary": "Listo.", "details": None}
+    text = f"{prose}\n\n{_json_block(data)}"
+
+    result = parse_delegation_result(text)
+
+    assert result.details == prose
+
+
+def test_prose_fallback_when_details_empty_string():
+    """Si el JSON tiene details='', se usa la prosa previa como fallback."""
+    prose = "Output del subagente."
+    data = {"status": "success", "summary": "Listo.", "details": ""}
+    text = f"{prose}\n\n{_json_block(data)}"
+
+    result = parse_delegation_result(text)
+
+    assert result.details == prose
+
+
+def test_explicit_details_takes_priority_over_prose():
+    """Si el JSON tiene details no-vacío, prevalece sobre la prosa previa."""
+    prose = "Este es el texto en prosa que el subagente escribió."
+    data = {
+        "status": "success",
+        "summary": "Listo.",
+        "details": "Detalle explícito del JSON.",
+    }
+    text = f"{prose}\n\n{_json_block(data)}"
+
+    result = parse_delegation_result(text)
+
+    assert result.details == "Detalle explícito del JSON."
+
+
+def test_no_prose_before_json_block_details_none():
+    """Si el JSON empieza al inicio del texto, no hay prosa → details=None."""
+    data = {"status": "success", "summary": "Listo."}
+    text = _json_block(data)  # sin prosa previa
+
+    result = parse_delegation_result(text)
+
+    assert result.details is None
+
+
+def test_whitespace_only_prose_not_used_as_fallback():
+    """Prosa compuesta solo de espacios/newlines no se usa como fallback."""
+    data = {"status": "success", "summary": "Listo."}
+    text = f"\n\n   \n\n{_json_block(data)}"
+
+    result = parse_delegation_result(text)
+
+    assert result.details is None

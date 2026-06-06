@@ -110,13 +110,23 @@ class _WebSearchConfigStore:
 class WebSearchTool(ITool):
     name = "web_search"
     description = (
-        "Busca información en internet vía Tavily. "
-        "Usar para eventos actuales, datos volátiles o info fuera del contexto. "
-        "Default: llamá con operation='search' y el parámetro 'query'. "
-        "Si la llamada falla por credenciales, el error te indica cómo proceder. "
-        "Otras operaciones: "
-        "'configure' con 'api_key' (y opcionalmente 'search_depth', 'max_results') para guardar credenciales de Tavily; "
-        "'show_config' para inspeccionar la configuración actual."
+        "Search the internet for current, real-time, or external information via Tavily. "
+        "Use this whenever the user asks about recent events, news, prices, weather, "
+        "facts you are unsure about, or anything that may have changed or lies outside your context. "
+        "Default: call with operation='search' and the 'query' parameter. "
+        "If the call fails due to credentials, the error explains how to proceed. "
+        "Other operations: "
+        "'configure' with 'api_key' (optionally 'search_depth', 'max_results') to store Tavily credentials; "
+        "'show_config' to inspect the current configuration."
+    )
+    # Disparadores multilingües solo para el embedding del semantic routing.
+    routing_keywords = (
+        "buscá en internet, busca en la web, googleá, qué noticias hay, qué pasó con, "
+        "información actual, precio de, cotización, clima, tiempo, últimas noticias, "
+        "buscar en línea, qué está pasando, novedades sobre. "
+        "search the web, look it up online, google it, latest news, current price, "
+        "what's happening with, recent events, find online, look up. "
+        "cherche sur internet, recherche web, dernières nouvelles, prix actuel, quoi de neuf."
     )
     parameters_schema = {
         "type": "object",

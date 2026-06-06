@@ -66,6 +66,14 @@ class SearchMemoryTool(ITool):
         "Returns each result with its UUID `id`, content, relevance, tags, "
         "creation date, scope (channel + chat_id of origin), and similarity score."
     )
+    # Disparadores multilingües solo para el embedding del semantic routing.
+    routing_keywords = (
+        "te acordás, qué te dije sobre, qué guardé, qué recordás de mí, mis datos, "
+        "lo que hablamos, qué sabés sobre mí, mis preferencias, recordá lo que. "
+        "do you remember, what did I tell you about, what do you know about me, "
+        "my preferences, what we discussed, recall about me. "
+        "tu te souviens, qu'est-ce que je t'ai dit, mes préférences, ce qu'on a dit."
+    )
     parameters_schema = {
         "type": "object",
         "properties": {

@@ -25,6 +25,14 @@ class KnowledgeSearchTool(ITool):
         "Optional parameter: 'top_k' (max number of results, default 5). "
         "Optional parameter: 'source' (restrict search to a specific source ID, e.g. 'memory')."
     )
+    # Disparadores multilingües solo para el embedding del semantic routing.
+    routing_keywords = (
+        "qué sabés sobre, buscá en la base de conocimiento, qué información tenés de, "
+        "consultá la documentación, qué dice sobre, contexto previo de. "
+        "what do you know about, look it up in the knowledge base, search the docs, "
+        "prior context about, what information do you have on. "
+        "que sais-tu sur, cherche dans la base de connaissances, contexte précédent."
+    )
     parameters_schema = {
         "type": "object",
         "properties": {

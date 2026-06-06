@@ -52,14 +52,22 @@ You MUST end your response with a fenced JSON block in the following format, exa
 ```json
 {
   "status": "success" | "failed",
-  "summary": "one-sentence result",
-  "details": "full result or null",
+  "summary": "one-sentence description of what you did",
+  "details": "COMPLETE OUTPUT HERE — verbatim, not a summary",
   "reason": "failure reason code or null"
 }
 ```
 
-This is the last thing in your response. Do not add any text after the closing fence. \
-The `status` must be `"success"` if you completed the task, or `"failed"` if you could not."""
+Rules for each field:
+- `status`: `"success"` if you completed the task, `"failed"` if you could not.
+- `summary`: one short sentence (what you did or why you failed).
+- `details`: the COMPLETE output you produced — the FULL text of anything you wrote, \
+generated, or computed. If the task asked you to write articles, posts, code, plans, or \
+any artifact, paste the ENTIRE content here verbatim. Do NOT summarize or truncate. \
+If nothing was produced, use null.
+- `reason`: a short error code if status is "failed", otherwise null.
+
+This JSON block is the LAST thing in your response. Do not add any text after the closing fence."""
 
 
 class DelegateTool(ITool):

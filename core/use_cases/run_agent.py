@@ -305,11 +305,16 @@ class RunAgentUseCase:
     def _read_user_context(self) -> str:
         """Lee el contexto per-user para el sender del turno actual.
 
-        Resuelve en este orden y devuelve el contenido del primer archivo que
-        existe (o ``""`` si ninguno):
+        Concatena dos capas (la primera que falte se omite):
 
-          1. ``~/.inaki/users/{channel_type}/{username}.md``
-          2. ``~/.inaki/users/{channel_type}/{user_id}.md``
+          1. ``~/.inaki/users/{channel_type}/_common.md`` — contexto común a
+             TODOS los usuarios del canal (ej: formato de respuesta, "no uses
+             tablas markdown en Telegram"). Se inyecta ANTES del archivo per-user.
+             Prefijo ``_`` para no colisionar con un ``{username}.md`` que se
+             llamara "common".
+          2. El primer archivo per-user que exista, en este orden:
+             a. ``~/.inaki/users/{channel_type}/{username}.md``
+             b. ``~/.inaki/users/{channel_type}/{user_id}.md``
 
         Scope por canal: ``alberto`` en telegram ≠ ``alberto`` en cli — cada canal
         tiene su propio directorio. Username preferente porque es el handle humano
@@ -328,14 +333,24 @@ class RunAgentUseCase:
             return ""
 
         base = Path("~/.inaki/users").expanduser() / ctx.channel_type
+
+        instructions = ""
+        try:
+            instructions = (base / "_common.md").read_text(encoding="utf-8")
+        except (FileNotFoundError, OSError):
+            pass
+
+        user_specific = ""
         for candidate in (ctx.username, ctx.user_id):
             if not candidate or any(sep in candidate for sep in ("/", "\\", "..")):
                 continue
             try:
-                return (base / f"{candidate}.md").read_text(encoding="utf-8")
+                user_specific = (base / f"{candidate}.md").read_text(encoding="utf-8")
+                break
             except (FileNotFoundError, OSError):
                 continue
-        return ""
+
+        return "\n\n".join(part for part in (instructions, user_specific) if part.strip())
 
     def _read_digest(self, channel: str | None = None, chat_id: str | None = None) -> str:
         """

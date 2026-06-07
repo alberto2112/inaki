@@ -1,8 +1,9 @@
 """Tests unitarios para ``RunAgentUseCase._read_user_context``.
 
 Cubre la resolución de archivos per-user que reemplazó al `~/.inaki/USER.md`
-global. Orden de búsqueda:
+global. Capas concatenadas (la que falte se omite):
 
+  0. ``~/.inaki/users/{channel_type}/_common.md`` (común al canal, antes del per-user)
   1. ``~/.inaki/users/{channel_type}/{username}.md``
   2. ``~/.inaki/users/{channel_type}/{user_id}.md``
   3. ``""`` (sin contexto)
@@ -140,6 +141,46 @@ def test_scope_por_canal_no_cruza_canales(deps, users_root):
 
     assert _make_use_case_with_ctx(deps, ctx=ctx_telegram)._read_user_context() == "telegram-context"
     assert _make_use_case_with_ctx(deps, ctx=ctx_cli)._read_user_context() == "cli-context"
+
+
+def test_inyecta_instructions_antes_del_archivo_per_user(deps, users_root):
+    """``_common.md`` (común al canal) se concatena ANTES del archivo per-user."""
+    (users_root / "telegram").mkdir()
+    (users_root / "telegram" / "_common.md").write_text(
+        "no uses tablas markdown", encoding="utf-8"
+    )
+    (users_root / "telegram" / "alberto.md").write_text("contexto de alberto", encoding="utf-8")
+
+    ctx = ChannelContext(channel_type="telegram", user_id="999", username="alberto")
+    uc = _make_use_case_with_ctx(deps, ctx=ctx)
+
+    assert uc._read_user_context() == "no uses tablas markdown\n\ncontexto de alberto"
+
+
+def test_instructions_solo_sin_archivo_per_user(deps, users_root):
+    """Si hay ``_common.md`` pero ningún archivo per-user, devuelve solo las instrucciones."""
+    (users_root / "telegram").mkdir()
+    (users_root / "telegram" / "_common.md").write_text(
+        "formato común del canal", encoding="utf-8"
+    )
+
+    ctx = ChannelContext(channel_type="telegram", user_id="999", username="desconocido")
+    uc = _make_use_case_with_ctx(deps, ctx=ctx)
+
+    assert uc._read_user_context() == "formato común del canal"
+
+
+def test_instructions_scopeado_por_canal(deps, users_root):
+    """``_common.md`` es por canal — telegram no hereda las de cli."""
+    (users_root / "telegram").mkdir()
+    (users_root / "cli").mkdir()
+    (users_root / "cli" / "_common.md").write_text("instr cli", encoding="utf-8")
+
+    ctx_telegram = ChannelContext(channel_type="telegram", user_id="1", username="alberto")
+    uc = _make_use_case_with_ctx(deps, ctx=ctx_telegram)
+
+    # telegram no tiene _common.md ni archivo per-user → vacío
+    assert uc._read_user_context() == ""
 
 
 @pytest.mark.parametrize(

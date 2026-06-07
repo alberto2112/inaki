@@ -577,13 +577,21 @@ el system prompt. Antes existía un único `~/.inaki/USER.md` global; ahora se
 resuelve por canal y por usuario:
 
 ```
-~/.inaki/users/{channel_type}/{username}.md   ← preferente
-~/.inaki/users/{channel_type}/{user_id}.md    ← fallback
-(nada)                                        ← si ninguno existe
+~/.inaki/users/{channel_type}/_common.md     ← común al canal (se inyecta ANTES)
+~/.inaki/users/{channel_type}/{username}.md  ← per-user, preferente
+~/.inaki/users/{channel_type}/{user_id}.md   ← per-user, fallback
+(nada)                                       ← si ninguno existe
 ```
 
+- **`_common.md` — contexto común al canal**: si existe, su contenido se
+  concatena **antes** del archivo per-user. Pensado para reglas que aplican a
+  todos los usuarios del canal, p. ej. formato de respuesta ("no uses tablas
+  markdown en Telegram, no las renderiza"). El prefijo `_` evita colisión con un
+  `{username}.md` que se llamara `common`. Se inyecta aunque no haya archivo
+  per-user: el contexto común del canal solo también vale.
 - **Scope por canal**: `alberto` en Telegram ≠ `alberto` en CLI. Cada canal
-  tiene su propio subdirectorio.
+  tiene su propio subdirectorio. `_common.md` también es por canal — el de CLI
+  no se hereda en Telegram.
 - **Preferencia por `username`**: el handle humano (sin `@`) es más legible y
   estable que un ID numérico. Cuando el usuario no tiene username configurado
   (Telegram lo permite), cae al `user_id`.

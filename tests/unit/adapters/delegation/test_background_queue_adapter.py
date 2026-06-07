@@ -13,8 +13,6 @@ import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from adapters.outbound.delegation.background_queue_adapter import (
     BackgroundDelegationQueueAdapter,
 )
@@ -299,7 +297,7 @@ class TestSemaphoreYFIFO:
 
 
 # ---------------------------------------------------------------------------
-# 2.4 — Happy path: dispatch con marker + purge antes de dispatch
+# 2.4 — Happy path: dispatch con marker + purge tras dispatch exitoso
 # ---------------------------------------------------------------------------
 
 
@@ -343,11 +341,12 @@ class TestHappyPathDispatch:
         assert kwargs["channel"] == "cli"
         assert kwargs["chat_id"] == "local"
 
-    async def test_task_purgada_antes_del_dispatch(self) -> None:
-        """REQ-BGD-4: la task se elimina de _tasks antes de invocar dispatch.
+    async def test_task_purgada_tras_dispatch_exitoso(self) -> None:
+        """FIX silent-death: la task se purga DESPUÉS de un dispatch exitoso.
 
-        Capturamos el estado de `_tasks` cuando el dispatcher es invocado: si la
-        purga sucede antes (como manda la spec), la task ya no debe estar.
+        En el momento del dispatch la task TODAVÍA está en `_tasks` (aún no se
+        sabe si la entrega va a tener éxito); una vez que dispatch retorna sin
+        error, la task se elimina. Verificamos ambas mitades.
         """
         one_shot = _one_shot_returning("ok")
         adapter, dispatcher = _build_adapter(one_shot_for={"r": one_shot})
@@ -355,7 +354,7 @@ class TestHappyPathDispatch:
         capturado: dict = {}
 
         async def captura_y_devuelve(**kw) -> str:
-            # Snapshot del estado del adapter en el momento del dispatch
+            # Snapshot del estado del adapter EN el momento del dispatch
             capturado["snap"] = list(adapter._tasks.keys())
             return ""
 
@@ -369,8 +368,62 @@ class TestHappyPathDispatch:
         await asyncio.sleep(0.05)
         await adapter.stop()
 
-        # Cuando dispatch corrió, la task ya estaba purgada
-        assert task_id not in capturado["snap"]
+        # Durante el dispatch la task todavía estaba presente...
+        assert task_id in capturado["snap"]
+        # ...y tras un dispatch exitoso se purgó.
+        assert task_id not in adapter._tasks
+
+    async def test_task_no_purgada_si_dispatch_falla(self) -> None:
+        """FIX silent-death: si el dispatch falla en todos los intentos, la task
+        NO se purga — queda visible en snapshot para que el agente no la dé por
+        perdida ni la relance a ciegas.
+        """
+        one_shot = _one_shot_returning("ok")
+        adapter, dispatcher = _build_adapter(one_shot_for={"r": one_shot})
+        # Todos los intentos de dispatch fallan.
+        dispatcher.dispatch.side_effect = RuntimeError("dispatch boom")
+
+        await adapter.start()
+        task_id = await adapter.enqueue(
+            caller_agent_id="inaki", target_agent_id="r", prompt="x",
+            system_prompt=None, channel="", chat_id="",
+        )
+        # Esperar a que se agoten los reintentos (3 intentos con backoff 0.5*n).
+        await asyncio.sleep(2.0)
+        await adapter.stop()
+
+        # La task sigue viva y aparece en el snapshot del caller.
+        assert task_id in adapter._tasks
+        snap = adapter.snapshot_inflight("inaki")
+        assert any(v.id == task_id for v in snap)
+
+    async def test_dispatch_se_reintenta_y_eventualmente_entrega(self) -> None:
+        """FIX silent-death: un fallo transitorio de dispatch se reintenta; si un
+        intento posterior tiene éxito, la task se entrega y se purga.
+        """
+        one_shot = _one_shot_returning("ok")
+        adapter, dispatcher = _build_adapter(one_shot_for={"r": one_shot})
+
+        intentos = {"n": 0}
+
+        async def falla_una_vez(**kw) -> str:
+            intentos["n"] += 1
+            if intentos["n"] == 1:
+                raise RuntimeError("transient")
+            return ""
+
+        dispatcher.dispatch.side_effect = falla_una_vez
+
+        await adapter.start()
+        task_id = await adapter.enqueue(
+            caller_agent_id="inaki", target_agent_id="r", prompt="x",
+            system_prompt=None, channel="", chat_id="",
+        )
+        await asyncio.sleep(1.0)
+        await adapter.stop()
+
+        assert intentos["n"] >= 2  # hubo al menos un reintento
+        assert task_id not in adapter._tasks  # se entregó y purgó
 
 
 # ---------------------------------------------------------------------------
@@ -414,7 +467,9 @@ class TestErrorPath:
         assert prompt == f"[{task_id}] failed: unknown_target_agent: 'fantasma'"
 
     async def test_purga_ocurre_aun_si_one_shot_lanza(self) -> None:
-        """REQ-BGD-4: el purge en `finally` se respeta también en path de error."""
+        """El path de error también se purga: el fallo del hijo se serializa en el
+        marker `[bg-N] failed: ...`, se dispatcha con éxito (mock) y la task se
+        purga igual que en el happy path."""
         roto = MagicMock()
         roto.execute = AsyncMock(side_effect=ValueError("nope"))
         adapter, _ = _build_adapter(one_shot_for={"r": roto})

@@ -130,7 +130,7 @@ def _render_in_flight_section(snap: list[BackgroundTaskView]) -> str:
     Pure function: no side effects, deterministic por input.
     """
     bullets = "\n".join(
-        f'- {v.id} → {v.target_agent_id} | started {v.elapsed_seconds}s ago | "{v.prompt_preview}"'
+        f'- {v.id} → {v.target_agent_id} | status: {v.status} | started {v.elapsed_seconds}s ago | "{v.prompt_preview}"'
         for v in snap
     )
     return (
@@ -138,7 +138,16 @@ def _render_in_flight_section(snap: list[BackgroundTaskView]) -> str:
         "You have one or more delegations launched via `delegate(... wait=false)` running in\n"
         "the background. When they finish, you will receive a message starting with `[bg-N] ...`.\n"
         "That message is NOT user input — it is the result of YOUR own delegation. Process it\n"
-        "directly: no greetings, no preambles.\n\n"
+        "directly: no greetings, no preambles. A `[bg-N] failed: ...` message means that\n"
+        "delegation errored — report the failure to the user, do NOT keep waiting for it.\n\n"
+        "If the user asks how a delegation is going, ANSWER FROM THE LIST BELOW — it is your\n"
+        "live source of truth. State the task_id, its status, and how long it has been running.\n"
+        "`queued` = waiting for a free slot, `running` = the child agent is working now. Never\n"
+        "say you don't know: the data is right here. A delegation that finished (success or\n"
+        "failure) is NOT in this list — its result already arrived as a `[bg-N] ...` message,\n"
+        "so check the conversation for it instead.\n\n"
+        "Do NOT re-launch a task that is already `queued` or `running` below — that would\n"
+        "duplicate the work. Wait for its `[bg-N]` result first.\n\n"
         "Currently in flight:\n"
         f"{bullets}"
     )

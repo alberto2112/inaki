@@ -102,18 +102,27 @@ def mock_outbound_registry(mock_channel_adapter: MagicMock) -> MagicMock:
 def mock_agent_container(
     mock_tools_registry: MagicMock, mock_outbound_registry: MagicMock
 ) -> MagicMock:
-    """Mock de AgentContainer con _tools y channel_outbound_registry."""
+    """Mock de AgentContainer con _tools y channel_outbound_registry.
+
+    agent_config.channels se configura como dict vacío para que el path de
+    broadcast no explote en los tests existentes (emit_assistant=True por default,
+    pero emitter=None → broadcasted=False sin error).
+    """
     container = MagicMock()
     container._tools = mock_tools_registry
     container.channel_outbound_registry = mock_outbound_registry
+    # Evitar que MagicMock devuelva MagicMock en las navegaciones de config
+    container.agent_config.channels = {}
     return container
 
 
 @pytest.fixture
 def mock_app_container(mock_agent_container: MagicMock) -> MagicMock:
-    """Mock de AppContainer con agente 'foo' registrado."""
+    """Mock de AppContainer con agente 'foo' registrado y sin broadcast_adapter."""
     app_container = MagicMock()
     app_container.agents = {"foo": mock_agent_container}
+    # Sin broadcast_adapter por default → broadcasted=False en los tests existentes
+    del app_container.broadcast_adapter
     return app_container
 
 
@@ -430,3 +439,195 @@ async def test_send_sin_auth_401(app) -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         resp = await ac.post("/admin/send", json=body)
     assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/send — broadcast
+# ---------------------------------------------------------------------------
+
+
+def _app_con_broadcast_emitter(
+    mock_agent_container: MagicMock,
+    emit_flag: bool = True,
+) -> tuple:
+    """Construye una app con broadcast_adapter wired y config de agente apropiada.
+
+    Retorna (app, mock_emitter).
+    """
+    mock_emitter = AsyncMock()
+
+    mock_agent_container.agent_config.channels = {
+        "telegram": {"broadcast": {"emit": {"assistant_response": emit_flag}}}
+    }
+
+    app_container = MagicMock()
+    app_container.agents = {"foo": mock_agent_container}
+    app_container.broadcast_adapter = mock_emitter
+
+    return create_admin_app(app_container, admin_auth_key="clave-test"), mock_emitter
+
+
+async def test_send_broadcast_text_emite_cuando_todo_ok(
+    mock_agent_container: MagicMock,
+) -> None:
+    """TEXT + broadcast=True + emitter disponible + config flag on → emit() llamado, broadcasted=True."""
+    app_b, mock_emitter = _app_con_broadcast_emitter(mock_agent_container, emit_flag=True)
+    body = {
+        "agent_id": "foo",
+        "channel": "telegram",
+        "chat_id": "123456",
+        "kind": "text",
+        "text": "Hola broadcast",
+        "broadcast": True,
+    }
+    async with AsyncClient(transport=ASGITransport(app=app_b), base_url="http://test") as ac:
+        resp = await ac.post("/admin/send", json=body, headers=VALID_KEY)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["broadcasted"] is True
+    mock_emitter.emit.assert_awaited_once()
+    # Verificar que el BroadcastMessage tiene los campos correctos
+    msg_arg = mock_emitter.emit.call_args[0][0]
+    assert msg_arg.agent_id == "foo"
+    assert msg_arg.chat_id == "123456"
+    assert msg_arg.event_type == "assistant_response"
+    assert msg_arg.content == "Hola broadcast"
+
+
+async def test_send_broadcast_false_no_emite(
+    mock_agent_container: MagicMock,
+) -> None:
+    """broadcast=False → emit NO llamado, broadcasted=False."""
+    app_b, mock_emitter = _app_con_broadcast_emitter(mock_agent_container, emit_flag=True)
+    body = {
+        "agent_id": "foo",
+        "channel": "telegram",
+        "chat_id": "123456",
+        "kind": "text",
+        "text": "Sin broadcast",
+        "broadcast": False,
+    }
+    async with AsyncClient(transport=ASGITransport(app=app_b), base_url="http://test") as ac:
+        resp = await ac.post("/admin/send", json=body, headers=VALID_KEY)
+    assert resp.status_code == 200
+    assert resp.json()["broadcasted"] is False
+    mock_emitter.emit.assert_not_awaited()
+
+
+async def test_send_broadcast_kind_photo_no_emite(
+    mock_agent_container: MagicMock,
+) -> None:
+    """kind=photo con broadcast=True → emit NO llamado (solo TEXT dispara broadcast)."""
+    app_b, mock_emitter = _app_con_broadcast_emitter(mock_agent_container, emit_flag=True)
+    body = {
+        "agent_id": "foo",
+        "channel": "telegram",
+        "chat_id": "123456",
+        "kind": "photo",
+        "sources": ["/tmp/foto.jpg"],
+        "broadcast": True,
+    }
+    async with AsyncClient(transport=ASGITransport(app=app_b), base_url="http://test") as ac:
+        resp = await ac.post("/admin/send", json=body, headers=VALID_KEY)
+    assert resp.status_code == 200
+    assert resp.json()["broadcasted"] is False
+    mock_emitter.emit.assert_not_awaited()
+
+
+async def test_send_broadcast_channel_no_telegram_no_emite(
+    mock_agent_container: MagicMock,
+    mock_outbound_registry: MagicMock,
+) -> None:
+    """channel!=telegram con broadcast=True → emit NO llamado."""
+    # Registrar un canal "slack" en el registry
+    mock_outbound_registry.get.return_value = MagicMock(
+        channel_name="slack",
+        capabilities=lambda: {OutboundKind.TEXT},
+        send=AsyncMock(return_value=None),
+    )
+    mock_outbound_registry.list_channels.return_value = ["slack"]
+
+    app_b, mock_emitter = _app_con_broadcast_emitter(mock_agent_container, emit_flag=True)
+    body = {
+        "agent_id": "foo",
+        "channel": "slack",
+        "chat_id": "C123",
+        "kind": "text",
+        "text": "Hola Slack",
+        "broadcast": True,
+    }
+    async with AsyncClient(transport=ASGITransport(app=app_b), base_url="http://test") as ac:
+        resp = await ac.post("/admin/send", json=body, headers=VALID_KEY)
+    assert resp.status_code == 200
+    assert resp.json()["broadcasted"] is False
+    mock_emitter.emit.assert_not_awaited()
+
+
+async def test_send_broadcast_config_flag_off_no_emite(
+    mock_agent_container: MagicMock,
+) -> None:
+    """Config flag assistant_response=False → emit NO llamado aunque broadcast=True."""
+    app_b, mock_emitter = _app_con_broadcast_emitter(mock_agent_container, emit_flag=False)
+    body = {
+        "agent_id": "foo",
+        "channel": "telegram",
+        "chat_id": "123456",
+        "kind": "text",
+        "text": "Flag off",
+        "broadcast": True,
+    }
+    async with AsyncClient(transport=ASGITransport(app=app_b), base_url="http://test") as ac:
+        resp = await ac.post("/admin/send", json=body, headers=VALID_KEY)
+    assert resp.status_code == 200
+    assert resp.json()["broadcasted"] is False
+    mock_emitter.emit.assert_not_awaited()
+
+
+async def test_send_broadcast_sin_emitter_no_falla(
+    mock_agent_container: MagicMock,
+) -> None:
+    """emitter=None (no wired) → broadcasted=False, sin error, 200 OK."""
+    # app_container sin broadcast_adapter
+    mock_agent_container.agent_config.channels = {
+        "telegram": {"broadcast": {"emit": {"assistant_response": True}}}
+    }
+    app_container = MagicMock()
+    app_container.agents = {"foo": mock_agent_container}
+    del app_container.broadcast_adapter
+
+    app_sin_emitter = create_admin_app(app_container, admin_auth_key="clave-test")
+    body = {
+        "agent_id": "foo",
+        "channel": "telegram",
+        "chat_id": "123456",
+        "kind": "text",
+        "text": "Sin emitter",
+        "broadcast": True,
+    }
+    async with AsyncClient(
+        transport=ASGITransport(app=app_sin_emitter), base_url="http://test"
+    ) as ac:
+        resp = await ac.post("/admin/send", json=body, headers=VALID_KEY)
+    assert resp.status_code == 200
+    assert resp.json()["broadcasted"] is False
+
+
+async def test_send_broadcast_emit_lanza_excepcion_no_propaga(
+    mock_agent_container: MagicMock,
+) -> None:
+    """emit.emit() lanza excepción → endpoint devuelve 200 con broadcasted=False."""
+    app_b, mock_emitter = _app_con_broadcast_emitter(mock_agent_container, emit_flag=True)
+    mock_emitter.emit.side_effect = RuntimeError("TCP timeout")
+
+    body = {
+        "agent_id": "foo",
+        "channel": "telegram",
+        "chat_id": "123456",
+        "kind": "text",
+        "text": "Emit falla",
+        "broadcast": True,
+    }
+    async with AsyncClient(transport=ASGITransport(app=app_b), base_url="http://test") as ac:
+        resp = await ac.post("/admin/send", json=body, headers=VALID_KEY)
+    assert resp.status_code == 200
+    assert resp.json()["broadcasted"] is False

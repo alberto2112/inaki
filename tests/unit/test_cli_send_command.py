@@ -353,3 +353,50 @@ def test_send_agent_custom() -> None:
     assert result.exit_code == 0, result.output
     agente_usado = client.send_message_via.call_args[0][0]
     assert agente_usado == "anacleto"
+
+
+# ---------------------------------------------------------------------------
+# --no-broadcast flag
+# ---------------------------------------------------------------------------
+
+
+def test_send_no_broadcast_manda_broadcast_false() -> None:
+    """--no-broadcast pasa broadcast=False en la llamada al DaemonClient."""
+    result, client = _invoke_send(["telegram:4879536", "--text", "Script CI", "--no-broadcast"])
+
+    assert result.exit_code == 0, result.output
+    kwargs = client.send_message_via.call_args[1]
+    assert kwargs["broadcast"] is False
+
+
+def test_send_sin_no_broadcast_manda_broadcast_true() -> None:
+    """Sin --no-broadcast, broadcast=True (default) en la llamada al DaemonClient."""
+    result, client = _invoke_send(["telegram:4879536", "--text", "Mensaje normal"])
+
+    assert result.exit_code == 0, result.output
+    kwargs = client.send_message_via.call_args[1]
+    assert kwargs["broadcast"] is True
+
+
+def test_send_output_refleja_broadcasted_true() -> None:
+    """Si el response trae broadcasted=True, el output del CLI incluye [broadcast]."""
+    client = _make_mock_client()
+    client.send_message_via.return_value = {
+        "sent": True,
+        "channel": "telegram",
+        "chat_id": "4879536",
+        "kind": "text",
+        "broadcasted": True,
+    }
+    result, _ = _invoke_send(["telegram:4879536", "--text", "Hola"], mock_client=client)
+
+    assert result.exit_code == 0, result.output
+    assert "[broadcast]" in result.output
+
+
+def test_send_output_sin_broadcasted_no_muestra_tag() -> None:
+    """Si broadcasted=False (o ausente), el output NO incluye [broadcast]."""
+    result, _ = _invoke_send(["telegram:4879536", "--text", "Hola"])
+
+    assert result.exit_code == 0, result.output
+    assert "[broadcast]" not in result.output

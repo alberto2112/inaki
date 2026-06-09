@@ -314,9 +314,11 @@ class DaemonClient:
         channel: str,
         chat_id: str,
         kind: str,
+        *,
         text: str | None = None,
         sources: list[str] | None = None,
         caption: str | None = None,
+        broadcast: bool = True,
     ) -> dict[str, Any]:
         """Envía un mensaje a un canal externo via el ChannelOutboundRegistry del agente.
 
@@ -328,6 +330,9 @@ class DaemonClient:
             text: Texto del mensaje. Requerido cuando kind="text".
             sources: Paths locales de archivos. Requerido para kinds de media.
             caption: Texto descriptivo adjunto a un archivo/álbum. Opcional.
+            broadcast: Si emitir BroadcastMessage al LAN tras envío exitoso.
+                Default True (consistente con el comportamiento del bot).
+                Solo aplica para kind=text y channel=telegram.
 
         Raises:
             DaemonNotRunningError: si el daemon no es alcanzable.
@@ -336,12 +341,14 @@ class DaemonClient:
             DaemonAuthError: si la autenticación falla (HTTP 401/403).
             DaemonClientError: para otros errores HTTP del daemon.
         """
-        # Filtrar Nones para no mandar campos nulos innecesarios
+        # Filtrar Nones para no mandar campos nulos innecesarios.
+        # broadcast es bool (no Optional) — siempre se incluye en el body.
         body: dict[str, Any] = {
             "agent_id": agent_id,
             "channel": channel,
             "chat_id": chat_id,
             "kind": kind,
+            "broadcast": broadcast,
         }
         if text is not None:
             body["text"] = text

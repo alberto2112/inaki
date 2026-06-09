@@ -395,3 +395,56 @@ def test_send_message_via_connect_error(client: DaemonClient) -> None:
     with patch("httpx.post", side_effect=httpx.ConnectError("refused")):
         with pytest.raises(DaemonNotRunningError):
             client.send_message_via("dev", "telegram", "123456", "text", text="hola")
+
+
+def test_send_message_via_broadcast_false_en_body(client: DaemonClient) -> None:
+    """broadcast=False se incluye en el body aunque sea bool (no es Optional)."""
+    with patch("httpx.post") as mock_post:
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {
+            "sent": True,
+            "channel": "telegram",
+            "chat_id": "123456",
+            "kind": "text",
+            "broadcasted": False,
+        }
+        mock_post.return_value = mock_resp
+        client.send_message_via(
+            agent_id="dev",
+            channel="telegram",
+            chat_id="123456",
+            kind="text",
+            text="Script CI",
+            broadcast=False,
+        )
+
+    _, kwargs = mock_post.call_args
+    body = kwargs["json"]
+    assert "broadcast" in body
+    assert body["broadcast"] is False
+
+
+def test_send_message_via_broadcast_true_por_defecto(client: DaemonClient) -> None:
+    """Sin pasar broadcast, el default True se incluye en el body."""
+    with patch("httpx.post") as mock_post:
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {
+            "sent": True,
+            "channel": "telegram",
+            "chat_id": "123456",
+            "kind": "text",
+            "broadcasted": True,
+        }
+        mock_post.return_value = mock_resp
+        client.send_message_via(
+            agent_id="dev",
+            channel="telegram",
+            chat_id="123456",
+            kind="text",
+            text="Mensaje normal",
+        )
+
+    _, kwargs = mock_post.call_args
+    body = kwargs["json"]
+    assert "broadcast" in body
+    assert body["broadcast"] is True

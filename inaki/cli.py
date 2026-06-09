@@ -702,6 +702,15 @@ def send(
         metavar="AGENT_ID",
         help="ID del agente desde el que se envía (default: agente por defecto del global).",
     ),
+    no_broadcast: bool = typer.Option(
+        False,
+        "--no-broadcast",
+        help=(
+            "No emitir BroadcastMessage al LAN tras envío (escape hatch para "
+            "scripts CI o casos donde no querés que otros bots vean este mensaje). "
+            "Solo aplica para envíos de texto a Telegram."
+        ),
+    ),
 ) -> None:
     """Envía un mensaje o archivo a un canal externo sin pasar por el LLM."""
     # --- Parsear destination ------------------------------------------------
@@ -826,5 +835,10 @@ def send(
         if caption is not None:
             kwargs["caption"] = caption
 
-    _handle_daemon_errors(lambda: client.send_message_via(agent_id, canal, chat_id, kind, **kwargs))
-    print(f"✓ enviado a {canal}:{chat_id} ({kind})")
+    respuesta: dict[str, Any] = _handle_daemon_errors(
+        lambda: client.send_message_via(
+            agent_id, canal, chat_id, kind, broadcast=not no_broadcast, **kwargs
+        )
+    )
+    sufijo = " [broadcast]" if (respuesta or {}).get("broadcasted") else ""
+    print(f"✓ enviado a {canal}:{chat_id} ({kind}){sufijo}")

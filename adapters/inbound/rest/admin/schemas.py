@@ -211,6 +211,15 @@ class SendRequest(BaseModel):
     )
     caption: str | None = Field(None, description="Texto descriptivo adjunto a un archivo/álbum")
 
+    broadcast: bool = Field(
+        default=True,
+        description=(
+            "Si emitir BroadcastMessage al LAN tras envío exitoso (solo aplica "
+            "para kind=text y channel=telegram). Default True (consistente con "
+            "el comportamiento del bot)."
+        ),
+    )
+
     @model_validator(mode="after")
     def _validate_kind_payload(self) -> "SendRequest":
         """Valida coherencia entre kind y los campos text/sources/caption."""
@@ -241,3 +250,7 @@ class SendResponse(BaseModel):
     channel: str = Field(..., description="Canal al que se envió")
     chat_id: str = Field(..., description="Chat destino")
     kind: str = Field(..., description="Tipo de contenido enviado")
+    broadcasted: bool = Field(
+        default=False,
+        description="True si el mensaje se emitió al canal de broadcast LAN.",
+    )

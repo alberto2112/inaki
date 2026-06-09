@@ -93,9 +93,7 @@ async def test_concurrent_acquire_only_one_wins(
     múltiples corutinas verían el set vacío al mismo tiempo y todas
     devolverían True.
     """
-    results = await asyncio.gather(
-        *[registry.try_mark_busy(scope) for _ in range(50)]
-    )
+    results = await asyncio.gather(*[registry.try_mark_busy(scope) for _ in range(50)])
     assert results.count(True) == 1
     assert results.count(False) == 49
 

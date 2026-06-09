@@ -242,9 +242,7 @@ def _tool_call_response(agent_id: str, task: str) -> LLMResponse:
             {
                 "function": {
                     "name": "delegate",
-                    "arguments": json.dumps(
-                        {"agent_id": agent_id, "task": task, "wait": True}
-                    ),
+                    "arguments": json.dumps({"agent_id": agent_id, "task": task, "wait": True}),
                 }
             }
         ],

@@ -81,7 +81,9 @@ async def test_ensure_schema_idempotent_adds_created_by(repo: SQLiteSchedulerRep
             ),
         )
         await conn.commit()
-        rows = list(await conn.execute_fetchall("SELECT created_by FROM scheduled_tasks WHERE id = 200"))
+        rows = list(
+            await conn.execute_fetchall("SELECT created_by FROM scheduled_tasks WHERE id = 200")
+        )
 
     assert rows[0]["created_by"] == "test-agent"
 

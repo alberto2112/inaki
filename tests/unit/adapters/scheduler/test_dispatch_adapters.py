@@ -352,12 +352,8 @@ class TestLLMDispatcherAdapterLockPerScope:
         dispatcher = LLMDispatcherAdapter({"inaki": agent})
 
         await asyncio.gather(
-            dispatcher.dispatch(
-                "inaki", "msg1", channel="telegram", chat_id="42"
-            ),
-            dispatcher.dispatch(
-                "inaki", "msg2", channel="telegram", chat_id="42"
-            ),
+            dispatcher.dispatch("inaki", "msg1", channel="telegram", chat_id="42"),
+            dispatcher.dispatch("inaki", "msg2", channel="telegram", chat_id="42"),
         )
 
         # Con lock: cada invocación completa antes de que arranque la otra.
@@ -384,12 +380,8 @@ class TestLLMDispatcherAdapterLockPerScope:
         dispatcher = LLMDispatcherAdapter({"inaki": agent})
 
         await asyncio.gather(
-            dispatcher.dispatch(
-                "inaki", "msg1", channel="telegram", chat_id="42"
-            ),
-            dispatcher.dispatch(
-                "inaki", "msg2", channel="telegram", chat_id="99"
-            ),
+            dispatcher.dispatch("inaki", "msg1", channel="telegram", chat_id="42"),
+            dispatcher.dispatch("inaki", "msg2", channel="telegram", chat_id="99"),
         )
 
         # El adapter expone su dict de locks para inspección/test
@@ -410,9 +402,7 @@ class TestLLMDispatcherAdapterLockPerScope:
         dispatcher = LLMDispatcherAdapter({"inaki": agent})
 
         with pytest.raises(RuntimeError, match="boom"):
-            await dispatcher.dispatch(
-                "inaki", "x", channel="cli", chat_id=""
-            )
+            await dispatcher.dispatch("inaki", "x", channel="cli", chat_id="")
 
         # Segunda llamada al mismo scope no debe colgarse — si el lock quedó
         # tomado, este await timeoutearía.

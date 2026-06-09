@@ -206,7 +206,9 @@ async def test_empty_drain_does_not_reset_counter():
     async def llm_complete(messages, system_prompt, tools=None):  # noqa: ARG001
         nonlocal call_count
         call_count += 1
-        return _tool_call_response()  # SIEMPRE devuelve tool_calls → loop nunca termina por respuesta final
+        return (
+            _tool_call_response()
+        )  # SIEMPRE devuelve tool_calls → loop nunca termina por respuesta final
 
     llm = AsyncMock()
     llm.complete = AsyncMock(side_effect=llm_complete)

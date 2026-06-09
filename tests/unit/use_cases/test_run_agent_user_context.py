@@ -139,16 +139,16 @@ def test_scope_por_canal_no_cruza_canales(deps, users_root):
     ctx_telegram = ChannelContext(channel_type="telegram", user_id="1", username="alberto")
     ctx_cli = ChannelContext(channel_type="cli", user_id="2", username="alberto")
 
-    assert _make_use_case_with_ctx(deps, ctx=ctx_telegram)._read_user_context() == "telegram-context"
+    assert (
+        _make_use_case_with_ctx(deps, ctx=ctx_telegram)._read_user_context() == "telegram-context"
+    )
     assert _make_use_case_with_ctx(deps, ctx=ctx_cli)._read_user_context() == "cli-context"
 
 
 def test_inyecta_instructions_antes_del_archivo_per_user(deps, users_root):
     """``_common.md`` (común al canal) se concatena ANTES del archivo per-user."""
     (users_root / "telegram").mkdir()
-    (users_root / "telegram" / "_common.md").write_text(
-        "no uses tablas markdown", encoding="utf-8"
-    )
+    (users_root / "telegram" / "_common.md").write_text("no uses tablas markdown", encoding="utf-8")
     (users_root / "telegram" / "alberto.md").write_text("contexto de alberto", encoding="utf-8")
 
     ctx = ChannelContext(channel_type="telegram", user_id="999", username="alberto")
@@ -160,9 +160,7 @@ def test_inyecta_instructions_antes_del_archivo_per_user(deps, users_root):
 def test_instructions_solo_sin_archivo_per_user(deps, users_root):
     """Si hay ``_common.md`` pero ningún archivo per-user, devuelve solo las instrucciones."""
     (users_root / "telegram").mkdir()
-    (users_root / "telegram" / "_common.md").write_text(
-        "formato común del canal", encoding="utf-8"
-    )
+    (users_root / "telegram" / "_common.md").write_text("formato común del canal", encoding="utf-8")
 
     ctx = ChannelContext(channel_type="telegram", user_id="999", username="desconocido")
     uc = _make_use_case_with_ctx(deps, ctx=ctx)

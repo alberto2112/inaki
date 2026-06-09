@@ -26,6 +26,7 @@ from adapters.outbound.delegation.background_queue_adapter import (
     BackgroundDelegationQueueAdapter,
 )
 from adapters.outbound.history.sqlite_history_store import SQLiteHistoryStore
+from adapters.outbound.messaging.channel_outbound_registry import ChannelOutboundRegistry
 from adapters.outbound.memory.sqlite_memory_repo import SQLiteMemoryRepository
 from adapters.outbound.scope_registry_adapter import InMemoryScopeRegistryAdapter
 from adapters.outbound.scheduler.builtin_tasks import (
@@ -107,6 +108,10 @@ class AgentContainer:
 
         # Idempotency guard for wire_telegram_tools
         self._telegram_tools_wired: bool = False
+
+        # Registry de adapters de canal saliente (ej: telegram).
+        # Se puebla en wire_telegram_tools y en futuros wire_* de otros canales.
+        self.channel_outbound_registry: ChannelOutboundRegistry = ChannelOutboundRegistry()
 
         # ScheduleTaskUseCase — wired en fase 3 por AppContainer. None hasta entonces.
         self.schedule_task: ScheduleTaskUseCase | None = None
@@ -469,9 +474,7 @@ class AgentContainer:
         self._tools.register(
             PatchFileTool(workspace=workspace_path, containment=ws_cfg.containment)
         )
-        self._tools.register(
-            EditFileTool(workspace=workspace_path, containment=ws_cfg.containment)
-        )
+        self._tools.register(EditFileTool(workspace=workspace_path, containment=ws_cfg.containment))
 
     @staticmethod
     def _resolve_transcription(cfg: AgentConfig) -> ITranscriptionProvider | None:
@@ -666,11 +669,8 @@ class AgentContainer:
         from adapters.outbound.file_transport.telegram_file_downloader import (
             TelegramFileDownloader,
         )
-        from adapters.outbound.file_transport.telegram_file_sender import (
-            TelegramFileSender,
-        )
-        from adapters.outbound.messaging.telegram_message_sender import (
-            TelegramMessageSender,
+        from adapters.outbound.messaging.telegram_channel_outbound import (
+            TelegramChannelOutbound,
         )
         from adapters.inbound.telegram.tools.download_from_telegram_tool import (
             DownloadFromTelegramTool,
@@ -689,26 +689,26 @@ class AgentContainer:
         # file_id de los media entrantes.
         self.telegram_file_repo = telegram_file_repo
 
-        sender = TelegramFileSender(get_telegram_bot=get_telegram_bot)
-        message_sender = TelegramMessageSender(get_telegram_bot=get_telegram_bot)
+        tg_channel_outbound = TelegramChannelOutbound(
+            get_telegram_bot=get_telegram_bot,
+            history=self._history,
+            agent_id=self.agent_config.id,
+        )
+        self.channel_outbound_registry.register(tg_channel_outbound)
         downloader = TelegramFileDownloader(get_telegram_bot=get_telegram_bot)
         self.telegram_file_downloader = downloader
 
         self._tools.register(
             SendToTelegramTool(
-                sender=sender,
+                registry=self.channel_outbound_registry,
                 workspace=workspace_path,
                 containment=ws_cfg.containment,
                 get_channel_context=self.get_channel_context,
-                history=self._history,
-                agent_id=self.agent_config.id,
             )
         )
         self._tools.register(
             SendTelegramMessageTool(
-                sender=message_sender,
-                history=self._history,
-                agent_id=self.agent_config.id,
+                registry=self.channel_outbound_registry,
             )
         )
         self._tools.register(
@@ -995,9 +995,7 @@ class AgentContainer:
                         # spec_from_file_location devuelve None si la ruta no es
                         # importable (extensión rara, permisos, etc.). loader es
                         # None si el spec se arma sin loader (no debería pasar acá).
-                        raise ImportError(
-                            f"No se pudo armar ModuleSpec para {manifest_path}"
-                        )
+                        raise ImportError(f"No se pudo armar ModuleSpec para {manifest_path}")
                     module = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(module)
                 except Exception as exc:

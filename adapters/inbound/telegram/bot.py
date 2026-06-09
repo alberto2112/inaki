@@ -287,9 +287,7 @@ class TelegramBot:
             return
         if not self._is_allowed(user.id):
             return
-        await message.reply_text(
-            f"Hola, soy {self._agent_cfg.name}. {self._agent_cfg.description}"
-        )
+        await message.reply_text(f"Hola, soy {self._agent_cfg.name}. {self._agent_cfg.description}")
 
     async def _cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
@@ -694,9 +692,7 @@ class TelegramBot:
         process_photo_uc = getattr(self._container, "process_photo", None)
         if process_photo_uc is None:
             if chat_type not in _TIPOS_GRUPO:
-                await message.reply_text(
-                    "La función de reconocimiento visual no está habilitada."
-                )
+                await message.reply_text("La función de reconocimiento visual no está habilitada.")
             return
 
         # Extraer bytes de la foto.
@@ -716,112 +712,155 @@ class TelegramBot:
 
         await self._set_reaction(update, "👀")
 
-        # Persistir en el historial y obtener el history_id.
-        # Si el usuario adjuntó una descripción, la incluimos en el registro.
-        if scene_prompt:
-            history_content = f"__PHOTO__ !{scene_prompt}"
-        elif caption:
-            history_content = f"__PHOTO__ {caption}"
-        else:
-            history_content = "__PHOTO__"
-        history_id = await self._container.run_agent.record_photo_message(
-            history_content,
-            channel="telegram",
-            chat_id=chat_id,
-        )
-
-        # Persistir file_id en telegram_files.db (best-effort).
-        await self._persist_incoming_file(update, history_id=history_id)
+        # In-flight protection: en privados, si ya hay un turno corriendo sobre
+        # este scope, tomamos un camino alternativo (record_user_message + ACK)
+        # para no disparar un execute() paralelo. En grupos, el buffer-flush ya
+        # se encarga (vía _schedule_group_flush idempotente al final).
+        # Ver `in-flight-message-injection` y CLAUDE.md.
+        agent_id = self._container.run_agent.get_agent_info().id
+        scope = (agent_id, "telegram", chat_id)
+        slot_acquired = False
+        if chat_type not in _TIPOS_GRUPO:
+            slot_acquired = await self._container.scope_registry.try_mark_busy(scope)
 
         try:
-            result = await process_photo_uc.execute(
-                image_bytes=image_bytes,
-                history_id=history_id,
-                agent_id=self._agent_cfg.id,
+            # Persistir en el historial y obtener el history_id.
+            # Si el usuario adjuntó una descripción, la incluimos en el registro.
+            if scene_prompt:
+                history_content = f"__PHOTO__ !{scene_prompt}"
+            elif caption:
+                history_content = f"__PHOTO__ {caption}"
+            else:
+                history_content = "__PHOTO__"
+            history_id = await self._container.run_agent.record_photo_message(
+                history_content,
                 channel="telegram",
                 chat_id=chat_id,
-                chat_type=chat_type,
-                analysis_only=bool(caption),
-                scene_prompt=scene_prompt,
             )
-        except Exception as exc:
-            logger.exception("Error procesando foto Telegram para '%s'", self._agent_cfg.id)
-            await message.reply_text(f"Error al procesar la foto: {exc}")
-            await self._set_reaction(update, "👎")
-            return
 
-        # Enviar imagen anotada si existe (cara desconocida en chat privado).
-        if result.annotated_image:
-            await message.reply_photo(result.annotated_image)
+            # Persistir file_id en telegram_files.db (best-effort).
+            await self._persist_incoming_file(update, history_id=history_id)
 
-        # Si el use case pide saltar el agente (photos.enabled=False en runtime),
-        # responder con aviso solo en privado. En grupos return silencioso para no
-        # ensuciar el chat — los bots sin la feature simplemente no participan.
-        if result.should_skip_run_agent:
-            if chat_type not in _TIPOS_GRUPO:
-                await message.reply_text(
-                    "La función de reconocimiento visual no está habilitada."
+            try:
+                result = await process_photo_uc.execute(
+                    image_bytes=image_bytes,
+                    history_id=history_id,
+                    agent_id=self._agent_cfg.id,
+                    channel="telegram",
+                    chat_id=chat_id,
+                    chat_type=chat_type,
+                    analysis_only=bool(caption),
+                    scene_prompt=scene_prompt,
                 )
-            return
+            except Exception as exc:
+                logger.exception("Error procesando foto Telegram para '%s'", self._agent_cfg.id)
+                await message.reply_text(f"Error al procesar la foto: {exc}")
+                await self._set_reaction(update, "👎")
+                return
 
-        # Modo transcripción/extracción ("!"): el resultado del descriptor va directo
-        # al chat y se guarda como mensaje del asistente para que el usuario pueda iterar.
-        if scene_prompt and result.text_context:
-            direct_text = result.text_context
-            await message.reply_text(direct_text)
-            await self._container.run_agent.record_assistant_message(
-                f"photo_transcription: {direct_text}",
-                channel="telegram",
-                chat_id=chat_id,
-            )
-            # Emitir user_input_photo solo si es chat grupal — sin assistant_response
-            # porque este modo no pasa por LLM. Gated por flag.
+            # Enviar imagen anotada si existe (cara desconocida en chat privado).
+            if result.annotated_image:
+                await message.reply_photo(result.annotated_image)
+
+            # Si el use case pide saltar el agente (photos.enabled=False en runtime),
+            # responder con aviso solo en privado. En grupos return silencioso para no
+            # ensuciar el chat — los bots sin la feature simplemente no participan.
+            if result.should_skip_run_agent:
+                if chat_type not in _TIPOS_GRUPO:
+                    await message.reply_text(
+                        "La función de reconocimiento visual no está habilitada."
+                    )
+                return
+
+            # Modo transcripción/extracción ("!"): el resultado del descriptor va directo
+            # al chat y se guarda como mensaje del asistente para que el usuario pueda iterar.
+            if scene_prompt and result.text_context:
+                direct_text = result.text_context
+                await message.reply_text(direct_text)
+                await self._container.run_agent.record_assistant_message(
+                    f"photo_transcription: {direct_text}",
+                    channel="telegram",
+                    chat_id=chat_id,
+                )
+                # Emitir user_input_photo solo si es chat grupal — sin assistant_response
+                # porque este modo no pasa por LLM. Gated por flag.
+                if chat_type in _TIPOS_GRUPO:
+                    asyncio.ensure_future(
+                        self._emit_event(
+                            event_type="user_input_photo",
+                            chat_id=chat_id,
+                            content=direct_text,
+                            sender=extract_sender_name(message),
+                        )
+                    )
+                return
+
+            # Construir el contenido enriquecido (faces + scene + caption + prefijo grupal).
+            # En grupos antepone el prefijo "{sender} (foto): ..." para mantener simetría con
+            # los audios (`{sender} (audio): ...`) y con `_format_history_prefix` aplicado a
+            # los broadcasts entrantes — así originante y receptores ven la misma estructura.
+            enriched_content = result.text_context
+            if caption:
+                enriched_content = f"{result.text_context}\n\nDescripción del usuario: {caption}"
             if chat_type in _TIPOS_GRUPO:
+                sender = extract_sender_name(message)
+                enriched_content = f"{sender} (foto): {enriched_content}"
+
+            # CAMINO IN-FLIGHT (privado, slot ocupado): persistir el enriched como un
+            # mensaje user NUEVO (no update_message_content) para que el drain del turno
+            # en curso lo capte entre iteraciones — `_drain_new_user_messages` cuenta
+            # filas nuevas, no detecta ediciones in-place. ACK rápido y volvemos sin
+            # disparar otro execute().
+            if not slot_acquired and chat_type not in _TIPOS_GRUPO:
+                await self._container.run_agent.record_user_message(
+                    enriched_content, channel="telegram", chat_id=chat_id
+                )
+                await message.reply_text(
+                    "📝 Lo incorporo a lo que estoy haciendo, dame un momento."
+                )
+                return
+
+            # CAMINO NORMAL: enriquecer el placeholder __PHOTO__ persistido al inicio
+            # con el text_context final. Esto evita un segundo mensaje role=user
+            # consecutivo en el historial. El history_id no cambia → face_ref sigue
+            # válido y el orden cronológico se preserva.
+            await self._container.run_agent.update_message_content(history_id, enriched_content)
+
+            # Emitir user_input_photo (solo grupos) ANTES de correr el pipeline, para que
+            # otros agentes vean la descripción antes que la respuesta del LLM.
+            if chat_type in _TIPOS_GRUPO and result.text_context:
                 asyncio.ensure_future(
                     self._emit_event(
                         event_type="user_input_photo",
                         chat_id=chat_id,
-                        content=direct_text,
+                        content=result.text_context,
                         sender=extract_sender_name(message),
                     )
                 )
-            return
 
-        # Enriquecer el placeholder __PHOTO__ persistido al inicio con el text_context final.
-        # Esto evita un segundo mensaje role=user consecutivo en el historial.
-        # El history_id no cambia → face_ref sigue válido y el orden cronológico se preserva.
-        # En grupos antepone el prefijo "{sender} (foto): ..." para mantener simetría con
-        # los audios (`{sender} (audio): ...`) y con `_format_history_prefix` aplicado a
-        # los broadcasts entrantes — así originante y receptores ven la misma estructura.
-        enriched_content = result.text_context
-        if caption:
-            enriched_content = f"{result.text_context}\n\nDescripción del usuario: {caption}"
-        if chat_type in _TIPOS_GRUPO:
-            sender = extract_sender_name(message)
-            enriched_content = f"{sender} (foto): {enriched_content}"
-        await self._container.run_agent.update_message_content(history_id, enriched_content)
+            # Si photos.debug está activo, registrar la ruta del archivo de debug
+            # en run_agent para que Phase 2 (historial + system prompt + mensajes al
+            # LLM) se agregue al archivo.
+            if result.debug_path:
+                self._container.run_agent.set_photo_debug_path(result.debug_path)
 
-        # Emitir user_input_photo (solo grupos) ANTES de correr el pipeline, para que
-        # otros agentes vean la descripción antes que la respuesta del LLM.
-        if chat_type in _TIPOS_GRUPO and result.text_context:
-            asyncio.ensure_future(
-                self._emit_event(
-                    event_type="user_input_photo",
-                    chat_id=chat_id,
-                    content=result.text_context,
-                    sender=extract_sender_name(message),
-                )
-            )
-
-        # Si photos.debug está activo, registrar la ruta del archivo de debug en run_agent
-        # para que Phase 2 (historial + system prompt + mensajes al LLM) se agregue al archivo.
-        if result.debug_path:
-            self._container.run_agent.set_photo_debug_path(result.debug_path)
-
-        # Modo history-derived: la query del turno se deriva del trailing role=user
-        # (que ahora es el placeholder enriquecido). NO pasamos user_input para evitar
-        # que ``execute()`` agregue un mensaje extra encima del que ya actualizamos.
-        await self._run_pipeline(update, None, chat_type=chat_type)
+            # Dispatch:
+            # - Grupo: delegamos al buffer-flush idempotente. Si ya hay un flush
+            #   pendiente disparado por mensajes previos, esta llamada es no-op y
+            #   ese flush eventual va a leer la foto enriquecida junto con todo lo
+            #   demás. Evita el race "foto + texto rápido" → dos execute() paralelos.
+            # - Privado con slot adquirido: history-derived run_pipeline (la query
+            #   del turno se deriva del trailing role=user que acabamos de actualizar).
+            if chat_type in _TIPOS_GRUPO:
+                self._schedule_group_flush(chat_id, chat_type)
+            else:
+                await self._run_pipeline(update, None, chat_type=chat_type)
+        finally:
+            # Liberar el slot SIEMPRE que lo hayamos adquirido, incluso si algún
+            # camino lanzó excepción. Sin esto un fallo dejaría el scope busy
+            # para siempre y todos los mensajes siguientes irían al ACK path.
+            if slot_acquired:
+                await self._container.scope_registry.mark_idle(scope)
 
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
@@ -1417,9 +1456,7 @@ class TelegramBot:
         # in-flight no aplica (SCN-IFI-13/14 del spec).
         agent_id = self._container.run_agent.get_agent_info().id
         scope = (agent_id, "telegram", str(chat_id))
-        skip_marker_value = (
-            "__SKIP__" if (self._behavior == "autonomous" and es_grupo) else None
-        )
+        skip_marker_value = "__SKIP__" if (self._behavior == "autonomous" and es_grupo) else None
 
         # Si es grupo o si user_input is None (modo history-derived: foto enriquecida)
         # → saltar el branch in-flight y caer en el flow legacy.
@@ -1464,11 +1501,7 @@ class TelegramBot:
             # la instrucción "respondé EXACTAMENTE con __SKIP__"). Cualquier
             # ocurrencia suprime el envío al chat y el broadcast. El use case
             # aplica la misma regla para descartar la persistencia.
-            if (
-                self._behavior == "autonomous"
-                and es_grupo
-                and "__SKIP__" in response.upper()
-            ):
+            if self._behavior == "autonomous" and es_grupo and "__SKIP__" in response.upper():
                 logger.debug(
                     "autonomous_skip detectado (agent=%s, chat_id=%s)",
                     self._agent_cfg.id,

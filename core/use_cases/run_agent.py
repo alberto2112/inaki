@@ -644,9 +644,7 @@ class RunAgentUseCase:
                     )
 
         user_context = self._read_user_context()
-        sender_name, sender_username, sender_first_name, sender_last_name = (
-            self._snapshot_sender()
-        )
+        sender_name, sender_username, sender_first_name, sender_last_name = self._snapshot_sender()
         context = AgentContext(
             agent_id=agent_id,
             user_context=user_context,
@@ -750,9 +748,7 @@ class RunAgentUseCase:
         # parte de la respuesta (case-insensitive) — los LLMs no siempre cumplen
         # "respondé EXACTAMENTE con __SKIP__" al pie de la letra y suelen agregar
         # pre/post-amble. Si está presente, descartamos persistencia.
-        skip_persist = (
-            skip_marker is not None and skip_marker.upper() in response.upper()
-        )
+        skip_persist = skip_marker is not None and skip_marker.upper() in response.upper()
 
         if not ephemeral and not skip_persist:
             if state_dirty:
@@ -925,9 +921,7 @@ class RunAgentUseCase:
             )
 
         user_context = self._read_user_context()
-        sender_name, sender_username, sender_first_name, sender_last_name = (
-            self._snapshot_sender()
-        )
+        sender_name, sender_username, sender_first_name, sender_last_name = self._snapshot_sender()
         context = AgentContext(
             agent_id=self._cfg.id,
             user_context=user_context,

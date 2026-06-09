@@ -79,16 +79,28 @@ class TestEnqueue:
         adapter, _ = _build_adapter()
 
         id1 = await adapter.enqueue(
-            caller_agent_id="inaki", target_agent_id="r", prompt="a",
-            system_prompt=None, channel="", chat_id="",
+            caller_agent_id="inaki",
+            target_agent_id="r",
+            prompt="a",
+            system_prompt=None,
+            channel="",
+            chat_id="",
         )
         id2 = await adapter.enqueue(
-            caller_agent_id="inaki", target_agent_id="r", prompt="b",
-            system_prompt=None, channel="", chat_id="",
+            caller_agent_id="inaki",
+            target_agent_id="r",
+            prompt="b",
+            system_prompt=None,
+            channel="",
+            chat_id="",
         )
         id3 = await adapter.enqueue(
-            caller_agent_id="otro", target_agent_id="r", prompt="c",
-            system_prompt=None, channel="", chat_id="",
+            caller_agent_id="otro",
+            target_agent_id="r",
+            prompt="c",
+            system_prompt=None,
+            channel="",
+            chat_id="",
         )
 
         assert (id1, id2, id3) == ("bg-1", "bg-2", "bg-3")
@@ -99,8 +111,12 @@ class TestEnqueue:
 
         inicio = time.perf_counter()
         await adapter.enqueue(
-            caller_agent_id="inaki", target_agent_id="r", prompt="x",
-            system_prompt=None, channel="", chat_id="",
+            caller_agent_id="inaki",
+            target_agent_id="r",
+            prompt="x",
+            system_prompt=None,
+            channel="",
+            chat_id="",
         )
         elapsed = time.perf_counter() - inicio
 
@@ -117,9 +133,12 @@ class TestSnapshotInflight:
         adapter, _ = _build_adapter()
 
         task_id = await adapter.enqueue(
-            caller_agent_id="inaki", target_agent_id="researcher",
+            caller_agent_id="inaki",
+            target_agent_id="researcher",
             prompt="investigá el saldo de Galicia",
-            system_prompt=None, channel="telegram", chat_id="42",
+            system_prompt=None,
+            channel="telegram",
+            chat_id="42",
         )
 
         snap = adapter.snapshot_inflight("inaki")
@@ -134,12 +153,20 @@ class TestSnapshotInflight:
         adapter, _ = _build_adapter()
 
         await adapter.enqueue(
-            caller_agent_id="inaki", target_agent_id="r", prompt="a",
-            system_prompt=None, channel="", chat_id="",
+            caller_agent_id="inaki",
+            target_agent_id="r",
+            prompt="a",
+            system_prompt=None,
+            channel="",
+            chat_id="",
         )
         await adapter.enqueue(
-            caller_agent_id="alberto", target_agent_id="r", prompt="b",
-            system_prompt=None, channel="", chat_id="",
+            caller_agent_id="alberto",
+            target_agent_id="r",
+            prompt="b",
+            system_prompt=None,
+            channel="",
+            chat_id="",
         )
 
         snap_inaki = adapter.snapshot_inflight("inaki")
@@ -152,8 +179,12 @@ class TestSnapshotInflight:
         adapter, _ = _build_adapter()
 
         await adapter.enqueue(
-            caller_agent_id="inaki", target_agent_id="r", prompt="a",
-            system_prompt=None, channel="", chat_id="",
+            caller_agent_id="inaki",
+            target_agent_id="r",
+            prompt="a",
+            system_prompt=None,
+            channel="",
+            chat_id="",
         )
 
         assert adapter.snapshot_inflight("otro") == []
@@ -173,6 +204,7 @@ def _one_shot_returning(value: str) -> MagicMock:
 
 def _one_shot_sleeping(seconds: float, value: str = "done") -> MagicMock:
     """One-shot mock que duerme antes de devolver — para forzar overlap."""
+
     async def slow(**_kw):
         await asyncio.sleep(seconds)
         return value
@@ -228,8 +260,12 @@ class TestLifecycle:
 
         await adapter.start()
         await adapter.enqueue(
-            caller_agent_id="inaki", target_agent_id="r", prompt="x",
-            system_prompt=None, channel="", chat_id="",
+            caller_agent_id="inaki",
+            target_agent_id="r",
+            prompt="x",
+            system_prompt=None,
+            channel="",
+            chat_id="",
         )
         # Dejar que el consumer la levante y la lance
         await asyncio.sleep(0.05)
@@ -252,8 +288,12 @@ class TestSemaphoreYFIFO:
         await adapter.start()
         for _ in range(4):
             await adapter.enqueue(
-                caller_agent_id="inaki", target_agent_id="r", prompt="x",
-                system_prompt=None, channel="", chat_id="",
+                caller_agent_id="inaki",
+                target_agent_id="r",
+                prompt="x",
+                system_prompt=None,
+                channel="",
+                chat_id="",
             )
 
         # Dar tiempo al consumer a tomar 3 y arrancar la 4ta (queue)
@@ -271,16 +311,23 @@ class TestSemaphoreYFIFO:
         """REQ-BGD-3: las tasks completan en el mismo orden que se encolaron."""
         fast = _one_shot_sleeping(0.02)
         adapter, dispatcher = _build_adapter(
-            one_shot_for={"r": fast}, max_concurrent=1,  # serializa para orden estricto
+            one_shot_for={"r": fast},
+            max_concurrent=1,  # serializa para orden estricto
         )
 
         await adapter.start()
         ids = []
         for letra in ["a", "b", "c"]:
-            ids.append(await adapter.enqueue(
-                caller_agent_id="inaki", target_agent_id="r", prompt=letra,
-                system_prompt=None, channel="", chat_id="",
-            ))
+            ids.append(
+                await adapter.enqueue(
+                    caller_agent_id="inaki",
+                    target_agent_id="r",
+                    prompt=letra,
+                    system_prompt=None,
+                    channel="",
+                    chat_id="",
+                )
+            )
 
         # Esperar a que las 3 terminen
         await asyncio.sleep(0.2)
@@ -309,9 +356,12 @@ class TestHappyPathDispatch:
 
         await adapter.start()
         task_id = await adapter.enqueue(
-            caller_agent_id="inaki", target_agent_id="researcher",
-            prompt="dame el saldo", system_prompt=None,
-            channel="telegram", chat_id="42",
+            caller_agent_id="inaki",
+            target_agent_id="researcher",
+            prompt="dame el saldo",
+            system_prompt=None,
+            channel="telegram",
+            chat_id="42",
         )
         await asyncio.sleep(0.05)
         await adapter.stop()
@@ -330,8 +380,12 @@ class TestHappyPathDispatch:
 
         await adapter.start()
         await adapter.enqueue(
-            caller_agent_id="alberto", target_agent_id="r", prompt="x",
-            system_prompt=None, channel="cli", chat_id="local",
+            caller_agent_id="alberto",
+            target_agent_id="r",
+            prompt="x",
+            system_prompt=None,
+            channel="cli",
+            chat_id="local",
         )
         await asyncio.sleep(0.05)
         await adapter.stop()
@@ -362,8 +416,12 @@ class TestHappyPathDispatch:
 
         await adapter.start()
         task_id = await adapter.enqueue(
-            caller_agent_id="inaki", target_agent_id="r", prompt="x",
-            system_prompt=None, channel="", chat_id="",
+            caller_agent_id="inaki",
+            target_agent_id="r",
+            prompt="x",
+            system_prompt=None,
+            channel="",
+            chat_id="",
         )
         await asyncio.sleep(0.05)
         await adapter.stop()
@@ -385,8 +443,12 @@ class TestHappyPathDispatch:
 
         await adapter.start()
         task_id = await adapter.enqueue(
-            caller_agent_id="inaki", target_agent_id="r", prompt="x",
-            system_prompt=None, channel="", chat_id="",
+            caller_agent_id="inaki",
+            target_agent_id="r",
+            prompt="x",
+            system_prompt=None,
+            channel="",
+            chat_id="",
         )
         # Esperar a que se agoten los reintentos (3 intentos con backoff 0.5*n).
         await asyncio.sleep(2.0)
@@ -416,8 +478,12 @@ class TestHappyPathDispatch:
 
         await adapter.start()
         task_id = await adapter.enqueue(
-            caller_agent_id="inaki", target_agent_id="r", prompt="x",
-            system_prompt=None, channel="", chat_id="",
+            caller_agent_id="inaki",
+            target_agent_id="r",
+            prompt="x",
+            system_prompt=None,
+            channel="",
+            chat_id="",
         )
         await asyncio.sleep(1.0)
         await adapter.stop()
@@ -440,8 +506,12 @@ class TestErrorPath:
 
         await adapter.start()
         task_id = await adapter.enqueue(
-            caller_agent_id="inaki", target_agent_id="r", prompt="x",
-            system_prompt=None, channel="cli", chat_id="",
+            caller_agent_id="inaki",
+            target_agent_id="r",
+            prompt="x",
+            system_prompt=None,
+            channel="cli",
+            chat_id="",
         )
         await asyncio.sleep(0.05)
         await adapter.stop()
@@ -457,8 +527,12 @@ class TestErrorPath:
 
         await adapter.start()
         task_id = await adapter.enqueue(
-            caller_agent_id="inaki", target_agent_id="fantasma", prompt="x",
-            system_prompt=None, channel="", chat_id="",
+            caller_agent_id="inaki",
+            target_agent_id="fantasma",
+            prompt="x",
+            system_prompt=None,
+            channel="",
+            chat_id="",
         )
         await asyncio.sleep(0.05)
         await adapter.stop()
@@ -476,8 +550,12 @@ class TestErrorPath:
 
         await adapter.start()
         task_id = await adapter.enqueue(
-            caller_agent_id="inaki", target_agent_id="r", prompt="x",
-            system_prompt=None, channel="", chat_id="",
+            caller_agent_id="inaki",
+            target_agent_id="r",
+            prompt="x",
+            system_prompt=None,
+            channel="",
+            chat_id="",
         )
         await asyncio.sleep(0.05)
         await adapter.stop()

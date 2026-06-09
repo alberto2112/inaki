@@ -4,6 +4,8 @@ Reemplaza la antigua ``send_photo``. Soporta photo / audio / video / file
 individual y ``album`` (lista de fotos enviadas como media group).
 
 El destino siempre es el chat actual del turno (resuelto del ``ChannelContext``).
+La persistencia en historial corre a cargo del adapter del registry — la tool
+NO persiste directamente.
 """
 
 from __future__ import annotations
@@ -14,23 +16,28 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from adapters.outbound.messaging.channel_outbound_registry import ChannelOutboundRegistry
 from adapters.outbound.tools.path_resolution import (
     ContainmentMode,
     WorkspaceEscapeError,
     resolve_path,
 )
-from core.domain.entities.message import Message, Role
 from core.domain.value_objects.channel_context import ChannelContext
-from core.domain.value_objects.telegram_file import FileContentType
-from core.ports.outbound.file_sender_port import IFileSender
-from core.ports.outbound.history_port import IHistoryStore
+from core.domain.value_objects.outbound_kind import OutboundKind
 from core.ports.outbound.tool_port import ITool, ToolResult
 
 logger = logging.getLogger(__name__)
 
 
-_TIPOS_INDIVIDUALES: tuple[FileContentType, ...] = ("photo", "audio", "video", "file")
-_TIPOS_VALIDOS = (*_TIPOS_INDIVIDUALES, "album")
+_CONTENT_TYPE_MAP: dict[str, OutboundKind] = {
+    "photo": OutboundKind.PHOTO,
+    "audio": OutboundKind.AUDIO,
+    "video": OutboundKind.VIDEO,
+    "file": OutboundKind.FILE,
+    "album": OutboundKind.ALBUM,
+}
+
+_TIPOS_VALIDOS = tuple(_CONTENT_TYPE_MAP.keys())
 
 
 class SendToTelegramTool(ITool):
@@ -74,23 +81,19 @@ class SendToTelegramTool(ITool):
 
     def __init__(
         self,
-        sender: IFileSender,
+        registry: ChannelOutboundRegistry,
         workspace: Path,
         containment: ContainmentMode,
         get_channel_context: Callable[[], ChannelContext | None],
-        history: IHistoryStore,
-        agent_id: str,
     ) -> None:
-        self._sender = sender
+        self._registry = registry
         self._workspace = workspace
         self._containment = containment
         self._get_channel_context = get_channel_context
-        self._history = history
-        self._agent_id = agent_id
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         content_type = str(kwargs.get("content_type") or "").strip().lower()
-        if content_type not in _TIPOS_VALIDOS:
+        if content_type not in _CONTENT_TYPE_MAP:
             return self._fail(
                 f"content_type inválido: {content_type!r}. Válidos: {sorted(_TIPOS_VALIDOS)}",
                 retryable=False,
@@ -124,15 +127,19 @@ class SendToTelegramTool(ITool):
             return self._fail(str(exc), retryable=False)
 
         try:
-            if content_type == "album":
-                await self._sender.send_album(chat_id=ctx.chat_id, sources=paths, caption=caption)
-            else:
-                await self._sender.send(
-                    chat_id=ctx.chat_id,
-                    content_type=content_type,  # type: ignore[arg-type]
-                    source=paths[0],
-                    caption=caption,
-                )
+            adapter = self._registry.get("telegram")
+        except KeyError as exc:
+            return self._fail(str(exc), retryable=False)
+
+        kind = _CONTENT_TYPE_MAP[content_type]
+
+        try:
+            await adapter.send(
+                chat_id=ctx.chat_id,
+                kind=kind,
+                sources=paths,
+                caption=caption,
+            )
         except (FileNotFoundError, ValueError) as exc:
             return self._fail(str(exc), retryable=False)
         except Exception as exc:  # noqa: BLE001
@@ -142,16 +149,6 @@ class SendToTelegramTool(ITool):
                 ctx.chat_id,
             )
             return self._fail(f"transport error: {exc}", retryable=True)
-
-        sent_desc = f"[{content_type}]" if not caption else f"[{content_type}: {caption}]"
-        if content_type == "album":
-            sent_desc = f"[album: {len(paths)} fotos]" if not caption else f"[album: {len(paths)} fotos: {caption}]"
-        await self._history.append(
-            self._agent_id,
-            Message(role=Role.ASSISTANT, content=sent_desc),
-            channel=ctx.channel_type,
-            chat_id=ctx.chat_id,
-        )
 
         payload = {
             "sent": True,
@@ -177,7 +174,8 @@ class SendToTelegramTool(ITool):
         else:
             if isinstance(filename_raw, list):
                 raise ValueError(
-                    f"para content_type={content_type!r}, 'filename' debe ser un único path (string), no una lista."
+                    f"para content_type={content_type!r}, 'filename' debe ser un único path "
+                    f"(string), no una lista."
                 )
             single = str(filename_raw or "").strip()
             if not single:

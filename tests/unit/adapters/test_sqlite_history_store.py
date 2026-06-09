@@ -419,6 +419,7 @@ async def test_save_state_sets_updated_at(history_store):
 
     assert row is not None
     from datetime import datetime
+
     parsed = datetime.fromisoformat(row["updated_at"])
     assert parsed.year >= 2025
 
@@ -436,7 +437,7 @@ async def test_clear_scoped_wipes_state_of_that_scope(history_store):
 
     state_g1 = await history_store.load_state("agent1", channel="telegram", chat_id="g1")
     state_g2 = await history_store.load_state("agent1", channel="telegram", chat_id="g2")
-    assert state_g1.sticky_skills == {}   # borrado
+    assert state_g1.sticky_skills == {}  # borrado
     assert state_g2.sticky_skills == {"b": 2}  # intacto
 
 

@@ -6,7 +6,7 @@ Permite escribirle a otro chat distinto al de la conversación en curso.
 
 El mensaje saliente se persiste en el historial bajo el scope del chat DESTINO
 (``channel='telegram'``, ``chat_id=<destino>``) como un mensaje ``ASSISTANT``,
-para que quede coherente con la conversación de ese chat — no con la del turno.
+a través del adapter del registry — la tool NO persiste directamente.
 """
 
 from __future__ import annotations
@@ -15,9 +15,8 @@ import json
 import logging
 from typing import Any
 
-from core.domain.entities.message import Message, Role
-from core.ports.outbound.history_port import IHistoryStore
-from core.ports.outbound.message_sender_port import IMessageSender
+from adapters.outbound.messaging.channel_outbound_registry import ChannelOutboundRegistry
+from core.domain.value_objects.outbound_kind import OutboundKind
 from core.ports.outbound.tool_port import ITool, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -57,15 +56,8 @@ class SendTelegramMessageTool(ITool):
         "required": ["chat_id", "text"],
     }
 
-    def __init__(
-        self,
-        sender: IMessageSender,
-        history: IHistoryStore,
-        agent_id: str,
-    ) -> None:
-        self._sender = sender
-        self._history = history
-        self._agent_id = agent_id
+    def __init__(self, registry: ChannelOutboundRegistry) -> None:
+        self._registry = registry
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         chat_id = str(kwargs.get("chat_id") or "").strip()
@@ -77,7 +69,12 @@ class SendTelegramMessageTool(ITool):
             return self._fail("'text' es requerido y no puede ser vacío.", retryable=False)
 
         try:
-            await self._sender.send_message(chat_id=chat_id, text=text)
+            adapter = self._registry.get("telegram")
+        except KeyError as exc:
+            return self._fail(str(exc), retryable=False)
+
+        try:
+            await adapter.send(chat_id=chat_id, kind=OutboundKind.TEXT, text=text)
         except ValueError as exc:
             return self._fail(str(exc), retryable=False)
         except Exception as exc:  # noqa: BLE001
@@ -86,15 +83,6 @@ class SendTelegramMessageTool(ITool):
                 chat_id,
             )
             return self._fail(f"transport error: {exc}", retryable=True)
-
-        # Persistimos en el scope del chat DESTINO, no en el del turno actual:
-        # el texto pertenece a la conversación del destinatario.
-        await self._history.append(
-            self._agent_id,
-            Message(role=Role.ASSISTANT, content=text),
-            channel="telegram",
-            chat_id=chat_id,
-        )
 
         payload = {"sent": True, "chat_id": chat_id}
         return ToolResult(

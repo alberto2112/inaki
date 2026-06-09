@@ -48,21 +48,24 @@ class TestRenderInFlightSection:
         assert out.startswith("## In-flight background delegations")
 
     def test_bullet_incluye_id_target_elapsed_y_preview(self) -> None:
-        out = _render_in_flight_section([
-            _view(id="bg-7", target="researcher", preview="averiguá saldo",
-                  elapsed=32),
-        ])
+        out = _render_in_flight_section(
+            [
+                _view(id="bg-7", target="researcher", preview="averiguá saldo", elapsed=32),
+            ]
+        )
 
-        assert 'bg-7 → researcher' in out
-        assert 'started 32s ago' in out
+        assert "bg-7 → researcher" in out
+        assert "started 32s ago" in out
         assert '"averiguá saldo"' in out
 
     def test_multiple_tasks_se_listan_como_bullets_separados(self) -> None:
         """Triangulación: el formato escala a N tasks."""
-        out = _render_in_flight_section([
-            _view(id="bg-1", target="researcher", preview="a", elapsed=10),
-            _view(id="bg-2", target="coder", preview="b", elapsed=3),
-        ])
+        out = _render_in_flight_section(
+            [
+                _view(id="bg-1", target="researcher", preview="a", elapsed=10),
+                _view(id="bg-2", target="coder", preview="b", elapsed=3),
+            ]
+        )
 
         assert "- bg-1 → researcher" in out
         assert "- bg-2 → coder" in out
@@ -107,10 +110,11 @@ class TestSystemPromptInjection:
     ) -> None:
         """REQ-BGD-7: con tasks in-flight, el system prompt contiene la sección."""
         queue = MagicMock()
-        queue.snapshot_inflight = MagicMock(return_value=[
-            _view(id="bg-7", target="researcher", preview="averiguá saldo",
-                  elapsed=32),
-        ])
+        queue.snapshot_inflight = MagicMock(
+            return_value=[
+                _view(id="bg-7", target="researcher", preview="averiguá saldo", elapsed=32),
+            ]
+        )
         use_case = _build_use_case(queue=queue)
         mock_llm.complete.return_value = LLMResponse.of_text("ok")
 
@@ -120,9 +124,7 @@ class TestSystemPromptInjection:
         assert "## In-flight background delegations" in system_prompt
         assert "bg-7 → researcher" in system_prompt
 
-    async def test_snapshot_vacio_no_inyecta_seccion(
-        self, _build_use_case, mock_llm
-    ) -> None:
+    async def test_snapshot_vacio_no_inyecta_seccion(self, _build_use_case, mock_llm) -> None:
         """REQ-BGD-7: snapshot vacío → no se agrega la sección."""
         queue = MagicMock()
         queue.snapshot_inflight = MagicMock(return_value=[])
@@ -134,9 +136,7 @@ class TestSystemPromptInjection:
         system_prompt = mock_llm.complete.call_args.args[1]
         assert "## In-flight background delegations" not in system_prompt
 
-    async def test_sin_queue_wired_no_inyecta_seccion(
-        self, _build_use_case, mock_llm
-    ) -> None:
+    async def test_sin_queue_wired_no_inyecta_seccion(self, _build_use_case, mock_llm) -> None:
         """Triangulación: sin queue (default None) el feature está desactivado."""
         use_case = _build_use_case(queue=None)
         mock_llm.complete.return_value = LLMResponse.of_text("ok")

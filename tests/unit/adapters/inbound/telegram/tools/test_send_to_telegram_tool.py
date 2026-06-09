@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from adapters.inbound.telegram.tools.send_to_telegram_tool import SendToTelegramTool
-from core.domain.entities.message import Role
+from adapters.outbound.messaging.channel_outbound_registry import ChannelOutboundRegistry
 from core.domain.value_objects.channel_context import ChannelContext
+from core.domain.value_objects.outbound_kind import OutboundKind
 
 
 @pytest.fixture
@@ -20,32 +21,36 @@ def workspace(tmp_path: Path) -> Path:
     return ws
 
 
-@pytest.fixture
-def sender() -> AsyncMock:
-    return AsyncMock()
+def _make_adapter() -> MagicMock:
+    adapter = MagicMock()
+    adapter.channel_name = "telegram"
+    adapter.capabilities.return_value = set(OutboundKind)
+    adapter.send = AsyncMock()
+    return adapter
 
 
-@pytest.fixture
-def history() -> AsyncMock:
-    return AsyncMock()
+def _make_registry(adapter: MagicMock | None = None) -> ChannelOutboundRegistry:
+    registry = ChannelOutboundRegistry()
+    if adapter is not None:
+        registry.register(adapter)
+    return registry
 
 
 def _make_tool(
-    sender: AsyncMock,
     workspace: Path,
     *,
     ctx: ChannelContext | None,
-    history: AsyncMock | None = None,
-    agent_id: str = "test-agent",
-) -> SendToTelegramTool:
-    return SendToTelegramTool(
-        sender=sender,
+    adapter: MagicMock | None = None,
+) -> tuple[SendToTelegramTool, MagicMock | None]:
+    ad = adapter if adapter is not None else _make_adapter()
+    registry = _make_registry(ad)
+    tool = SendToTelegramTool(
+        registry=registry,
         workspace=workspace,
         containment="strict",
         get_channel_context=lambda: ctx,
-        history=history or AsyncMock(),
-        agent_id=agent_id,
     )
+    return tool, ad
 
 
 def _foto(workspace: Path, name: str = "foto.jpg") -> Path:
@@ -55,108 +60,171 @@ def _foto(workspace: Path, name: str = "foto.jpg") -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Camino feliz - cada content_type
+# Camino feliz - cada content_type individual
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("ct", ["photo", "audio", "video", "file"])
-async def test_envia_individual(sender, workspace, ct):
+@pytest.mark.parametrize(
+    ("ct", "expected_kind"),
+    [
+        ("photo", OutboundKind.PHOTO),
+        ("audio", OutboundKind.AUDIO),
+        ("video", OutboundKind.VIDEO),
+        ("file", OutboundKind.FILE),
+    ],
+)
+async def test_envia_individual(workspace, ct, expected_kind):
     file = _foto(workspace, f"x.{ct}")
     ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100")
-    tool = _make_tool(sender, workspace, ctx=ctx)
+    tool, adapter = _make_tool(workspace, ctx=ctx)
 
     result = await tool.execute(content_type=ct, filename=file.name, caption="hola")
 
     assert result.success is True
     payload = json.loads(result.output)
     assert payload == {"sent": True, "content_type": ct, "count": 1, "chat_id": "-100"}
-    sender.send.assert_awaited_once()
-    kwargs = sender.send.call_args.kwargs
+    adapter.send.assert_awaited_once()
+    kwargs = adapter.send.call_args.kwargs
     assert kwargs["chat_id"] == "-100"
-    assert kwargs["content_type"] == ct
-    assert kwargs["source"].name == file.name
+    assert kwargs["kind"] == expected_kind
+    assert kwargs["sources"] == [file]
     assert kwargs["caption"] == "hola"
-    sender.send_album.assert_not_awaited()
 
 
-async def test_envia_album(sender, workspace):
+async def test_envia_album(workspace):
     f1 = _foto(workspace, "a.jpg")
     f2 = _foto(workspace, "b.jpg")
     ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100")
-    tool = _make_tool(sender, workspace, ctx=ctx)
+    tool, adapter = _make_tool(workspace, ctx=ctx)
 
     result = await tool.execute(content_type="album", filename=[f1.name, f2.name], caption="grupo")
 
     assert result.success is True
     payload = json.loads(result.output)
     assert payload["count"] == 2
-    sender.send_album.assert_awaited_once()
-    kwargs = sender.send_album.call_args.kwargs
+    adapter.send.assert_awaited_once()
+    kwargs = adapter.send.call_args.kwargs
+    assert kwargs["kind"] == OutboundKind.ALBUM
     assert [p.name for p in kwargs["sources"]] == ["a.jpg", "b.jpg"]
     assert kwargs["caption"] == "grupo"
-    sender.send.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
-# Validación
+# Mapping content_type → OutboundKind para los 5 valores
 # ---------------------------------------------------------------------------
 
 
-async def test_falla_content_type_invalido(sender, workspace):
+@pytest.mark.parametrize(
+    ("ct", "expected_kind"),
+    [
+        ("photo", OutboundKind.PHOTO),
+        ("audio", OutboundKind.AUDIO),
+        ("video", OutboundKind.VIDEO),
+        ("file", OutboundKind.FILE),
+        ("album", OutboundKind.ALBUM),
+    ],
+)
+async def test_mapping_content_type_a_outbound_kind(workspace, ct, expected_kind):
+    """Verifica el mapeo de los 5 content_type al OutboundKind correcto."""
+    if ct == "album":
+        f1 = _foto(workspace, "a.jpg")
+        filename = [f1.name]
+    else:
+        f = _foto(workspace, f"x.{ct}")
+        filename = f.name
+
     ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100")
-    tool = _make_tool(sender, workspace, ctx=ctx)
+    tool, adapter = _make_tool(workspace, ctx=ctx)
+
+    await tool.execute(content_type=ct, filename=filename)
+
+    kwargs = adapter.send.call_args.kwargs
+    assert kwargs["kind"] == expected_kind
+
+
+# ---------------------------------------------------------------------------
+# Validación de parámetros
+# ---------------------------------------------------------------------------
+
+
+async def test_falla_content_type_invalido(workspace):
+    ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100")
+    tool, adapter = _make_tool(workspace, ctx=ctx)
     result = await tool.execute(content_type="raro", filename="x.jpg")
     assert result.success is False
     assert "content_type" in result.error.lower()
 
 
-async def test_falla_album_sin_lista(sender, workspace):
+async def test_falla_album_sin_lista(workspace):
     _foto(workspace, "x.jpg")
     ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100")
-    tool = _make_tool(sender, workspace, ctx=ctx)
+    tool, adapter = _make_tool(workspace, ctx=ctx)
     result = await tool.execute(content_type="album", filename="x.jpg")
     assert result.success is False
     assert "lista" in result.error.lower()
 
 
-async def test_falla_individual_con_lista(sender, workspace):
+async def test_falla_individual_con_lista(workspace):
     ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100")
-    tool = _make_tool(sender, workspace, ctx=ctx)
+    tool, adapter = _make_tool(workspace, ctx=ctx)
     result = await tool.execute(content_type="photo", filename=["a.jpg", "b.jpg"])
     assert result.success is False
     assert "string" in result.error.lower() or "lista" in result.error.lower()
 
 
-async def test_falla_sin_channel_context(sender, workspace):
+async def test_falla_sin_channel_context(workspace):
     _foto(workspace, "x.jpg")
-    tool = _make_tool(sender, workspace, ctx=None)
+    tool, adapter = _make_tool(workspace, ctx=None)
     result = await tool.execute(content_type="photo", filename="x.jpg")
     assert result.success is False
 
 
-async def test_falla_canal_no_telegram(sender, workspace):
+async def test_falla_canal_no_telegram(workspace):
     _foto(workspace, "x.jpg")
     ctx = ChannelContext(channel_type="cli", user_id="local")
-    tool = _make_tool(sender, workspace, ctx=ctx)
+    tool, adapter = _make_tool(workspace, ctx=ctx)
     result = await tool.execute(content_type="photo", filename="x.jpg")
     assert result.success is False
 
 
-async def test_falla_archivo_inexistente(sender, workspace):
+async def test_falla_archivo_inexistente(workspace):
     ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100")
-    tool = _make_tool(sender, workspace, ctx=ctx)
+    tool, adapter = _make_tool(workspace, ctx=ctx)
     result = await tool.execute(content_type="photo", filename="no-existe.jpg")
     assert result.success is False
     assert "no encontrado" in result.error.lower() or "no existe" in result.error.lower()
 
 
-async def test_album_con_un_solo_path_es_aceptado(sender, workspace):
+async def test_album_con_un_solo_path_es_aceptado(workspace):
     f1 = _foto(workspace, "a.jpg")
     ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100")
-    tool = _make_tool(sender, workspace, ctx=ctx)
+    tool, adapter = _make_tool(workspace, ctx=ctx)
     result = await tool.execute(content_type="album", filename=[f1.name])
     assert result.success is True
-    sender.send_album.assert_awaited_once()
+    kwargs = adapter.send.call_args.kwargs
+    assert kwargs["kind"] == OutboundKind.ALBUM
+
+
+# ---------------------------------------------------------------------------
+# Canal no registrado → falla no retryable
+# ---------------------------------------------------------------------------
+
+
+async def test_falla_canal_no_registrado(workspace):
+    _foto(workspace, "x.jpg")
+    ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100")
+    # Registry vacío: ningún adapter
+    registry = ChannelOutboundRegistry()
+    tool = SendToTelegramTool(
+        registry=registry,
+        workspace=workspace,
+        containment="strict",
+        get_channel_context=lambda: ctx,
+    )
+    result = await tool.execute(content_type="photo", filename="x.jpg")
+    assert result.success is False
+    assert result.retryable is False
+    assert "telegram" in result.error.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -164,70 +232,51 @@ async def test_album_con_un_solo_path_es_aceptado(sender, workspace):
 # ---------------------------------------------------------------------------
 
 
-async def test_transport_timeout_es_retryable(sender, workspace):
-    sender.send.side_effect = TimeoutError("timeout")
+async def test_transport_timeout_es_retryable(workspace):
     _foto(workspace, "x.jpg")
     ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100")
-    tool = _make_tool(sender, workspace, ctx=ctx)
+    adapter = _make_adapter()
+    adapter.send.side_effect = TimeoutError("timeout")
+    tool, _ = _make_tool(workspace, ctx=ctx, adapter=adapter)
     result = await tool.execute(content_type="photo", filename="x.jpg")
     assert result.success is False
     assert result.retryable is True
 
 
-async def test_value_error_del_sender_no_retryable(sender, workspace):
-    sender.send.side_effect = ValueError("chat id mal")
+async def test_value_error_del_adapter_no_retryable(workspace):
     _foto(workspace, "x.jpg")
     ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100")
-    tool = _make_tool(sender, workspace, ctx=ctx)
+    adapter = _make_adapter()
+    adapter.send.side_effect = ValueError("chat id mal")
+    tool, _ = _make_tool(workspace, ctx=ctx, adapter=adapter)
     result = await tool.execute(content_type="photo", filename="x.jpg")
     assert result.success is False
     assert result.retryable is False
 
 
 # ---------------------------------------------------------------------------
-# Persistencia en historial
+# La tool NO persiste directamente en historial — lo hace el adapter
 # ---------------------------------------------------------------------------
 
 
-async def test_guarda_en_historial_al_enviar_individual(sender, workspace, history):
-    _foto(workspace, "x.jpg")
+async def test_no_tiene_history_ni_agent_id(workspace):
+    """La tool ya no tiene _history ni _agent_id — el adapter los gestiona."""
     ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100")
-    tool = _make_tool(sender, workspace, ctx=ctx, history=history)
+    tool, _ = _make_tool(workspace, ctx=ctx)
 
-    await tool.execute(content_type="photo", filename="x.jpg", caption="hola")
-
-    history.append.assert_awaited_once()
-    args, kwargs = history.append.call_args
-    assert args[0] == "test-agent"
-    msg = args[1]
-    assert msg.role == Role.ASSISTANT
-    assert "photo" in msg.content
-    assert "hola" in msg.content
-    assert kwargs.get("channel") == "telegram"
-    assert kwargs.get("chat_id") == "-100"
+    assert not hasattr(tool, "_history")
+    assert not hasattr(tool, "_agent_id")
 
 
-async def test_guarda_en_historial_al_enviar_album(sender, workspace, history):
-    f1 = _foto(workspace, "a.jpg")
-    f2 = _foto(workspace, "b.jpg")
+async def test_adapter_send_llamado_con_sources_list(workspace):
+    """El adapter recibe sources como lista de Paths — no source individual."""
+    f = _foto(workspace, "x.jpg")
     ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100")
-    tool = _make_tool(sender, workspace, ctx=ctx, history=history)
+    tool, adapter = _make_tool(workspace, ctx=ctx)
 
-    await tool.execute(content_type="album", filename=[f1.name, f2.name])
+    await tool.execute(content_type="photo", filename=f.name, caption="cap")
 
-    history.append.assert_awaited_once()
-    msg = history.append.call_args.args[1]
-    assert msg.role == Role.ASSISTANT
-    assert "album" in msg.content
-    assert "2" in msg.content
-
-
-async def test_no_guarda_en_historial_si_falla_el_envio(sender, workspace, history):
-    sender.send.side_effect = TimeoutError("timeout")
-    _foto(workspace, "x.jpg")
-    ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100")
-    tool = _make_tool(sender, workspace, ctx=ctx, history=history)
-
-    await tool.execute(content_type="photo", filename="x.jpg")
-
-    history.append.assert_not_awaited()
+    kwargs = adapter.send.call_args.kwargs
+    assert isinstance(kwargs["sources"], list)
+    assert len(kwargs["sources"]) == 1
+    assert isinstance(kwargs["sources"][0], Path)

@@ -65,12 +65,21 @@ def mock_container(mock_process_photo) -> MagicMock:
     container.run_agent = MagicMock()
     container.run_agent.execute = AsyncMock(return_value="Respuesta del agente")
     container.run_agent.record_photo_message = AsyncMock(return_value=42)
+    container.run_agent.record_user_message = AsyncMock()
     container.run_agent.record_assistant_message = AsyncMock()
     container.run_agent.update_message_content = AsyncMock(return_value=True)
     container.run_agent.set_extra_system_sections = MagicMock()
     container.run_agent.set_photo_debug_path = MagicMock()
+    agent_info = MagicMock()
+    agent_info.id = "dev"
+    container.run_agent.get_agent_info = MagicMock(return_value=agent_info)
     container.process_photo = mock_process_photo
     container.set_channel_context = MagicMock()
+    # Scope registry para in-flight protection. Por default el slot está libre
+    # (try_mark_busy=True) → flujo normal; tests específicos lo cambian a False.
+    container.scope_registry = MagicMock()
+    container.scope_registry.try_mark_busy = AsyncMock(return_value=True)
+    container.scope_registry.mark_idle = AsyncMock()
     return container
 
 
@@ -231,9 +240,78 @@ async def test_happy_path_private_chat_pipeline_corrido(agent_cfg, mock_containe
     mock_container.run_agent.execute.assert_awaited_once()
     assert mock_container.run_agent.execute.await_args.args[0] is None
 
+    # In-flight protection: el handler tomó el slot y lo liberó al terminar.
+    scope = ("dev", "telegram", str(update.effective_chat.id))
+    mock_container.scope_registry.try_mark_busy.assert_awaited_once_with(scope)
+    mock_container.scope_registry.mark_idle.assert_awaited_once_with(scope)
 
-async def test_group_chat_pipeline_corrido_con_chat_type_group(agent_cfg, mock_container) -> None:
+
+async def test_privado_slot_ocupado_record_user_message_y_ack(agent_cfg, mock_container) -> None:
+    """En privado con un turno en curso en este scope: la foto se procesa al
+    margen, el enriched se persiste como user-msg NUEVO (no update_message_content,
+    para que el drain del turno en curso lo capte vía `_drain_new_user_messages`),
+    y se devuelve un ACK rápido sin disparar `_run_pipeline`.
+    """
+    mock_container.scope_registry.try_mark_busy = AsyncMock(return_value=False)
+
     bot = _build_bot(agent_cfg, mock_container)
+    update = _mk_update(chat_type="private")
+    context = MagicMock()
+
+    await bot._handle_photo_message(update, context)
+
+    # process_photo se ejecuta igual — necesitamos la descripción para inyectar.
+    mock_container.process_photo.execute.assert_awaited_once()
+
+    # NO se enriquece el placeholder (porque el drain no detecta ediciones in-place)
+    # — en su lugar persiste un user-msg nuevo con el enriched.
+    mock_container.run_agent.update_message_content.assert_not_called()
+    mock_container.run_agent.record_user_message.assert_awaited_once()
+    call_kwargs = mock_container.run_agent.record_user_message.await_args.kwargs
+    assert "una foto de prueba" in call_kwargs.get(
+        "content", mock_container.run_agent.record_user_message.await_args.args[0]
+    )
+
+    # NO se dispara execute() — el turno en curso va a drenar el enriched solo.
+    mock_container.run_agent.execute.assert_not_called()
+
+    # ACK rápido al usuario.
+    update.message.reply_text.assert_awaited_once()
+    ack = update.message.reply_text.await_args.args[0]
+    assert "incorporo" in ack.lower() or "moment" in ack.lower()
+
+    # El slot NO se libera (no lo adquirimos), pero `mark_idle` no debe llamarse.
+    scope = ("dev", "telegram", str(update.effective_chat.id))
+    mock_container.scope_registry.try_mark_busy.assert_awaited_once_with(scope)
+    mock_container.scope_registry.mark_idle.assert_not_called()
+
+
+async def test_grupo_no_consulta_scope_registry(agent_cfg, mock_container) -> None:
+    """En grupos NO usamos try_mark_busy — el buffer-flush idempotente cubre
+    la coalescencia. Verificamos que el handler no toca el scope_registry.
+    """
+    bot = _build_bot(agent_cfg, mock_container)
+    bot._schedule_group_flush = MagicMock()
+    update = _mk_update(chat_type="group")
+    context = MagicMock()
+
+    await bot._handle_photo_message(update, context)
+
+    mock_container.scope_registry.try_mark_busy.assert_not_called()
+    mock_container.scope_registry.mark_idle.assert_not_called()
+
+
+async def test_grupo_delega_al_buffer_flush_idempotente(agent_cfg, mock_container) -> None:
+    """En grupos la foto delega al `_schedule_group_flush` (idempotente) en lugar
+    de disparar `_run_pipeline` directo.
+
+    Esto evita el race "foto + texto rápido" → dos `execute()` paralelos (uno
+    del handler de foto, otro del flush programado por el texto previo). Con el
+    fix, ambos paths se coalescen en un solo flush que lee la foto enriquecida
+    + cualquier texto pendiente del trailing batch del historial.
+    """
+    bot = _build_bot(agent_cfg, mock_container)
+    bot._schedule_group_flush = MagicMock()
     update = _mk_update(chat_type="group")
     context = MagicMock()
 
@@ -241,7 +319,10 @@ async def test_group_chat_pipeline_corrido_con_chat_type_group(agent_cfg, mock_c
 
     call_kwargs = mock_container.process_photo.execute.await_args.kwargs
     assert call_kwargs["chat_type"] == "group"
-    mock_container.run_agent.execute.assert_awaited_once()
+
+    # El handler delega al buffer, NO ejecuta el agente directo.
+    bot._schedule_group_flush.assert_called_once_with(str(update.effective_chat.id), "group")
+    mock_container.run_agent.execute.assert_not_called()
 
 
 async def test_annotated_image_reply_photo_llamado(agent_cfg, mock_container) -> None:

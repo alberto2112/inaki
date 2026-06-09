@@ -106,7 +106,7 @@ inaki/                                  ← repository root
 │   │       ├── scene_describer_port.py# ISceneDescriber (multimodal LLM description)
 │   │       ├── transcription_port.py  # ITranscriptionProvider (voice → text)
 │   │       ├── file_downloader_port.py# IFileDownloader (Telegram → bytes)
-│   │       ├── file_sender_port.py    # IFileSender (bytes → Telegram)
+│   │       ├── channel_outbound_port.py # IChannelOutbound (envío saliente por canal)
 │   │       ├── file_repo_port.py      # ITelegramFileRepo (local file cache)
 │   │       ├── message_face_metadata_port.py # IMessageFaceMetadataRepo
 │   │       ├── intermediate_sink_port.py      # IIntermediateSink

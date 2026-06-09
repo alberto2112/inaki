@@ -237,9 +237,7 @@ class EditFileTool(ITool):
         return [i for i, line in enumerate(lines) if pattern in line]
 
     @staticmethod
-    def _apply_edit(
-        edit: dict[str, Any], lines: list[str], match_indices: list[int]
-    ) -> list[str]:
+    def _apply_edit(edit: dict[str, Any], lines: list[str], match_indices: list[int]) -> list[str]:
         op = edit["op"]
         is_regex = bool(edit.get("is_regex", False))
         pattern = edit["pattern"]

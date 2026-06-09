@@ -141,14 +141,20 @@ async def test_end_to_end_dispatch_uses_lock_per_scope() -> None:
     try:
         # Dos delegaciones al MISMO scope, encoladas back-to-back
         await queue.enqueue(
-            caller_agent_id="inaki", target_agent_id="r",
-            prompt="a", system_prompt=None,
-            channel="telegram", chat_id="42",
+            caller_agent_id="inaki",
+            target_agent_id="r",
+            prompt="a",
+            system_prompt=None,
+            channel="telegram",
+            chat_id="42",
         )
         await queue.enqueue(
-            caller_agent_id="inaki", target_agent_id="r",
-            prompt="b", system_prompt=None,
-            channel="telegram", chat_id="42",
+            caller_agent_id="inaki",
+            target_agent_id="r",
+            prompt="b",
+            system_prompt=None,
+            channel="telegram",
+            chat_id="42",
         )
         await asyncio.wait_for(
             _wait_until(lambda: len(historial_persistido) == 4, timeout=5.0),

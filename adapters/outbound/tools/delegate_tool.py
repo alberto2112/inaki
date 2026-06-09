@@ -193,9 +193,7 @@ class DelegateTool(ITool):
             return await self._execute_sync(
                 agent_id=agent_id, task=task, system_prompt=system_prompt
             )
-        return await self._execute_async(
-            agent_id=agent_id, task=task, system_prompt=system_prompt
-        )
+        return await self._execute_async(agent_id=agent_id, task=task, system_prompt=system_prompt)
 
     async def _execute_sync(
         self,

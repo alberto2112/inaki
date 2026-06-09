@@ -110,7 +110,9 @@ async def test_handle_group_message_snapshot_sender_humano(agent_cfg_autonomous,
     bot._schedule_group_flush = MagicMock()
 
     update = _human_update(chat_id=-100123, user_id=42, username="juan")
-    with patch("adapters.inbound.telegram.bot.format_group_message", return_value="juan said: hola"):
+    with patch(
+        "adapters.inbound.telegram.bot.format_group_message", return_value="juan said: hola"
+    ):
         await bot._handle_group_message(update, "hola", "supergroup")
 
     snap = bot._last_group_sender["-100123"]
@@ -185,8 +187,8 @@ async def test_run_group_pipeline_inyecta_sender_desde_snapshot(
     bot._broadcast_receiver = None
 
     captured: list[ChannelContext] = []
-    mock_container.set_channel_context.side_effect = (
-        lambda c: captured.append(c) if isinstance(c, ChannelContext) else None
+    mock_container.set_channel_context.side_effect = lambda c: (
+        captured.append(c) if isinstance(c, ChannelContext) else None
     )
 
     await bot._run_group_pipeline("-100123", "supergroup")
@@ -211,8 +213,8 @@ async def test_run_group_pipeline_sin_snapshot_deja_sender_none(
     # _last_group_sender vacío deliberadamente.
 
     captured: list[ChannelContext] = []
-    mock_container.set_channel_context.side_effect = (
-        lambda c: captured.append(c) if isinstance(c, ChannelContext) else None
+    mock_container.set_channel_context.side_effect = lambda c: (
+        captured.append(c) if isinstance(c, ChannelContext) else None
     )
 
     await bot._run_group_pipeline("-100999", "supergroup")

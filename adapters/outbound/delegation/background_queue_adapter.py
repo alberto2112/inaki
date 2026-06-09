@@ -119,9 +119,7 @@ class BackgroundDelegationQueueAdapter:
         """Consumer principal: dispara ``_run_task`` por cada item de la cola."""
         while True:
             task = await self._queue.get()
-            asyncio.create_task(
-                self._run_task(task), name=f"bg-delegation-{task.id}"
-            )
+            asyncio.create_task(self._run_task(task), name=f"bg-delegation-{task.id}")
 
     async def _run_task(self, task: BackgroundTask) -> None:
         """Ejecuta una delegación bajo el semáforo y dispatcha el resultado.
@@ -144,10 +142,7 @@ class BackgroundDelegationQueueAdapter:
             try:
                 one_shot = self._one_shot_resolver(task.target_agent_id)
                 if one_shot is None:
-                    content = (
-                        f"[{task.id}] failed: unknown_target_agent: "
-                        f"'{task.target_agent_id}'"
-                    )
+                    content = f"[{task.id}] failed: unknown_target_agent: '{task.target_agent_id}'"
                 else:
                     raw = await one_shot.execute(
                         task=task.prompt,
@@ -160,7 +155,9 @@ class BackgroundDelegationQueueAdapter:
                 content = f"[{task.id}] failed: {type(exc).__name__}: {exc}"
                 logger.warning(
                     "background-delegation %s falló: %s: %s",
-                    task.id, type(exc).__name__, exc,
+                    task.id,
+                    type(exc).__name__,
+                    exc,
                 )
 
             entregado = await self._dispatch_result(task, content)
@@ -196,7 +193,10 @@ class BackgroundDelegationQueueAdapter:
             except Exception as dispatch_exc:  # noqa: BLE001
                 logger.warning(
                     "background-delegation %s: dispatch intento %d/%d falló: %s",
-                    task.id, intento, _DISPATCH_ATTEMPTS, dispatch_exc,
+                    task.id,
+                    intento,
+                    _DISPATCH_ATTEMPTS,
+                    dispatch_exc,
                 )
                 if intento < _DISPATCH_ATTEMPTS:
                     await asyncio.sleep(_DISPATCH_RETRY_DELAY * intento)

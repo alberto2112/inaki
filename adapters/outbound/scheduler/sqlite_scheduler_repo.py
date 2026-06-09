@@ -116,9 +116,11 @@ class SQLiteSchedulerRepo:
             await self._ensure_schema_conn(conn)
             if task.id == 0:
                 # Allocate user task id: COALESCE(MAX(id), 99) + 1 WHERE id >= 100
-                rows = list(await conn.execute_fetchall(
-                    "SELECT COALESCE(MAX(id), 99) + 1 AS next_id FROM scheduled_tasks WHERE id >= 100"
-                ))
+                rows = list(
+                    await conn.execute_fetchall(
+                        "SELECT COALESCE(MAX(id), 99) + 1 AS next_id FROM scheduled_tasks WHERE id >= 100"
+                    )
+                )
                 new_id = rows[0]["next_id"] if rows else 100
                 await conn.execute(
                     """
@@ -201,9 +203,11 @@ class SQLiteSchedulerRepo:
         """Devuelve la tarea o None si no existe."""
         async with self._conn() as conn:
             await self._ensure_schema_conn(conn)
-            rows = list(await conn.execute_fetchall(
-                "SELECT * FROM scheduled_tasks WHERE id = ?", (task_id,)
-            ))
+            rows = list(
+                await conn.execute_fetchall(
+                    "SELECT * FROM scheduled_tasks WHERE id = ?", (task_id,)
+                )
+            )
         if not rows:
             return None
         return self._row_to_task(rows[0])
@@ -223,27 +227,31 @@ class SQLiteSchedulerRepo:
     async def count_active_by_agent(self, agent_id: str) -> int:
         async with self._conn() as conn:
             await self._ensure_schema_conn(conn)
-            rows = list(await conn.execute_fetchall(
-                """
+            rows = list(
+                await conn.execute_fetchall(
+                    """
                 SELECT COUNT(*) AS cnt FROM scheduled_tasks
                 WHERE created_by = ? AND enabled = 1 AND status NOT IN ('completed', 'failed')
                 """,
-                (agent_id,),
-            ))
+                    (agent_id,),
+                )
+            )
         return rows[0]["cnt"] if rows else 0
 
     async def get_next_due(self, as_of: datetime) -> ScheduledTask | None:
         """Returns the enabled pending task with the earliest next_run."""
         async with self._conn() as conn:
             await self._ensure_schema_conn(conn)
-            rows = list(await conn.execute_fetchall(
-                """
+            rows = list(
+                await conn.execute_fetchall(
+                    """
                 SELECT * FROM scheduled_tasks
                 WHERE enabled = 1 AND status = 'pending'
                 ORDER BY (next_run IS NULL), next_run ASC
                 LIMIT 1
                 """,
-            ))
+                )
+            )
         if not rows:
             return None
         return self._row_to_task(rows[0])
@@ -411,7 +419,9 @@ class SQLiteSchedulerRepo:
         """Devuelve el TaskLog por id, o None si no existe (sin excepción)."""
         async with self._conn() as conn:
             await self._ensure_schema_conn(conn)
-            rows = list(await conn.execute_fetchall("SELECT * FROM task_logs WHERE id = ?", (log_id,)))
+            rows = list(
+                await conn.execute_fetchall("SELECT * FROM task_logs WHERE id = ?", (log_id,))
+            )
         if not rows:
             return None
         return self._row_to_tasklog(rows[0])

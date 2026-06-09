@@ -2,7 +2,27 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from fastapi import HTTPException, Request
+
+if TYPE_CHECKING:
+    from infrastructure.container import AgentContainer
+
+
+def resolver_agente(request: Request, agent_id: str) -> "AgentContainer":
+    """Resuelve el AgentContainer para el agent_id dado o levanta 404."""
+    app_container = request.app.state.app_container
+    if agent_id not in app_container.agents:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": f"Agente '{agent_id}' no encontrado",
+                "error_code": "agent_not_found",
+                "disponibles": list(app_container.agents.keys()),
+            },
+        )
+    return app_container.agents[agent_id]
 
 
 def check_admin_auth(request: Request) -> None:

@@ -13,12 +13,11 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 
-from adapters.inbound.rest.admin.routers.deps import check_admin_auth
+from adapters.inbound.rest.admin.routers.deps import check_admin_auth, resolver_agente
 from adapters.inbound.rest.admin.schemas import (
     ChatTurnRequest,
     ChatTurnResponse,
@@ -30,27 +29,9 @@ from adapters.inbound.rest.admin.schemas import (
 from adapters.outbound.intermediate_sinks.buffering import BufferingIntermediateSink
 from core.domain.value_objects.channel_context import ChannelContext
 
-if TYPE_CHECKING:
-    from infrastructure.container import AgentContainer
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-def _resolver_agente(request: Request, agent_id: str) -> "AgentContainer":
-    """Resuelve el AgentContainer para el agent_id dado o levanta 404."""
-    app_container = request.app.state.app_container
-    if agent_id not in app_container.agents:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "error": f"Agente '{agent_id}' no encontrado",
-                "error_code": "agent_not_found",
-                "disponibles": list(app_container.agents.keys()),
-            },
-        )
-    return app_container.agents[agent_id]
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +62,7 @@ async def chat_turn(body: ChatTurnRequest, request: Request) -> ChatTurnResponse
         len(body.message),
     )
 
-    agent_container = _resolver_agente(request, body.agent_id)
+    agent_container = resolver_agente(request, body.agent_id)
     # Username opcional desde la config del agente — habilita el lookup de
     # ``~/.inaki/users/cli/{username}.md``. Si no está configurado queda None
     # y el resolver de user_context cae al fallback por user_id (session_id).
@@ -167,7 +148,7 @@ async def chat_task(body: TaskTurnRequest, request: Request) -> TaskTurnResponse
     t0 = time.monotonic()
     logger.info("chat_task agent=%s msg_len=%d", body.agent_id, len(body.message))
 
-    agent_container = _resolver_agente(request, body.agent_id)
+    agent_container = resolver_agente(request, body.agent_id)
     sink = BufferingIntermediateSink()
 
     # Si vienen channel + chat_id (validados both-or-none por el schema), se propagan
@@ -231,7 +212,7 @@ async def get_history(agent_id: str, request: Request) -> HistoryResponse:
     t0 = time.monotonic()
     logger.info("get_history agent=%s", agent_id)
 
-    agent_container = _resolver_agente(request, agent_id)
+    agent_container = resolver_agente(request, agent_id)
     mensajes = await agent_container.run_agent.get_history()
 
     duration_ms = int((time.monotonic() - t0) * 1000)
@@ -273,7 +254,7 @@ async def clear_history(agent_id: str, request: Request) -> Response:
     t0 = time.monotonic()
     logger.info("clear_history agent=%s", agent_id)
 
-    agent_container = _resolver_agente(request, agent_id)
+    agent_container = resolver_agente(request, agent_id)
     await agent_container.run_agent.clear_history()
 
     duration_ms = int((time.monotonic() - t0) * 1000)

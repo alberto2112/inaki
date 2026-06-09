@@ -393,8 +393,7 @@ def test_channel_sender_tokens_passthrough_when_none() -> None:
     """Si los 4 campos son None → las variables quedan literales (mismo criterio que WORKSPACE)."""
     ctx = AgentContext(agent_id="test")
     prompt = (
-        "{{CHANNEL.SENDER}} | {{CHANNEL.USERNAME}} | "
-        "{{CHANNEL.FIRST_NAME}} | {{CHANNEL.LAST_NAME}}"
+        "{{CHANNEL.SENDER}} | {{CHANNEL.USERNAME}} | {{CHANNEL.FIRST_NAME}} | {{CHANNEL.LAST_NAME}}"
     )
     assert ctx.build_system_prompt(prompt) == prompt
 

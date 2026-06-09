@@ -255,6 +255,110 @@ class DaemonClient:
         )
 
     # ------------------------------------------------------------------
+    # list_tools — lista tools del agente (Fase 5)
+    # ------------------------------------------------------------------
+
+    def list_tools(self, agent_id: str) -> dict[str, Any]:
+        """Lista las tools registradas en el agente.
+
+        Retorna el dict completo con clave 'tools': list[{name, description, parameters_schema}].
+
+        Raises:
+            DaemonNotRunningError: si el daemon no es alcanzable.
+            UnknownAgentError: si agent_id no existe en el daemon (HTTP 404).
+            DaemonAuthError: si la autenticación falla (HTTP 401/403).
+            DaemonClientError: para otros errores HTTP del daemon.
+        """
+        return self._get(
+            "/admin/tool/list",
+            params={"agent_id": agent_id},
+            error_map=self._CHAT_ERROR_MAP,
+            agent_id=agent_id,
+        )
+
+    # ------------------------------------------------------------------
+    # invoke_tool — invoca una tool del agente (Fase 5)
+    # ------------------------------------------------------------------
+
+    def invoke_tool(
+        self, agent_id: str, tool_name: str, args: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Invoca una tool del agente con los argumentos dados.
+
+        Retorna el dict completo con claves tool_name, output, success, error.
+        Un success=False en el payload NO es excepción — indica que la tool falló
+        (ej. tool no registrada, args inválidos), pero el endpoint respondió 200.
+
+        Raises:
+            DaemonNotRunningError: si el daemon no es alcanzable.
+            DaemonTimeoutError: si la respuesta supera el timeout.
+            UnknownAgentError: si agent_id no existe en el daemon (HTTP 404).
+            DaemonAuthError: si la autenticación falla (HTTP 401/403).
+            DaemonClientError: para otros errores HTTP del daemon.
+        """
+        return self._post(
+            "/admin/tool/invoke",
+            json={"agent_id": agent_id, "tool_name": tool_name, "args": args or {}},
+            timeout=self._chat_timeout,
+            error_map=self._CHAT_ERROR_MAP,
+            agent_id=agent_id,
+        )
+
+    # ------------------------------------------------------------------
+    # send_message_via — envía a un canal via ChannelOutboundRegistry (Fase 5)
+    # ------------------------------------------------------------------
+
+    def send_message_via(
+        self,
+        agent_id: str,
+        channel: str,
+        chat_id: str,
+        kind: str,
+        text: str | None = None,
+        sources: list[str] | None = None,
+        caption: str | None = None,
+    ) -> dict[str, Any]:
+        """Envía un mensaje a un canal externo via el ChannelOutboundRegistry del agente.
+
+        Args:
+            agent_id: ID del agente desde el que se envía.
+            channel: Canal destino (ej. "telegram").
+            chat_id: Identificador del chat dentro del canal.
+            kind: Tipo de contenido: "text" | "photo" | "audio" | "video" | "file" | "album".
+            text: Texto del mensaje. Requerido cuando kind="text".
+            sources: Paths locales de archivos. Requerido para kinds de media.
+            caption: Texto descriptivo adjunto a un archivo/álbum. Opcional.
+
+        Raises:
+            DaemonNotRunningError: si el daemon no es alcanzable.
+            DaemonTimeoutError: si la respuesta supera el timeout.
+            UnknownAgentError: si agent_id no existe en el daemon (HTTP 404).
+            DaemonAuthError: si la autenticación falla (HTTP 401/403).
+            DaemonClientError: para otros errores HTTP del daemon.
+        """
+        # Filtrar Nones para no mandar campos nulos innecesarios
+        body: dict[str, Any] = {
+            "agent_id": agent_id,
+            "channel": channel,
+            "chat_id": chat_id,
+            "kind": kind,
+        }
+        if text is not None:
+            body["text"] = text
+        if sources is not None:
+            body["sources"] = sources
+        if caption is not None:
+            body["caption"] = caption
+
+        return self._post(
+            "/admin/send",
+            json=body,
+            timeout=_LONG_TIMEOUT,
+            error_map=self._CHAT_ERROR_MAP,
+            agent_id=agent_id,
+        )
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 

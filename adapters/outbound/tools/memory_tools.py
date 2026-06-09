@@ -220,9 +220,7 @@ class DeleteMemoryTool(ITool):
                 )
             return ToolResult(
                 tool_name=self.name,
-                output=(
-                    f"Memory id '{memory_id}' was already deleted. No-op."
-                ),
+                output=(f"Memory id '{memory_id}' was already deleted. No-op."),
                 success=True,
             )
 

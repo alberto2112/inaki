@@ -172,9 +172,7 @@ async def test_preserves_no_trailing_newline(tool: EditFileTool, tmp_path: Path)
 # -----------------------------
 
 
-async def test_no_match_returns_error_without_writing(
-    tool: EditFileTool, tmp_path: Path
-) -> None:
+async def test_no_match_returns_error_without_writing(tool: EditFileTool, tmp_path: Path) -> None:
     f = tmp_path / "f.txt"
     original = "foo\nbar\n"
     f.write_text(original, encoding="utf-8")
@@ -189,9 +187,7 @@ async def test_no_match_returns_error_without_writing(
     assert f.read_text() == original  # intacto
 
 
-async def test_batch_aborts_if_any_pattern_missing(
-    tool: EditFileTool, tmp_path: Path
-) -> None:
+async def test_batch_aborts_if_any_pattern_missing(tool: EditFileTool, tmp_path: Path) -> None:
     """Si UN edit del batch no matchea, NADA se escribe."""
     f = tmp_path / "f.txt"
     original = "foo\nbar\n"
@@ -276,9 +272,7 @@ async def test_empty_pattern_rejected(tool: EditFileTool, tmp_path: Path) -> Non
     assert "non-empty string" in (result.error or "")
 
 
-async def test_replace_missing_replacement_rejected(
-    tool: EditFileTool, tmp_path: Path
-) -> None:
+async def test_replace_missing_replacement_rejected(tool: EditFileTool, tmp_path: Path) -> None:
     f = tmp_path / "f.txt"
     f.write_text("foo\n", encoding="utf-8")
 

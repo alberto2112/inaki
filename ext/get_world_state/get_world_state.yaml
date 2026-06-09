@@ -1,0 +1,8 @@
+id: "get_world_state"
+name: "Get World State"
+description: "Auto-generated skill for get_world_state"
+instructions: |
+  Usa get_world_state cuando necesites consultar o actualizar el estado actual del mundo. La tool consulta tareas programadas, próximos eventos del calendario y proyectos activos en memoria, generando un resumen estructurado en formato markdown.
+tags:
+  - "generated"
+  - "get_world_state"

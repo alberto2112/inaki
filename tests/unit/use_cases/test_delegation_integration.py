@@ -38,7 +38,8 @@ from infrastructure.config import (
     MemoryConfig,
     ProviderConfig,
 )
-from infrastructure.container import AgentContainer
+from core.domain.value_objects.agent_settings import OneShotSettings
+from infrastructure.container import AgentContainer, build_run_agent_settings
 
 
 # ===========================================================================
@@ -189,14 +190,18 @@ def _build_container(
             save_state=AsyncMock(),
         ),
         tools=container._tools,
-        agent_config=agent_config,
+        settings=build_run_agent_settings(agent_config),
     )
 
     # Every container gets run_agent_one_shot unconditionally (mirrors __init__ behaviour).
     container.run_agent_one_shot = RunAgentOneShotUseCase(
         llm=llm,
         tools=container._tools,
-        agent_config=agent_config,
+        settings=OneShotSettings(
+            agent_id=agent_config.id,
+            system_prompt=agent_config.system_prompt,
+            circuit_breaker_threshold=agent_config.tools.circuit_breaker_threshold,
+        ),
     )
 
     return container

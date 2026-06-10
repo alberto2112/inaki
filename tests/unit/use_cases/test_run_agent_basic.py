@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from core.use_cases.run_agent import RunAgentUseCase
+from infrastructure.container import build_run_agent_settings
 from core.domain.entities.message import Message, Role
 from core.domain.entities.skill import Skill
 from core.domain.value_objects.llm_response import LLMResponse
@@ -30,7 +31,7 @@ def use_case(
         skills=mock_skills,
         history=mock_history,
         tools=mock_tools,
-        agent_config=agent_config,
+        settings=build_run_agent_settings(agent_config),
     )
 
 
@@ -152,7 +153,7 @@ def _make_use_case(
         skills=mock_skills,
         history=mock_history,
         tools=mock_tools,
-        agent_config=cfg,
+        settings=build_run_agent_settings(cfg),
     )
 
 
@@ -217,7 +218,7 @@ async def test_memory_search_not_called_in_execute(
         skills=mock_skills,
         history=mock_history,
         tools=mock_tools,
-        agent_config=agent_config,
+        settings=build_run_agent_settings(agent_config),
     )
     await uc.execute("hola")
     assert mock_memory.search.call_count == 0
@@ -235,7 +236,7 @@ async def test_memory_search_not_called_in_inspect(
         skills=mock_skills,
         history=mock_history,
         tools=mock_tools,
-        agent_config=agent_config,
+        settings=build_run_agent_settings(agent_config),
     )
     await uc.inspect("hola")
     assert mock_memory.search.call_count == 0
@@ -309,7 +310,7 @@ async def test_read_digest_swallows_oserror(
         skills=mock_skills,
         history=mock_history,
         tools=mock_tools,
-        agent_config=agent_config,
+        settings=build_run_agent_settings(agent_config),
     )
     with patch.object(Path, "read_text", side_effect=PermissionError("denied")):
         result = uc._read_digest()
@@ -328,7 +329,7 @@ async def test_read_digest_returns_empty_on_unicode_decode_error(
         skills=mock_skills,
         history=mock_history,
         tools=mock_tools,
-        agent_config=agent_config,
+        settings=build_run_agent_settings(agent_config),
     )
     with patch.object(
         Path,
@@ -351,7 +352,7 @@ async def test_inspect_result_has_memory_digest_not_memories(
         skills=mock_skills,
         history=mock_history,
         tools=mock_tools,
-        agent_config=agent_config,
+        settings=build_run_agent_settings(agent_config),
     )
     result = await uc.inspect("hola")
     assert hasattr(result, "memory_digest") and isinstance(result.memory_digest, str)
@@ -383,7 +384,7 @@ async def test_extra_system_sections_threaded_to_llm(
         skills=mock_skills,
         history=mock_history,
         tools=mock_tools,
-        agent_config=agent_config,
+        settings=build_run_agent_settings(agent_config),
     )
 
     # Simulate what wire_delegation does
@@ -417,7 +418,7 @@ async def test_extra_system_sections_empty_by_default(
         skills=mock_skills,
         history=mock_history,
         tools=mock_tools,
-        agent_config=agent_config,
+        settings=build_run_agent_settings(agent_config),
     )
 
     # No extra sections set — _extra_system_sections defaults to []
@@ -446,7 +447,7 @@ async def test_set_extra_system_sections_replaces_existing(
         skills=mock_skills,
         history=mock_history,
         tools=mock_tools,
-        agent_config=agent_config,
+        settings=build_run_agent_settings(agent_config),
     )
 
     uc.set_extra_system_sections(["FIRST-SECTION"])

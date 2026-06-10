@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Literal
 
 from croniter import croniter
@@ -40,8 +41,8 @@ from adapters.outbound.scheduler.dispatch_adapters import (
     ConsolidationDispatchAdapter,
     HttpCallerAdapter,
     LLMDispatcherAdapter,
-    SchedulerDispatchPorts,
 )
+from core.ports.outbound.scheduler_dispatch_port import SchedulerDispatchPorts
 from adapters.outbound.sinks.sink_factory import SinkFactory
 from adapters.outbound.sinks.telegram_sink import TelegramSink
 from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRepo
@@ -62,11 +63,19 @@ from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
 from core.use_cases.run_agent import RunAgentUseCase
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from core.use_cases.schedule_task import ScheduleTaskUseCase
+from core.domain.value_objects.agent_settings import (
+    MemorySettings,
+    OneShotSettings,
+    PhotosSettings,
+    RunAgentSettings,
+)
 from infrastructure.config import (
     AgentConfig,
     AgentRegistry,
     GlobalConfig,
     KnowledgeSourceConfig,
+    MemoryConfig,
+    PhotosConfig,
     TelegramChannelConfig,
 )
 from infrastructure.daemon_reloader import DaemonReloader
@@ -75,6 +84,66 @@ from infrastructure.factories.llm_factory import LLMProviderFactory
 from infrastructure.factories.transcription_factory import TranscriptionProviderFactory
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Mapeo config (YAML mergeado) → settings VOs de core
+#
+# Este es el ÚNICO punto del sistema donde infrastructure traduce su schema
+# user-facing a los parámetros que cada use case declara. core/ no conoce
+# AgentConfig; cada use case recibe exactamente lo que consume.
+# ---------------------------------------------------------------------------
+
+
+def build_memory_settings(memory_cfg: MemoryConfig) -> MemorySettings:
+    return MemorySettings(
+        # digest_filename ya viene resuelto a ruta absoluta por RuntimePath.
+        digest_template=memory_cfg.digest_filename,
+        digest_size=memory_cfg.digest_size,
+        min_relevance_score=memory_cfg.min_relevance_score,
+        keep_last_messages=memory_cfg.keep_last_messages,
+        channels_infused=(
+            tuple(memory_cfg.channels_infused) if memory_cfg.channels_infused else None
+        ),
+    )
+
+
+def build_run_agent_settings(cfg: AgentConfig) -> RunAgentSettings:
+    tg_cfg = cfg.channels.get("telegram", {}) or {}
+    timestamp_channels = (
+        frozenset({"telegram"}) if tg_cfg.get("add_llm_timestamp", False) else frozenset()
+    )
+    return RunAgentSettings(
+        agent_id=cfg.id,
+        name=cfg.name,
+        description=cfg.description,
+        system_prompt=cfg.system_prompt,
+        workspace_root=str(Path(cfg.workspace.path).expanduser().resolve()),
+        merge_chats=cfg.chat_history.merge_chats,
+        min_words_threshold=cfg.semantic_routing.min_words_threshold,
+        skills_min_skills=cfg.skills.semantic_routing_min_skills,
+        skills_top_k=cfg.skills.semantic_routing_top_k,
+        skills_min_score=cfg.skills.semantic_routing_min_score,
+        skills_sticky_ttl=cfg.skills.sticky_ttl,
+        tools_min_tools=cfg.tools.semantic_routing_min_tools,
+        tools_top_k=cfg.tools.semantic_routing_top_k,
+        tools_min_score=cfg.tools.semantic_routing_min_score,
+        tools_sticky_ttl=cfg.tools.sticky_ttl,
+        tool_call_max_iterations=cfg.tools.tool_call_max_iterations,
+        circuit_breaker_threshold=cfg.tools.circuit_breaker_threshold,
+        timestamp_channels=timestamp_channels,
+        memory=build_memory_settings(cfg.memory),
+    )
+
+
+def build_photos_settings(photos_cfg: PhotosConfig) -> PhotosSettings:
+    return PhotosSettings(
+        enabled=photos_cfg.enabled,
+        debug=photos_cfg.debug,
+        enrollment_chats=photos_cfg.enrollment_chats,
+        match_threshold=photos_cfg.faces.match_threshold,
+        ambiguous_threshold=photos_cfg.faces.ambiguous_threshold,
+    )
 
 
 class AgentContainer:
@@ -171,7 +240,7 @@ class AgentContainer:
             skills=self._skills,
             history=self._history,
             tools=self._tools,
-            agent_config=cfg,
+            settings=build_run_agent_settings(cfg),
             knowledge_orchestrator=self._knowledge_orchestrator,
             thinking_indicator=global_config.channels.thinking_indicator,
         )
@@ -186,7 +255,11 @@ class AgentContainer:
         self.run_agent_one_shot: RunAgentOneShotUseCase = RunAgentOneShotUseCase(
             llm=self._llm,
             tools=self._tools,
-            agent_config=cfg,
+            settings=OneShotSettings(
+                agent_id=cfg.id,
+                system_prompt=cfg.system_prompt,
+                circuit_breaker_threshold=cfg.tools.circuit_breaker_threshold,
+            ),
             thinking_indicator=global_config.channels.thinking_indicator,
         )
 
@@ -203,7 +276,7 @@ class AgentContainer:
                 embedder=self._embedder,
                 history=self._history,
                 agent_id=cfg.id,
-                memory_config=cfg.memory,
+                memory_config=build_memory_settings(cfg.memory),
                 # Mismo delay que se aplica entre agentes en
                 # ``ConsolidateAllAgentsUseCase``, ahora también respetado
                 # entre scopes (channel, chat_id) dentro de ESTE agente.
@@ -777,7 +850,7 @@ class AgentContainer:
                 scene_describer=scene_describer,
                 annotator=annotator,
                 metadata_repo=metadata_repo,
-                config=photos_cfg,
+                config=build_photos_settings(photos_cfg),
             )
 
             # Registrar las 8 face tools.
@@ -1201,7 +1274,8 @@ class AppContainer:
         self.scheduler_service = SchedulerService(
             repo=self.scheduler_repo,
             dispatch=dispatch_ports,
-            config=scheduler_cfg,
+            max_retries=scheduler_cfg.max_retries,
+            output_truncation_size=scheduler_cfg.output_truncation_size,
         )
 
         # Phase 3: wire scheduler tool into each agent now that schedule_task_uc is ready.

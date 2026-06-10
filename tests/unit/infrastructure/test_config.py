@@ -14,7 +14,6 @@ from infrastructure.config import (
     MemoryLLMOverride,
     ProviderConfig,
     SchedulerConfig,
-    sanitize_digest_scope,
 )
 
 HOME = str(Path.home())
@@ -157,17 +156,6 @@ def test_app_ext_dirs_expand_tilde_per_element() -> None:
 def test_keep_last_messages_default_is_zero_sentinel() -> None:
     cfg = MemoryConfig()
     assert cfg.keep_last_messages == 0
-    assert cfg.resolved_keep_last_messages() == 84
-
-
-def test_keep_last_messages_explicit_value_respected() -> None:
-    cfg = MemoryConfig(keep_last_messages=50)
-    assert cfg.resolved_keep_last_messages() == 50
-
-
-def test_keep_last_messages_negative_treated_as_sentinel() -> None:
-    cfg = MemoryConfig(keep_last_messages=-1)
-    assert cfg.resolved_keep_last_messages() == 84
 
 
 # ---------------------------------------------------------------------------
@@ -487,48 +475,6 @@ def test_render_default_global_yaml_delegation_is_commented_out() -> None:
     assert "delegation" not in parsed
 
 
-# ---------------------------------------------------------------------------
-# sanitize_digest_scope + resolved_digest_path
-# ---------------------------------------------------------------------------
-
-
-def test_sanitize_digest_scope_none_or_empty_becomes_default() -> None:
-    assert sanitize_digest_scope(None) == "default"
-    assert sanitize_digest_scope("") == "default"
-
-
-def test_sanitize_digest_scope_alphanumeric_passthrough() -> None:
-    assert sanitize_digest_scope("telegram") == "telegram"
-    assert sanitize_digest_scope("abc123") == "abc123"
-
-
-def test_sanitize_digest_scope_preserves_dashes_and_underscores() -> None:
-    # Telegram suele usar IDs negativos tipo "-1001234567"
-    assert sanitize_digest_scope("-1001234567") == "-1001234567"
-    assert sanitize_digest_scope("foo_bar") == "foo_bar"
-
-
-def test_sanitize_digest_scope_replaces_unsafe_chars() -> None:
-    assert sanitize_digest_scope("foo:bar/baz") == "foo_bar_baz"
-    assert sanitize_digest_scope("path with spaces") == "path_with_spaces"
-    assert sanitize_digest_scope("héllo") == "h_llo"  # tilde no es ascii safe
-
-
-def test_resolved_digest_path_substitutes_placeholders() -> None:
-    cfg = MemoryConfig(digest_filename="mem/digest_{channel}_{chat_id}.md")
-    p = cfg.resolved_digest_path("telegram", "-1001")
-    assert p.name == "digest_telegram_-1001.md"
-
-
-def test_resolved_digest_path_sanitizes_components() -> None:
-    cfg = MemoryConfig(digest_filename="mem/digest_{channel}_{chat_id}.md")
-    p = cfg.resolved_digest_path("tele:gram", None)
-    assert p.name == "digest_tele_gram_default.md"
-
-
-def test_resolved_digest_path_legacy_filename_without_placeholders() -> None:
-    """Config legacy sin placeholders → un único archivo para todos los scopes."""
-    cfg = MemoryConfig(digest_filename="mem/single.md")
-    p1 = cfg.resolved_digest_path("telegram", "1")
-    p2 = cfg.resolved_digest_path("cli", None)
-    assert p1 == p2  # mismo archivo — comportamiento de compatibilidad temporal
+# La lógica de digest scope (sanitize + resolved_digest_path + keep_last fallback)
+# vive ahora en core/domain/value_objects/agent_settings.py — ver
+# tests/unit/domain/test_agent_settings.py.

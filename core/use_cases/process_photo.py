@@ -29,7 +29,7 @@ from core.ports.outbound.face_registry_port import IFaceRegistryPort
 from core.ports.outbound.message_face_metadata_port import IMessageFaceMetadataRepo
 from core.ports.outbound.scene_describer_port import ISceneDescriberPort
 from core.ports.outbound.vision_port import IVisionPort
-from infrastructure.config import PhotosConfig
+from core.domain.value_objects.agent_settings import PhotosSettings
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ class ProcessPhotoUseCase:
         scene_describer: ISceneDescriberPort | None,
         annotator: IPhotoAnnotator,
         metadata_repo: IMessageFaceMetadataRepo,
-        config: PhotosConfig,
+        config: PhotosSettings,
     ) -> None:
         self._vision = vision
         self._face_registry = face_registry
@@ -242,8 +242,8 @@ class ProcessPhotoUseCase:
         (placeholder face_ref/bbox). Acá los consolidamos en un FaceMatch por
         cara con todos los candidatos juntos y status calculado.
         """
-        match_threshold = self._config.faces.match_threshold
-        ambiguous_threshold = self._config.faces.ambiguous_threshold
+        match_threshold = self._config.match_threshold
+        ambiguous_threshold = self._config.ambiguous_threshold
 
         face_matches: list[FaceMatch] = []
         for idx, detection in enumerate(detections):

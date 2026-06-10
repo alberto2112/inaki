@@ -46,14 +46,9 @@ from core.ports.outbound.memory_port import IMemoryRepository
 from core.ports.outbound.skill_port import ISkillRepository
 from core.ports.outbound.tool_port import IToolExecutor
 from core.use_cases._tool_loop import run_tool_loop
-from infrastructure.config import AgentConfig
+from core.domain.value_objects.agent_settings import RunAgentSettings
 
 logger = logging.getLogger(__name__)
-
-
-def _workspace_absolute_path(agent_config: AgentConfig) -> str:
-    """Raíz del workspace del agente, coherente con `AgentContainer` y las tools de FS."""
-    return str(Path(agent_config.workspace.path).expanduser().resolve())
 
 
 def _extract_trailing_user_batch(history: list[Message]) -> str:
@@ -211,7 +206,7 @@ class RunAgentUseCase:
         skills: ISkillRepository,
         history: IHistoryStore,
         tools: IToolExecutor,
-        agent_config: AgentConfig,
+        settings: RunAgentSettings,
         knowledge_orchestrator: KnowledgeOrchestrator | None = None,
         background_queue: IBackgroundDelegationQueue | None = None,
         thinking_indicator: bool = False,
@@ -222,7 +217,7 @@ class RunAgentUseCase:
         self._skills = skills
         self._history = history
         self._tools = tools
-        self._cfg = agent_config
+        self._settings = settings
         # Flag transversal del bloque global ``channels.thinking_indicator``.
         # Lo wirea el container desde ``GlobalConfig.channels.thinking_indicator``;
         # default ``False`` para tests que construyen el use case directo.
@@ -259,9 +254,9 @@ class RunAgentUseCase:
     def get_agent_info(self) -> AgentInfoDTO:
         """Retorna información pública del agente sin exponer _cfg."""
         return AgentInfoDTO(
-            id=self._cfg.id,
-            name=self._cfg.name,
-            description=self._cfg.description,
+            id=self._settings.agent_id,
+            name=self._settings.name,
+            description=self._settings.description,
         )
 
     def set_photo_debug_path(self, path: str | None) -> None:
@@ -352,7 +347,7 @@ class RunAgentUseCase:
         componente del scope se sanitizan a ``"default"`` (ver
         ``MemoryConfig.resolved_digest_path``).
         """
-        path = self._cfg.memory.resolved_digest_path(channel, chat_id)
+        path = self._settings.memory.resolved_digest_path(channel, chat_id)
         try:
             return path.read_text(encoding="utf-8")
         except FileNotFoundError:
@@ -379,7 +374,7 @@ class RunAgentUseCase:
         sin ``user_input`` y deriva el "turno actual" del trailing batch del historial.
         """
         msg = Message(role=Role.USER, content=content)
-        await self._history.append(self._cfg.id, msg, channel=channel, chat_id=chat_id)
+        await self._history.append(self._settings.agent_id, msg, channel=channel, chat_id=chat_id)
 
     async def record_photo_message(
         self,
@@ -393,7 +388,9 @@ class RunAgentUseCase:
         necesario en ``ProcessPhotoUseCase.execute()``.
         """
         msg = Message(role=Role.USER, content=content)
-        row_id = await self._history.append(self._cfg.id, msg, channel=channel, chat_id=chat_id)
+        row_id = await self._history.append(
+            self._settings.agent_id, msg, channel=channel, chat_id=chat_id
+        )
         return row_id or 0
 
     async def update_message_content(
@@ -407,7 +404,7 @@ class RunAgentUseCase:
         el ``text_context`` final del descriptor de escena, evitando un segundo mensaje
         ``role=user`` consecutivo en el historial.
         """
-        return await self._history.update_content(self._cfg.id, message_id, new_content)
+        return await self._history.update_content(self._settings.agent_id, message_id, new_content)
 
     async def record_assistant_message(
         self,
@@ -421,7 +418,7 @@ class RunAgentUseCase:
         que debe quedar en el historial para que el usuario pueda iterar sobre ella.
         """
         msg = Message(role=Role.ASSISTANT, content=content)
-        await self._history.append(self._cfg.id, msg, channel=channel, chat_id=chat_id)
+        await self._history.append(self._settings.agent_id, msg, channel=channel, chat_id=chat_id)
 
     async def execute(
         self,
@@ -510,7 +507,7 @@ class RunAgentUseCase:
         skip_marker: str | None,
     ) -> str:
         """Cuerpo del turno. ``channel``/``chat_id`` llegan ya normalizados por ``execute``."""
-        agent_id = self._cfg.id
+        agent_id = self._settings.agent_id
 
         # Snapshot antes del primer await para evitar carrera con flushes concurrentes
         # de distintos grupos: set_extra_system_sections puede ser sobreescrito por otro
@@ -534,7 +531,7 @@ class RunAgentUseCase:
         # Aislar historial por (channel, chat_id) salvo que merge_chats esté activo.
         # Sin filtro, el LLM recibiría mensajes de otros chats del mismo agente
         # (p. ej. privado de Telegram viendo mensajes del grupo).
-        if self._cfg.chat_history.merge_chats:
+        if self._settings.merge_chats:
             history = await self._history.load(agent_id)
         else:
             history = await self._history.load(agent_id, channel=channel, chat_id=chat_id)
@@ -559,9 +556,9 @@ class RunAgentUseCase:
         digest_text = self._read_digest(channel=channel, chat_id=chat_id)
         all_skills = await self._skills.list_all()
         all_schemas = self._tools.get_schemas()
-        skills_routing_active = len(all_skills) > self._cfg.skills.semantic_routing_min_skills
+        skills_routing_active = len(all_skills) > self._settings.skills_min_skills
         tools_routing_active = (
-            tools_override is None and len(all_schemas) > self._cfg.tools.semantic_routing_min_tools
+            tools_override is None and len(all_schemas) > self._settings.tools_min_tools
         )
         retrieved_skills: list[Skill] = all_skills
         tool_schemas: list[dict] = tools_override if tools_override is not None else all_schemas
@@ -573,7 +570,7 @@ class RunAgentUseCase:
 
         routing_bypass = _should_bypass_routing_for_short_input(
             user_input=query,
-            min_words_threshold=self._cfg.semantic_routing.min_words_threshold,
+            min_words_threshold=self._settings.min_words_threshold,
             prev_state=prev_state,
         )
 
@@ -598,7 +595,7 @@ class RunAgentUseCase:
                 "[routing] short-input bypass (agent=%s words=%d threshold=%d sticky_skills=%d sticky_tools=%d)",
                 agent_id,
                 len(query.split()),
-                self._cfg.semantic_routing.min_words_threshold,
+                self._settings.min_words_threshold,
                 len(prev_state.sticky_skills),
                 len(prev_state.sticky_tools),
             )
@@ -607,12 +604,12 @@ class RunAgentUseCase:
             if skills_routing_active:
                 routing_skills = await self._skills.retrieve(
                     query_vec,
-                    top_k=self._cfg.skills.semantic_routing_top_k,
-                    min_score=self._cfg.skills.semantic_routing_min_score,
+                    top_k=self._settings.skills_top_k,
+                    min_score=self._settings.skills_min_score,
                 )
                 routing_ids = {s.id for s in routing_skills}
                 active_ids, new_sticky_skills = apply_sticky(
-                    routing_ids, prev_state.sticky_skills, self._cfg.skills.sticky_ttl
+                    routing_ids, prev_state.sticky_skills, self._settings.skills_sticky_ttl
                 )
                 skills_by_id = {s.id: s for s in all_skills}
                 retrieved_skills = [skills_by_id[i] for i in active_ids if i in skills_by_id]
@@ -620,12 +617,12 @@ class RunAgentUseCase:
             if tools_routing_active:
                 routing_schemas = await self._tools.get_schemas_relevant(
                     query_vec,
-                    top_k=self._cfg.tools.semantic_routing_top_k,
-                    min_score=self._cfg.tools.semantic_routing_min_score,
+                    top_k=self._settings.tools_top_k,
+                    min_score=self._settings.tools_min_score,
                 )
                 routing_names = {sch["function"]["name"] for sch in routing_schemas}
                 active_names, new_sticky_tools = apply_sticky(
-                    routing_names, prev_state.sticky_tools, self._cfg.tools.sticky_ttl
+                    routing_names, prev_state.sticky_tools, self._settings.tools_sticky_ttl
                 )
                 schemas_by_name = {sch["function"]["name"]: sch for sch in all_schemas}
                 tool_schemas = [schemas_by_name[n] for n in active_names if n in schemas_by_name]
@@ -690,7 +687,7 @@ class RunAgentUseCase:
             memory_digest=digest_text,
             skills=retrieved_skills,
             timezone=self._user_timezone,
-            workspace_root=_workspace_absolute_path(self._cfg),
+            workspace_root=self._settings.workspace_root or None,
             channel=channel or None,
             chat_id=chat_id or None,
             sender_name=sender_name,
@@ -700,7 +697,7 @@ class RunAgentUseCase:
             knowledge_chunks=knowledge_chunks,
         )
         system_prompt = context.build_system_prompt(
-            self._cfg.system_prompt,
+            self._settings.system_prompt,
             extra_sections=extra_sections_snapshot or None,
         )
 
@@ -720,8 +717,7 @@ class RunAgentUseCase:
             # consecutivos mismo-rol para que el LLM reciba alternación limpia.
             messages = _coalesce_consecutive_same_role(history)
 
-        tg_cfg = self._cfg.channels.get("telegram", {}) or {}
-        if channel == "telegram" and tg_cfg.get("add_llm_timestamp", False):
+        if channel and channel in self._settings.timestamp_channels:
             messages = prepend_timestamps(messages)
 
         if self._photo_debug_path:
@@ -765,9 +761,9 @@ class RunAgentUseCase:
                 messages=messages,
                 system_prompt=system_prompt,
                 tool_schemas=tool_schemas,
-                max_iterations=self._cfg.tools.tool_call_max_iterations,
-                circuit_breaker_threshold=self._cfg.tools.circuit_breaker_threshold,
-                agent_id=self._cfg.id,
+                max_iterations=self._settings.tool_call_max_iterations,
+                circuit_breaker_threshold=self._settings.circuit_breaker_threshold,
+                agent_id=self._settings.agent_id,
                 intermediate_sink=intermediate_sink,
                 thinking_indicator=self._thinking_indicator,
                 # in-flight-message-injection: activamos drainage pasando el
@@ -811,7 +807,7 @@ class RunAgentUseCase:
 
     async def get_history(self) -> list[Message]:
         """Devuelve el historial activo del agente (sin archivados ni infused)."""
-        return await self._history.load(self._cfg.id)
+        return await self._history.load(self._settings.agent_id)
 
     async def clear_history(
         self,
@@ -824,7 +820,7 @@ class RunAgentUseCase:
         historial y resetea ``agent_state``. Si se proveen, borra solo los
         mensajes de ese (channel, chat_id) y preserva ``agent_state``.
         """
-        await self._history.clear(self._cfg.id, channel=channel, chat_id=chat_id)
+        await self._history.clear(self._settings.agent_id, channel=channel, chat_id=chat_id)
 
     @staticmethod
     def _write_debug_phase2(
@@ -895,17 +891,19 @@ class RunAgentUseCase:
         digest_text = self._read_digest(channel=channel, chat_id=chat_id)
         all_skills = await self._skills.list_all()
         all_schemas = self._tools.get_schemas()
-        skills_routing_active = len(all_skills) > self._cfg.skills.semantic_routing_min_skills
-        tools_routing_active = len(all_schemas) > self._cfg.tools.semantic_routing_min_tools
+        skills_routing_active = len(all_skills) > self._settings.skills_min_skills
+        tools_routing_active = len(all_schemas) > self._settings.tools_min_tools
         retrieved_skills: list[Skill] = all_skills
         selected_schemas: list[dict] = all_schemas
         skill_scores: list[tuple[str, float]] = []
         tool_scores: list[tuple[str, float]] = []
 
-        prev_state = await self._history.load_state(self._cfg.id, channel=channel, chat_id=chat_id)
+        prev_state = await self._history.load_state(
+            self._settings.agent_id, channel=channel, chat_id=chat_id
+        )
         routing_bypass = _should_bypass_routing_for_short_input(
             user_input=user_input,
-            min_words_threshold=self._cfg.semantic_routing.min_words_threshold,
+            min_words_threshold=self._settings.min_words_threshold,
             prev_state=prev_state,
         )
 
@@ -928,16 +926,16 @@ class RunAgentUseCase:
             if skills_routing_active:
                 scored_skills = await self._skills.retrieve_with_scores(
                     query_vec,
-                    top_k=self._cfg.skills.semantic_routing_top_k,
-                    min_score=self._cfg.skills.semantic_routing_min_score,
+                    top_k=self._settings.skills_top_k,
+                    min_score=self._settings.skills_min_score,
                 )
                 retrieved_skills = [s for s, _ in scored_skills]
                 skill_scores = [(s.id, sc) for s, sc in scored_skills]
             if tools_routing_active:
                 scored_tools = await self._tools.get_schemas_relevant_with_scores(
                     query_vec,
-                    top_k=self._cfg.tools.semantic_routing_top_k,
-                    min_score=self._cfg.tools.semantic_routing_min_score,
+                    top_k=self._settings.tools_top_k,
+                    min_score=self._settings.tools_min_score,
                 )
                 selected_schemas = [sch for sch, _ in scored_tools]
                 tool_scores = [(sch["function"]["name"], sc) for sch, sc in scored_tools]
@@ -965,12 +963,12 @@ class RunAgentUseCase:
             inspect_ctx
         )
         context = AgentContext(
-            agent_id=self._cfg.id,
+            agent_id=self._settings.agent_id,
             user_context=user_context,
             memory_digest=digest_text,
             skills=retrieved_skills,
             timezone=self._user_timezone,
-            workspace_root=_workspace_absolute_path(self._cfg),
+            workspace_root=self._settings.workspace_root or None,
             channel=channel or None,
             chat_id=chat_id or None,
             sender_name=sender_name,
@@ -979,7 +977,7 @@ class RunAgentUseCase:
             sender_last_name=sender_last_name,
             knowledge_chunks=knowledge_chunks,
         )
-        system_prompt = context.build_system_prompt(self._cfg.system_prompt)
+        system_prompt = context.build_system_prompt(self._settings.system_prompt)
 
         return InspectResult(
             user_input=user_input,

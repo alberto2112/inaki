@@ -21,15 +21,7 @@ from core.domain.errors import ToolLoopMaxIterationsError
 from core.domain.value_objects.llm_response import LLMResponse
 from core.ports.outbound.tool_port import ToolResult
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
-from infrastructure.config import (
-    AgentConfig,
-    AgentDelegationConfig,
-    ChatHistoryConfig,
-    EmbeddingConfig,
-    LLMConfig,
-    MemoryConfig,
-    ToolsConfig,
-)
+from core.domain.value_objects.agent_settings import OneShotSettings
 
 
 # ---------------------------------------------------------------------------
@@ -37,18 +29,11 @@ from infrastructure.config import (
 # ---------------------------------------------------------------------------
 
 
-def _make_agent_config(agent_id: str = "test-child") -> AgentConfig:
-    return AgentConfig(
-        id=agent_id,
-        name="Test Child",
-        description="Agente child de test",
+def _make_settings(agent_id: str = "test-child") -> OneShotSettings:
+    return OneShotSettings(
+        agent_id=agent_id,
         system_prompt="Sos un agente de test.",
-        llm=LLMConfig(provider="openrouter", model="test-model"),
-        embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
-        memory=MemoryConfig(db_filename=":memory:", default_top_k=3),
-        chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history_oneshot.db"),
-        tools=ToolsConfig(circuit_breaker_threshold=2),
-        delegation=AgentDelegationConfig(enabled=True),
+        circuit_breaker_threshold=2,
     )
 
 
@@ -70,12 +55,12 @@ def _make_tools(schemas: list[dict] | None = None) -> MagicMock:
 def _make_use_case(
     llm: AsyncMock | None = None,
     tools: MagicMock | None = None,
-    agent_config: AgentConfig | None = None,
+    settings: OneShotSettings | None = None,
 ) -> RunAgentOneShotUseCase:
     return RunAgentOneShotUseCase(
         llm=llm or _make_llm(),
         tools=tools or _make_tools(),
-        agent_config=agent_config or _make_agent_config(),
+        settings=settings or _make_settings(),
     )
 
 
@@ -113,8 +98,8 @@ async def test_req_os1_messages_start_clean_with_only_task():
     """
     llm = _make_llm("respuesta")
     tools = _make_tools()
-    cfg = _make_agent_config()
-    uc = RunAgentOneShotUseCase(llm=llm, tools=tools, agent_config=cfg)
+    cfg = _make_settings()
+    uc = RunAgentOneShotUseCase(llm=llm, tools=tools, settings=cfg)
 
     with patch(
         "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
@@ -149,8 +134,8 @@ async def test_req_os2_override_prompt_used_verbatim():
     como lo entregó el caller — sin merges, wrappers ni modificaciones.
     """
     override = "Sos un clasificador especializado."
-    cfg = _make_agent_config()
-    uc = _make_use_case(agent_config=cfg)
+    cfg = _make_settings()
+    uc = _make_use_case(settings=cfg)
 
     with patch(
         "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
@@ -176,10 +161,10 @@ async def test_req_os2_none_prompt_uses_agent_default():
     REQ-OS-2: Cuando system_prompt es None, usa el system_prompt por defecto del agente.
     No debe aparecer el digest ni sections extra.
     """
-    cfg = _make_agent_config()
+    cfg = _make_settings()
     assert cfg.system_prompt == "Sos un agente de test."
 
-    uc = _make_use_case(agent_config=cfg)
+    uc = _make_use_case(settings=cfg)
 
     with patch(
         "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
@@ -203,9 +188,9 @@ async def test_req_os2_override_does_not_contain_default_prompt():
     """
     REQ-OS-2: El override NO debe mezclarse con el prompt por defecto del agente.
     """
-    cfg = _make_agent_config()
+    cfg = _make_settings()
     override = "Override completamente diferente."
-    uc = _make_use_case(agent_config=cfg)
+    uc = _make_use_case(settings=cfg)
 
     with patch(
         "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
@@ -238,10 +223,10 @@ async def test_req_os3_timeout_propagates():
     REQ-OS-3: Si run_tool_loop tarda más que timeout_seconds, se propaga
     asyncio.TimeoutError al caller sin capturarlo en este use case.
     """
-    cfg = _make_agent_config()
+    cfg = _make_settings()
     llm = _make_llm()
     tools = _make_tools()
-    uc = RunAgentOneShotUseCase(llm=llm, tools=tools, agent_config=cfg)
+    uc = RunAgentOneShotUseCase(llm=llm, tools=tools, settings=cfg)
 
     async def _slow_loop(**kwargs):
         await asyncio.sleep(10)  # duerme mucho más que el timeout
@@ -261,8 +246,8 @@ async def test_req_os3_max_iterations_error_propagates():
     REQ-OS-3: Si run_tool_loop lanza ToolLoopMaxIterationsError,
     el use case la propaga sin capturarla.
     """
-    cfg = _make_agent_config()
-    uc = _make_use_case(agent_config=cfg)
+    cfg = _make_settings()
+    uc = _make_use_case(settings=cfg)
 
     with patch(
         "core.use_cases.run_agent_one_shot.run_tool_loop",
@@ -284,8 +269,8 @@ async def test_req_os3_max_iterations_passed_to_loop():
     """
     REQ-OS-3: El valor de max_iterations se pasa directamente a run_tool_loop.
     """
-    cfg = _make_agent_config()
-    uc = _make_use_case(agent_config=cfg)
+    cfg = _make_settings()
+    uc = _make_use_case(settings=cfg)
 
     with patch(
         "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
@@ -483,9 +468,9 @@ async def test_constructor_injection_shape():
     """Verifica que el use case se instancia correctamente con los tres args."""
     llm = _make_llm()
     tools = _make_tools()
-    cfg = _make_agent_config()
+    cfg = _make_settings()
 
-    uc = RunAgentOneShotUseCase(llm=llm, tools=tools, agent_config=cfg)
+    uc = RunAgentOneShotUseCase(llm=llm, tools=tools, settings=cfg)
 
     assert uc._llm is llm
     assert uc._tools is tools
@@ -513,14 +498,14 @@ async def test_execute_returns_string_response():
 
 async def test_circuit_breaker_threshold_from_agent_config():
     """
-    El circuit_breaker_threshold que se pasa al loop es el del AgentConfig
+    El circuit_breaker_threshold que se pasa al loop es el del OneShotSettings
     del agente hijo (no un valor hardcodeado).
     """
-    cfg = _make_agent_config()
-    # ToolsConfig en _make_agent_config tiene circuit_breaker_threshold=2
-    assert cfg.tools.circuit_breaker_threshold == 2
+    cfg = _make_settings()
+    # _make_settings tiene circuit_breaker_threshold=2
+    assert cfg.circuit_breaker_threshold == 2
 
-    uc = _make_use_case(agent_config=cfg)
+    uc = _make_use_case(settings=cfg)
 
     with patch(
         "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
@@ -540,8 +525,8 @@ async def test_circuit_breaker_threshold_from_agent_config():
 
 async def test_agent_id_passed_to_loop():
     """El agent_id pasado a run_tool_loop es el del agente hijo."""
-    cfg = _make_agent_config(agent_id="child-specialist")
-    uc = _make_use_case(agent_config=cfg)
+    cfg = _make_settings(agent_id="child-specialist")
+    uc = _make_use_case(settings=cfg)
 
     with patch(
         "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock

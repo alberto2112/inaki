@@ -17,6 +17,7 @@ import pytest
 from core.domain.entities.background_task import BackgroundTaskView
 from core.domain.value_objects.llm_response import LLMResponse
 from core.use_cases.run_agent import RunAgentUseCase, _render_in_flight_section
+from infrastructure.container import build_run_agent_settings
 
 
 def _view(
@@ -97,7 +98,7 @@ def _build_use_case(
             skills=mock_skills,
             history=mock_history,
             tools=mock_tools,
-            agent_config=agent_config,
+            settings=build_run_agent_settings(agent_config),
             background_queue=queue,
         )
 

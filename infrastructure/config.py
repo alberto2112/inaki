@@ -19,7 +19,6 @@ Regla de secrets: si el agente no define un secret, hereda del global.
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
 from typing import Annotated, Any, Iterable, Literal, Protocol
 
@@ -75,24 +74,6 @@ def _resolve_runtime_path(v: Any) -> Any:
 
 
 RuntimePath = Annotated[str, BeforeValidator(_resolve_runtime_path)]
-
-
-_DIGEST_SCOPE_SANITIZER = re.compile(r"[^a-zA-Z0-9_-]")
-
-
-def sanitize_digest_scope(value: str | None) -> str:
-    """
-    Normaliza un valor de ``channel`` o ``chat_id`` para usarlo como segmento
-    de un nombre de archivo del digest.
-
-    - ``None`` o cadena vacía → ``"default"``.
-    - Cualquier carácter fuera de ``[a-zA-Z0-9_-]`` se reemplaza por ``_``
-      (cubre IDs negativos de Telegram, dos puntos, espacios, etc.).
-    """
-    if not value:
-        return "default"
-    sanitized = _DIGEST_SCOPE_SANITIZER.sub("_", value)
-    return sanitized or "default"
 
 
 # ---------------------------------------------------------------------------
@@ -240,9 +221,6 @@ class ResolvedTranscriptionConfig(BaseModel):
     base_url: str | None = None
 
 
-_KEEP_LAST_MESSAGES_FALLBACK = 84
-
-
 class MemoryLLMOverride(BaseModel):
     """
     Override parcial de ``LLMConfig`` para el LLM de consolidación de memoria.
@@ -310,34 +288,9 @@ class MemoryConfig(BaseModel):
     Si es ``None``, consolidación reusa el LLM del agente.
     """
 
-    def resolved_digest_path(self, channel: str | None, chat_id: str | None) -> Path:
-        """
-        Devuelve la ruta absoluta del digest markdown para el scope
-        ``(channel, chat_id)``.
-
-        Aplica ``sanitize_digest_scope`` a ambos componentes y formatea el
-        template ``digest_filename``. Si el template no contiene los
-        placeholders ``{channel}`` y ``{chat_id}`` (por config legacy), se
-        devuelve la misma ruta para todos los scopes — comportamiento de
-        compatibilidad temporal; recomendado migrar a un template per-scope.
-        """
-        ch = sanitize_digest_scope(channel)
-        cid = sanitize_digest_scope(chat_id)
-        # ``digest_filename`` ya viene resuelto a absoluto por ``RuntimePath``.
-        # Llaves no-{channel}/{chat_id} en el path harían fallar str.format,
-        # pero el resolver solo concatena segmentos; los placeholders sobreviven.
-        formatted = self.digest_filename.format(channel=ch, chat_id=cid)
-        return Path(formatted)
-
-    def resolved_keep_last_messages(self) -> int:
-        """
-        Devuelve cuántos mensajes preservar por agente tras la consolidación.
-        0 (default) es un sentinel que significa 'usar el fallback del sistema'
-        ({fallback}). Cualquier valor > 0 se respeta tal cual.
-        """.format(fallback=_KEEP_LAST_MESSAGES_FALLBACK)
-        if self.keep_last_messages <= 0:
-            return _KEEP_LAST_MESSAGES_FALLBACK
-        return self.keep_last_messages
+    # La resolución del digest path y de keep_last_messages (lógica de dominio
+    # que solo core consume) vive en core/domain/value_objects/agent_settings.py
+    # (``MemorySettings``). El container traduce este modelo a ese VO.
 
     def merged_llm_config(self, base: LLMConfig) -> LLMConfig:
         """

@@ -17,15 +17,14 @@ from core.domain.entities.message import Message, Role
 from core.domain.errors import ConsolidationError
 from core.domain.value_objects.llm_response import LLMResponse
 from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
-from infrastructure.config import MemoryConfig
+from core.domain.value_objects.agent_settings import MemorySettings
 
 
 @pytest.fixture
-def memory_config(tmp_path: Path) -> MemoryConfig:
-    return MemoryConfig(
-        db_filename=":memory:",
+def memory_config(tmp_path: Path) -> MemorySettings:
+    return MemorySettings(
         digest_size=3,
-        digest_filename=str(tmp_path / "mem" / "digest.md"),
+        digest_template=str(tmp_path / "mem" / "digest.md"),
         min_relevance_score=0.5,
         keep_last_messages=20,
     )

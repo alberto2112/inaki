@@ -28,13 +28,6 @@ from core.domain.value_objects.dispatch_result import DispatchResult
 # ---------------------------------------------------------------------------
 
 
-def _make_config() -> MagicMock:
-    cfg = MagicMock()
-    cfg.max_retries = 1
-    cfg.output_truncation_size = 65536
-    return cfg
-
-
 def _make_dispatch() -> MagicMock:
     dispatch = MagicMock()
     dispatch.channel_sender = AsyncMock()
@@ -78,7 +71,8 @@ def service(mock_repo: AsyncMock) -> SchedulerService:
     return SchedulerService(
         repo=mock_repo,
         dispatch=_make_dispatch(),
-        config=_make_config(),
+        max_retries=1,
+        output_truncation_size=65536,
     )
 
 

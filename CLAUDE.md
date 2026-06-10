@@ -30,10 +30,12 @@ Inaki is a multi-agent AI assistant following **strict hexagonal architecture**:
 - **`ext/`** — User extensions auto-discovered via `manifest.py`.
 
 Dependency direction: `adapters → core ←  infrastructure`. Never reversed.
+Enforced by `tests/unit/test_architecture.py` — falla si `core/` importa `adapters/` o `infrastructure/` (incluye TYPE_CHECKING).
 
 ### Key Wiring Rules
 
 - **`infrastructure/container.py`** — `AgentContainer` (per-agent DI) and `AppContainer` (root, all agents). Registering a new tool, provider, or repo happens here and ONLY here.
+- **Settings VOs** — Los use cases NO reciben `AgentConfig`: cada uno declara sus parámetros en un VO de `core/domain/value_objects/agent_settings.py` (`RunAgentSettings`, `OneShotSettings`, `MemorySettings`, `PhotosSettings`). El mapeo config→VO vive en los builders públicos de `container.py` (`build_run_agent_settings`, etc.) — único punto donde ambos mundos se tocan. Para exponer un campo nuevo de config a un use case: agregarlo al VO + al builder.
 - **Provider discovery** — LLM and embedding providers are auto-discovered by scanning modules for a `PROVIDER_NAME` module-level constant. No manual registration needed.
 - **Two-phase agent init** — `AppContainer` first builds all `AgentContainer` instances, then wires delegation (the `delegate` tool) in a second pass so all containers exist before cross-references.
 

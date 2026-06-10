@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 from adapters.outbound.tools.scheduler_tool import SchedulerTool
 from adapters.outbound.tools.tool_registry import ToolRegistry
 from core.use_cases.run_agent import RunAgentUseCase
+from core.domain.value_objects.agent_settings import OneShotSettings
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from infrastructure.config import (
     AgentConfig,
@@ -119,7 +120,11 @@ def _build_minimal_container(
     container.run_agent_one_shot = RunAgentOneShotUseCase(
         llm=container._llm,
         tools=container._tools,
-        agent_config=agent_config,
+        settings=OneShotSettings(
+            agent_id=agent_config.id,
+            system_prompt=agent_config.system_prompt,
+            circuit_breaker_threshold=agent_config.tools.circuit_breaker_threshold,
+        ),
     )
     return container
 

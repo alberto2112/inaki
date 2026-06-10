@@ -17,12 +17,12 @@ from pathlib import Path
 import aiosqlite
 import pytest
 
+from core.ports.outbound.scheduler_dispatch_port import SchedulerDispatchPorts
 from adapters.outbound.scheduler.dispatch_adapters import (
     ChannelRouter,
     ConsolidationDispatchAdapter,
     HttpCallerAdapter,
     LLMDispatcherAdapter,
-    SchedulerDispatchPorts,
 )
 from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRepo
 from adapters.outbound.sinks.sink_factory import SinkFactory
@@ -34,7 +34,7 @@ from core.domain.entities.task import (
     TriggerType,
 )
 from core.domain.services.scheduler_service import SchedulerService
-from infrastructure.config import ChannelFallbackConfig, SchedulerConfig
+from infrastructure.config import ChannelFallbackConfig
 
 
 @pytest.fixture()
@@ -63,8 +63,7 @@ async def test_channel_send_cli_cae_en_hardcoded_file_y_persiste_metadata(
         consolidator=ConsolidationDispatchAdapter(None),  # type: ignore[arg-type]
         http_caller=HttpCallerAdapter(),
     )
-    config = SchedulerConfig(db_filename=str(tmp_path / "sched.db"))
-    service = SchedulerService(repo=repo, dispatch=dispatch, config=config)
+    service = SchedulerService(repo=repo, dispatch=dispatch)
 
     task = await repo.save_task(
         ScheduledTask(

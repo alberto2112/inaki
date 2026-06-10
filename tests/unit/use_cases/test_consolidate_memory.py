@@ -11,15 +11,14 @@ from core.domain.entities.message import Message, Role
 from core.domain.errors import ConsolidationError
 from core.domain.value_objects.llm_response import LLMResponse
 from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
-from infrastructure.config import MemoryConfig
+from core.domain.value_objects.agent_settings import MemorySettings
 
 
 @pytest.fixture
-def memory_config(tmp_path: Path) -> MemoryConfig:
-    return MemoryConfig(
-        db_filename=":memory:",
+def memory_config(tmp_path: Path) -> MemorySettings:
+    return MemorySettings(
         digest_size=3,
-        digest_filename=str(tmp_path / "mem" / "digest.md"),
+        digest_template=str(tmp_path / "mem" / "digest.md"),
         min_relevance_score=0.5,
         keep_last_messages=20,
     )
@@ -288,10 +287,9 @@ async def test_consolidation_uses_sentinel_fallback_when_keep_last_is_zero(
     tmp_path: Path, mock_llm, mock_memory, mock_embedder, mock_history
 ):
     """keep_last_messages=0 es sentinel → resuelve al fallback del sistema (84)."""
-    cfg = MemoryConfig(
-        db_filename=":memory:",
+    cfg = MemorySettings(
         digest_size=3,
-        digest_filename=str(tmp_path / "mem" / "digest.md"),
+        digest_template=str(tmp_path / "mem" / "digest.md"),
         min_relevance_score=0.5,
         keep_last_messages=0,  # sentinel
     )
@@ -374,7 +372,7 @@ async def test_digest_file_written_with_correct_format(
     )
     await uc.execute()
 
-    digest_file = Path(memory_config.digest_filename)
+    digest_file = Path(memory_config.digest_template)
     assert digest_file.exists()
     content = digest_file.read_text(encoding="utf-8")
     assert content.startswith("# Recuerdos sobre el usuario")
@@ -441,7 +439,7 @@ async def test_parent_directory_created_for_digest(
     nested_path = tmp_path / "a" / "b" / "c" / "digest.md"
     assert not nested_path.parent.exists()
 
-    cfg = MemoryConfig(digest_size=2, digest_filename=str(nested_path))
+    cfg = MemorySettings(digest_size=2, digest_template=str(nested_path))
     mock_memory.get_recent.return_value = []
     mock_history.load_uninfused.return_value = [
         Message(role=Role.USER, content="hola"),
@@ -581,10 +579,9 @@ async def test_digest_written_per_scope_to_distinct_files(
     mock_llm, mock_memory, mock_embedder, mock_history, tmp_path
 ):
     """Cada scope debe producir su propio archivo de digest, sanitizado."""
-    cfg = MemoryConfig(
-        db_filename=":memory:",
+    cfg = MemorySettings(
         digest_size=3,
-        digest_filename=str(tmp_path / "mem" / "digest_{channel}_{chat_id}.md"),
+        digest_template=str(tmp_path / "mem" / "digest_{channel}_{chat_id}.md"),
         min_relevance_score=0.5,
         keep_last_messages=20,
     )

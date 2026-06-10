@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock
 
 from core.domain.entities.message import Message, Role
 from core.use_cases.run_agent import RunAgentUseCase
+from infrastructure.container import build_run_agent_settings
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +40,7 @@ def caso_uso(
         skills=mock_skills,
         history=mock_history,
         tools=mock_tools,
-        agent_config=agent_config,
+        settings=build_run_agent_settings(agent_config),
     )
 
 

@@ -20,6 +20,7 @@ import pytest
 
 from core.domain.value_objects.channel_context import ChannelContext
 from core.use_cases.run_agent import RunAgentUseCase
+from infrastructure.container import build_run_agent_settings
 
 
 @pytest.fixture
@@ -34,7 +35,7 @@ def use_case(
         skills=mock_skills,
         history=mock_history,
         tools=mock_tools,
-        agent_config=agent_config,
+        settings=build_run_agent_settings(agent_config),
     )
 
 

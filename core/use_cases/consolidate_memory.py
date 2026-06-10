@@ -45,7 +45,7 @@ from core.ports.outbound.history_port import IHistoryStore
 from core.ports.outbound.llm_port import ILLMProvider
 from core.ports.outbound.memory_port import IMemoryRepository
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
-from infrastructure.config import MemoryConfig
+from core.domain.value_objects.agent_settings import MemorySettings
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +111,7 @@ class ConsolidateMemoryUseCase:
         embedder: IEmbeddingProvider,
         history: IHistoryStore,
         agent_id: str,
-        memory_config: MemoryConfig,
+        memory_config: MemorySettings,
         delay_seconds: int = 0,
     ) -> None:
         self._llm = llm
@@ -155,7 +155,9 @@ class ConsolidateMemoryUseCase:
         # Si channels_infused está configurado, se filtran los canales para que
         # la consolidación solo incluya mensajes de esos canales (p. ej. solo
         # "telegram" y no mensajes de CLI o daemon que no aportan recuerdos relevantes).
-        channels_infused = self._memory_cfg.channels_infused or None
+        # tuple inmutable del VO → list para el contrato del port de history.
+        cfg_channels = self._memory_cfg.channels_infused
+        channels_infused = list(cfg_channels) if cfg_channels else None
         messages = await self._history.load_uninfused(self._agent_id, channels=channels_infused)
         if not messages:
             return "No hay mensajes nuevos para consolidar."

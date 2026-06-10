@@ -22,7 +22,7 @@ from core.domain.entities.face import (
     Person,
 )
 from core.use_cases.process_photo import ProcessPhotoUseCase
-from infrastructure.config import FacesConfig, PhotosConfig
+from core.domain.value_objects.agent_settings import PhotosSettings
 
 
 # ----------------------------------------------------------------------
@@ -51,7 +51,7 @@ def _candidate_match(persona: Person, score: float) -> FaceMatch:
 
 def _build_use_case(
     *,
-    photos_config: PhotosConfig | None = None,
+    photos_config: PhotosSettings | None = None,
     scene_describer: AsyncMock | None = None,
 ) -> tuple[ProcessPhotoUseCase, dict]:
     """Construye el use case con todos los mocks. Devuelve (uc, mocks_dict)."""
@@ -71,7 +71,7 @@ def _build_use_case(
         scene_describer = AsyncMock()
         scene_describer.describe_image.return_value = "Una persona en un café."
 
-    config = photos_config or PhotosConfig()
+    config = photos_config or PhotosSettings()
 
     uc = ProcessPhotoUseCase(
         vision=vision,
@@ -97,7 +97,7 @@ def _build_use_case(
 
 
 async def test_disabled_devuelve_skip_y_no_llama_a_nada():
-    config = PhotosConfig(enabled=False)
+    config = PhotosSettings(enabled=False)
     uc, mocks = _build_use_case(photos_config=config)
 
     resultado = await uc.execute(
@@ -284,7 +284,7 @@ async def test_ignored_se_filtra_silenciosamente_pero_persiste_metadata():
 
 async def test_ambiguous_score_genera_anotacion_en_privado():
     """Score entre ambiguous_threshold (0.40) y match_threshold (0.55) → ambiguous."""
-    config = PhotosConfig(faces=FacesConfig(match_threshold=0.55, ambiguous_threshold=0.40))
+    config = PhotosSettings(match_threshold=0.55, ambiguous_threshold=0.40)
     uc, mocks = _build_use_case(photos_config=config)
     persona = Person(nombre="Quizás Alberto", embeddings_count=1)
     mocks["vision"].detect_and_embed.return_value = [_detection()]
@@ -358,7 +358,7 @@ async def test_analysis_only_suprime_face_refs_y_enrollment():
 
 async def test_analysis_only_ambiguous_muestra_candidato_sin_enrollment():
     """Con analysis_only=True, una cara ambigua muestra el candidato pero sin face_ref."""
-    config = PhotosConfig(faces=FacesConfig(match_threshold=0.55, ambiguous_threshold=0.40))
+    config = PhotosSettings(match_threshold=0.55, ambiguous_threshold=0.40)
     uc, mocks = _build_use_case(photos_config=config)
     persona = Person(nombre="Alberto", embeddings_count=1)
     mocks["vision"].detect_and_embed.return_value = [_detection()]

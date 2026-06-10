@@ -21,6 +21,7 @@ from core.domain.entities.memory import MemoryEntry
 from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
 from core.domain.value_objects.llm_response import LLMResponse
 from core.use_cases.run_agent import RunAgentUseCase
+from infrastructure.container import build_run_agent_settings
 
 
 def _vec_normalizado(n: int = 384, value: float = 1.0) -> list[float]:
@@ -69,7 +70,7 @@ def use_case(
         skills=mock_skills,
         history=mock_history,
         tools=mock_tools,
-        agent_config=agent_config,
+        settings=build_run_agent_settings(agent_config),
         knowledge_orchestrator=knowledge_orchestrator,
     )
 
@@ -170,7 +171,7 @@ class TestPreFetchPopulatesKnowledgeChunks:
             skills=mock_skills,
             history=mock_history,
             tools=mock_tools,
-            agent_config=agent_config,
+            settings=build_run_agent_settings(agent_config),
             knowledge_orchestrator=None,
         )
         mock_llm.complete.return_value = LLMResponse.of_text("OK sin knowledge")
@@ -232,7 +233,7 @@ class TestPreFetchBypassOnShortInput:
             skills=mock_skills,
             history=mock_history,
             tools=mock_tools,
-            agent_config=agent_config_bypass,
+            settings=build_run_agent_settings(agent_config_bypass),
             knowledge_orchestrator=orchestrator_mock,
         )
 

@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import httpx
 
 from core.domain.value_objects.dispatch_result import DispatchResult
 from core.ports.outbound.intermediate_sink_port import IIntermediateSink
-from core.ports.outbound.llm_dispatcher_port import ILLMDispatcher
 from core.ports.outbound.outbound_sink_port import IOutboundSink
 from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
 
@@ -164,11 +162,3 @@ class HttpCallerAdapter:
             if response.status_code not in payload.success_codes:
                 raise RuntimeError(f"Webhook returned non-success status {response.status_code}")
             return response.text
-
-
-@dataclass
-class SchedulerDispatchPorts:
-    channel_sender: ChannelRouter
-    llm_dispatcher: ILLMDispatcher
-    consolidator: ConsolidationDispatchAdapter
-    http_caller: HttpCallerAdapter

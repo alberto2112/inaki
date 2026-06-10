@@ -32,9 +32,8 @@ from core.domain.entities.task_log import TaskLog
 from core.domain.errors import InvalidTriggerTypeError
 
 if TYPE_CHECKING:
-    from adapters.outbound.scheduler.dispatch_adapters import SchedulerDispatchPorts
+    from core.ports.outbound.scheduler_dispatch_port import SchedulerDispatchPorts
     from core.ports.outbound.scheduler_port import ISchedulerRepository
-    from infrastructure.config import SchedulerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +43,16 @@ class SchedulerService:
         self,
         repo: ISchedulerRepository,
         dispatch: SchedulerDispatchPorts,
-        config: SchedulerConfig,
+        max_retries: int = 3,
+        output_truncation_size: int = 65536,
     ) -> None:
         self._repo = repo
         self._dispatch = dispatch
-        self._config = config
+        # Parámetros sueltos en lugar de SchedulerConfig completo: el service
+        # solo consume estos dos campos (el resto del bloque scheduler es
+        # wiring de infrastructure — db, enabled, channel_fallback).
+        self._max_retries = max(0, int(max_retries))
+        self._output_truncation_size = int(output_truncation_size)
         self._wake = asyncio.Event()
         self._task: asyncio.Task | None = None
 
@@ -139,7 +143,7 @@ class SchedulerService:
         attempt = 0
         dispatch_metadata: dict | None = None
 
-        for attempt in range(self._config.max_retries + 1):
+        for attempt in range(self._max_retries + 1):
             started_at = datetime.now(timezone.utc)
             try:
                 output, dispatch_metadata = await self._dispatch_trigger(task)
@@ -174,7 +178,7 @@ class SchedulerService:
         dispatch_metadata: dict | None = None,
     ) -> None:
         now = datetime.now(timezone.utc)
-        truncated = output[: self._config.output_truncation_size] if output else None
+        truncated = output[: self._output_truncation_size] if output else None
         if task.log_enabled:
             await self._repo.save_log(
                 TaskLog(

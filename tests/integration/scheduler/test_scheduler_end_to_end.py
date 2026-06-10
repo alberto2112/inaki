@@ -21,13 +21,6 @@ from core.domain.entities.task import (
 from core.domain.services.scheduler_service import SchedulerService
 
 
-def _make_config() -> MagicMock:
-    cfg = MagicMock()
-    cfg.max_retries = 0  # no retries for speed in tests
-    cfg.output_truncation_size = 65536
-    return cfg
-
-
 def _make_dispatch(llm_output: str = "agent-result") -> MagicMock:
     dispatch = MagicMock()
     dispatch.channel_sender = AsyncMock()
@@ -51,7 +44,8 @@ def dispatch() -> MagicMock:
 
 @pytest.fixture()
 def service(repo: SQLiteSchedulerRepo, dispatch: MagicMock) -> SchedulerService:
-    return SchedulerService(repo=repo, dispatch=dispatch, config=_make_config())
+    # max_retries=0: sin reintentos para velocidad en tests
+    return SchedulerService(repo=repo, dispatch=dispatch, max_retries=0)
 
 
 # ---------------------------------------------------------------------------

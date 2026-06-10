@@ -24,7 +24,7 @@ from core.domain.entities.message import Message, Role
 from core.ports.outbound.llm_port import ILLMProvider
 from core.ports.outbound.tool_port import IToolExecutor
 from core.use_cases._tool_loop import run_tool_loop
-from infrastructure.config import AgentConfig
+from core.domain.value_objects.agent_settings import OneShotSettings
 
 logger = logging.getLogger(__name__)
 
@@ -43,12 +43,12 @@ class RunAgentOneShotUseCase:
         self,
         llm: ILLMProvider,
         tools: IToolExecutor,
-        agent_config: AgentConfig,
+        settings: OneShotSettings,
         thinking_indicator: bool = False,
     ) -> None:
         self._llm = llm
         self._tools = tools
-        self._cfg = agent_config
+        self._cfg = settings
         # Flag transversal del bloque global ``channels.thinking_indicator``.
         # Default False para no-op si nadie lo wirea (el one-shot suele correr sin sink).
         self._thinking_indicator = thinking_indicator
@@ -111,8 +111,8 @@ class RunAgentOneShotUseCase:
                 system_prompt=effective_prompt,
                 tool_schemas=tool_schemas,
                 max_iterations=max_iterations,
-                circuit_breaker_threshold=self._cfg.tools.circuit_breaker_threshold,
-                agent_id=self._cfg.id,
+                circuit_breaker_threshold=self._cfg.circuit_breaker_threshold,
+                agent_id=self._cfg.agent_id,
                 thinking_indicator=self._thinking_indicator,
             ),
             timeout=timeout_seconds,

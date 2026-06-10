@@ -219,9 +219,7 @@ async def test_post_turn_error_interno_500(chat_app, mock_run_agent) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_post_turn_pasa_ctx_a_execute(
-    chat_app, mock_agent_container, mock_run_agent
-) -> None:
+async def test_post_turn_pasa_ctx_a_execute(chat_app, mock_agent_container, mock_run_agent) -> None:
     """POST /turn pasa ctx=ChannelContext("cli", session_id) a execute().
 
     El contexto viaja con la llamada — no hay estado compartido en el container.

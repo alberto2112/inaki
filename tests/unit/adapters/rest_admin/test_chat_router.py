@@ -21,8 +21,9 @@ Escenarios cubiertos (spec admin-chat/spec.md):
     - message vacío → 422
 
   Diseño §A3 — ChannelContext:
-    - set_channel_context("cli", session_id) se llama y se resetea a None (try/finally)
-    - set_channel_context se llama incluso si execute() falla (finally garantiza reset)
+    - execute() recibe ctx=ChannelContext("cli", session_id) — el contexto viaja
+      con la llamada (la publicación/limpieza per-turno es interna a execute)
+    - execute() recibe channel=""/chat_id="" explícitos (scope legacy del admin)
 
   GET /admin/chat/history:
     - Happy path → 200 con lista de mensajes
@@ -65,10 +66,9 @@ def mock_run_agent() -> MagicMock:
 
 @pytest.fixture
 def mock_agent_container(mock_run_agent: MagicMock) -> MagicMock:
-    """Mock de AgentContainer con run_agent y set_channel_context."""
+    """Mock de AgentContainer con run_agent."""
     container = MagicMock()
     container.run_agent = mock_run_agent
-    container.set_channel_context = MagicMock(return_value=None)
     # scope_registry para in-flight-message-injection — try_mark_busy=True
     # significa "scope libre", el camino normal corre execute() como antes.
     container.scope_registry = MagicMock()
@@ -116,7 +116,9 @@ async def test_post_turn_happy_path(chat_app, mock_run_agent) -> None:
     assert data["reply"] == "Hola, ¿en qué te ayudo?"
     assert data["agent_id"] == "dev"
     assert data["session_id"] == TURN_BODY["session_id"]
-    mock_run_agent.execute.assert_awaited_once_with("hola", intermediate_sink=ANY)
+    mock_run_agent.execute.assert_awaited_once_with(
+        "hola", intermediate_sink=ANY, ctx=ANY, channel="", chat_id=""
+    )
 
 
 async def test_post_turn_scope_busy_persists_and_returns_ack(
@@ -217,37 +219,26 @@ async def test_post_turn_error_interno_500(chat_app, mock_run_agent) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_post_turn_set_channel_context_llamado(
+async def test_post_turn_pasa_ctx_a_execute(
     chat_app, mock_agent_container, mock_run_agent
 ) -> None:
-    """POST /turn llama set_channel_context("cli", session_id) y lo resetea a None (try/finally)."""
+    """POST /turn pasa ctx=ChannelContext("cli", session_id) a execute().
 
+    El contexto viaja con la llamada — no hay estado compartido en el container.
+    El scope va explícito en ""/"" para preservar el historial legacy del admin
+    (no se deriva de ctx hasta decidir la semántica de scope de esta superficie).
+    """
     session_id = TURN_BODY["session_id"]
     async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as ac:
         await ac.post("/admin/chat/turn", json=TURN_BODY, headers=VALID_KEY)
 
-    # Verificar set_channel_context fue llamado con el ChannelContext correcto y luego con None
-    calls = mock_agent_container.set_channel_context.call_args_list
-    assert len(calls) == 2
-    ctx_pasado = calls[0].args[0]
+    kwargs = mock_run_agent.execute.await_args.kwargs
+    ctx_pasado = kwargs["ctx"]
     assert ctx_pasado.channel_type == "cli"
     assert ctx_pasado.user_id == session_id
-    assert calls[1].args[0] is None
-
-
-async def test_post_turn_channel_context_reset_en_error(
-    chat_app, mock_agent_container, mock_run_agent
-) -> None:
-    """set_channel_context(None) se llama incluso si execute() falla (garantía try/finally)."""
-    mock_run_agent.execute.side_effect = RuntimeError("crash")
-    async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as ac:
-        await ac.post("/admin/chat/turn", json=TURN_BODY, headers=VALID_KEY)
-
-    calls = mock_agent_container.set_channel_context.call_args_list
-    # Debe haberse llamado al menos una vez con None (el finally)
-    assert any(c.args[0] is None for c in calls), (
-        "set_channel_context(None) no fue llamado en finally"
-    )
+    # Scope legacy explícito — no derivado de ctx
+    assert kwargs["channel"] == ""
+    assert kwargs["chat_id"] == ""
 
 
 # ---------------------------------------------------------------------------

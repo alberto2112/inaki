@@ -55,7 +55,6 @@ def _make_container(respuesta_llm: str = "Respuesta del LLM") -> MagicMock:
     container.run_agent = MagicMock()
     container.run_agent.execute = AsyncMock(return_value=respuesta_llm)
     container.run_agent.set_extra_system_sections = MagicMock()
-    container.set_channel_context = MagicMock()
     return container
 
 

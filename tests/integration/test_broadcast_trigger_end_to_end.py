@@ -67,7 +67,6 @@ def _container(respuesta: str) -> MagicMock:
     c.run_agent.record_user_message = AsyncMock()
     c.run_agent.execute = AsyncMock(return_value=respuesta)
     c.run_agent.set_extra_system_sections = MagicMock()
-    c.set_channel_context = MagicMock()
     return c
 
 
@@ -178,11 +177,12 @@ async def test_broadcast_trigger_dispara_pipeline_del_otro_bot(par_bots):
     assert record_args.kwargs.get("channel") == "telegram"
     assert record_args.kwargs.get("chat_id") == CHAT_ID
 
-    # B corrió el pipeline (sin user_input — se deriva del historial)
+    # B corrió el pipeline (sin user_input — se deriva del historial).
+    # El scope viaja dentro del ctx — execute lo deriva de ahí.
     bot_b._container.run_agent.execute.assert_awaited()
-    exec_args = bot_b._container.run_agent.execute.await_args
-    assert exec_args.kwargs.get("channel") == "telegram"
-    assert exec_args.kwargs.get("chat_id") == CHAT_ID
+    exec_ctx = bot_b._container.run_agent.execute.await_args.kwargs["ctx"]
+    assert exec_ctx.channel_type == "telegram"
+    assert exec_ctx.chat_id == CHAT_ID
 
     # B mandó el mensaje a Telegram (aunque sea mock)
     bot_b._app.bot.send_message.assert_awaited_once()

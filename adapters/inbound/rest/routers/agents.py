@@ -1,5 +1,7 @@
 """Router de la REST API — endpoints por instancia de agente."""
-# TODO: implementar handler de channel_send para REST (set_channel_context + dispatch handler)
+# TODO: pasar un ChannelContext real a run_agent.execute(ctx=...) — habilitaría
+# {{CHANNEL.*}}, per-user context y channel_send para esta superficie. Pendiente
+# de decidir si se consolida con el admin server (ver auditoría inbound-adapters).
 
 from __future__ import annotations
 

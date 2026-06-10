@@ -51,7 +51,7 @@ async def chat_turn(body: ChatTurnRequest, request: Request) -> ChatTurnResponse
       1. Validar auth (via Depends)
       2. Resolver AgentContainer o 404
       3. Construir ChannelContext("cli", session_id)
-      4. set_channel_context → execute → set_channel_context(None) via try/finally
+      4. execute(ctx=...) — el contexto viaja con la llamada, sin estado compartido
       5. Retornar ChatTurnResponse
     """
     t0 = time.monotonic()
@@ -82,11 +82,19 @@ async def chat_turn(body: ChatTurnRequest, request: Request) -> ChatTurnResponse
     agent_id = agent_container.run_agent.get_agent_info().id
     scope = (agent_id, "", "")
     try:
-        agent_container.set_channel_context(ctx)
         if await agent_container.scope_registry.try_mark_busy(scope):
             try:
+                # channel=""/chat_id="" EXPLÍCITOS: fuerzan el scope legacy de esta
+                # superficie (historial compartido entre sesiones) aunque ctx diga
+                # "cli". La semántica de scope del admin es una decisión pendiente
+                # — si se deja derivar de ctx cambiaría el scope a ("cli", "") y
+                # requeriría migrar history.db.
                 reply = await agent_container.run_agent.execute(
-                    body.message, intermediate_sink=sink
+                    body.message,
+                    intermediate_sink=sink,
+                    ctx=ctx,
+                    channel="",
+                    chat_id="",
                 )
             finally:
                 await agent_container.scope_registry.mark_idle(scope)
@@ -109,8 +117,6 @@ async def chat_turn(body: ChatTurnRequest, request: Request) -> ChatTurnResponse
                 "error_code": "internal_error",
             },
         ) from exc
-    finally:
-        agent_container.set_channel_context(None)
 
     duration_ms = int((time.monotonic() - t0) * 1000)
     logger.info(

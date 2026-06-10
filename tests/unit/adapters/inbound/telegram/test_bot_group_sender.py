@@ -31,7 +31,6 @@ def mock_container() -> MagicMock:
     container.run_agent.record_user_message = AsyncMock()
     container.run_agent.execute = AsyncMock(return_value="respuesta")
     container.run_agent.set_extra_system_sections = MagicMock()
-    container.set_channel_context = MagicMock()
     return container
 
 
@@ -186,15 +185,11 @@ async def test_run_group_pipeline_inyecta_sender_desde_snapshot(
     }
     bot._broadcast_receiver = None
 
-    captured: list[ChannelContext] = []
-    mock_container.set_channel_context.side_effect = lambda c: (
-        captured.append(c) if isinstance(c, ChannelContext) else None
-    )
-
     await bot._run_group_pipeline("-100123", "supergroup")
 
-    assert len(captured) == 1
-    ctx = captured[0]
+    mock_container.run_agent.execute.assert_awaited_once()
+    ctx = mock_container.run_agent.execute.await_args.kwargs["ctx"]
+    assert isinstance(ctx, ChannelContext)
     assert ctx.channel_type == "telegram"
     assert ctx.chat_id == "-100123"
     assert ctx.sender_name == "Juan Pérez (@juan)"
@@ -212,15 +207,11 @@ async def test_run_group_pipeline_sin_snapshot_deja_sender_none(
     bot._broadcast_receiver = None
     # _last_group_sender vacío deliberadamente.
 
-    captured: list[ChannelContext] = []
-    mock_container.set_channel_context.side_effect = lambda c: (
-        captured.append(c) if isinstance(c, ChannelContext) else None
-    )
-
     await bot._run_group_pipeline("-100999", "supergroup")
 
-    assert len(captured) == 1
-    ctx = captured[0]
+    mock_container.run_agent.execute.assert_awaited_once()
+    ctx = mock_container.run_agent.execute.await_args.kwargs["ctx"]
+    assert isinstance(ctx, ChannelContext)
     assert ctx.sender_name is None
     assert ctx.username is None
     assert ctx.first_name is None

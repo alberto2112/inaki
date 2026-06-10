@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextvars import ContextVar, Token
+
 from pydantic import BaseModel, computed_field, field_validator
 
 
@@ -64,3 +66,39 @@ class ChannelContext(BaseModel, frozen=True):
     def routing_key(self) -> str:
         """Clave de enrutamiento en formato ``channel_type:user_id``."""
         return f"{self.channel_type}:{self.user_id}"
+
+
+# ---------------------------------------------------------------------------
+# Contexto de canal del turno en curso (task-safe via contextvars)
+# ---------------------------------------------------------------------------
+#
+# ``execute()`` publica acá el ``ChannelContext`` del turno que está corriendo
+# y lo limpia al terminar (token + reset). Como cada turno corre en su propia
+# cadena de tasks de asyncio, dos turnos concurrentes del mismo agente ven cada
+# uno SU contexto — a diferencia del slot mutable por-container que reemplaza,
+# que se pisaba entre turnos (race con cross-user leak en ``{{CHANNEL.*}}`` y
+# en las tools que enrutan por ``routing_key``).
+#
+# Consumidores: las tools que necesitan saber "desde qué conversación me
+# llamaron" (scheduler channel_send, face tools, send/download de Telegram,
+# delegate) leen esto vía ``AgentContainer.get_channel_context()`` durante el
+# tool loop, que SIEMPRE ocurre dentro de un ``execute()`` en curso.
+
+_current_channel_context: ContextVar[ChannelContext | None] = ContextVar(
+    "current_channel_context", default=None
+)
+
+
+def current_channel_context() -> ChannelContext | None:
+    """Devuelve el ``ChannelContext`` del turno en curso, o ``None`` si no hay turno."""
+    return _current_channel_context.get()
+
+
+def set_current_channel_context(ctx: ChannelContext | None) -> Token:
+    """Publica el contexto del turno. Devuelve el token para restaurar con ``reset``."""
+    return _current_channel_context.set(ctx)
+
+
+def reset_current_channel_context(token: Token) -> None:
+    """Restaura el valor previo al ``set`` correspondiente (fin del turno)."""
+    _current_channel_context.reset(token)

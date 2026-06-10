@@ -1430,16 +1430,14 @@ class TelegramBot:
                 sender_last_name = _safe_optional_str(getattr(from_user, "last_name", None))
             sender_name = _safe_optional_str(compose_sender_identity(update.message))
 
-        self._container.set_channel_context(
-            ChannelContext(
-                channel_type="telegram",
-                user_id=str(user.id),
-                chat_id=str(chat_id),
-                sender_name=sender_name,
-                username=sender_username,
-                first_name=sender_first_name,
-                last_name=sender_last_name,
-            )
+        turn_ctx = ChannelContext(
+            channel_type="telegram",
+            user_id=str(user.id),
+            chat_id=str(chat_id),
+            sender_name=sender_name,
+            username=sender_username,
+            first_name=sender_first_name,
+            last_name=sender_last_name,
         )
         # En grupos NO usamos intermediate_sink: los intermedios del LLM (texto que
         # acompaña tool_calls) se emitirían directo al chat vía sink y NO se incluirían
@@ -1487,11 +1485,12 @@ class TelegramBot:
 
             # Camino normal: ejecutamos el turno. Si slot_acquired=True, el finally
             # libera el slot. Si False (caso grupo), el slot no existe y no hace falta.
+            # El scope (channel, chat_id) se deriva de turn_ctx dentro de execute —
+            # una sola fuente de verdad, sin estado compartido entre turnos.
             response = await self._container.run_agent.execute(
                 user_input,
                 intermediate_sink=live_sink,
-                channel="telegram",
-                chat_id=str(chat_id),
+                ctx=turn_ctx,
                 skip_marker=skip_marker_value,
             )
 
@@ -1532,7 +1531,6 @@ class TelegramBot:
             # dejaría el scope marcado busy para siempre.
             if slot_acquired:
                 await self._container.scope_registry.mark_idle(scope)
-            self._container.set_channel_context(None)
             # Limpiar extra_sections después del turno para no contaminar el siguiente.
             self._container.run_agent.set_extra_system_sections([])
 
@@ -1728,21 +1726,19 @@ class TelegramBot:
         # disparo por broadcast), los 4 campos quedan en ``None`` y las variables
         # ``{{CHANNEL.SENDER}}/USERNAME/FIRST_NAME/LAST_NAME}}`` se dejan literales.
         last_sender = self._last_group_sender.get(chat_id_str, {})
-        self._container.set_channel_context(
-            ChannelContext(
-                channel_type="telegram",
-                user_id=self._agent_cfg.id,
-                chat_id=chat_id_str,
-                sender_name=last_sender.get("sender_name"),
-                username=last_sender.get("username"),
-                first_name=last_sender.get("first_name"),
-                last_name=last_sender.get("last_name"),
-            )
+        turn_ctx = ChannelContext(
+            channel_type="telegram",
+            user_id=self._agent_cfg.id,
+            chat_id=chat_id_str,
+            sender_name=last_sender.get("sender_name"),
+            username=last_sender.get("username"),
+            first_name=last_sender.get("first_name"),
+            last_name=last_sender.get("last_name"),
         )
         try:
+            # Scope (channel, chat_id) derivado de turn_ctx dentro de execute.
             response = await self._container.run_agent.execute(
-                channel="telegram",
-                chat_id=chat_id_str,
+                ctx=turn_ctx,
                 skip_marker="__SKIP__" if self._behavior == "autonomous" else None,
             )
 
@@ -1788,7 +1784,6 @@ class TelegramBot:
             except Exception:
                 pass
         finally:
-            self._container.set_channel_context(None)
             self._container.run_agent.set_extra_system_sections([])
 
     async def verificar_bot_username(self) -> None:

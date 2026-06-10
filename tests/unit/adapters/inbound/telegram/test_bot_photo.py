@@ -74,7 +74,6 @@ def mock_container(mock_process_photo) -> MagicMock:
     agent_info.id = "dev"
     container.run_agent.get_agent_info = MagicMock(return_value=agent_info)
     container.process_photo = mock_process_photo
-    container.set_channel_context = MagicMock()
     # Scope registry para in-flight protection. Por default el slot está libre
     # (try_mark_busy=True) → flujo normal; tests específicos lo cambian a False.
     container.scope_registry = MagicMock()
@@ -163,7 +162,6 @@ async def test_feature_disabled_process_photo_none(agent_cfg) -> None:
     container.run_agent.record_photo_message = AsyncMock(return_value=0)
     container.run_agent.set_extra_system_sections = MagicMock()
     container.process_photo = None  # feature disabled
-    container.set_channel_context = MagicMock()
 
     bot = _build_bot(agent_cfg, container)
     update = _mk_update()
@@ -187,7 +185,6 @@ async def test_feature_disabled_en_grupo_silencio_total(agent_cfg) -> None:
     container.run_agent = MagicMock()
     container.run_agent.record_photo_message = AsyncMock(return_value=0)
     container.process_photo = None
-    container.set_channel_context = MagicMock()
 
     bot = _build_bot(agent_cfg, container)
     update = _mk_update(chat_type="group")
@@ -663,7 +660,6 @@ async def test_handle_photo_modo_bang_emite_user_input_photo_sin_assistant_respo
     container.run_agent.update_message_content = AsyncMock()
     container.run_agent.set_extra_system_sections = MagicMock()
     container.run_agent.set_photo_debug_path = MagicMock()
-    container.set_channel_context = MagicMock()
 
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()

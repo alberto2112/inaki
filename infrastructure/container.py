@@ -51,6 +51,7 @@ from adapters.outbound.tools.tool_registry import ToolRegistry
 from core.domain.entities.task import TaskStatus
 from core.domain.errors import AgentNotFoundError, InakiError
 from core.domain.services.broadcast_buffer import BroadcastBuffer
+from core.domain.value_objects.channel_context import current_channel_context
 from core.domain.services.rate_limiter import FixedWindowRateLimiter
 from core.domain.services.scheduler_service import SchedulerService
 from core.ports.outbound.memory_port import IMemoryRepository
@@ -134,9 +135,6 @@ class AgentContainer:
         self.broadcast_adapter: object | None = None
         self.broadcast_rate_limiter: FixedWindowRateLimiter | None = None
 
-        # Contexto de canal activo — se setea en cada turno de conversación
-        self._channel_context: ChannelContext | None = None
-
         # Factories resuelven el proveedor correcto leyendo cfg.embedding.provider y cfg.llm.provider
         # y componen ResolvedXConfig contra el registry top-level de providers.
         self._embedder = EmbeddingProviderFactory.create(cfg.embedding, cfg.providers)
@@ -176,7 +174,6 @@ class AgentContainer:
             agent_config=cfg,
             knowledge_orchestrator=self._knowledge_orchestrator,
             thinking_indicator=global_config.channels.thinking_indicator,
-            get_channel_context=self.get_channel_context,
         )
 
         # Every agent gets a one-shot use case unconditionally so it can always
@@ -511,13 +508,15 @@ class AgentContainer:
         """Provider de transcripción para este agente (o None si voz deshabilitada)."""
         return self._transcription
 
-    def set_channel_context(self, ctx: "ChannelContext | None") -> None:
-        """Actualiza el contexto de canal activo para este agente."""
-        self._channel_context = ctx
-
     def get_channel_context(self) -> "ChannelContext | None":
-        """Devuelve el contexto de canal activo, o None si no hay conversación en curso."""
-        return self._channel_context
+        """Devuelve el ``ChannelContext`` del turno en curso, o ``None`` si no hay turno.
+
+        Lee el ``ContextVar`` que ``RunAgentUseCase.execute`` publica al inicio de
+        cada turno (task-safe: turnos concurrentes del mismo agente ven cada uno su
+        propio contexto). Las tools lo consumen vía el bound method inyectado en el
+        wiring — no hay estado mutable compartido entre turnos.
+        """
+        return current_channel_context()
 
     def wire_delegation(
         self,

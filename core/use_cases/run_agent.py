@@ -21,7 +21,6 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Callable
 from core.domain.entities.background_task import BackgroundTaskView
 from core.domain.entities.message import Message, Role
 from core.domain.entities.skill import Skill
@@ -31,7 +30,12 @@ from core.domain.services.prepend_timestamps import prepend_timestamps
 from core.domain.services.sticky_selector import apply_sticky
 from core.domain.value_objects.agent_context import AgentContext
 from core.domain.value_objects.agent_info import AgentInfoDTO
-from core.domain.value_objects.channel_context import ChannelContext
+from core.domain.value_objects.channel_context import (
+    ChannelContext,
+    current_channel_context,
+    reset_current_channel_context,
+    set_current_channel_context,
+)
 from core.domain.value_objects.conversation_state import ConversationState
 from core.ports.outbound.background_delegation_port import IBackgroundDelegationQueue
 from core.ports.outbound.embedding_port import IEmbeddingProvider
@@ -211,7 +215,6 @@ class RunAgentUseCase:
         knowledge_orchestrator: KnowledgeOrchestrator | None = None,
         background_queue: IBackgroundDelegationQueue | None = None,
         thinking_indicator: bool = False,
-        get_channel_context: Callable[[], ChannelContext | None] | None = None,
     ) -> None:
         self._llm = llm
         self._memory = memory
@@ -230,12 +233,6 @@ class RunAgentUseCase:
         # Cuando está set, execute() inyecta una sección con el snapshot de
         # delegaciones in-flight en cada turno (REQ-BGD-7).
         self._background_queue = background_queue
-        # Lector del ``ChannelContext`` del turno (lo setea el adapter inbound vía
-        # ``AgentContainer.set_channel_context``). Lo usamos para resolver las variables
-        # ``{{CHANNEL.SENDER}}``, ``{{CHANNEL.USERNAME}}``, ``{{CHANNEL.FIRST_NAME}}`` y
-        # ``{{CHANNEL.LAST_NAME}}`` en el system prompt. Default ``None`` para no romper
-        # tests que construyen el use case sin container.
-        self._get_channel_context = get_channel_context
         # Extra sections injected by wire_delegation (task 6.1).
         # Empty by default — non-breaking when delegation is disabled.
         self._extra_system_sections: list[str] = []
@@ -285,24 +282,23 @@ class RunAgentUseCase:
         """
         self._extra_system_sections = list(sections)
 
-    def _snapshot_sender(self) -> tuple[str | None, str | None, str | None, str | None]:
+    def _snapshot_sender(
+        self, ctx: ChannelContext | None
+    ) -> tuple[str | None, str | None, str | None, str | None]:
         """Devuelve ``(sender_name, username, first_name, last_name)`` del turno.
 
-        Snapshot defensivo: el ``ChannelContext`` puede ser ``None`` (canal que no lo
-        setea, ej: scheduler triggers que invocan ``execute`` sin pasar por un adapter
-        inbound), y cualquiera de los 4 campos puede ser ``None`` (usuario sin
-        ``@username``, canal sin first_name, grupos donde no hay un único sender, etc.).
-        En todos esos casos las variables ``{{CHANNEL.*}}`` correspondientes quedan
-        literales en el system prompt — mismo criterio que ``{{WORKSPACE}}``.
+        El ``ChannelContext`` puede ser ``None`` (canal que no lo pasa, ej: scheduler
+        triggers que invocan ``execute`` sin pasar por un adapter inbound), y
+        cualquiera de los 4 campos puede ser ``None`` (usuario sin ``@username``,
+        canal sin first_name, grupos donde no hay un único sender, etc.). En todos
+        esos casos las variables ``{{CHANNEL.*}}`` correspondientes quedan literales
+        en el system prompt — mismo criterio que ``{{WORKSPACE}}``.
         """
-        if self._get_channel_context is None:
-            return (None, None, None, None)
-        ctx = self._get_channel_context()
         if ctx is None:
             return (None, None, None, None)
         return (ctx.sender_name, ctx.username, ctx.first_name, ctx.last_name)
 
-    def _read_user_context(self) -> str:
+    def _read_user_context(self, ctx: ChannelContext | None) -> str:
         """Lee el contexto per-user para el sender del turno actual.
 
         Concatena dos capas (la primera que falte se omite):
@@ -326,9 +322,6 @@ class RunAgentUseCase:
         Sin ``ChannelContext`` (ej: scheduler triggers que no pasan por un adapter
         inbound) o ningún archivo presente → ``""``. Mismo criterio que el digest.
         """
-        if self._get_channel_context is None:
-            return ""
-        ctx = self._get_channel_context()
         if ctx is None:
             return ""
 
@@ -435,8 +428,9 @@ class RunAgentUseCase:
         user_input: str | None = None,
         tools_override: list[dict] | None = None,
         intermediate_sink: IIntermediateSink | None = None,
-        channel: str = "",
-        chat_id: str = "",
+        ctx: ChannelContext | None = None,
+        channel: str | None = None,
+        chat_id: str | None = None,
         ephemeral: bool = False,
         skip_marker: str | None = None,
     ) -> str:
@@ -457,10 +451,18 @@ class RunAgentUseCase:
                 tipo "ok, voy a buscar..."). El mensaje FINAL del turno NO pasa
                 por el sink — se retorna por el return. Default ``None`` → no
                 se emiten intermedios (backwards-compat).
-            channel: canal de origen del mensaje (ej: ``"telegram"``, ``"cli"``).
-                Cadena vacía cuando no aplica.
-            chat_id: identificador del chat dentro del canal (ej: ID de grupo
-                Telegram). Cadena vacía para chats privados o sin distinción.
+            ctx: ``ChannelContext`` del turno (identidad del sender + canal de
+                origen). Viaja con la llamada — NO hay estado compartido entre
+                turnos: durante el turno se publica en un ``contextvars.ContextVar``
+                que las tools leen vía ``AgentContainer.get_channel_context()``.
+                ``None`` para paths sin conversación (scheduler triggers, tests).
+            channel: scope de historial del turno (ej: ``"telegram"``, ``"cli"``).
+                ``None`` (default) deriva de ``ctx.channel_type`` (o ``""`` sin
+                ctx). Pasar ``""`` explícito fuerza el scope legacy aunque haya
+                ctx — usado por el admin REST hasta que se decida la semántica
+                de scope de esa superficie.
+            chat_id: identificador del chat dentro del scope. ``None`` (default)
+                deriva de ``ctx.chat_id`` (o ``""``). Mismas reglas que ``channel``.
             ephemeral: si True, carga el historial para contexto pero NO persiste
                 el turno ni actualiza el estado sticky. Usado por ``--task``.
                 Solo aplica cuando ``user_input`` es provisto.
@@ -473,6 +475,41 @@ class RunAgentUseCase:
                 suelen agregar pre/post-amble — antes era estricto y dejaba pasar
                 el marker al chat. Default ``None`` → siempre se persiste.
         """
+        # Una sola fuente de verdad: con ctx presente, el scope (channel, chat_id)
+        # se deriva de él salvo override explícito del caller.
+        effective_channel = channel if channel is not None else (ctx.channel_type if ctx else "")
+        effective_chat_id = chat_id if chat_id is not None else ((ctx.chat_id or "") if ctx else "")
+
+        # Publicar el contexto del turno para las tools (scheduler, faces, telegram,
+        # delegate). Set incondicional — también con ctx=None — para que un execute()
+        # anidado (delegación sync) no herede el contexto del turno padre.
+        token = set_current_channel_context(ctx)
+        try:
+            return await self._execute_turn(
+                user_input=user_input,
+                tools_override=tools_override,
+                intermediate_sink=intermediate_sink,
+                ctx=ctx,
+                channel=effective_channel,
+                chat_id=effective_chat_id,
+                ephemeral=ephemeral,
+                skip_marker=skip_marker,
+            )
+        finally:
+            reset_current_channel_context(token)
+
+    async def _execute_turn(
+        self,
+        user_input: str | None,
+        tools_override: list[dict] | None,
+        intermediate_sink: IIntermediateSink | None,
+        ctx: ChannelContext | None,
+        channel: str,
+        chat_id: str,
+        ephemeral: bool,
+        skip_marker: str | None,
+    ) -> str:
+        """Cuerpo del turno. ``channel``/``chat_id`` llegan ya normalizados por ``execute``."""
         agent_id = self._cfg.id
 
         # Snapshot antes del primer await para evitar carrera con flushes concurrentes
@@ -643,8 +680,10 @@ class RunAgentUseCase:
                         skills_tokens,
                     )
 
-        user_context = self._read_user_context()
-        sender_name, sender_username, sender_first_name, sender_last_name = self._snapshot_sender()
+        user_context = self._read_user_context(ctx)
+        sender_name, sender_username, sender_first_name, sender_last_name = self._snapshot_sender(
+            ctx
+        )
         context = AgentContext(
             agent_id=agent_id,
             user_context=user_context,
@@ -920,8 +959,11 @@ class RunAgentUseCase:
                 min_score=self._knowledge_orchestrator.default_min_score,
             )
 
-        user_context = self._read_user_context()
-        sender_name, sender_username, sender_first_name, sender_last_name = self._snapshot_sender()
+        inspect_ctx = current_channel_context()
+        user_context = self._read_user_context(inspect_ctx)
+        sender_name, sender_username, sender_first_name, sender_last_name = self._snapshot_sender(
+            inspect_ctx
+        )
         context = AgentContext(
             agent_id=self._cfg.id,
             user_context=user_context,

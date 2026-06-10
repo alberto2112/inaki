@@ -35,7 +35,6 @@ def _make_bot(*, has_repo: bool = True, voice_enabled: bool = True, tmp_path=Non
     container.run_agent.execute = AsyncMock(return_value="ok")
     container.run_agent.set_extra_system_sections = MagicMock()
     container.run_agent.record_photo_message = AsyncMock(return_value=42)
-    container.set_channel_context = MagicMock()
     container.process_photo = None  # Para que photo handler haga early return
 
     repo = AsyncMock() if has_repo else None

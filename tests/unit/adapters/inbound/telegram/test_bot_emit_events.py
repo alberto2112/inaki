@@ -56,7 +56,6 @@ def _build_bot(agent_cfg, *, emitter=None):
     container = MagicMock()
     container.transcription = MagicMock()
     container.run_agent = MagicMock()
-    container.set_channel_context = MagicMock()
 
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()

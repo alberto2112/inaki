@@ -1,16 +1,20 @@
 """
 Unit tests para TelegramBot._handle_message — inyección de ChannelContext.
 
+El contexto del turno viaja como parámetro ``ctx`` de ``run_agent.execute``
+(ya no existe el slot mutable ``set_channel_context`` en el container — la
+publicación/limpieza per-turno es responsabilidad de ``execute`` vía ContextVar).
+
 Coverage:
-- _handle_message setea channel_context ANTES de llamar run_agent.execute
-- _handle_message limpia channel_context en bloque finally (éxito)
-- _handle_message limpia channel_context en bloque finally (excepción)
-- ChannelContext tiene channel_type="telegram" y user_id correcto del update
+- _handle_message pasa ctx=ChannelContext a run_agent.execute
+- El ctx tiene channel_type="telegram", user_id y chat_id correctos del update
+- El scope (channel, chat_id) NO se pasa explícito — se deriva de ctx
+- Sin input no se llama a execute
 """
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 from adapters.inbound.telegram.bot import TelegramBot
@@ -51,7 +55,6 @@ def _make_bot(run_agent_response: str = "ok") -> tuple[TelegramBot, MagicMock]:
     container.run_agent.execute = AsyncMock(return_value=run_agent_response)
     container.run_agent.set_extra_system_sections = MagicMock()
     container.run_agent.record_user_message = AsyncMock(return_value=None)
-    container.set_channel_context = MagicMock()
     # scope_registry para in-flight-message-injection — try_mark_busy=True
     # significa "scope libre", el camino normal corre execute() como antes.
     container.scope_registry = MagicMock()
@@ -72,37 +75,41 @@ def _make_bot(run_agent_response: str = "ok") -> tuple[TelegramBot, MagicMock]:
 # ---------------------------------------------------------------------------
 
 
-async def test_handle_message_setea_channel_context_antes_de_execute():
-    """set_channel_context debe llamarse ANTES de run_agent.execute."""
+async def test_handle_message_pasa_ctx_a_execute():
+    """run_agent.execute debe recibir un ChannelContext en el kwarg ``ctx``."""
     bot, container = _make_bot()
     update = _make_update(user_id=99)
     ctx = _make_context()
 
-    # Verificar orden de llamadas usando side_effect
-    call_order: list[str] = []
-
-    def _set_ctx(c):
-        call_order.append(f"set_channel_context({c})")
-
-    async def _execute(inp, intermediate_sink=None, **kwargs):
-        call_order.append("execute")
-        return "respuesta"
-
-    container.set_channel_context.side_effect = _set_ctx
-    container.run_agent.execute.side_effect = _execute
-
     with patch("adapters.inbound.telegram.bot.telegram_update_to_input", return_value="hola"):
         await bot._handle_message(update, ctx)
 
-    # La primera llamada a set_channel_context debe ser con un ChannelContext válido
-    assert call_order[0].startswith("set_channel_context(")
-    assert "execute" in call_order
-    # set primero, execute después
-    assert call_order.index("execute") > 0
+    container.run_agent.execute.assert_awaited_once()
+    kwargs = container.run_agent.execute.await_args.kwargs
+    assert isinstance(kwargs.get("ctx"), ChannelContext), (
+        "execute debe recibir el ChannelContext del turno vía kwarg ctx"
+    )
 
 
-async def test_handle_message_limpia_channel_context_despues_de_execute():
-    """set_channel_context(None) debe llamarse en finally, después de execute exitoso."""
+async def test_handle_message_ctx_tiene_datos_correctos():
+    """El ctx inyectado debe tener channel_type='telegram', user_id y chat_id del update."""
+    bot, container = _make_bot()
+    user_id = 12345
+    update = _make_update(user_id=user_id)
+    ctx = _make_context()
+
+    with patch("adapters.inbound.telegram.bot.telegram_update_to_input", return_value="texto"):
+        await bot._handle_message(update, ctx)
+
+    channel_ctx = container.run_agent.execute.await_args.kwargs["ctx"]
+    assert channel_ctx.channel_type == "telegram"
+    assert channel_ctx.user_id == str(user_id)
+    assert channel_ctx.chat_id == str(update.effective_chat.id)
+
+
+async def test_handle_message_no_pasa_scope_explicito():
+    """El scope (channel, chat_id) se deriva de ctx dentro de execute — el adapter
+    NO debe pasarlo explícito (una sola fuente de verdad)."""
     bot, container = _make_bot()
     update = _make_update(user_id=7)
     ctx = _make_context()
@@ -110,18 +117,13 @@ async def test_handle_message_limpia_channel_context_despues_de_execute():
     with patch("adapters.inbound.telegram.bot.telegram_update_to_input", return_value="texto"):
         await bot._handle_message(update, ctx)
 
-    # Debe haber exactamente dos llamadas: set con contexto, luego set con None
-    assert container.set_channel_context.call_count == 2
-    calls = container.set_channel_context.call_args_list
-    # Primera llamada: ChannelContext real
-    first_arg = calls[0][0][0]
-    assert isinstance(first_arg, ChannelContext)
-    # Segunda llamada: None
-    assert calls[1] == call(None)
+    kwargs = container.run_agent.execute.await_args.kwargs
+    assert "channel" not in kwargs, "channel debe derivarse de ctx, no pasarse explícito"
+    assert "chat_id" not in kwargs, "chat_id debe derivarse de ctx, no pasarse explícito"
 
 
-async def test_handle_message_limpia_channel_context_aunque_execute_falle():
-    """set_channel_context(None) se debe llamar en finally incluso si execute lanza excepción."""
+async def test_handle_message_execute_falla_no_propaga():
+    """Si execute lanza, el handler responde el error al chat sin propagar la excepción."""
     bot, container = _make_bot()
     container.run_agent.execute.side_effect = RuntimeError("fallo en LLM")
     update = _make_update(user_id=55)
@@ -130,37 +132,12 @@ async def test_handle_message_limpia_channel_context_aunque_execute_falle():
     with patch("adapters.inbound.telegram.bot.telegram_update_to_input", return_value="texto"):
         await bot._handle_message(update, ctx)
 
-    # Debe haberse limpiado el contexto a pesar del error
-    assert container.set_channel_context.call_count == 2
-    calls = container.set_channel_context.call_args_list
-    assert calls[1] == call(None)
+    update.message.reply_text.assert_awaited()
+    # El slot del scope registry se libera incluso ante error
+    container.scope_registry.mark_idle.assert_awaited_once()
 
 
-async def test_handle_message_channel_context_tiene_datos_correctos():
-    """El ChannelContext inyectado debe tener channel_type='telegram' y user_id correcto."""
-    bot, container = _make_bot()
-    user_id = 12345
-    update = _make_update(user_id=user_id)
-    ctx = _make_context()
-
-    captured: list[ChannelContext] = []
-
-    def _capture(c):
-        if c is not None:
-            captured.append(c)
-
-    container.set_channel_context.side_effect = _capture
-
-    with patch("adapters.inbound.telegram.bot.telegram_update_to_input", return_value="texto"):
-        await bot._handle_message(update, ctx)
-
-    assert len(captured) == 1
-    channel_ctx = captured[0]
-    assert channel_ctx.channel_type == "telegram"
-    assert channel_ctx.user_id == str(user_id)
-
-
-async def test_handle_message_sin_input_no_llama_set_channel_context():
+async def test_handle_message_sin_input_no_llama_execute():
     """Si telegram_update_to_input devuelve None/vacío, no debe procesarse el mensaje."""
     bot, container = _make_bot()
     update = _make_update()
@@ -169,5 +146,4 @@ async def test_handle_message_sin_input_no_llama_set_channel_context():
     with patch("adapters.inbound.telegram.bot.telegram_update_to_input", return_value=None):
         await bot._handle_message(update, ctx)
 
-    # Sin input no hay que setear el contexto de canal
-    container.set_channel_context.assert_not_called()
+    container.run_agent.execute.assert_not_awaited()

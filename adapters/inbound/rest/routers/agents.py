@@ -1,7 +1,4 @@
 """Router de la REST API — endpoints por instancia de agente."""
-# TODO: pasar un ChannelContext real a run_agent.execute(ctx=...) — habilitaría
-# {{CHANNEL.*}}, per-user context y channel_send para esta superficie. Pendiente
-# de decidir si se consolida con el admin server (ver auditoría inbound-adapters).
 
 from __future__ import annotations
 
@@ -17,6 +14,7 @@ from adapters.inbound.rest.schemas import (
     HistoryResponse,
 )
 from adapters.inbound.turn_dispatch import dispatch_inbound_turn
+from core.domain.value_objects.channel_context import ChannelContext
 from infrastructure.container import AgentContainer
 
 logger = logging.getLogger(__name__)
@@ -41,18 +39,27 @@ async def chat(
     container: AgentContainer = Depends(get_container),
 ) -> ChatResponse:
     info = container.run_agent.get_agent_info()
-    # REST per-agente sin channel/chat_id explícitos → scope con strings vacíos
-    # (mismo default que execute()). Aislamiento entre clientes REST: ninguno
-    # en V1 — comparten el mismo scope (agent_id, "", ""). Aceptable para
-    # uso doméstico Pi 5 con pocos clientes.
-    scope = (info.id, "", "")
+
+    channel = body.channel if body.channel is not None else ""
+    chat_id = body.chat_id if body.chat_id is not None else ""
+    channel_type = body.channel if body.channel is not None else "rest"
+
+    ctx = ChannelContext(
+        channel_type=channel_type,
+        user_id="anonymous",
+        chat_id=chat_id or None,
+    )
+
+    scope = (info.id, channel, chat_id)
     try:
         result = await dispatch_inbound_turn(
             scope_registry=container.scope_registry,
             run_agent=container.run_agent,
             scope=scope,
             message=body.message,
-            execute=lambda: container.run_agent.execute(body.message),
+            execute=lambda: container.run_agent.execute(
+                body.message, ctx=ctx, channel=channel, chat_id=chat_id
+            ),
         )
     except Exception as exc:
         logger.exception("Error en /chat para agente '%s'", info.id)

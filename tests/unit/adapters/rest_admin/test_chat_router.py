@@ -240,6 +240,45 @@ async def test_post_turn_pasa_ctx_a_execute(chat_app, mock_agent_container, mock
 
 
 # ---------------------------------------------------------------------------
+# POST /admin/chat/turn — channel/chat_id explícitos
+# ---------------------------------------------------------------------------
+
+
+async def test_post_turn_con_channel_y_chat_id(chat_app, mock_run_agent) -> None:
+    """POST /turn con channel+chat_id → ctx usa ese channel_type y scope real."""
+    body = {
+        **TURN_BODY,
+        "channel": "telegram",
+        "chat_id": "-1001234",
+    }
+    async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as ac:
+        resp = await ac.post("/admin/chat/turn", json=body, headers=VALID_KEY)
+
+    assert resp.status_code == 200
+    kwargs = mock_run_agent.execute.await_args.kwargs
+    assert kwargs["ctx"].channel_type == "telegram"
+    assert kwargs["ctx"].chat_id == "-1001234"
+    assert kwargs["channel"] == "telegram"
+    assert kwargs["chat_id"] == "-1001234"
+
+
+async def test_post_turn_channel_sin_chat_id_422(chat_app) -> None:
+    """POST /turn con channel pero sin chat_id → 422 (both-or-none)."""
+    body = {**TURN_BODY, "channel": "telegram"}
+    async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as ac:
+        resp = await ac.post("/admin/chat/turn", json=body, headers=VALID_KEY)
+    assert resp.status_code == 422
+
+
+async def test_post_turn_chat_id_sin_channel_422(chat_app) -> None:
+    """POST /turn con chat_id pero sin channel → 422 (both-or-none)."""
+    body = {**TURN_BODY, "chat_id": "-1001234"}
+    async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as ac:
+        resp = await ac.post("/admin/chat/turn", json=body, headers=VALID_KEY)
+    assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
 # GET /admin/chat/history — happy path (5.3)
 # ---------------------------------------------------------------------------
 

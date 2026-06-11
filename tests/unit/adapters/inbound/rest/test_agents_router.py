@@ -41,6 +41,10 @@ def mock_container(mock_run_agent: MagicMock) -> MagicMock:
     container.run_agent = mock_run_agent
     container.consolidate_memory = MagicMock()
     container.consolidate_memory.execute = AsyncMock(return_value="ok")
+    container.scope_registry = MagicMock()
+    container.scope_registry.try_mark_busy = AsyncMock(return_value=True)
+    container.scope_registry.mark_idle = AsyncMock(return_value=None)
+    mock_run_agent.record_user_message = AsyncMock(return_value=None)
     return container
 
 
@@ -113,3 +117,54 @@ def test_delete_history_retorna_ok(client: TestClient) -> None:
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# POST /chat — ChannelContext
+# ---------------------------------------------------------------------------
+
+
+def test_post_chat_sin_channel_usa_rest_y_scope_legacy(
+    client: TestClient, mock_run_agent: RunAgentUseCase
+) -> None:
+    """POST /chat sin channel/chat_id → ctx con channel_type='rest', scope ('', '')."""
+    mock_run_agent.execute = AsyncMock(return_value="ok")  # type: ignore[method-assign]
+
+    response = client.post("/chat", json={"message": "hola"})
+
+    assert response.status_code == 200
+    kwargs = mock_run_agent.execute.await_args.kwargs  # type: ignore[union-attr]
+    assert kwargs["ctx"].channel_type == "rest"
+    assert kwargs["ctx"].user_id == "anonymous"
+    assert kwargs["channel"] == ""
+    assert kwargs["chat_id"] == ""
+
+
+def test_post_chat_con_channel_y_chat_id(
+    client: TestClient, mock_run_agent: RunAgentUseCase
+) -> None:
+    """POST /chat con channel+chat_id → ctx y scope reales."""
+    mock_run_agent.execute = AsyncMock(return_value="ok")  # type: ignore[method-assign]
+
+    response = client.post(
+        "/chat", json={"message": "hola", "channel": "telegram", "chat_id": "-100"}
+    )
+
+    assert response.status_code == 200
+    kwargs = mock_run_agent.execute.await_args.kwargs  # type: ignore[union-attr]
+    assert kwargs["ctx"].channel_type == "telegram"
+    assert kwargs["ctx"].chat_id == "-100"
+    assert kwargs["channel"] == "telegram"
+    assert kwargs["chat_id"] == "-100"
+
+
+def test_post_chat_channel_sin_chat_id_422(client: TestClient) -> None:
+    """POST /chat con channel pero sin chat_id → 422 (both-or-none)."""
+    response = client.post("/chat", json={"message": "hola", "channel": "telegram"})
+    assert response.status_code == 422
+
+
+def test_post_chat_chat_id_sin_channel_422(client: TestClient) -> None:
+    """POST /chat con chat_id pero sin channel → 422 (both-or-none)."""
+    response = client.post("/chat", json={"message": "hola", "chat_id": "-100"})
+    assert response.status_code == 422

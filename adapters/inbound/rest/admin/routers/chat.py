@@ -64,30 +64,28 @@ async def chat_turn(body: ChatTurnRequest, request: Request) -> ChatTurnResponse
     )
 
     agent_container = resolver_agente(request, body.agent_id)
+
+    # Si el cliente declara channel/chat_id, el turno opera sobre ese scope real.
+    # Sin ellos, channel_type="cli" + scope legacy ("", "") — backward-compatible.
+    channel = body.channel if body.channel is not None else ""
+    chat_id = body.chat_id if body.chat_id is not None else ""
+    channel_type = body.channel if body.channel is not None else "cli"
+
     # Username opcional desde la config del agente — habilita el lookup de
-    # ``~/.inaki/users/cli/{username}.md``. Si no está configurado queda None
-    # y el resolver de user_context cae al fallback por user_id (session_id).
-    cli_cfg = agent_container.agent_config.channels.get("cli", {})
+    # ``~/.inaki/users/{channel_type}/{username}.md``.
+    cli_cfg = agent_container.agent_config.channels.get(channel_type, {})
     cli_user = cli_cfg.get("user") if isinstance(cli_cfg, dict) else None
     ctx = ChannelContext(
-        channel_type="cli",
+        channel_type=channel_type,
         user_id=body.session_id,
+        chat_id=chat_id or None,
         username=cli_user if cli_user else None,
     )
     sink = BufferingIntermediateSink()
 
-    # Routing in-flight-message-injection: si el scope tiene un turno en curso,
-    # persistimos el mensaje en history y respondemos un ACK. El loop activo lo
-    # drenará entre iteraciones e integrará la nueva instrucción al turno actual.
-    # Default channel="" / chat_id="" porque execute() sin overrides usa esos.
     agent_id = agent_container.run_agent.get_agent_info().id
-    scope = (agent_id, "", "")
+    scope = (agent_id, channel, chat_id)
     try:
-        # channel=""/chat_id="" EXPLÍCITOS: fuerzan el scope legacy de esta
-        # superficie (historial compartido entre sesiones) aunque ctx diga
-        # "cli". La semántica de scope del admin es una decisión pendiente
-        # — si se deja derivar de ctx cambiaría el scope a ("cli", "") y
-        # requeriría migrar history.db.
         result = await dispatch_inbound_turn(
             scope_registry=agent_container.scope_registry,
             run_agent=agent_container.run_agent,
@@ -97,8 +95,8 @@ async def chat_turn(body: ChatTurnRequest, request: Request) -> ChatTurnResponse
                 body.message,
                 intermediate_sink=sink,
                 ctx=ctx,
-                channel="",
-                chat_id="",
+                channel=channel,
+                chat_id=chat_id,
             ),
         )
         reply = result.reply

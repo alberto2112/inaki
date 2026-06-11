@@ -260,6 +260,8 @@ scheduler:
   enabled: true                  # Starts the SchedulerService in daemon mode
   db_filename: "data/scheduler.db"  # SQLite scheduled tasks file (relative to ~/.inaki/)
   max_retries: 3
+  retry_backoff_seconds: 10.0    # Linear wait between retries (10s, 20s, 30s...)
+  max_tasks_per_agent: 20        # Active (pending/running) tasks an agent may own
   output_truncation_size: 65536
   channel_fallback:              # Resolution cascade for channel dispatch (see below)
     default: null                # str|null — default sink if no override or native match
@@ -1207,7 +1209,7 @@ Given a `target` of the form `<prefix>:<destination>` (e.g. `cli:local`, `telegr
 2. **Override** — if `channel_fallback.overrides[<prefix>]` exists,
    it is redirected to the target configured there.
 3. **Default** — if `channel_fallback.default` is set, it is redirected there.
-4. **Hardcoded** — last resort: `file:///tmp/inaki-schedule-output.log`.
+4. **Hardcoded** — last resort: `file://~/.inaki/data/scheduler-fallback.log`.
    Always works (creates the file and directory if they don't exist).
 
 ### Supported sinks
@@ -1253,7 +1255,7 @@ Each send persists in `task_logs.metadata` (JSON) a pair
 
 ```sql
 SELECT task_id, metadata FROM task_logs WHERE status = 'success';
--- → {"original_target":"cli:local","resolved_target":"file:///tmp/inaki-schedule-output.log"}
+-- → {"original_target":"cli:local","resolved_target":"file://~/.inaki/data/scheduler-fallback.log"}
 ```
 
 Useful for auditing where a message actually ended up when there was a fallback.

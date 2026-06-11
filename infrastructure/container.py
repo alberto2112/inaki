@@ -15,8 +15,6 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Literal
 
-from croniter import croniter
-
 if TYPE_CHECKING:
     from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
     from core.domain.value_objects.channel_context import ChannelContext
@@ -31,8 +29,6 @@ from adapters.outbound.messaging.channel_outbound_registry import ChannelOutboun
 from adapters.outbound.memory.sqlite_memory_repo import SQLiteMemoryRepository
 from adapters.outbound.scope_registry_adapter import InMemoryScopeRegistryAdapter
 from adapters.outbound.scheduler.builtin_tasks import (
-    CONSOLIDATE_MEMORY_TASK_ID,
-    FACE_DEDUP_TASK_ID,
     build_consolidate_memory_task,
     build_face_dedup_task,
 )
@@ -41,6 +37,7 @@ from adapters.outbound.scheduler.dispatch_adapters import (
     ConsolidationDispatchAdapter,
     HttpCallerAdapter,
     LLMDispatcherAdapter,
+    ShellExecAdapter,
 )
 from core.ports.outbound.scheduler_dispatch_port import SchedulerDispatchPorts
 from adapters.outbound.sinks.sink_factory import SinkFactory
@@ -49,8 +46,9 @@ from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRep
 from adapters.outbound.embedding.sqlite_embedding_cache import SqliteEmbeddingCache
 from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
 from adapters.outbound.tools.tool_registry import ToolRegistry
-from core.domain.entities.task import TaskStatus
+from core.domain.entities.task import ScheduledTask, TaskStatus
 from core.domain.errors import AgentNotFoundError, InakiError
+from core.domain.utils.cron import next_cron_occurrence, resolve_timezone
 from core.domain.services.broadcast_buffer import BroadcastBuffer
 from core.domain.value_objects.channel_context import current_channel_context
 from core.domain.services.rate_limiter import FixedWindowRateLimiter
@@ -1253,6 +1251,7 @@ class AppContainer:
         self.schedule_task_uc = ScheduleTaskUseCase(
             repo=self.scheduler_repo,
             on_mutation=self._on_scheduler_mutation,
+            max_active_tasks=scheduler_cfg.max_tasks_per_agent,
         )
         telegram_sink = TelegramSink(get_telegram_bot=self._get_telegram_bot)
         sink_factory = SinkFactory(get_telegram_bot=self._get_telegram_bot)
@@ -1270,12 +1269,15 @@ class AppContainer:
             llm_dispatcher=self._llm_dispatcher,
             consolidator=ConsolidationDispatchAdapter(self.consolidate_all_agents),
             http_caller=HttpCallerAdapter(),
+            shell_executor=ShellExecAdapter(),
         )
         self.scheduler_service = SchedulerService(
             repo=self.scheduler_repo,
             dispatch=dispatch_ports,
             max_retries=scheduler_cfg.max_retries,
             output_truncation_size=scheduler_cfg.output_truncation_size,
+            user_timezone=global_config.user.timezone,
+            retry_backoff_seconds=scheduler_cfg.retry_backoff_seconds,
         )
 
         # Phase 3: wire scheduler tool into each agent now that schedule_task_uc is ready.
@@ -1565,31 +1567,27 @@ class AppContainer:
     def _on_scheduler_mutation(self) -> None:
         self.scheduler_service.invalidate()
 
-    async def _reconcile_consolidate_memory_task(self) -> None:
+    async def _reconcile_builtin_task(self, target: ScheduledTask) -> None:
         """
-        Garantiza que la tarea builtin `consolidate_memory` en la DB refleja
-        la config actual:
+        Garantiza que una tarea builtin en la DB refleja la config actual:
           - no existe → seed con schedule de config + next_run computado
           - schedule cambió en config → update + recompute next_run
           - status = FAILED (arrastre de corridas viejas rotas) → reset a pending
           - next_run NULL → recompute
+
+        El cron se evalúa SIEMPRE en la timezone del usuario via el helper
+        central (`core.domain.utils.cron`), igual que el repo y el service.
         """
-        target_schedule = self.global_config.memory.schedule
-        target = build_consolidate_memory_task(target_schedule)
-
         await self.scheduler_repo.ensure_schema()
-
-        existing = await self.scheduler_repo.get_task(CONSOLIDATE_MEMORY_TASK_ID)
+        existing = await self.scheduler_repo.get_task(target.id)
 
         if existing is None:
             # seed_builtin computa next_run si es recurrente y viene None
             await self.scheduler_repo.seed_builtin(target)
-            logger.info(
-                "Tarea builtin consolidate_memory sembrada con schedule '%s'",
-                target_schedule,
-            )
+            logger.info("Tarea builtin %s sembrada con schedule '%s'", target.name, target.schedule)
             return
 
+        cron_tz = resolve_timezone(self.global_config.user.timezone)
         now = datetime.now(timezone.utc)
         needs_save = False
         new_schedule = existing.schedule
@@ -1597,15 +1595,14 @@ class AppContainer:
         new_status = existing.status
         new_retry = existing.retry_count
 
-        if existing.schedule != target_schedule:
-            new_schedule = target_schedule
-            new_next_run = datetime.fromtimestamp(
-                croniter(target_schedule, now).get_next(), tz=timezone.utc
-            )
+        if existing.schedule != target.schedule:
+            new_schedule = target.schedule
+            new_next_run = next_cron_occurrence(new_schedule, cron_tz, after=now)
             logger.info(
-                "consolidate_memory: schedule actualizado '%s' → '%s'",
+                "%s: schedule actualizado '%s' → '%s'",
+                target.name,
                 existing.schedule,
-                target_schedule,
+                target.schedule,
             )
             needs_save = True
 
@@ -1613,20 +1610,17 @@ class AppContainer:
             new_status = TaskStatus.PENDING
             new_retry = 0
             if new_next_run is None or new_next_run <= now:
-                new_next_run = datetime.fromtimestamp(
-                    croniter(new_schedule, now).get_next(), tz=timezone.utc
-                )
+                new_next_run = next_cron_occurrence(new_schedule, cron_tz, after=now)
             logger.info(
-                "consolidate_memory: estado FAILED reseteado a PENDING (next_run=%s)",
+                "%s: estado FAILED reseteado a PENDING (next_run=%s)",
+                target.name,
                 new_next_run,
             )
             needs_save = True
 
         if new_next_run is None:
-            new_next_run = datetime.fromtimestamp(
-                croniter(new_schedule, now).get_next(), tz=timezone.utc
-            )
-            logger.info("consolidate_memory: next_run era NULL → recomputado a %s", new_next_run)
+            new_next_run = next_cron_occurrence(new_schedule, cron_tz, after=now)
+            logger.info("%s: next_run era NULL → recomputado a %s", target.name, new_next_run)
             needs_save = True
 
         if needs_save:
@@ -1640,13 +1634,13 @@ class AppContainer:
             )
             await self.scheduler_repo.save_task(updated)
 
-    async def _reconcile_face_dedup_task(self) -> None:
-        """Garantiza que la tarea builtin `face_dedup_nightly` en la DB refleja la config actual.
+    async def _reconcile_consolidate_memory_task(self) -> None:
+        await self._reconcile_builtin_task(
+            build_consolidate_memory_task(self.global_config.memory.schedule)
+        )
 
-        No-op si photos está deshabilitado o si dedup.enabled=False.
-        Si existe y el schedule cambió → actualiza next_run.
-        Si status FAILED → resetea a PENDING.
-        """
+    async def _reconcile_face_dedup_task(self) -> None:
+        """No-op si photos está deshabilitado o si dedup.enabled=False."""
         photos_cfg = getattr(self.global_config, "photos", None)
         if photos_cfg is None or not photos_cfg.enabled:
             return
@@ -1662,66 +1656,9 @@ class AppContainer:
             logger.warning("face_dedup_nightly: no hay agentes con photos wired — omitido")
             return
 
-        target_schedule = photos_cfg.dedup.schedule
-        target = build_face_dedup_task(target_schedule, agent_id)
-
-        await self.scheduler_repo.ensure_schema()
-        existing = await self.scheduler_repo.get_task(FACE_DEDUP_TASK_ID)
-
-        if existing is None:
-            await self.scheduler_repo.seed_builtin(target)
-            logger.info(
-                "Tarea builtin face_dedup_nightly sembrada (agent=%s, schedule='%s')",
-                agent_id,
-                target_schedule,
-            )
-            return
-
-        now = datetime.now(timezone.utc)
-        needs_save = False
-        new_schedule = existing.schedule
-        new_next_run = existing.next_run
-        new_status = existing.status
-        new_retry = existing.retry_count
-
-        if existing.schedule != target_schedule:
-            new_schedule = target_schedule
-            new_next_run = datetime.fromtimestamp(
-                croniter(target_schedule, now).get_next(), tz=timezone.utc
-            )
-            logger.info(
-                "face_dedup_nightly: schedule actualizado '%s' → '%s'",
-                existing.schedule,
-                target_schedule,
-            )
-            needs_save = True
-
-        if new_status == TaskStatus.FAILED:
-            new_status = TaskStatus.PENDING
-            new_retry = 0
-            if new_next_run is None or new_next_run <= now:
-                new_next_run = datetime.fromtimestamp(
-                    croniter(new_schedule, now).get_next(), tz=timezone.utc
-                )
-            logger.info("face_dedup_nightly: estado FAILED reseteado a PENDING")
-            needs_save = True
-
-        if new_next_run is None:
-            new_next_run = datetime.fromtimestamp(
-                croniter(new_schedule, now).get_next(), tz=timezone.utc
-            )
-            needs_save = True
-
-        if needs_save:
-            updated = existing.model_copy(
-                update={
-                    "schedule": new_schedule,
-                    "next_run": new_next_run,
-                    "status": new_status,
-                    "retry_count": new_retry,
-                }
-            )
-            await self.scheduler_repo.save_task(updated)
+        await self._reconcile_builtin_task(
+            build_face_dedup_task(photos_cfg.dedup.schedule, agent_id)
+        )
 
     async def startup(self) -> None:
         """Arranca el scheduler service, la cola de background-delegation y los

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Callable
+from contextlib import suppress
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import httpx
@@ -12,11 +15,13 @@ from core.ports.outbound.outbound_sink_port import IOutboundSink
 from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
 
 if TYPE_CHECKING:
-    from core.domain.entities.task import WebhookPayload
+    from core.domain.entities.task import ShellExecPayload, WebhookPayload
     from infrastructure.config import ChannelFallbackConfig
 
 
-_HARDCODED_FALLBACK = "file:///tmp/inaki-schedule-output.log"
+# Último recurso de la cascada de routing. Bajo ~/.inaki/ (no /tmp): el
+# contenido puede ser privado y /tmp es world-readable.
+_HARDCODED_FALLBACK = f"file://{Path.home() / '.inaki' / 'data' / 'scheduler-fallback.log'}"
 
 
 class ChannelRouter:
@@ -140,6 +145,37 @@ class ConsolidationDispatchAdapter:
 
     async def consolidate_all(self) -> str:
         return await self._uc.execute()
+
+
+class ShellExecAdapter:
+    """Ejecuta triggers shell_exec como subprocess con timeout duro.
+
+    Satisface ``IShellExecutor``. Al expirar el timeout, el proceso se MATA
+    (kill + reap) — sin esto quedaba corriendo huérfano y cada retry lanzaba
+    otro encima.
+    """
+
+    async def run(self, payload: ShellExecPayload) -> str:
+        proc = await asyncio.create_subprocess_shell(
+            payload.command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=payload.working_dir,
+            env={**os.environ, **(payload.env_vars or {})},
+        )
+        timeout = payload.timeout or 300
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except TimeoutError:
+            proc.kill()
+            with suppress(Exception):
+                await proc.communicate()  # reap — evita zombie
+            raise RuntimeError(
+                f"shell_exec excedió el timeout de {timeout}s — proceso terminado"
+            ) from None
+        if proc.returncode != 0:
+            raise RuntimeError(f"shell_exec exited with code {proc.returncode}")
+        return stdout.decode(errors="replace")
 
 
 class HttpCallerAdapter:

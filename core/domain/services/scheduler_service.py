@@ -4,19 +4,28 @@ SchedulerService — motor de ejecución del scheduler.
 Loop principal:
   - Obtiene la próxima tarea pendiente
   - Espera hasta su next_run (máx 60s o hasta invalidación)
-  - Ejecuta la tarea con reintentos
+  - Ejecuta la tarea con reintentos (backoff lineal entre intentos)
   - Finaliza y recomputa next_run para tareas recurrentes
+
+Semántica de fallos:
+  - ONESHOT que agota reintentos → FAILED (terminal).
+  - RECURRENT que agota reintentos → avanza al próximo slot del cron y sigue
+    PENDING: el fallo de UNA ocurrencia no mata la recurrencia. Los intentos
+    fallidos quedan registrados en task_logs.
+
+Toda evaluación de cron pasa por ``core.domain.utils.cron`` con la timezone
+del usuario — nunca evaluar croniter acá directamente (ver docstring de ese
+módulo para la historia del bug de doble ejecución).
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 from contextlib import suppress
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
-
-from croniter import croniter
 
 from core.domain.entities.task import (
     AgentSendPayload,
@@ -30,6 +39,7 @@ from core.domain.entities.task import (
 )
 from core.domain.entities.task_log import TaskLog
 from core.domain.errors import InvalidTriggerTypeError
+from core.domain.utils.cron import next_cron_occurrence, resolve_timezone
 
 if TYPE_CHECKING:
     from core.ports.outbound.scheduler_dispatch_port import SchedulerDispatchPorts
@@ -45,14 +55,18 @@ class SchedulerService:
         dispatch: SchedulerDispatchPorts,
         max_retries: int = 3,
         output_truncation_size: int = 65536,
+        user_timezone: str = "UTC",
+        retry_backoff_seconds: float = 10.0,
     ) -> None:
         self._repo = repo
         self._dispatch = dispatch
         # Parámetros sueltos en lugar de SchedulerConfig completo: el service
-        # solo consume estos dos campos (el resto del bloque scheduler es
+        # solo consume estos campos (el resto del bloque scheduler es
         # wiring de infrastructure — db, enabled, channel_fallback).
         self._max_retries = max(0, int(max_retries))
         self._output_truncation_size = int(output_truncation_size)
+        self._cron_tz = resolve_timezone(user_timezone)
+        self._retry_backoff_seconds = max(0.0, float(retry_backoff_seconds))
         self._wake = asyncio.Event()
         self._task: asyncio.Task | None = None
 
@@ -62,7 +76,7 @@ class SchedulerService:
 
     async def start(self) -> None:
         await self._repo.ensure_schema()
-        await self._handle_missed_on_startup()
+        await self._recover_on_startup()
         self._task = asyncio.create_task(self._loop(), name="scheduler-loop")
 
     async def stop(self) -> None:
@@ -75,16 +89,14 @@ class SchedulerService:
         while True:
             try:
                 now = datetime.now(timezone.utc)
-                next_task = await self._repo.get_next_due(now)
-                if next_task is None:
+                next_task = await self._repo.get_next_due()
+                if next_task is None or next_task.next_run is None:
                     # No active tasks — sleep up to 60s or until invalidated
                     self._wake.clear()
                     with suppress(asyncio.TimeoutError):
                         await asyncio.wait_for(self._wake.wait(), timeout=60.0)
                     continue
-                wait_secs = (
-                    (next_task.next_run - now).total_seconds() if next_task.next_run else 0.0
-                )
+                wait_secs = (next_task.next_run - now).total_seconds()
                 if wait_secs > 0:
                     self._wake.clear()
                     with suppress(asyncio.TimeoutError):
@@ -93,11 +105,16 @@ class SchedulerService:
                 await self._execute_task(next_task)
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
+            except sqlite3.ProgrammingError as exc:
                 # En Python < 3.12, el shutdown del event loop interrumpe aiosqlite
                 # con sqlite3.ProgrammingError antes de que llegue el CancelledError.
                 # sleep(1) cede el control — si hay cancelación pendiente se dispara ahí.
                 logger.debug("Error en loop del scheduler (posible shutdown): %s", exc)
+                await asyncio.sleep(1)
+            except Exception:
+                # Errores reales (DB corrupta, bug en dispatch) deben ser visibles
+                # en producción — no enterrarlos en DEBUG.
+                logger.exception("Error inesperado en loop del scheduler")
                 await asyncio.sleep(1)
 
     async def _run_once(self) -> None:
@@ -107,12 +124,46 @@ class SchedulerService:
         if due:
             await self._execute_task(due[0])
 
-    async def _handle_missed_on_startup(self) -> None:
+    async def _recover_on_startup(self) -> None:
+        """Recupera estado runtime tras un arranque del daemon.
+
+        1. Tareas atrapadas en RUNNING (el daemon murió a mitad de ejecución):
+           ONESHOT → FAILED con log explicativo; RECURRENT → avanza al próximo
+           slot y vuelve a PENDING.
+        2. Tareas PENDING cuyo next_run quedó en el pasado:
+           ONESHOT → MISSED; RECURRENT → avanza al próximo slot (las
+           ocurrencias perdidas no se re-ejecutan ni tocan last_run).
+        """
         now = datetime.now(timezone.utc)
+
+        stuck = await self._repo.list_running()
+        for task in stuck:
+            if task.log_enabled:
+                await self._repo.save_log(
+                    TaskLog(
+                        task_id=task.id,
+                        started_at=now,
+                        finished_at=now,
+                        status="failed",
+                        error="Daemon restarted while task was running",
+                    )
+                )
+            if task.task_kind == TaskKind.ONESHOT:
+                await self._repo.update_status(task.id, TaskStatus.FAILED)
+            else:
+                await self._advance_recurrent(task, now)
+            logger.warning(
+                "Task %s estaba RUNNING al arrancar — recuperada (%s)",
+                task.id,
+                task.task_kind.value,
+            )
+
         missed = await self._repo.list_due_pending(now)
         for task in missed:
-            if task.task_kind == TaskKind.ONESHOT:
-                await self._repo.update_status(task.id, TaskStatus.MISSED)
+            if task.log_enabled:
+                # La ocurrencia salteada deja rastro en task_logs — sin esto,
+                # "¿por qué ayer no llegó el resumen de las 6?" no tiene
+                # respuesta en los logs (el oneshot la tenía; la recurrente no).
                 await self._repo.save_log(
                     TaskLog(
                         task_id=task.id,
@@ -122,18 +173,23 @@ class SchedulerService:
                         error="Task was not running when scheduled time passed",
                     )
                 )
+            if task.task_kind == TaskKind.ONESHOT:
+                await self._repo.update_status(task.id, TaskStatus.MISSED)
             else:
-                # Recurrent: recompute next_run, skip missed occurrences
-                next_run = datetime.fromtimestamp(
-                    croniter(task.schedule, now).get_next(), tz=timezone.utc
-                )
-                await self._repo.update_after_execution(
-                    task.id,
-                    success=True,
-                    output=None,
-                    next_run=next_run,
-                    executions_remaining=task.executions_remaining,
-                )
+                # Recurrent: recompute next_run, skip missed occurrences.
+                # last_run NO se toca: la tarea no se ejecutó.
+                await self._advance_recurrent(task, now)
+
+    async def _advance_recurrent(self, task: ScheduledTask, now: datetime) -> None:
+        """Avanza una recurrente al próximo slot del cron sin registrar ejecución."""
+        next_run = next_cron_occurrence(task.schedule, self._cron_tz, after=now)
+        await self._repo.update_after_execution(
+            task.id,
+            next_run=next_run,
+            executions_remaining=task.executions_remaining,
+            retry_count=0,
+            last_run=None,
+        )
 
     async def _execute_task(self, task: ScheduledTask) -> None:
         await self._repo.update_status(task.id, TaskStatus.RUNNING)
@@ -142,6 +198,7 @@ class SchedulerService:
         success = False
         attempt = 0
         dispatch_metadata: dict | None = None
+        run_started_at = datetime.now(timezone.utc)
 
         for attempt in range(self._max_retries + 1):
             started_at = datetime.now(timezone.utc)
@@ -165,9 +222,22 @@ class SchedulerService:
                         error=error,
                     )
                 )
+            if attempt < self._max_retries and self._retry_backoff_seconds > 0:
+                # Backoff lineal: 1×, 2×, 3×... — sin esto, un agent_send
+                # fallido dispara N corridas completas de LLM back-to-back.
+                await asyncio.sleep(self._retry_backoff_seconds * (attempt + 1))
 
         if success:
-            await self._finalize_task(task, output, dispatch_metadata)
+            await self._finalize_task(task, output, dispatch_metadata, run_started_at)
+        elif task.task_kind == TaskKind.RECURRENT:
+            # El fallo de una ocurrencia no mata la recurrencia: avanzar al
+            # próximo slot. Los intentos fallidos ya quedaron en task_logs.
+            logger.warning(
+                "Task %s falló tras %d intentos — recurrente: avanza al próximo slot",
+                task.id,
+                attempt + 1,
+            )
+            await self._advance_recurrent(task, datetime.now(timezone.utc))
         else:
             await self._repo.update_status(task.id, TaskStatus.FAILED, retry_count=attempt + 1)
 
@@ -176,6 +246,7 @@ class SchedulerService:
         task: ScheduledTask,
         output: str | None,
         dispatch_metadata: dict | None = None,
+        started_at: datetime | None = None,
     ) -> None:
         now = datetime.now(timezone.utc)
         truncated = output[: self._output_truncation_size] if output else None
@@ -183,7 +254,7 @@ class SchedulerService:
             await self._repo.save_log(
                 TaskLog(
                     task_id=task.id,
-                    started_at=now,
+                    started_at=started_at or now,
                     finished_at=now,
                     status="success",
                     output=truncated,
@@ -200,16 +271,13 @@ class SchedulerService:
             if remaining == 0:
                 await self._repo.update_status(task.id, TaskStatus.COMPLETED)
             else:
-                next_run = datetime.fromtimestamp(
-                    croniter(task.schedule, now).get_next(), tz=timezone.utc
-                )
+                next_run = next_cron_occurrence(task.schedule, self._cron_tz, after=now)
                 await self._repo.update_after_execution(
                     task.id,
-                    success=True,
-                    output=truncated,
                     next_run=next_run,
                     executions_remaining=remaining,
                     retry_count=0,
+                    last_run=now,
                 )
 
     async def _dispatch_trigger(self, task: ScheduledTask) -> tuple[str | None, dict | None]:
@@ -267,26 +335,10 @@ class SchedulerService:
                 }
             return result, None
         elif isinstance(payload, ShellExecPayload):
-            return await self._shell_exec(payload), None
+            return await self._dispatch.shell_executor.run(payload), None
         elif isinstance(payload, ConsolidateMemoryPayload):
             return await self._dispatch.consolidator.consolidate_all(), None
         elif isinstance(payload, WebhookPayload):
             return await self._dispatch.http_caller.call(payload), None
         else:
             raise InvalidTriggerTypeError(f"Unknown payload type: {type(payload)}")
-
-    async def _shell_exec(self, payload: ShellExecPayload) -> str:
-        import os
-
-        proc = await asyncio.create_subprocess_shell(
-            payload.command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            cwd=payload.working_dir,
-            env={**os.environ, **(payload.env_vars or {})},
-        )
-        timeout = payload.timeout or 300
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        if proc.returncode != 0:
-            raise RuntimeError(f"shell_exec exited with code {proc.returncode}")
-        return stdout.decode(errors="replace")

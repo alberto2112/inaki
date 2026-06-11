@@ -158,14 +158,14 @@ async def test_create_one_shot_iso_schedule() -> None:
         task_kind="one_shot",
         trigger_type="channel_send",
         trigger_payload={"text": "ping"},
-        schedule="2026-06-01T10:00:00Z",
+        schedule="2099-06-01T10:00:00Z",
     )
 
     assert result.success is True
     uc.create_task.assert_awaited_once()
     call_arg: ScheduledTask = uc.create_task.call_args[0][0]
     # Schedule normalizado a UTC: "Z" → "+00:00"
-    assert call_arg.schedule == "2026-06-01T10:00:00+00:00"
+    assert call_arg.schedule == "2099-06-01T10:00:00+00:00"
     assert call_arg.created_by == _AGENT_ID
 
 
@@ -208,7 +208,7 @@ async def test_create_trigger_type_agent_send() -> None:
         task_kind="one_shot",
         trigger_type="agent_send",
         trigger_payload={"agent_id": "other-agent", "task": "do something"},
-        schedule="2026-06-01T10:00:00Z",
+        schedule="2099-06-01T10:00:00Z",
     )
 
     assert result.success is True
@@ -231,7 +231,7 @@ async def test_create_trigger_type_shell_exec() -> None:
         task_kind="one_shot",
         trigger_type="shell_exec",
         trigger_payload={"command": "echo hello"},
-        schedule="2026-06-01T10:00:00Z",
+        schedule="2099-06-01T10:00:00Z",
     )
 
     assert result.success is True
@@ -254,7 +254,7 @@ async def test_create_created_by_always_from_agent_id_not_kwargs() -> None:
         task_kind="one_shot",
         trigger_type="channel_send",
         trigger_payload={"text": "hi"},
-        schedule="2026-06-01T10:00:00Z",
+        schedule="2099-06-01T10:00:00Z",
         created_by="malicious-agent",  # must be ignored
     )
 
@@ -595,7 +595,7 @@ async def test_create_trigger_payload_como_json_string() -> None:
         task_kind="one_shot",
         trigger_type="channel_send",
         trigger_payload='{"text": "recordatorio"}',  # string en lugar de dict
-        schedule="2026-06-01T10:00:00Z",
+        schedule="2099-06-01T10:00:00Z",
     )
 
     assert result.success is True, result.output
@@ -615,7 +615,7 @@ async def test_create_invalid_trigger_payload_is_error() -> None:
         task_kind="one_shot",
         trigger_type="channel_send",
         trigger_payload={},  # missing 'text'
-        schedule="2026-06-01T10:00:00Z",
+        schedule="2099-06-01T10:00:00Z",
     )
 
     assert result.success is False
@@ -632,7 +632,7 @@ async def test_create_missing_name_is_error() -> None:
         task_kind="one_shot",
         trigger_type="channel_send",
         trigger_payload={"text": "hi"},
-        schedule="2026-06-01T10:00:00Z",
+        schedule="2099-06-01T10:00:00Z",
     )
 
     assert result.success is False
@@ -667,7 +667,7 @@ async def test_create_invalid_task_kind_is_error() -> None:
         task_kind="daily",
         trigger_type="channel_send",
         trigger_payload={"text": "hi"},
-        schedule="2026-06-01T10:00:00Z",
+        schedule="2099-06-01T10:00:00Z",
     )
 
     assert result.success is False
@@ -685,7 +685,7 @@ async def test_create_invalid_trigger_type_is_error() -> None:
         task_kind="one_shot",
         trigger_type="webhook",
         trigger_payload={"url": "http://example.com"},
-        schedule="2026-06-01T10:00:00Z",
+        schedule="2099-06-01T10:00:00Z",
     )
 
     assert result.success is False
@@ -701,7 +701,7 @@ async def test_create_invalid_trigger_type_is_error() -> None:
 async def test_create_too_many_active_tasks_error() -> None:
     """TooManyActiveTasksError → ToolResult(success=False)."""
     tool, uc = _make_tool()
-    uc.create_task.side_effect = TooManyActiveTasksError(agent_id=_AGENT_ID)
+    uc.create_task.side_effect = TooManyActiveTasksError(agent_id=_AGENT_ID, limit=20)
 
     result = await tool.execute(
         operation="create",
@@ -709,7 +709,7 @@ async def test_create_too_many_active_tasks_error() -> None:
         task_kind="one_shot",
         trigger_type="channel_send",
         trigger_payload={"text": "hi"},
-        schedule="2026-06-01T10:00:00Z",
+        schedule="2099-06-01T10:00:00Z",
     )
 
     assert result.success is False
@@ -728,7 +728,7 @@ async def test_create_unexpected_exception_returns_error() -> None:
         task_kind="one_shot",
         trigger_type="channel_send",
         trigger_payload={"text": "hi"},
-        schedule="2026-06-01T10:00:00Z",
+        schedule="2099-06-01T10:00:00Z",
     )
 
     assert result.success is False
@@ -825,7 +825,7 @@ async def test_create_maps_one_shot_to_domain_oneshot() -> None:
         task_kind="one_shot",
         trigger_type="channel_send",
         trigger_payload={"text": "t"},
-        schedule="2026-06-01T10:00:00Z",
+        schedule="2099-06-01T10:00:00Z",
     )
 
     call_arg = uc.create_task.call_args[0][0]
@@ -871,7 +871,7 @@ async def test_create_channel_send_target_auto_inyectado_desde_contexto() -> Non
         task_kind="one_shot",
         trigger_type="channel_send",
         trigger_payload={"text": "mensaje programado"},
-        schedule="2026-06-01T10:00:00Z",
+        schedule="2099-06-01T10:00:00Z",
     )
 
     assert result.success is True
@@ -895,7 +895,7 @@ async def test_create_channel_send_user_id_override_reconstruye_target() -> None
         task_kind="one_shot",
         trigger_type="channel_send",
         trigger_payload={"text": "para otro usuario", "user_id": "777"},
-        schedule="2026-06-01T10:00:00Z",
+        schedule="2099-06-01T10:00:00Z",
     )
 
     assert result.success is True
@@ -917,7 +917,7 @@ async def test_create_channel_send_sin_contexto_retorna_error() -> None:
         task_kind="one_shot",
         trigger_type="channel_send",
         trigger_payload={"text": "hola"},
-        schedule="2026-06-01T10:00:00Z",
+        schedule="2099-06-01T10:00:00Z",
     )
 
     assert result.success is False
@@ -942,7 +942,7 @@ async def test_create_agent_send_hereda_output_channel() -> None:
         task_kind="one_shot",
         trigger_type="agent_send",
         trigger_payload={"agent_id": "otro-agent", "task": "hacer algo"},
-        schedule="2026-06-01T10:00:00Z",
+        schedule="2099-06-01T10:00:00Z",
     )
 
     assert result.success is True
@@ -965,7 +965,7 @@ async def test_create_channel_send_target_en_payload_descartado_silenciosamente(
         task_kind="one_shot",
         trigger_type="channel_send",
         trigger_payload={"text": "test", "target": "hacker:000"},  # debe ignorarse
-        schedule="2026-06-01T10:00:00Z",
+        schedule="2099-06-01T10:00:00Z",
     )
 
     assert result.success is True
@@ -1109,7 +1109,7 @@ async def test_create_echo_next_run_at_null_when_repo_cant_resolve() -> None:
         task_kind="one_shot",
         trigger_type="channel_send",
         trigger_payload={"text": "x"},
-        schedule="2026-06-01T10:00:00Z",
+        schedule="2099-06-01T10:00:00Z",
     )
 
     assert result.success is True
@@ -1132,9 +1132,9 @@ async def test_update_echo_reflects_runtime_reset() -> None:
     post_reset = _make_task(task_id=200, name="Post Reset")
     post_reset = post_reset.model_copy(
         update={
-            "schedule": "2026-06-01T09:00:00+00:00",
+            "schedule": "2099-06-01T09:00:00+00:00",
             "status": TaskStatus.PENDING,  # reset desde FAILED
-            "next_run": datetime(2026, 6, 1, 9, 0, 0, tzinfo=timezone.utc),
+            "next_run": datetime(2099, 6, 1, 9, 0, 0, tzinfo=timezone.utc),
         }
     )
     uc.update_task.return_value = post_reset
@@ -1142,16 +1142,16 @@ async def test_update_echo_reflects_runtime_reset() -> None:
     result = await tool.execute(
         operation="update",
         task_id=200,
-        schedule="2026-06-01T09:00:00Z",
+        schedule="2099-06-01T09:00:00Z",
     )
 
     assert result.success is True
     data = json.loads(result.output)
     assert data["updated"] is True
     assert data["id"] == 200
-    assert data["schedule"] == "2026-06-01T09:00:00+00:00"
+    assert data["schedule"] == "2099-06-01T09:00:00+00:00"
     assert data["task_status"] == "pending"
-    assert data["next_run_at"] == "2026-06-01T09:00:00+00:00"
+    assert data["next_run_at"] == "2099-06-01T09:00:00+00:00"
 
 
 @pytest.mark.asyncio
@@ -1427,3 +1427,101 @@ async def test_log_get_missing_log_id_returns_error() -> None:
     assert result.success is False
     assert "log_id" in result.output
     uc.get_log.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# enable / disable — la intención on/off, sin tocar status a mano
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_enable_invoca_use_case_y_devuelve_estado() -> None:
+    tool, uc = _make_tool()
+    uc.enable_task = AsyncMock()
+    enabled_task = _make_task(task_id=42).model_copy(update={"enabled": True})
+    uc.get_task.return_value = enabled_task
+
+    result = await tool.execute(operation="enable", task_id=42)
+
+    assert result.success is True
+    uc.enable_task.assert_awaited_once_with(42)
+    data = json.loads(result.output)
+    assert data["enabled"] is True
+    assert data["task_id"] == 42
+
+
+@pytest.mark.asyncio
+async def test_disable_invoca_use_case_y_devuelve_estado() -> None:
+    tool, uc = _make_tool()
+    uc.disable_task = AsyncMock()
+    disabled_task = _make_task(task_id=42).model_copy(update={"enabled": False})
+    uc.get_task.return_value = disabled_task
+
+    result = await tool.execute(operation="disable", task_id=42)
+
+    assert result.success is True
+    uc.disable_task.assert_awaited_once_with(42)
+    data = json.loads(result.output)
+    assert data["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_enable_sin_task_id_retorna_error() -> None:
+    tool, _ = _make_tool()
+    result = await tool.execute(operation="enable")
+    assert result.success is False
+    assert "task_id" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_update_ya_no_acepta_status() -> None:
+    """El status runtime no es mutable desde el LLM — setear 'running' a mano
+    brickeaba la task (el loop solo levanta 'pending')."""
+    tool, uc = _make_tool()
+
+    result = await tool.execute(operation="update", task_id=42, status="running")
+
+    assert result.success is False
+    assert "No mutable fields" in (result.error or "")
+    uc.update_task.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Rechazo de schedules en el pasado (one_shot)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_one_shot_en_el_pasado_retorna_error() -> None:
+    """Un typo de fecha no debe disparar la task inmediatamente."""
+    tool, uc = _make_tool()
+
+    result = await tool.execute(
+        operation="create",
+        name="Typo",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "hola"},
+        schedule="2020-01-01T10:00:00Z",
+    )
+
+    assert result.success is False
+    assert "in the past" in (result.error or "")
+    uc.create_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_update_schedule_en_el_pasado_retorna_error() -> None:
+    tool, uc = _make_tool()
+    existing = _make_task(task_id=200)
+    uc.get_task.return_value = existing
+
+    result = await tool.execute(
+        operation="update",
+        task_id=200,
+        schedule="2020-01-01T10:00:00Z",
+    )
+
+    assert result.success is False
+    assert "in the past" in (result.error or "")
+    uc.update_task.assert_not_awaited()

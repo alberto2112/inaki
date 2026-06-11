@@ -55,19 +55,19 @@ def on_mutation() -> MagicMock:
 
 @pytest.fixture()
 def uc(mock_repo: AsyncMock, on_mutation: MagicMock) -> ScheduleTaskUseCase:
-    return ScheduleTaskUseCase(repo=mock_repo, on_mutation=on_mutation)
+    return ScheduleTaskUseCase(repo=mock_repo, on_mutation=on_mutation, max_active_tasks=20)
 
 
 # ---------------------------------------------------------------------------
-# Guardrail: count >= 21 raises TooManyActiveTasksError
+# Guardrail: count >= max_active_tasks (20) raises TooManyActiveTasksError
 # ---------------------------------------------------------------------------
 
 
 async def test_guardrail_raises_when_count_at_limit(
     uc: ScheduleTaskUseCase, mock_repo: AsyncMock
 ) -> None:
-    """count_active_by_agent returns 21 → TooManyActiveTasksError raised."""
-    mock_repo.count_active_by_agent.return_value = 21
+    """count_active_by_agent returns 20 (== límite) → TooManyActiveTasksError raised."""
+    mock_repo.count_active_by_agent.return_value = 20
     task = _make_agent_task("agent-main")
 
     with pytest.raises(TooManyActiveTasksError) as exc_info:
@@ -80,8 +80,8 @@ async def test_guardrail_raises_when_count_at_limit(
 async def test_guardrail_raises_when_count_above_limit(
     uc: ScheduleTaskUseCase, mock_repo: AsyncMock
 ) -> None:
-    """count_active_by_agent returns 22 → TooManyActiveTasksError raised."""
-    mock_repo.count_active_by_agent.return_value = 22
+    """count_active_by_agent returns 25 → TooManyActiveTasksError raised."""
+    mock_repo.count_active_by_agent.return_value = 25
     task = _make_agent_task("agent-x")
 
     with pytest.raises(TooManyActiveTasksError):
@@ -91,15 +91,15 @@ async def test_guardrail_raises_when_count_above_limit(
 
 
 # ---------------------------------------------------------------------------
-# Guardrail: count < 21 allows task creation
+# Guardrail: count < max_active_tasks allows task creation
 # ---------------------------------------------------------------------------
 
 
 async def test_guardrail_allows_when_count_below_limit(
     uc: ScheduleTaskUseCase, mock_repo: AsyncMock, on_mutation: MagicMock
 ) -> None:
-    """count_active_by_agent returns 20 → task saved successfully."""
-    mock_repo.count_active_by_agent.return_value = 20
+    """count_active_by_agent returns 19 (< límite) → task saved successfully."""
+    mock_repo.count_active_by_agent.return_value = 19
     task = _make_agent_task("agent-main")
     mock_repo.save_task.return_value = task
 
@@ -145,7 +145,7 @@ async def test_cli_task_skips_guardrail(
 async def test_cli_task_skips_guardrail_even_when_count_would_exceed(
     uc: ScheduleTaskUseCase, mock_repo: AsyncMock
 ) -> None:
-    """Even if count would be >= 21, CLI tasks bypass the guard completely."""
+    """Even if count would exceed the limit, CLI tasks bypass the guard completely."""
     mock_repo.count_active_by_agent.return_value = 999  # would trigger if called
     task = _make_cli_task()
     mock_repo.save_task.return_value = task
@@ -155,3 +155,15 @@ async def test_cli_task_skips_guardrail_even_when_count_would_exceed(
 
     mock_repo.count_active_by_agent.assert_not_awaited()
     mock_repo.save_task.assert_awaited_once()
+
+
+async def test_guardrail_limit_es_configurable(mock_repo: AsyncMock) -> None:
+    """El límite viene del constructor (config scheduler.max_tasks_per_agent)."""
+    uc = ScheduleTaskUseCase(repo=mock_repo, on_mutation=MagicMock(), max_active_tasks=3)
+    mock_repo.count_active_by_agent.return_value = 3
+    task = _make_agent_task("agent-small")
+
+    with pytest.raises(TooManyActiveTasksError) as exc_info:
+        await uc.create_task(task)
+
+    assert "3" in str(exc_info.value)

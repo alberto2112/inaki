@@ -15,14 +15,20 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncIterator
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import aiosqlite
-from croniter import croniter
 from pydantic import TypeAdapter
 
-from core.domain.entities.task import ScheduledTask, TaskKind, TaskStatus, TriggerPayload
+from core.domain.entities.task import (
+    USER_TASK_ID_START,
+    ScheduledTask,
+    TaskKind,
+    TaskStatus,
+    TriggerPayload,
+)
 from core.domain.entities.task_log import TaskLog
+from core.domain.errors import InvalidScheduleError
+from core.domain.utils.cron import next_cron_occurrence, resolve_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -87,14 +93,9 @@ class SQLiteSchedulerRepo:
                 ya viene como ISO 8601 con offset explícito).
         """
         self._db_path = db_path
-        try:
-            self._cron_tz = ZoneInfo(user_timezone)
-        except ZoneInfoNotFoundError:
-            logger.warning(
-                "scheduler.repo: timezone '%s' inválido — fallback a UTC para evaluación de cron",
-                user_timezone,
-            )
-            self._cron_tz = ZoneInfo("UTC")
+        self._cron_tz = resolve_timezone(user_timezone)
+        # Las DDL + migración legacy corren UNA vez por instancia, no en cada query.
+        self._schema_ready = False
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
     @asynccontextmanager
@@ -115,23 +116,28 @@ class SQLiteSchedulerRepo:
         async with self._conn() as conn:
             await self._ensure_schema_conn(conn)
             if task.id == 0:
-                # Allocate user task id: COALESCE(MAX(id), 99) + 1 WHERE id >= 100
-                rows = list(
-                    await conn.execute_fetchall(
-                        "SELECT COALESCE(MAX(id), 99) + 1 AS next_id FROM scheduled_tasks WHERE id >= 100"
-                    )
-                )
-                new_id = rows[0]["next_id"] if rows else 100
-                await conn.execute(
-                    """
+                # Asignación atómica del id de usuario en un solo INSERT...SELECT:
+                #   - sin ventana SELECT-then-INSERT (dos creates concurrentes ya
+                #     no pueden chocar contra UNIQUE);
+                #   - el máximo considera TAMBIÉN task_logs.task_id, así un id
+                #     nunca se reusa tras borrar la task más alta (los logs
+                #     históricos de la task borrada no se "heredan").
+                cursor = await conn.execute(
+                    f"""
                     INSERT INTO scheduled_tasks
                         (id, name, description, task_kind, trigger_type, trigger_payload,
                          schedule, next_run, status, enabled, executions_remaining,
                          retry_count, log_enabled, created_at, last_run, created_by)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    SELECT MAX(
+                            {USER_TASK_ID_START - 1},
+                            (SELECT COALESCE(MAX(id), 0) FROM scheduled_tasks
+                             WHERE id >= {USER_TASK_ID_START}),
+                            (SELECT COALESCE(MAX(task_id), 0) FROM task_logs
+                             WHERE task_id >= {USER_TASK_ID_START})
+                        ) + 1,
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                     """,
                     (
-                        new_id,
                         task.name,
                         task.description,
                         task.task_kind.value,
@@ -149,6 +155,7 @@ class SQLiteSchedulerRepo:
                         task.created_by,
                     ),
                 )
+                new_id = cursor.lastrowid
                 await conn.commit()
                 return task.model_copy(update={"id": new_id, "next_run": resolved_next_run})
             else:
@@ -225,29 +232,38 @@ class SQLiteSchedulerRepo:
             await conn.commit()
 
     async def count_active_by_agent(self, agent_id: str) -> int:
+        """Cuenta las tareas que ocupan cuota: pending o running.
+
+        Las terminales (completed/failed/missed) no cuentan — un oneshot
+        perdido no debe comerse el límite del agente para siempre.
+        """
         async with self._conn() as conn:
             await self._ensure_schema_conn(conn)
             rows = list(
                 await conn.execute_fetchall(
                     """
                 SELECT COUNT(*) AS cnt FROM scheduled_tasks
-                WHERE created_by = ? AND enabled = 1 AND status NOT IN ('completed', 'failed')
+                WHERE created_by = ? AND enabled = 1 AND status IN ('pending', 'running')
                 """,
                     (agent_id,),
                 )
             )
         return rows[0]["cnt"] if rows else 0
 
-    async def get_next_due(self, as_of: datetime) -> ScheduledTask | None:
-        """Returns the enabled pending task with the earliest next_run."""
+    async def get_next_due(self) -> ScheduledTask | None:
+        """Returns the enabled pending task with the earliest next_run.
+
+        Excluye next_run NULL — coherente con list_due_pending: una fila sin
+        next_run es invisible para el loop (no "due ya mismo").
+        """
         async with self._conn() as conn:
             await self._ensure_schema_conn(conn)
             rows = list(
                 await conn.execute_fetchall(
                     """
                 SELECT * FROM scheduled_tasks
-                WHERE enabled = 1 AND status = 'pending'
-                ORDER BY (next_run IS NULL), next_run ASC
+                WHERE enabled = 1 AND status = 'pending' AND next_run IS NOT NULL
+                ORDER BY next_run ASC
                 LIMIT 1
                 """,
                 )
@@ -255,6 +271,15 @@ class SQLiteSchedulerRepo:
         if not rows:
             return None
         return self._row_to_task(rows[0])
+
+    async def list_running(self) -> list[ScheduledTask]:
+        """Tareas atrapadas en RUNNING (el daemon murió a mitad de ejecución)."""
+        async with self._conn() as conn:
+            await self._ensure_schema_conn(conn)
+            rows = await conn.execute_fetchall(
+                "SELECT * FROM scheduled_tasks WHERE status = 'running'"
+            )
+        return [self._row_to_task(row) for row in rows]
 
     async def list_due_pending(self, as_of: datetime) -> list[ScheduledTask]:
         """Returns all enabled pending tasks whose next_run <= as_of."""
@@ -306,28 +331,44 @@ class SQLiteSchedulerRepo:
         self,
         task_id: int,
         *,
-        success: bool,
-        output: str | None,
         next_run: datetime | None,
         executions_remaining: int | None,
         retry_count: int = 0,
+        last_run: datetime | None = None,
     ) -> None:
-        now_iso = datetime.now(timezone.utc).isoformat()
+        """Re-arma una recurrente: status vuelve a 'pending' con el próximo slot.
+
+        ``last_run`` solo se escribe si viene informado — los paths que avanzan
+        el cron SIN ejecutar (missed/recovery) pasan None y no mienten last_run.
+        """
         next_run_ts = next_run.timestamp() if next_run else None
         async with self._conn() as conn:
             await self._ensure_schema_conn(conn)
-            await conn.execute(
-                """
-                UPDATE scheduled_tasks
-                SET status = 'pending',
-                    last_run = ?,
-                    next_run = ?,
-                    executions_remaining = ?,
-                    retry_count = ?
-                WHERE id = ?
-                """,
-                (now_iso, next_run_ts, executions_remaining, retry_count, task_id),
-            )
+            if last_run is not None:
+                await conn.execute(
+                    """
+                    UPDATE scheduled_tasks
+                    SET status = 'pending',
+                        last_run = ?,
+                        next_run = ?,
+                        executions_remaining = ?,
+                        retry_count = ?
+                    WHERE id = ?
+                    """,
+                    (last_run.isoformat(), next_run_ts, executions_remaining, retry_count, task_id),
+                )
+            else:
+                await conn.execute(
+                    """
+                    UPDATE scheduled_tasks
+                    SET status = 'pending',
+                        next_run = ?,
+                        executions_remaining = ?,
+                        retry_count = ?
+                    WHERE id = ?
+                    """,
+                    (next_run_ts, executions_remaining, retry_count, task_id),
+                )
             await conn.commit()
 
     async def save_log(self, log: TaskLog) -> TaskLog:
@@ -490,25 +531,28 @@ class SQLiteSchedulerRepo:
         if task.next_run is not None:
             return task.next_run
         if task.task_kind == TaskKind.RECURRENT:
-            # Cron se evalúa en la timezone del usuario (no en UTC) para que
-            # `0 6 * * *` signifique "6:00 hora local" siempre — croniter sobre
-            # un datetime tz-aware respeta DST automáticamente. El resultado se
-            # convierte a UTC para persistencia (loop del scheduler compara en UTC).
-            now_local = datetime.now(self._cron_tz)
-            next_local = croniter(task.schedule, now_local).get_next(datetime)
-            return next_local.astimezone(timezone.utc)
+            # Cron se evalúa en la timezone del usuario via el helper central —
+            # `0 6 * * *` significa "6:00 hora local" siempre, con DST. El
+            # resultado vuelve en UTC (el loop del scheduler compara en UTC).
+            return next_cron_occurrence(task.schedule, self._cron_tz)
         if task.task_kind == TaskKind.ONESHOT:
             try:
                 dt = datetime.fromisoformat(task.schedule)
-                # Safety net: si llega un datetime naive, tratarlo como UTC
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
-                return dt
             except ValueError:
-                return None
+                # Antes devolvía None y la fila se persistía con next_run NULL
+                # en silencio (invisible para el loop). Fallar acá es honesto.
+                raise InvalidScheduleError(
+                    f"One-shot schedule '{task.schedule}' is not a valid ISO 8601 datetime."
+                ) from None
+            # Safety net: si llega un datetime naive, tratarlo como UTC
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
         return None
 
     async def _ensure_schema_conn(self, conn: aiosqlite.Connection) -> None:
+        if self._schema_ready:
+            return
         await conn.execute(_CREATE_TASKS_TABLE)
         await conn.execute(_CREATE_TASKS_INDEX)
         await conn.execute(_CREATE_LOGS_TABLE)
@@ -521,6 +565,7 @@ class SQLiteSchedulerRepo:
             "UPDATE scheduled_tasks SET enabled = 0, status = 'pending' WHERE status = 'disabled'"
         )
         await conn.commit()
+        self._schema_ready = True
 
     def _row_to_tasklog(self, row: aiosqlite.Row) -> TaskLog:
         started_at = datetime.fromisoformat(row["started_at"])

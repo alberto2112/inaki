@@ -52,10 +52,12 @@ def test_lightweight_bootstrap_returns_use_case(tmp_path: Path) -> None:
 
     with patch("adapters.inbound.cli.scheduler_cli._create_lightweight_uc") as mock_create:
         mock_uc = MagicMock()
-        mock_create.return_value = (mock_uc, MagicMock())
-        result = _bootstrap_uc(ctx)
+        mock_cfg = MagicMock()
+        mock_create.return_value = (mock_uc, mock_cfg)
+        uc, cfg = _bootstrap_uc(ctx)
 
-    assert result is mock_uc
+    assert uc is mock_uc
+    assert cfg is mock_cfg
 
 
 def test_reload_callback_silences_all_exceptions(tmp_path: Path) -> None:

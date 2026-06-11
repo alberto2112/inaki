@@ -96,15 +96,24 @@ def _notify_daemon_reload(admin_base_url: str, auth_key: str | None) -> None:
         pass  # Si el daemon no corre, no hay caché que invalidar
 
 
-def _bootstrap_uc(ctx: typer.Context) -> "ISchedulerUseCase":
+def _bootstrap_uc(ctx: typer.Context) -> tuple["ISchedulerUseCase", "GlobalConfig"]:
     """Bootstrap liviano — carga solo config + SQLiteSchedulerRepo + UseCase."""
     from inaki.cli import _resolve_dirs
 
     config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
     config_dir, _ = _resolve_dirs(config_dir_override)
 
-    uc, _ = _create_lightweight_uc(config_dir)
-    return uc
+    return _create_lightweight_uc(config_dir)
+
+
+def _notify_after_mutation(global_config: "GlobalConfig") -> None:
+    """Despierta el loop del daemon tras una mutación desde CLI.
+
+    Sin esto, el daemon (que tiene su propia instancia del scheduler en otro
+    proceso) tarda hasta 60s en ver el cambio. Silencioso si no está corriendo.
+    """
+    admin = global_config.admin
+    _notify_daemon_reload(f"http://{admin.host}:{admin.port}", admin.auth_key)
 
 
 def _run_async(coro: Any) -> Any:
@@ -270,7 +279,7 @@ def list_cmd(
     enabled_only: bool = typer.Option(False, "--enabled-only", help="Show only enabled tasks"),
 ) -> None:
     """List scheduled tasks."""
-    uc = _bootstrap_uc(ctx)
+    uc, _ = _bootstrap_uc(ctx)
     try:
         tasks = _run_async(uc.list_tasks())
     except Exception as exc:
@@ -297,7 +306,7 @@ def show_cmd(
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Show details of a scheduled task."""
-    uc = _bootstrap_uc(ctx)
+    uc, _ = _bootstrap_uc(ctx)
     try:
         task = _run_async(uc.get_task(task_id))
     except TaskNotFoundError:
@@ -323,7 +332,7 @@ def edit_cmd(
     task_id: int = typer.Argument(..., metavar="ID"),
 ) -> None:
     """Edit a scheduled task in $EDITOR (YAML round-trip)."""
-    uc = _bootstrap_uc(ctx)
+    uc, global_config = _bootstrap_uc(ctx)
     try:
         task = _run_async(uc.get_task(task_id))
     except TaskNotFoundError:
@@ -352,6 +361,7 @@ def edit_cmd(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1)
 
+    _notify_after_mutation(global_config)
     typer.echo(f"Task {task_id} updated.")
 
 
@@ -361,7 +371,7 @@ def enable_cmd(
     task_id: int = typer.Argument(..., metavar="ID"),
 ) -> None:
     """Enable a scheduled task."""
-    uc = _bootstrap_uc(ctx)
+    uc, global_config = _bootstrap_uc(ctx)
     try:
         _run_async(uc.enable_task(task_id))
     except TaskNotFoundError:
@@ -370,6 +380,7 @@ def enable_cmd(
     except Exception as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1)
+    _notify_after_mutation(global_config)
     typer.echo(f"Task {task_id} enabled.")
 
 
@@ -379,7 +390,7 @@ def disable_cmd(
     task_id: int = typer.Argument(..., metavar="ID"),
 ) -> None:
     """Disable a scheduled task."""
-    uc = _bootstrap_uc(ctx)
+    uc, global_config = _bootstrap_uc(ctx)
     try:
         _run_async(uc.disable_task(task_id))
     except TaskNotFoundError:
@@ -388,6 +399,7 @@ def disable_cmd(
     except Exception as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1)
+    _notify_after_mutation(global_config)
     typer.echo(f"Task {task_id} disabled.")
 
 
@@ -397,7 +409,7 @@ def rm_cmd(
     task_id: int = typer.Argument(..., metavar="ID"),
 ) -> None:
     """Remove a scheduled task (builtin tasks with id < 100 are protected)."""
-    uc = _bootstrap_uc(ctx)
+    uc, global_config = _bootstrap_uc(ctx)
     try:
         _run_async(uc.delete_task(task_id))
     except BuiltinTaskProtectedError:
@@ -409,4 +421,5 @@ def rm_cmd(
     except Exception as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1)
+    _notify_after_mutation(global_config)
     typer.echo(f"Task {task_id} deleted.")

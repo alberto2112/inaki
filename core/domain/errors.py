@@ -67,6 +67,10 @@ class InvalidTriggerTypeError(SchedulerError):
     """Tipo de trigger no soportado."""
 
 
+class InvalidScheduleError(SchedulerError):
+    """Schedule inválido: cron malformado o datetime ISO no parseable."""
+
+
 class TaskNotFoundError(SchedulerError):
     """La tarea solicitada no existe."""
 
@@ -74,9 +78,10 @@ class TaskNotFoundError(SchedulerError):
 class TooManyActiveTasksError(SchedulerError):
     """El agente alcanzó el límite máximo de tareas activas."""
 
-    def __init__(self, agent_id: str) -> None:
-        super().__init__(f"Agent {agent_id} has reached the maximum of 21 active tasks")
+    def __init__(self, agent_id: str, limit: int) -> None:
+        super().__init__(f"Agent {agent_id} has reached the maximum of {limit} active tasks")
         self.agent_id = agent_id
+        self.limit = limit
 
 
 class ToolLoopMaxIterationsError(InakiError):

@@ -24,7 +24,7 @@ No Makefile or CI. All commands are direct calls.
 
 Inaki is a multi-agent AI assistant following **strict hexagonal architecture**:
 
-- **`core/`** — Domain layer. Entities, ports (interfaces), use cases, domain services and errors. **NEVER imports from `adapters/` or `infrastructure/`**. Only stdlib + `core/` imports allowed.
+- **`core/`** — Domain layer. Entities, ports (interfaces), use cases, domain services and errors. **NEVER imports from `adapters/` or `infrastructure/`**. Allowed imports: stdlib, `core/`, and the third-party allowlist `pydantic` + `croniter` (the rule `tests/unit/test_architecture.py` actually enforces).
 - **`adapters/`** — Concrete implementations of ports. Inbound (CLI, Telegram, REST, daemon) and outbound (LLM providers, tools, memory/history repos, embedding, skills, scheduler).
 - **`infrastructure/`** — Wiring and cross-cutting. `container.py` is the **single place** where all adapters are instantiated and injected into use cases.
 - **`ext/`** — User extensions auto-discovered via `manifest.py`.
@@ -65,6 +65,7 @@ Secrets are YAML-only (no env vars). `*.secrets.yaml` files are gitignored.
 - **Message roles** use `Role` enum (`Role.USER`, `Role.ASSISTANT`, etc.), not string literals.
 - **Workspace containment** — `read_file`, `write_file` y `patch_file` usan `workspace.containment` (strict/warn/off). `shell_exec` NO tiene contención — opera en cualquier path. Ver `docs/configuracion.md`.
 - **Tool loop** — LLM can call tools iteratively up to `tools.tool_call_max_iterations` (default 5) with a circuit breaker for repeated failures.
+- **Scheduler cron evaluation** — TODA computación de "próxima ocurrencia" de un cron pasa por `core/domain/utils/cron.py::next_cron_occurrence()` (evalúa en `user.timezone`, devuelve UTC). NUNCA llamar `croniter` directo para next_run: evaluar cron en dos lugares con tz distintas causó el bug histórico de doble ejecución separada por el offset DST (repo en local, service en UTC).
 - **Tool semantic routing** — ALL tools (including builtins) go through RAG selection when `len(all_schemas) > tools.semantic_routing_min_tools` (default 10). There is NO automatic injection of builtins. Only `top_k` (default 5) tools reach the LLM per turn.
 - **`ITool.routing_keywords`** — Optional field (default `""`). Content is concatenated with `description` **only for embedding** — never sent to the LLM schema. Pattern: `description` in English (LLM comprehension), `routing_keywords` in multilingual es/en/fr (retrieval). Reason: `multilingual-e5-small` matches query↔text much better within the same language than cross-lingual. Use this for tools that users invoke with natural language (scheduler, web_search, memory). Omit for tools the LLM selects by reasoning (FS tools, delegate, create_tool). Cache hash includes both fields — changing either invalidates the embedding cache.
 - **Codebase language** — Variables, docstrings, comments, and error messages are in Spanish.

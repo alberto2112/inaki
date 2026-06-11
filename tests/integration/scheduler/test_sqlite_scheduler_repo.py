@@ -277,15 +277,13 @@ async def test_save_task_preserves_explicit_next_run(repo: SQLiteSchedulerRepo) 
 
 
 async def test_get_next_due_returns_soonest(repo: SQLiteSchedulerRepo) -> None:
-    now = datetime(2025, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
     earlier = datetime(2025, 6, 1, 11, 0, 0, tzinfo=timezone.utc)
     later = datetime(2025, 6, 1, 13, 0, 0, tzinfo=timezone.utc)
 
     await repo.save_task(_make_task("later", next_run=later))
     await repo.save_task(_make_task("earlier", next_run=earlier))
 
-    result = await repo.get_next_due(now)
-    # Both are in the future relative to now (both > now), earliest should be returned
+    result = await repo.get_next_due()
     assert result is not None
     assert result.name == "earlier"
 
@@ -540,3 +538,81 @@ async def test_get_log_preserves_metadata_and_error(repo: SQLiteSchedulerRepo) -
     assert result.error == "Agent 'self' not found"
     assert result.metadata == {"original_target": "telegram:1", "resolved_target": "telegram:1"}
     assert result.output is None
+
+
+# ---------------------------------------------------------------------------
+# ID allocation: no se reusan ids tras borrar (los logs históricos no se heredan)
+# ---------------------------------------------------------------------------
+
+
+async def test_deleted_task_id_no_se_reusa_si_dejo_logs(repo: SQLiteSchedulerRepo) -> None:
+    """Borrar la task de id más alto y crear otra NO debe reusar el id si esa
+    task dejó logs: los task_logs viejos apuntarían a la task nueva."""
+    first = await repo.save_task(_make_task("first"))
+    assert first.id == 100
+    await repo.save_log(
+        TaskLog(
+            task_id=first.id,
+            started_at=datetime.now(timezone.utc),
+            finished_at=datetime.now(timezone.utc),
+            status="success",
+        )
+    )
+    await repo.delete_task(first.id)
+
+    second = await repo.save_task(_make_task("second"))
+
+    assert second.id == 101  # 100 quedó "quemado" por los logs históricos
+
+
+# ---------------------------------------------------------------------------
+# _resolve_next_run: oneshot con ISO inválido → error, no NULL silencioso
+# ---------------------------------------------------------------------------
+
+
+async def test_oneshot_schedule_invalido_lanza_invalid_schedule_error(
+    repo: SQLiteSchedulerRepo,
+) -> None:
+    from core.domain.errors import InvalidScheduleError
+
+    bad = _make_task("bad")
+    bad = bad.model_copy(update={"schedule": "esto-no-es-iso"})
+
+    with pytest.raises(InvalidScheduleError):
+        await repo.save_task(bad)
+
+
+# ---------------------------------------------------------------------------
+# get_next_due excluye filas con next_run NULL (coherente con list_due_pending)
+# ---------------------------------------------------------------------------
+
+
+async def test_get_next_due_ignora_next_run_null(repo: SQLiteSchedulerRepo) -> None:
+    import aiosqlite
+
+    # Inyectar una fila legacy con next_run NULL directamente (el repo ya no
+    # permite crearlas, pero pueden existir de versiones previas).
+    saved = await repo.save_task(_make_task("legacy"))
+    async with aiosqlite.connect(repo._db_path) as conn:
+        await conn.execute("UPDATE scheduled_tasks SET next_run = NULL WHERE id = ?", (saved.id,))
+        await conn.commit()
+
+    assert await repo.get_next_due() is None
+
+
+# ---------------------------------------------------------------------------
+# list_running
+# ---------------------------------------------------------------------------
+
+
+async def test_list_running_devuelve_solo_running(repo: SQLiteSchedulerRepo) -> None:
+    from core.domain.entities.task import TaskStatus
+
+    a = await repo.save_task(_make_task("a"))
+    b = await repo.save_task(_make_task("b"))
+    await repo.update_status(a.id, TaskStatus.RUNNING)
+
+    running = await repo.list_running()
+
+    assert [t.id for t in running] == [a.id]
+    assert b.id not in {t.id for t in running}

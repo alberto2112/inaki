@@ -6,6 +6,10 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
+# Frontera de IDs reservados: ids < USER_TASK_ID_START son tareas builtin
+# (protegidas contra update/delete); la asignación de IDs de usuario arranca acá.
+USER_TASK_ID_START = 100
+
 
 class TaskKind(str, Enum):
     RECURRENT = "recurrent"
@@ -51,7 +55,6 @@ class AgentSendPayload(BaseModel):
     type: Literal["agent_send"] = "agent_send"
     agent_id: str
     task: str
-    system: str | None = None
     tools_override: list[dict] | None = None
     output_channel: str | None = None
 

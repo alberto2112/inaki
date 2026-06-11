@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from core.domain.entities.task import WebhookPayload
+from core.domain.entities.task import ShellExecPayload, WebhookPayload
 from core.domain.value_objects.dispatch_result import DispatchResult
 from core.ports.outbound.intermediate_sink_port import IIntermediateSink
 from core.ports.outbound.llm_dispatcher_port import ILLMDispatcher
@@ -38,6 +38,17 @@ class IHttpCaller(Protocol):
     async def call(self, payload: WebhookPayload) -> str: ...
 
 
+class IShellExecutor(Protocol):
+    """Ejecuta un trigger shell_exec como subprocess controlado.
+
+    El subprocess es I/O de sistema operativo — adapter, no dominio. El
+    contrato exige timeout duro: al expirar, el proceso DEBE ser terminado
+    (kill), no abandonado corriendo.
+    """
+
+    async def run(self, payload: ShellExecPayload) -> str: ...
+
+
 @dataclass(frozen=True)
 class SchedulerDispatchPorts:
     """Bundle de ports que el ``SchedulerService`` recibe en el constructor."""
@@ -46,3 +57,4 @@ class SchedulerDispatchPorts:
     llm_dispatcher: ILLMDispatcher
     consolidator: IConsolidator
     http_caller: IHttpCaller
+    shell_executor: IShellExecutor

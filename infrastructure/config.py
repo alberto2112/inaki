@@ -377,7 +377,7 @@ class ChannelFallbackConfig(BaseModel):
       1. Sink nativo registrado para el prefix del target.
       2. Entry en ``overrides`` para el ``channel_type`` del target.
       3. ``default`` global (si está configurado).
-      4. Fallback hardcoded: ``file:///tmp/inaki-schedule-output.log``.
+      4. Fallback hardcoded: ``file://~/.inaki/data/scheduler-fallback.log``.
 
     Atributos:
         default: Target string (p. ej. ``"file:///var/log/x.log"``,
@@ -398,6 +398,8 @@ class SchedulerConfig(BaseModel):
     enabled: bool = True
     db_filename: RuntimePath = "data/scheduler.db"  # relativo a ~/.inaki/
     max_retries: int = 3
+    retry_backoff_seconds: float = 10.0  # espera lineal entre reintentos (1x, 2x, 3x...)
+    max_tasks_per_agent: int = 20  # tareas activas (pending/running) por agente
     output_truncation_size: int = 65536
     channel_fallback: ChannelFallbackConfig = ChannelFallbackConfig()
 

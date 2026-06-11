@@ -6,8 +6,15 @@ Operations:
   - get      : obtiene una tarea por ID (detalle completo con trigger_payload)
   - update   : modifica campos mutables de una tarea existente
   - delete   : elimina una tarea (builtin tasks protegidas)
+  - enable   : habilita una tarea (re-arma FAILED/MISSED)
+  - disable  : deshabilita una tarea sin borrarla (pausa)
   - logs     : lista logs de ejecución (una tarea o global si se omite task_id)
   - log_get  : obtiene un log por ID con output/error completos (sin truncación)
+
+El status runtime (pending/running/...) NO es mutable desde el LLM: es estado
+interno del loop. La intención "quiero/no quiero que corra" se expresa con
+enable/disable; re-armar una task se logra editando schedule/trigger_payload
+(el use case resetea el runtime automáticamente en edits invalidantes).
 
 REQs satisfechos: REQ-ST-1, REQ-ST-2, REQ-ST-3, REQ-ST-4, REQ-ST-5, REQ-ST-6,
                   REQ-ST-8, REQ-ST-10
@@ -17,17 +24,18 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, cast
 
 from pydantic import BaseModel
 
 from core.domain.entities.task import (
+    USER_TASK_ID_START,
     AgentSendPayload,
     ChannelSendPayload,
     ScheduledTask,
     ShellExecPayload,
     TaskKind,
-    TaskStatus,
     TriggerPayload,
     TriggerType,
 )
@@ -55,7 +63,21 @@ _TRIGGER_PAYLOAD_MODELS: dict[str, type[BaseModel]] = {
     "shell_exec": ShellExecPayload,
 }
 
-_VALID_OPERATIONS = ("create", "list", "get", "update", "delete", "logs", "log_get")
+_VALID_OPERATIONS = (
+    "create",
+    "list",
+    "get",
+    "update",
+    "delete",
+    "enable",
+    "disable",
+    "logs",
+    "log_get",
+)
+
+# Margen de gracia para schedules one-shot "en el pasado": un reloj levemente
+# desfasado o un parse al filo del minuto no deben rechazar la creación.
+_PAST_SCHEDULE_GRACE_SECONDS = 60
 
 # Ejemplos de trigger_payload por tipo — usados en el mensaje de error para que
 # el LLM pueda auto-corregirse en el retry dentro del tool loop.
@@ -95,9 +117,11 @@ _TASK_KIND_TO_LLM = {
 }
 _LLM_TO_TASK_KIND = {v: k for k, v in _TASK_KIND_TO_LLM.items()}
 
-# Fields the LLM is allowed to update on an existing task
+# Fields the LLM is allowed to update on an existing task. El status runtime
+# NO está: setear 'running' a mano brickea la task (el loop solo levanta
+# 'pending') y la intención on/off se expresa con las operaciones enable/disable.
 _MUTABLE_FIELDS = frozenset(
-    {"name", "description", "schedule", "trigger_payload", "executions_remaining", "status"}
+    {"name", "description", "schedule", "trigger_payload", "executions_remaining"}
 )
 
 
@@ -131,10 +155,12 @@ class SchedulerTool(ITool):
         "Use 'get' to retrieve full detail (including trigger_payload) for a specific task. "
         "Use 'update' to modify mutable fields on a task. "
         "Use 'delete' to remove a non-builtin task permanently. "
+        "Use 'enable' to turn a task on (also re-arms a failed/missed task). "
+        "Use 'disable' to pause a task without deleting it. "
         "Use 'logs' to list execution logs (newest first, paginated, outputs truncated to 1000 chars). "
         "Omit task_id to list the latest logs across all tasks; include task_id to filter by task. "
         "Use 'log_get' to fetch a single log by id with the FULL untruncated output/error. "
-        "Builtin tasks (id < 100) cannot be modified or deleted."
+        f"Builtin tasks (id < {USER_TASK_ID_START}) cannot be modified or deleted."
     )
     # Disparadores multilingües solo para el embedding del semantic routing.
     routing_keywords = (
@@ -219,16 +245,11 @@ class SchedulerTool(ITool):
                     "Null means infinite."
                 ),
             },
-            "status": {
-                "type": "string",
-                "enum": ["pending", "running", "completed", "failed", "missed"],
-                "description": "Task status (update only).",
-            },
-            # --- get / update / delete / logs ---
+            # --- get / update / delete / enable / disable / logs ---
             "task_id": {
                 "type": "integer",
                 "description": (
-                    "Task ID (required for get, update, delete). "
+                    "Task ID (required for get, update, delete, enable, disable). "
                     "For 'logs': optional — omit to list the latest logs across all tasks."
                 ),
             },
@@ -283,6 +304,10 @@ class SchedulerTool(ITool):
                 return await self._update(kwargs)
             if operation == "delete":
                 return await self._delete(kwargs)
+            if operation == "enable":
+                return await self._set_enabled(kwargs, enabled=True)
+            if operation == "disable":
+                return await self._set_enabled(kwargs, enabled=False)
             if operation == "logs":
                 return await self._logs(kwargs)
             if operation == "log_get":
@@ -366,6 +391,12 @@ class SchedulerTool(ITool):
                     parsed_schedule = dt.isoformat()
                 except ValueError as exc:
                     return self._error(str(exc))
+                # Un datetime en el pasado dispararía la task inmediatamente —
+                # casi siempre es un typo de fecha o un "hoy a las 9" cuando ya
+                # son las 10. Mejor error accionable que ejecución sorpresa.
+                past_error = self._check_not_past(dt, schedule_raw)
+                if past_error is not None:
+                    return past_error
 
         # --- Inyección de contexto de canal para channel_send ---
         if trigger_type_raw == "channel_send":
@@ -528,16 +559,6 @@ class SchedulerTool(ITool):
         if "executions_remaining" in params:
             updates["executions_remaining"] = params["executions_remaining"]
 
-        if "status" in params:
-            status_raw = str(params["status"]).strip().lower()
-            try:
-                updates["status"] = TaskStatus(status_raw)
-            except ValueError:
-                return self._error(
-                    f"Invalid 'status': '{status_raw}'. "
-                    f"Must be one of: {', '.join(s.value for s in TaskStatus)}."
-                )
-
         if "trigger_payload" in params:
             payload_raw_original = params["trigger_payload"]
             payload_raw = _coerce_to_dict(payload_raw_original)
@@ -593,6 +614,9 @@ class SchedulerTool(ITool):
                     updates["schedule"] = dt.isoformat()
                 except ValueError as exc:
                     return self._error(str(exc))
+                past_error = self._check_not_past(dt, schedule_raw)
+                if past_error is not None:
+                    return past_error
 
         if not {k for k in updates if not k.startswith("_")}:
             if "_trigger_payload_raw" not in updates:
@@ -683,6 +707,45 @@ class SchedulerTool(ITool):
         return ToolResult(
             tool_name=self.name,
             output=json.dumps({"deleted": True, "task_id": task_id}),
+            success=True,
+        )
+
+    async def _set_enabled(self, params: dict[str, Any], *, enabled: bool) -> ToolResult:
+        """Operaciones enable/disable — la intención on/off del usuario.
+
+        ``enable`` además re-arma tasks FAILED/MISSED (el use case resetea el
+        runtime); ``disable`` pausa sin tocar el estado runtime.
+        """
+        task_id = params.get("task_id")
+        if task_id is None:
+            return self._error("Missing required parameter 'task_id'.")
+        try:
+            task_id = int(task_id)
+        except (TypeError, ValueError):
+            return self._error(f"Invalid 'task_id': '{task_id}'. Must be an integer.")
+
+        try:
+            if enabled:
+                await self._uc.enable_task(task_id)
+            else:
+                await self._uc.disable_task(task_id)
+            task = await self._uc.get_task(task_id)
+        except TaskNotFoundError as exc:
+            return self._error(str(exc))
+        except SchedulerError as exc:
+            return self._error(str(exc))
+
+        return ToolResult(
+            tool_name=self.name,
+            output=json.dumps(
+                {
+                    "task_id": task.id,
+                    "name": task.name,
+                    "enabled": task.enabled,
+                    "task_status": task.status.value,
+                    "next_run_at": task.next_run.isoformat() if task.next_run else None,
+                }
+            ),
             success=True,
         )
 
@@ -838,6 +901,22 @@ class SchedulerTool(ITool):
             "task_status": task.status.value,
             "enabled": task.enabled,
         }
+
+    def _check_not_past(self, dt: datetime, schedule_raw: str) -> ToolResult | None:
+        """Devuelve un error si el datetime quedó en el pasado (con gracia de 60s).
+
+        Sin este check, un typo de fecha ("2025" en vez de "2026") o un "hoy a
+        las 9" cuando ya pasaron las 9 dispara la task INMEDIATAMENTE. El error
+        le permite al LLM corregir (p. ej. mover al día siguiente) en el retry.
+        """
+        now = datetime.now(timezone.utc)
+        if (now - dt).total_seconds() > _PAST_SCHEDULE_GRACE_SECONDS:
+            return self._error(
+                f"Schedule '{schedule_raw}' resolves to {dt.isoformat()}, which is in the past. "
+                f"One-shot tasks must be scheduled in the future — adjust the date/time "
+                f"(e.g. tomorrow) and retry."
+            )
+        return None
 
     def _error(self, message: str) -> ToolResult:
         return ToolResult(

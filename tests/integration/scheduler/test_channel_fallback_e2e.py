@@ -19,6 +19,7 @@ import pytest
 
 from core.ports.outbound.scheduler_dispatch_port import SchedulerDispatchPorts
 from adapters.outbound.scheduler.dispatch_adapters import (
+    ShellExecAdapter,
     ChannelRouter,
     ConsolidationDispatchAdapter,
     HttpCallerAdapter,
@@ -62,6 +63,7 @@ async def test_channel_send_cli_cae_en_hardcoded_file_y_persiste_metadata(
         llm_dispatcher=LLMDispatcherAdapter({}),
         consolidator=ConsolidationDispatchAdapter(None),  # type: ignore[arg-type]
         http_caller=HttpCallerAdapter(),
+        shell_executor=ShellExecAdapter(),
     )
     service = SchedulerService(repo=repo, dispatch=dispatch)
 

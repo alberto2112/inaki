@@ -154,7 +154,7 @@ async def test_missed_oneshot_on_restart_marked_missed(
 ) -> None:
     task = await repo.save_task(_oneshot_past())
 
-    await service._handle_missed_on_startup()
+    await service._recover_on_startup()
 
     saved = await repo.get_task(task.id)
     assert saved is not None

@@ -64,7 +64,7 @@ The scheduler is a background task execution engine that runs continuously withi
 
 ### 2.1 Daily memory consolidation
 
-Builtin case. The scheduler runs memory consolidation for all enabled agents according to the cron configured in `memory.schedule` (default: `0 3 * * *` = 3 AM UTC every day).
+Builtin case. The scheduler runs memory consolidation for all enabled agents according to the cron configured in `memory.schedule` (default: `0 3 * * *` = 3 AM user-local every day).
 
 **Trigger**: `consolidate_memory`  
 **Frequency**: recurring, configurable cron  
@@ -80,7 +80,7 @@ trigger_payload:
   type: channel_send
   target: "telegram:123456789"
   text: "Buenos días. Este es el resumen del día."
-schedule: "0 9 * * 1-5"   # Monday to Friday 9 AM UTC
+schedule: "0 9 * * 1-5"   # Monday to Friday 9 AM (user-local)
 task_kind: recurrent
 ```
 
@@ -152,8 +152,8 @@ trigger_payload:
 ```
 while running:
     now = utcnow()
-    task = repo.get_next_due(now)
-               └─ earliest PENDING + enabled task
+    task = repo.get_next_due()
+               └─ earliest PENDING + enabled task (next_run IS NOT NULL)
                └─ skips stale payloads (ValidationError → warning, continues)
 
     if task is None:
@@ -186,19 +186,27 @@ for attempt in range(0, max_retries + 1):
         task.retry_count = attempt + 1
         if log_enabled:
             save TaskLog(status="failed", error=str(e))
+        sleep(retry_backoff_seconds * (attempt + 1))   # backoff lineal entre intentos
 
 else:
     # all retries exhausted
-    task.status → FAILED
+    if ONESHOT:
+        task.status → FAILED                            # terminal
+    else:  # RECURRENT
+        # El fallo de UNA ocurrencia no mata la recurrencia: avanza al
+        # próximo slot del cron y vuelve a PENDING. Los intentos fallidos
+        # quedan en task_logs.
+        next_run = next_cron_occurrence(schedule, user_tz)
+        repo.update_after_execution(next_run=next_run, retry_count=0, last_run=None)
 ```
 
 ### 3.3 Dispatch by trigger type
 
 | Trigger | Action |
 |---------|--------|
-| `channel_send` | `channel_router.send_message(target, text)` → `DispatchResult(original_target, resolved_target)` — the router applies a fallback cascade (native → override → default → hardcoded `/tmp/inaki-schedule-output.log`). See [configuracion.md — `channel_fallback`](configuracion.md#scheduler--channel_fallback-routing-de-canales). The `{original_target, resolved_target}` pair is persisted in `task_logs.metadata` (JSON) for traceability. |
+| `channel_send` | `channel_router.send_message(target, text)` → `DispatchResult(original_target, resolved_target)` — the router applies a fallback cascade (native → override → default → hardcoded `~/.inaki/data/scheduler-fallback.log`). See [configuracion.md — `channel_fallback`](configuracion.md#scheduler--channel_fallback-routing-de-canales). The `{original_target, resolved_target}` pair is persisted in `task_logs.metadata` (JSON) for traceability. |
 | `agent_send` | `llm_dispatcher.dispatch(agent_id, prompt, tools)` → str result; if `output_channel` is defined, sends result to the channel |
-| `shell_exec` | subprocess with command/working_dir/env_vars/timeout → stdout; RuntimeError if exit code != 0 |
+| `shell_exec` | `ShellExecAdapter` (port `IShellExecutor`): subprocess with command/working_dir/env_vars/timeout → stdout; RuntimeError if exit code != 0. On timeout the process is **killed** (no orphans). |
 | `consolidate_memory` | `consolidator.consolidate_all()` → str result |
 
 ### 3.4 Finalization (`_finalize_task()`)
@@ -221,33 +229,57 @@ else:  # RECURRENT
     if remaining == 0:
         task.status → COMPLETED
     else:
-        next_run = croniter(schedule, now).get_next()
+        next_run = next_cron_occurrence(schedule, user_tz)   # SIEMPRE en tz del usuario
         repo.update_after_execution(
-            success=True, output=output,
             next_run=next_run,
             executions_remaining=remaining,
-            retry_count=0          ← reset
+            retry_count=0,         ← reset
+            last_run=now           ← solo se escribe cuando hubo ejecución real
         )
         task.status remains PENDING
 ```
 
-### 3.5 Startup: missed tasks (`_handle_missed_on_startup()`)
+> **Timezone**: toda evaluación de cron (repo, service, reconciliadores de
+> builtins) pasa por `core/domain/utils/cron.py::next_cron_occurrence()`, que
+> interpreta la expresión en la timezone del usuario (`user.timezone`) y
+> devuelve UTC. Evaluar cron en más de un lugar con tz distintas causó el bug
+> histórico de doble ejecución separada por el offset DST (6:00 local + 6:00 UTC).
 
-On service startup, tasks that should have run while the daemon was stopped are reviewed:
+### 3.5 Startup recovery (`_recover_on_startup()`)
+
+On service startup, two situations are repaired:
+
+**1. Tasks stuck in RUNNING** (the daemon died mid-execution):
+
+```
+for task in repo.list_running():
+    save TaskLog(status="failed", error="Daemon restarted while task was running")
+    if ONESHOT:
+        task.status → FAILED
+    else:  # RECURRENT
+        next_run = next_cron_occurrence(schedule, user_tz)   # back to PENDING
+```
+
+**2. Tasks that should have run while the daemon was stopped:**
 
 ```
 tasks = repo.list_due_pending(now)
          └─ PENDING + enabled + next_run <= now
 
 for task in tasks:
+    save TaskLog(status="missed", error="Task was not running when...")
     if ONESHOT:
         task.status → MISSED
-        save TaskLog(status="missed", error="Task was not running when...")
     else:  # RECURRENT
-        # Skip the missed execution, recalculate next date
-        next_run = croniter(schedule, now).get_next()
-        repo.update_after_execution(success=True, output=None, next_run=next_run)
+        # Skip the missed execution, recalculate next date.
+        # last_run is NOT touched — nothing actually ran.
+        next_run = next_cron_occurrence(schedule, user_tz)
+        repo.update_after_execution(next_run=next_run, last_run=None)
 ```
+
+Skipped occurrences (oneshot **and** recurrent) always leave a `"missed"`
+entry in `task_logs` (respecting `log_enabled`), so "why didn't yesterday's
+6 AM summary arrive?" is answerable from the logs.
 
 Missed recurring tasks **are not re-executed**; they advance to the next cron slot. Missed one-shot tasks remain as `MISSED`.
 
@@ -268,7 +300,7 @@ inaki scheduler list [--json] [--enabled-only]
 | Option | Description |
 |--------|-------------|
 | `--json` | JSON output with all fields |
-| `--enabled-only` | Filters only non-disabled tasks (status != DISABLED) |
+| `--enabled-only` | Filters only enabled tasks (`enabled = true`) |
 
 **Columns**: ID, Name, Kind, Trigger, Enabled, Next execution
 
@@ -319,7 +351,8 @@ id, status, next_run, last_run, created_at, retry_count
 
 ### `inaki scheduler enable <ID>`
 
-Activates a task (status → `PENDING`).
+Sets `enabled = true`. If the task was `FAILED`/`MISSED`, it is also re-armed
+(status → `PENDING`, retry_count → 0, next_run recomputed).
 
 ```
 inaki scheduler enable <ID>
@@ -329,7 +362,7 @@ inaki scheduler enable <ID>
 
 ### `inaki scheduler disable <ID>`
 
-Deactivates a task (status → `DISABLED`). The loop skips it.
+Sets `enabled = false` without touching runtime status. The loop skips it.
 
 ```
 inaki scheduler disable <ID>
@@ -384,7 +417,6 @@ class AgentSendPayload(BaseModel):
     type: Literal["agent_send"] = "agent_send"
     agent_id: str                           # ID of the agent to dispatch
     task: str                               # Message/task to send to the agent
-    system: str | None = None               # System prompt override; None = use agent's default
     tools_override: list[dict] | None = None  # Available tools; None = all
     output_channel: str | None = None       # If defined, sends result to the channel
 ```
@@ -452,17 +484,20 @@ class ConsolidateMemoryPayload(BaseModel):
 
 The task repeats according to a cron expression. After each execution, the next `next_run` is recalculated.
 
-- `schedule`: standard cron expression (5 fields, UTC)
+- `schedule`: standard cron expression (5 fields) — **evaluated in the user's
+  timezone** (`user.timezone`, with DST), not UTC. `0 6 * * *` means 06:00
+  local time every day, year-round.
 - `executions_remaining`: `null` = infinite; `N` = execute N times then transition to `COMPLETED`
+  (failed occurrences do not consume the countdown)
 
 **Cron examples**:
 
 | Expression | Meaning |
 |-----------|---------|
-| `0 3 * * *` | Every day at 3:00 AM UTC |
-| `0 9 * * 1-5` | Monday to Friday, 9:00 AM UTC |
+| `0 3 * * *` | Every day at 3:00 AM (user-local) |
+| `0 9 * * 1-5` | Monday to Friday, 9:00 AM (user-local) |
 | `*/15 * * * *` | Every 15 minutes |
-| `0 0 1 * *` | First day of each month, midnight UTC |
+| `0 0 1 * *` | First day of each month, midnight (user-local) |
 
 ---
 
@@ -511,7 +546,7 @@ class TaskStatus(str, Enum):
     PENDING   = "pending"    # Waiting for next execution
     RUNNING   = "running"    # Currently executing
     COMPLETED = "completed"  # Finished (oneshot completed or countdown=0)
-    FAILED    = "failed"     # Exhausted retries, last attempt failed
+    FAILED    = "failed"     # ONESHOT only: exhausted retries (recurrent tasks advance instead)
     MISSED    = "missed"     # Oneshot that did not execute (daemon was stopped)
 ```
 
@@ -549,8 +584,12 @@ scheduler:
   enabled: true                    # Enable/disable the scheduler on startup
   db_filename: "data/scheduler.db" # SQLite file relative to ~/.inaki/ (or absolute)
   max_retries: 3                   # Maximum retries per failed task
+  retry_backoff_seconds: 10.0      # Linear wait between retries (1x, 2x, 3x...)
+  max_tasks_per_agent: 20          # Active (pending/running) tasks an agent may own
   output_truncation_size: 65536    # Maximum bytes to store in task_logs.output
 ```
+
+Cron expressions are evaluated in `user.timezone` (empty → UTC fallback).
 
 ### `memory` block (affects builtin task)
 
@@ -599,16 +638,21 @@ File: [core/domain/errors.py](../core/domain/errors.py)
 | Error | When raised |
 |-------|-------------|
 | `TaskNotFoundError` | `get_task(id)` with non-existent ID |
-| `BuiltinTaskProtectedError` | Attempt to modify/delete a task with `id < 100` |
+| `BuiltinTaskProtectedError` | Attempt to modify/delete a task with `id < USER_TASK_ID_START` (100) |
 | `InvalidTriggerTypeError` | Payload with unknown trigger type in dispatch |
+| `InvalidScheduleError` | Malformed cron expression or unparseable ISO datetime |
+| `TooManyActiveTasksError` | Agent exceeded `scheduler.max_tasks_per_agent` |
 | `SchedulerError` | Base for all scheduler errors |
 
 ### Retries
 
-- Configurable: `scheduler.max_retries` (default: 3)
+- Configurable: `scheduler.max_retries` (default: 3) with linear backoff
+  between attempts (`scheduler.retry_backoff_seconds`, default 10s → 10/20/30s)
 - The retry_count resets to 0 on each successful execution
-- When retries are exhausted → status `FAILED`, will not run again until manual intervention
-- To reactivate a failed task: `inaki scheduler enable <ID>`
+- ONESHOT with retries exhausted → status `FAILED`; reactivate with
+  `inaki scheduler enable <ID>` (re-arms and recomputes next_run)
+- RECURRENT with retries exhausted → advances to the next cron slot and stays
+  `PENDING` — one failed occurrence does not kill the recurrence
 
 ---
 

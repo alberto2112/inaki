@@ -412,3 +412,42 @@ class TestLLMDispatcherAdapterLockPerScope:
             timeout=1.0,
         )
         assert result == "ok"
+
+
+# ---------------------------------------------------------------------------
+# ShellExecAdapter
+# ---------------------------------------------------------------------------
+
+
+async def test_shell_exec_devuelve_stdout() -> None:
+    from adapters.outbound.scheduler.dispatch_adapters import ShellExecAdapter
+    from core.domain.entities.task import ShellExecPayload
+
+    adapter = ShellExecAdapter()
+    out = await adapter.run(ShellExecPayload(command="echo hola"))
+    assert out.strip() == "hola"
+
+
+async def test_shell_exec_exit_code_no_cero_lanza() -> None:
+    from adapters.outbound.scheduler.dispatch_adapters import ShellExecAdapter
+    from core.domain.entities.task import ShellExecPayload
+
+    adapter = ShellExecAdapter()
+    with pytest.raises(RuntimeError, match="exited with code"):
+        await adapter.run(ShellExecPayload(command="exit 3"))
+
+
+async def test_shell_exec_timeout_mata_el_proceso() -> None:
+    """Al expirar el timeout, el subprocess debe ser terminado — no quedar
+    corriendo huérfano mientras el retry lanza otro encima."""
+    import time
+
+    from adapters.outbound.scheduler.dispatch_adapters import ShellExecAdapter
+    from core.domain.entities.task import ShellExecPayload
+
+    adapter = ShellExecAdapter()
+    start = time.monotonic()
+    with pytest.raises(RuntimeError, match="timeout"):
+        await adapter.run(ShellExecPayload(command="sleep 30", timeout=1))
+    # Si el kill funcionó, volvemos apenas pasado el timeout (no los 30s del sleep)
+    assert time.monotonic() - start < 5

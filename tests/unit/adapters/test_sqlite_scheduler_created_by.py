@@ -130,10 +130,11 @@ async def test_count_active_by_agent_excludes_terminal_and_disabled(
     assert count == 1
 
 
-async def test_count_active_by_agent_includes_running_and_missed(
+async def test_count_active_by_agent_counts_running_but_not_missed(
     repo: SQLiteSchedulerRepo,
 ) -> None:
-    """running and missed tasks are non-terminal: they MUST be counted."""
+    """running ocupa cuota; missed es terminal y NO debe comerse el límite
+    del agente para siempre (el operador puede no limpiarlas nunca)."""
     t_running = await repo.save_task(_make_task("running", created_by="agent-a"))
     t_missed = await repo.save_task(_make_task("missed", created_by="agent-a"))
     await repo.update_status(t_running.id, TaskStatus.RUNNING)
@@ -141,7 +142,7 @@ async def test_count_active_by_agent_includes_running_and_missed(
 
     count = await repo.count_active_by_agent("agent-a")
 
-    assert count == 2
+    assert count == 1
 
 
 # ---------------------------------------------------------------------------

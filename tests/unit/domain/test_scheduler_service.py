@@ -62,6 +62,7 @@ def _make_task(
 def mock_repo() -> AsyncMock:
     repo = AsyncMock()
     repo.list_due_pending.return_value = []
+    repo.list_running.return_value = []
     repo.get_next_due.return_value = None
     return repo
 
@@ -73,16 +74,17 @@ def service(mock_repo: AsyncMock) -> SchedulerService:
         dispatch=_make_dispatch(),
         max_retries=1,
         output_truncation_size=65536,
+        retry_backoff_seconds=0,  # sin sleeps en unit tests
     )
 
 
 # ---------------------------------------------------------------------------
-# _handle_missed_on_startup
+# _recover_on_startup
 # ---------------------------------------------------------------------------
 
 
 @freeze_time("2025-06-01 12:00:00")
-async def test_handle_missed_marks_oneshot_as_missed(
+async def test_recover_marks_missed_oneshot_as_missed(
     service: SchedulerService, mock_repo: AsyncMock
 ) -> None:
     task = _make_task(
@@ -92,7 +94,7 @@ async def test_handle_missed_marks_oneshot_as_missed(
     )
     mock_repo.list_due_pending.return_value = [task]
 
-    await service._handle_missed_on_startup()
+    await service._recover_on_startup()
 
     mock_repo.update_status.assert_awaited_once_with(100, TaskStatus.MISSED)
     mock_repo.save_log.assert_awaited_once()
@@ -102,7 +104,7 @@ async def test_handle_missed_marks_oneshot_as_missed(
 
 
 @freeze_time("2025-06-01 12:00:00")
-async def test_handle_missed_recomputes_recurrent_next_run(
+async def test_recover_recomputes_recurrent_next_run_sin_tocar_last_run(
     service: SchedulerService, mock_repo: AsyncMock
 ) -> None:
     task = _make_task(
@@ -113,12 +115,53 @@ async def test_handle_missed_recomputes_recurrent_next_run(
     task = task.model_copy(update={"schedule": "0 3 * * *"})
     mock_repo.list_due_pending.return_value = [task]
 
-    await service._handle_missed_on_startup()
+    await service._recover_on_startup()
 
     mock_repo.update_after_execution.assert_awaited_once()
     call_kwargs = mock_repo.update_after_execution.call_args.kwargs
     # next_run should be future (tomorrow 03:00 UTC)
     assert call_kwargs["next_run"] > datetime(2025, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+    # No hubo ejecución real → last_run no se escribe
+    assert call_kwargs["last_run"] is None
+    # La ocurrencia salteada deja rastro en task_logs
+    log_arg: TaskLog = mock_repo.save_log.call_args[0][0]
+    assert log_arg.status == "missed"
+    assert log_arg.task_id == 101
+
+
+@freeze_time("2025-06-01 12:00:00")
+async def test_recover_oneshot_atrapado_en_running_pasa_a_failed(
+    service: SchedulerService, mock_repo: AsyncMock
+) -> None:
+    """Un oneshot RUNNING al arrancar (daemon murió a mitad) → FAILED + log."""
+    task = _make_task(task_id=102, task_kind=TaskKind.ONESHOT)
+    task = task.model_copy(update={"status": TaskStatus.RUNNING})
+    mock_repo.list_running.return_value = [task]
+
+    await service._recover_on_startup()
+
+    mock_repo.update_status.assert_awaited_once_with(102, TaskStatus.FAILED)
+    log_arg: TaskLog = mock_repo.save_log.call_args[0][0]
+    assert log_arg.status == "failed"
+    assert "restarted" in (log_arg.error or "")
+
+
+@freeze_time("2025-06-01 12:00:00")
+async def test_recover_recurrente_atrapada_en_running_avanza_al_proximo_slot(
+    service: SchedulerService, mock_repo: AsyncMock
+) -> None:
+    """Una recurrente RUNNING al arrancar → vuelve a pending con next_run futuro."""
+    task = _make_task(task_id=103, task_kind=TaskKind.RECURRENT)
+    task = task.model_copy(update={"status": TaskStatus.RUNNING})
+    mock_repo.list_running.return_value = [task]
+
+    await service._recover_on_startup()
+
+    mock_repo.update_after_execution.assert_awaited_once()
+    call_kwargs = mock_repo.update_after_execution.call_args.kwargs
+    assert call_kwargs["next_run"] > datetime(2025, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+    assert call_kwargs["retry_count"] == 0
+    assert call_kwargs["last_run"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +196,12 @@ async def test_execute_task_on_success_calls_finalize(
 
     await service._execute_task(task)
 
-    service._finalize_task.assert_awaited_once_with(task, "output", None)  # type: ignore[attr-defined]
+    service._finalize_task.assert_awaited_once()  # type: ignore[attr-defined]
+    args = service._finalize_task.await_args.args  # type: ignore[attr-defined, union-attr]
+    assert args[0] is task
+    assert args[1] == "output"
+    assert args[2] is None
+    assert isinstance(args[3], datetime)  # run_started_at real
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +215,64 @@ async def test_finalize_oneshot_sets_completed(
     task = _make_task(task_kind=TaskKind.ONESHOT)
     await service._finalize_task(task, None)
     mock_repo.update_status.assert_awaited_once_with(task.id, TaskStatus.COMPLETED)
+
+
+# ---------------------------------------------------------------------------
+# Timezone: el recompute post-ejecución usa la tz del usuario, no UTC
+# ---------------------------------------------------------------------------
+
+
+@freeze_time("2025-07-01 04:00:00")  # = 06:00 en Madrid (CEST, UTC+2)
+async def test_finalize_recurrent_recomputa_cron_en_timezone_usuario(
+    mock_repo: AsyncMock,
+) -> None:
+    """Regresión del bug de doble ejecución: una task `0 6 * * *` con
+    user_timezone=Europe/Madrid que corre a las 06:00 locales (04:00 UTC)
+    debe reprogramarse para MAÑANA 06:00 locales (04:00 UTC) — NO para hoy
+    06:00 UTC (08:00 locales), que era el drift que causaba dos ejecuciones
+    separadas por 2h."""
+    service = SchedulerService(
+        repo=mock_repo,
+        dispatch=_make_dispatch(),
+        user_timezone="Europe/Madrid",
+        retry_backoff_seconds=0,
+    )
+    task = _make_task(task_id=110, task_kind=TaskKind.RECURRENT)
+    task = task.model_copy(update={"schedule": "0 6 * * *"})
+
+    await service._finalize_task(task, None)
+
+    call_kwargs = mock_repo.update_after_execution.call_args.kwargs
+    assert call_kwargs["next_run"] == datetime(2025, 7, 2, 4, 0, 0, tzinfo=timezone.utc)
+
+
+# ---------------------------------------------------------------------------
+# Recurrente que agota retries → avanza al próximo slot, no muere
+# ---------------------------------------------------------------------------
+
+
+@freeze_time("2025-06-01 12:00:00")
+async def test_execute_recurrent_fallida_avanza_sin_morir(
+    service: SchedulerService, mock_repo: AsyncMock
+) -> None:
+    task = _make_task(task_id=120, task_kind=TaskKind.RECURRENT)
+    service._dispatch_trigger = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
+
+    await service._execute_task(task)
+
+    # Nunca pasa a FAILED — la recurrencia sobrevive
+    statuses = [c.args[1] for c in mock_repo.update_status.call_args_list]
+    assert TaskStatus.FAILED not in statuses
+    # Avanza al próximo slot con retry_count reseteado y sin tocar last_run
+    call_kwargs = mock_repo.update_after_execution.call_args.kwargs
+    assert call_kwargs["next_run"] > datetime(2025, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+    assert call_kwargs["retry_count"] == 0
+    assert call_kwargs["last_run"] is None
+    # Los intentos fallidos quedaron logueados
+    failed_logs = [
+        c.args[0] for c in mock_repo.save_log.call_args_list if c.args[0].status == "failed"
+    ]
+    assert len(failed_logs) == 2  # max_retries=1 → 2 intentos
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +324,10 @@ async def test_dispatch_webhook_return_value_propagated_to_finalize(
 
     await service._execute_task(task)
 
-    service._finalize_task.assert_awaited_once_with(task, "webhook response", None)  # type: ignore[attr-defined]
+    service._finalize_task.assert_awaited_once()  # type: ignore[attr-defined]
+    args = service._finalize_task.await_args.args  # type: ignore[attr-defined, union-attr]
+    assert args[0] is task
+    assert args[1] == "webhook response"
 
 
 async def test_dispatch_webhook_failure_propagates_as_execute_failure(

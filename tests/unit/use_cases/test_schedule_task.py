@@ -281,3 +281,71 @@ async def test_update_invalidating_recomputes_for_pending_task(
     assert saved.status == TaskStatus.PENDING
     assert saved.next_run is None
     assert saved.schedule == "2099-01-01T00:00:00+00:00"
+
+
+# ---------------------------------------------------------------------------
+# Validación de cron en create/update (InvalidScheduleError)
+# ---------------------------------------------------------------------------
+
+
+async def test_create_recurrente_con_cron_invalido_lanza(
+    uc: ScheduleTaskUseCase, mock_repo: AsyncMock
+) -> None:
+    from core.domain.errors import InvalidScheduleError
+
+    bad = _make_task().model_copy(
+        update={"task_kind": TaskKind.RECURRENT, "schedule": "esto no es cron"}
+    )
+
+    with pytest.raises(InvalidScheduleError):
+        await uc.create_task(bad)
+
+    mock_repo.save_task.assert_not_awaited()
+
+
+async def test_update_recurrente_con_cron_invalido_lanza(
+    uc: ScheduleTaskUseCase, mock_repo: AsyncMock
+) -> None:
+    from core.domain.errors import InvalidScheduleError
+
+    existing = _make_task(task_id=150).model_copy(
+        update={"task_kind": TaskKind.RECURRENT, "schedule": "0 3 * * *"}
+    )
+    mock_repo.get_task.return_value = existing
+
+    with pytest.raises(InvalidScheduleError):
+        await uc.update_task(150, schedule="61 25 * * *")
+
+    mock_repo.save_task.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# update_task valida con Pydantic (model_copy no corre validadores)
+# ---------------------------------------------------------------------------
+
+
+async def test_update_con_tipo_invalido_lanza_validation_error(
+    uc: ScheduleTaskUseCase, mock_repo: AsyncMock
+) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        await uc.update_task(150, executions_remaining="banana")
+
+    mock_repo.save_task.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# update_task despierta el loop (on_mutation)
+# ---------------------------------------------------------------------------
+
+
+async def test_update_task_invoca_on_mutation(
+    uc: ScheduleTaskUseCase, mock_repo: AsyncMock, on_mutation: MagicMock
+) -> None:
+    """Sin esto, un update que adelanta next_run no despierta el loop hasta 60s."""
+    mock_repo.save_task.side_effect = lambda task: task
+
+    await uc.update_task(150, name="nuevo nombre")
+
+    on_mutation.assert_called_once()

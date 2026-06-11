@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Callable
 
-from core.domain.entities.task import ScheduledTask, TaskStatus
+from core.domain.entities.task import USER_TASK_ID_START, ScheduledTask, TaskKind, TaskStatus
 from core.domain.entities.task_log import TaskLog
 from core.domain.errors import BuiltinTaskProtectedError, TaskNotFoundError, TooManyActiveTasksError
+from core.domain.utils.cron import validate_cron
 from core.ports.inbound.scheduler_port import ISchedulerUseCase
 
 if TYPE_CHECKING:
@@ -29,22 +30,28 @@ class ScheduleTaskUseCase(ISchedulerUseCase):
         self,
         repo: ISchedulerRepository,
         on_mutation: Callable[[], None],
+        max_active_tasks: int = 20,
     ) -> None:
         self._repo = repo
         self._on_mutation = on_mutation
+        self._max_active_tasks = max(1, int(max_active_tasks))
 
     async def create_task(self, task: ScheduledTask) -> ScheduledTask:
+        if task.task_kind == TaskKind.RECURRENT:
+            validate_cron(task.schedule)  # raises InvalidScheduleError
         if task.created_by != "":
             count = await self._repo.count_active_by_agent(task.created_by)
-            if count >= 21:
-                raise TooManyActiveTasksError(agent_id=task.created_by)
+            if count >= self._max_active_tasks:
+                raise TooManyActiveTasksError(
+                    agent_id=task.created_by, limit=self._max_active_tasks
+                )
         created = await self._repo.save_task(task)
         self._on_mutation()
         return created
 
     async def delete_task(self, task_id: int) -> None:
         await self.get_task(task_id)
-        if task_id < 100:
+        if task_id < USER_TASK_ID_START:
             raise BuiltinTaskProtectedError(f"Task {task_id} is a builtin and cannot be deleted.")
         await self._repo.delete_task(task_id)
         self._on_mutation()
@@ -89,7 +96,7 @@ class ScheduleTaskUseCase(ISchedulerUseCase):
         return await self._repo.list_tasks()
 
     async def update_task(self, task_id: int, **kwargs: Any) -> ScheduledTask:
-        if task_id < 100:
+        if task_id < USER_TASK_ID_START:
             raise BuiltinTaskProtectedError(
                 f"Task {task_id} is a builtin and cannot be modified via update_task."
             )
@@ -110,8 +117,16 @@ class ScheduleTaskUseCase(ISchedulerUseCase):
             kwargs.setdefault("retry_count", 0)
             kwargs.setdefault("next_run", None)
 
-        updated = task.model_copy(update=kwargs)
-        return await self._repo.save_task(updated)
+        # model_validate en lugar de model_copy: model_copy(update=...) NO corre
+        # validadores Pydantic — un caller podría persistir basura silenciosamente.
+        updated = ScheduledTask.model_validate({**task.model_dump(), **kwargs})
+        if updated.task_kind == TaskKind.RECURRENT and (
+            "schedule" in kwargs or "task_kind" in kwargs
+        ):
+            validate_cron(updated.schedule)  # raises InvalidScheduleError
+        saved = await self._repo.save_task(updated)
+        self._on_mutation()
+        return saved
 
     async def list_logs(
         self,

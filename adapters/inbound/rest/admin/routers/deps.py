@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 from typing import TYPE_CHECKING
 
 from fastapi import HTTPException, Request
@@ -38,5 +39,7 @@ def check_admin_auth(request: Request) -> None:
             detail="Admin auth_key no configurada. Agregala en global.secrets.yaml.",
         )
     provista = request.headers.get("X-Admin-Key")
-    if not provista or provista != auth_key:
+    # compare_digest: comparación en tiempo constante — un `!=` corta en el
+    # primer byte distinto y permite recuperar la key midiendo latencias.
+    if not provista or not hmac.compare_digest(provista, auth_key):
         raise HTTPException(status_code=401, detail="X-Admin-Key inválida o ausente")

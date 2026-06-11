@@ -61,7 +61,8 @@ inaki/                                  ← repository root
 │   │   ├── value_objects/
 │   │   │   ├── agent_context.py       # AgentContext → build_system_prompt()
 │   │   │   ├── agent_info.py          # AgentInfoDTO
-│   │   │   ├── channel_context.py     # ChannelContext (channel, chat_id, extras)
+│   │   │   ├── agent_settings.py      # Settings VOs per use case (Run/OneShot/Memory/Photos)
+│   │   │   ├── channel_context.py     # ChannelContext + ContextVar per-turn
 │   │   │   ├── chat_turn_result.py    # ChatTurnResult
 │   │   │   ├── conversation_state.py  # ConversationState
 │   │   │   ├── delegation_result.py   # DelegationResult
@@ -138,6 +139,7 @@ inaki/                                  ← repository root
 │
 ├── adapters/
 │   ├── inbound/
+│   │   ├── turn_dispatch.py           # dispatch_inbound_turn() — in-flight routing compartido
 │   │   ├── cli/
 │   │   │   ├── cli_runner.py          # Interactive terminal chat
 │   │   │   ├── scheduler_cli.py       # inaki scheduler ...
@@ -153,10 +155,10 @@ inaki/                                  ← repository root
 │   │   │   ├── message_mapper.py      # Update → Message, response → text
 │   │   │   └── tools/                 # Telegram-specific tools
 │   │   ├── rest/
-│   │   │   ├── app.py                 # create_agent_app() — per agent
-│   │   │   ├── schemas.py
-│   │   │   ├── routers/               # GET /info, POST /chat, etc.
-│   │   │   └── admin/                 # Admin REST server (daemon)
+│   │   │   └── admin/                 # Admin REST server — única superficie HTTP
+│   │   │       ├── app.py             # create_admin_app()
+│   │   │       ├── schemas.py
+│   │   │       └── routers/           # admin, chat, tools, deps
 │   │   └── daemon/
 │   │       └── runner.py              # DaemonRunner — starts all agents
 │   │
@@ -542,8 +544,17 @@ class AgentConfig(GlobalConfig):
     name: str
     description: str
     system_prompt: str
-    channels: dict[str, dict]   # telegram, rest, broadcast — per agent
+    channels: dict[str, dict]   # telegram, cli, broadcast — per agent
 ```
+
+### Settings VOs — config never crosses into `core/`
+
+Use cases do **not** receive `AgentConfig`. Each one declares the parameters it
+consumes as a frozen VO in `core/domain/value_objects/agent_settings.py`
+(`RunAgentSettings`, `OneShotSettings`, `MemorySettings`, `PhotosSettings`).
+The config→VO mapping lives in the public builders of
+`infrastructure/container.py` (`build_run_agent_settings`, etc.) — the only
+point where both worlds touch. Enforced by `tests/unit/test_architecture.py`.
 
 ---
 
@@ -585,6 +596,8 @@ else:
 
 The tool loop drains those messages between iterations and incorporates them into the LLM context. When drained messages are received, the iteration counter resets. The circuit breaker does **not** reset (tool failures keep accumulating).
 
+The routing is centralized in `dispatch_inbound_turn()` (`adapters/inbound/turn_dispatch.py`) with a single shared ACK constant — Telegram private chats and the admin chat endpoint go through it. The Telegram photo handler is the deliberate exception: it acquires the slot **before** the heavy photo processing and decides the path at the end, so it only shares the ACK constant.
+
 **Telegram groups excluded**: the group pipeline uses natural buffer+delay coalescing; in-flight injection does not apply there.
 
 ---
@@ -618,9 +631,9 @@ channels:
 
 ### REST API
 
-One FastAPI instance per agent on its own port. Authentication via `X-API-Key`. Endpoints: `GET /info`, `POST /chat`, `POST /consolidate`, `GET/DELETE /history`.
+A single **admin server** (port 6497, `127.0.0.1` by default) is the only HTTP surface of the daemon. Routing is by `agent_id` in the request; auth via `X-Admin-Key` (timing-safe comparison, fail-closed: no key configured → 403). There is no per-agent REST server.
 
-**Admin REST** (port 6497, `127.0.0.1`): centralized server for the daemon. Exposes management endpoints (`/agents`, `/config`, `/chat` from remote CLI).
+Endpoints: `/health`, `/inspect`, `/consolidate` (per-agent with `agent_id` in body, or all), `/scheduler/reload`, `/admin/reload`, `/admin/agents`, `/admin/agent/info`, `/admin/chat/turn` (accepts optional `channel`/`chat_id` to operate on a real history scope), `/admin/chat/task`, `/admin/chat/history`, `/admin/tool/list`, `/admin/tool/invoke`, `/admin/send`. See `docs/configuracion.md` for bodies and examples.
 
 ---
 
@@ -768,4 +781,4 @@ When adding any new functionality, this is the mandatory order:
 
 ---
 
-*Version: 2.x — Updated to reflect the complete system post-`in-flight-message-injection`.*
+*Version: 2.x — Updated to reflect the complete system post-`drop-per-agent-rest` (settings VOs, ContextVar per-turn, dispatch_inbound_turn, admin-only HTTP surface).*

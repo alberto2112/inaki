@@ -44,9 +44,10 @@ inaki (cli.py → app)
 │   │       ├── KnowledgeOrchestrator(sources) if knowledge enabled
 │   │       ├── (if photos enabled:) vision + face_registry + scene_describer
 │   │       ├── (if transcription configured:) TranscriptionProviderFactory.create(cfg)
-│   │       ├── RunAgentUseCase(llm, memory, embedder, skills, history, tools, cfg, ...)
-│   │       ├── RunAgentOneShotUseCase(llm, tools, cfg)
-│   │       └── ConsolidateMemoryUseCase(llm, memory, embedder, history, agent_id, memory_cfg)
+│   │       ├── RunAgentUseCase(llm, memory, ..., settings=build_run_agent_settings(cfg))
+│   │       ├── RunAgentOneShotUseCase(llm, tools, settings=OneShotSettings(...))
+│   │       └── ConsolidateMemoryUseCase(llm, memory, embedder, history, agent_id,
+│   │                                    settings=build_memory_settings(cfg.memory))
 │   │
 │   ├── Second pass — wire_delegation:
 │   │   └── Registers `delegate` tool in each container with refs to the others
@@ -93,9 +94,9 @@ inaki daemon
     │
     ├── Register SIGTERM/SIGINT → shutdown_event.set()
     │
-    ├── For each agent with 'rest' channel:
-    │   └── asyncio.create_task(_run_rest_server(agent_cfg, container))
-    │       └── uvicorn.Server(FastAPI app, host, port).serve()
+    ├── Admin server (única superficie HTTP, ruteo por agent_id):
+    │   └── asyncio.create_task(_run_admin_server(app_container, admin_cfg))
+    │       └── uvicorn.Server(create_admin_app(), admin.host, admin.port).serve()
     │
     ├── For each agent with 'telegram' channel:
     │   └── asyncio.create_task(_run_telegram_bot(agent_cfg, container))
@@ -198,10 +199,16 @@ AgentContainer.__init__(agent_config, global_config, scope_registry)
 ├── (if transcription configured:)
 │   └── TranscriptionProviderFactory.create(cfg) → ITranscriptionProvider
 │
-├── RunAgentUseCase(llm, memory, embedder, skills, history, tools, cfg, knowledge, ...)
-├── RunAgentOneShotUseCase(llm, tools, cfg) — for the scheduler (no history)
-└── ConsolidateMemoryUseCase(llm/memory_llm, memory, embedder, history, agent_id, memory_cfg)
+├── RunAgentUseCase(llm, memory, embedder, skills, history, tools,
+│                   settings=build_run_agent_settings(cfg), knowledge, ...)
+├── RunAgentOneShotUseCase(llm, tools, settings=OneShotSettings(...)) — scheduler (no history)
+└── ConsolidateMemoryUseCase(llm/memory_llm, memory, embedder, history, agent_id,
+                             settings=build_memory_settings(cfg.memory))
 ```
+
+**Note:** use cases never receive `AgentConfig` — each one declares its parameters
+as a frozen settings VO (`core/domain/value_objects/agent_settings.py`); the
+config→VO mapping lives only in the `build_*_settings` builders of `container.py`.
 
 **Note:** the `delegate` tool is NOT registered in `__init__` — it is wired in the second pass
 of `AppContainer` via `wire_delegation()`, because it needs ALL containers to already exist.

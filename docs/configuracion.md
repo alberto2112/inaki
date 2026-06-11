@@ -287,16 +287,26 @@ admin:
 
 The admin server exposes the following endpoints under `http://{admin.host}:{admin.port}/`:
 
+All endpoints except `/health` require the `X-Admin-Key` header. This is the
+**only** HTTP surface of the daemon — routing is by `agent_id`, there is no
+per-agent REST server.
+
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Health ping (no auth) |
-| POST | `/inspect` | Inspect the prompt pipeline for an agent (requires X-Admin-Key) |
-| POST | `/consolidate` | Consolidate agent memory (requires X-Admin-Key) |
-| POST | `/scheduler/reload` | Reload scheduler (requires X-Admin-Key) |
-| POST | `/admin/chat/turn` | Send a chat turn to the agent (requires X-Admin-Key) |
-| GET | `/admin/chat/history` | Get agent history (requires X-Admin-Key) |
-| DELETE | `/admin/chat/history` | Clear agent history (requires X-Admin-Key) |
-| GET | `/admin/agents` | List registered agents (requires X-Admin-Key) |
+| POST | `/inspect` | Inspect the prompt pipeline for an agent |
+| POST | `/consolidate` | Consolidate memory — body `{"agent_id": "X"}` for one agent, empty for all |
+| POST | `/scheduler/reload` | Reload scheduler |
+| POST | `/admin/reload` | Hot-reload the daemon (closes channels, reloads config, restarts) |
+| GET | `/admin/agents` | List registered agent ids |
+| GET | `/admin/agent/info` | Agent metadata (`?agent_id=X` → id, name, description) |
+| POST | `/admin/chat/turn` | Send a chat turn to an agent |
+| POST | `/admin/chat/task` | Oneshot ephemeral task (loads history, does not persist) |
+| GET | `/admin/chat/history` | Get agent history |
+| DELETE | `/admin/chat/history` | Clear agent history |
+| GET | `/admin/tool/list` | List the tools registered in an agent |
+| POST | `/admin/tool/invoke` | Invoke a tool directly |
+| POST | `/admin/send` | Send text/media to a channel from an agent |
 
 #### POST `/admin/chat/turn`
 
@@ -305,7 +315,9 @@ The admin server exposes the following endpoints under `http://{admin.host}:{adm
 {
   "agent_id": "dev",
   "session_id": "uuid-del-cliente-cli",
-  "message": "Hola, ¿cómo estás?"
+  "message": "Hola, ¿cómo estás?",
+  "channel": "telegram",      // optional — declares the turn's channel_type
+  "chat_id": "-1001234"       // optional — both-or-none with channel
 }
 
 // Response 200
@@ -316,7 +328,19 @@ The admin server exposes the following endpoints under `http://{admin.host}:{adm
 }
 ```
 
+`channel` + `chat_id` are optional and must be sent together (both-or-none,
+`422` otherwise). When present, the `ChannelContext` uses that `channel_type`
+and the turn operates on the real history scope `(agent_id, channel, chat_id)`
+— useful to simulate a turn as if it came from another channel. When omitted,
+`channel_type="cli"` and the legacy shared scope `("", "")` are used.
+
 Possible errors: `401` (missing X-Admin-Key), `404` (agent_id not registered), `422` (invalid body), `500` (internal agent error).
+
+#### POST `/consolidate`
+
+With `{"agent_id": "dev"}` consolidates only that agent (`404` unknown agent,
+`503` if the agent has `memory.enabled=false`). With an empty body (or no
+`agent_id`) consolidates all agents.
 
 #### GET `/admin/chat/history?agent_id=dev`
 

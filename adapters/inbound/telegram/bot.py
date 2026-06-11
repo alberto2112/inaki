@@ -32,6 +32,7 @@ from adapters.inbound.telegram.message_mapper import (
     hay_destinatario_explicito,
     telegram_update_to_input,
 )
+from adapters.inbound.turn_dispatch import INFLIGHT_ACK, dispatch_inbound_turn
 from adapters.outbound.intermediate_sinks.telegram_live import TelegramLiveIntermediateSink
 from core.domain.entities.task import ScheduledTask
 from core.domain.errors import TaskNotFoundError, TranscriptionError
@@ -717,6 +718,10 @@ class TelegramBot:
         # para no disparar un execute() paralelo. En grupos, el buffer-flush ya
         # se encarga (vía _schedule_group_flush idempotente al final).
         # Ver `in-flight-message-injection` y CLAUDE.md.
+        # NO usa dispatch_inbound_turn a propósito: acá el slot se adquiere ANTES
+        # del procesamiento pesado de la foto y el camino se decide al final,
+        # porque el _run_pipeline anidado (user_input=None) depende de que el
+        # slot ya esté tomado. Ver docstring de adapters/inbound/turn_dispatch.py.
         agent_id = self._container.run_agent.get_agent_info().id
         scope = (agent_id, "telegram", chat_id)
         slot_acquired = False
@@ -815,9 +820,7 @@ class TelegramBot:
                 await self._container.run_agent.record_user_message(
                     enriched_content, channel="telegram", chat_id=chat_id
                 )
-                await message.reply_text(
-                    "📝 Lo incorporo a lo que estoy haciendo, dame un momento."
-                )
+                await message.reply_text(INFLIGHT_ACK)
                 return
 
             # CAMINO NORMAL: enriquecer el placeholder __PHOTO__ persistido al inicio
@@ -1460,39 +1463,38 @@ class TelegramBot:
         # → saltar el branch in-flight y caer en el flow legacy.
         use_inflight_routing = not es_grupo and user_input is not None
 
-        # Flag para saber si DEBEMOS liberar el slot en el finally. Solo se libera
-        # cuando esta misma invocación lo adquirió. Sin esto, una llamada que NO
-        # tomó el slot podría liberarlo y arruinar un turno de OTRA invocación
-        # legítima que sí lo tiene.
-        slot_acquired = False
+        # El scope (channel, chat_id) se deriva de turn_ctx dentro de execute —
+        # una sola fuente de verdad, sin estado compartido entre turnos.
+        async def _ejecutar_turno() -> str:
+            return await self._container.run_agent.execute(
+                user_input,
+                intermediate_sink=live_sink,
+                ctx=turn_ctx,
+                skip_marker=skip_marker_value,
+            )
 
         try:
             if use_inflight_routing:
                 # use_inflight_routing implica user_input is not None (ver
                 # asignación arriba); asertamos para narrowear el tipo a str.
                 assert user_input is not None
-                slot_acquired = await self._container.scope_registry.try_mark_busy(scope)
-                if not slot_acquired:
-                    # Scope ocupado por otro turno: persistir + ACK rápido.
-                    await self._container.run_agent.record_user_message(
-                        user_input, "telegram", str(chat_id)
-                    )
+                result = await dispatch_inbound_turn(
+                    scope_registry=self._container.scope_registry,
+                    run_agent=self._container.run_agent,
+                    scope=scope,
+                    message=user_input,
+                    execute=_ejecutar_turno,
+                )
+                if not result.executed:
+                    # Scope ocupado por otro turno: el helper ya persistió el
+                    # mensaje; acá solo va el ACK rápido al chat.
                     if update.message is not None:
-                        await update.message.reply_text(
-                            "📝 Lo incorporo a lo que estoy haciendo, dame un momento."
-                        )
+                        await update.message.reply_text(result.reply)
                     return
-
-            # Camino normal: ejecutamos el turno. Si slot_acquired=True, el finally
-            # libera el slot. Si False (caso grupo), el slot no existe y no hace falta.
-            # El scope (channel, chat_id) se deriva de turn_ctx dentro de execute —
-            # una sola fuente de verdad, sin estado compartido entre turnos.
-            response = await self._container.run_agent.execute(
-                user_input,
-                intermediate_sink=live_sink,
-                ctx=turn_ctx,
-                skip_marker=skip_marker_value,
-            )
+                response = result.reply
+            else:
+                # Flow legacy (grupo o history-derived): sin slot, turno directo.
+                response = await _ejecutar_turno()
 
             # Verificar marcador __SKIP__ — solo aplica en modo autónomo en grupos.
             # Detección TOLERANTE: el marcador puede aparecer en cualquier parte
@@ -1526,12 +1528,9 @@ class TelegramBot:
             await message.reply_text(f"Error: {exc}")
             await self._set_reaction(update, "👎")
         finally:
-            # Liberar el slot del scope registry SIEMPRE que lo hayamos adquirido,
-            # incluso si execute() lanzó excepción. Sin esto un bug en el turno
-            # dejaría el scope marcado busy para siempre.
-            if slot_acquired:
-                await self._container.scope_registry.mark_idle(scope)
-            # Limpiar extra_sections después del turno para no contaminar el siguiente.
+            # El slot del scope registry lo libera dispatch_inbound_turn en su
+            # propio finally — acá solo queda la limpieza de extra_sections
+            # para no contaminar el turno siguiente.
             self._container.run_agent.set_extra_system_sections([])
 
     async def _emit_event(

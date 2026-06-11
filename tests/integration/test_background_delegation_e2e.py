@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
 from adapters.outbound.delegation.background_queue_adapter import (
     BackgroundDelegationQueueAdapter,

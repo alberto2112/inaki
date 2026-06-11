@@ -26,6 +26,7 @@ from adapters.inbound.rest.admin.schemas import (
     TaskTurnRequest,
     TaskTurnResponse,
 )
+from adapters.inbound.turn_dispatch import dispatch_inbound_turn
 from adapters.outbound.intermediate_sinks.buffering import BufferingIntermediateSink
 from core.domain.value_objects.channel_context import ChannelContext
 
@@ -82,25 +83,25 @@ async def chat_turn(body: ChatTurnRequest, request: Request) -> ChatTurnResponse
     agent_id = agent_container.run_agent.get_agent_info().id
     scope = (agent_id, "", "")
     try:
-        if await agent_container.scope_registry.try_mark_busy(scope):
-            try:
-                # channel=""/chat_id="" EXPLÍCITOS: fuerzan el scope legacy de esta
-                # superficie (historial compartido entre sesiones) aunque ctx diga
-                # "cli". La semántica de scope del admin es una decisión pendiente
-                # — si se deja derivar de ctx cambiaría el scope a ("cli", "") y
-                # requeriría migrar history.db.
-                reply = await agent_container.run_agent.execute(
-                    body.message,
-                    intermediate_sink=sink,
-                    ctx=ctx,
-                    channel="",
-                    chat_id="",
-                )
-            finally:
-                await agent_container.scope_registry.mark_idle(scope)
-        else:
-            await agent_container.run_agent.record_user_message(body.message, "", "")
-            reply = "📝 Mensaje recibido — se incorporará al turno en curso."
+        # channel=""/chat_id="" EXPLÍCITOS: fuerzan el scope legacy de esta
+        # superficie (historial compartido entre sesiones) aunque ctx diga
+        # "cli". La semántica de scope del admin es una decisión pendiente
+        # — si se deja derivar de ctx cambiaría el scope a ("cli", "") y
+        # requeriría migrar history.db.
+        result = await dispatch_inbound_turn(
+            scope_registry=agent_container.scope_registry,
+            run_agent=agent_container.run_agent,
+            scope=scope,
+            message=body.message,
+            execute=lambda: agent_container.run_agent.execute(
+                body.message,
+                intermediate_sink=sink,
+                ctx=ctx,
+                channel="",
+                chat_id="",
+            ),
+        )
+        reply = result.reply
     except Exception as exc:
         duration_ms = int((time.monotonic() - t0) * 1000)
         logger.error(

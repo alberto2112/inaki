@@ -16,6 +16,7 @@ from adapters.inbound.rest.schemas import (
     ConsolidateResponse,
     HistoryResponse,
 )
+from adapters.inbound.turn_dispatch import dispatch_inbound_turn
 from infrastructure.container import AgentContainer
 
 logger = logging.getLogger(__name__)
@@ -46,22 +47,17 @@ async def chat(
     # uso doméstico Pi 5 con pocos clientes.
     scope = (info.id, "", "")
     try:
-        if await container.scope_registry.try_mark_busy(scope):
-            # Scope libre → corremos un turno normal.
-            try:
-                response = await container.run_agent.execute(body.message)
-            finally:
-                await container.scope_registry.mark_idle(scope)
-        else:
-            # Scope ocupado por otro turno en curso. Persistimos el mensaje
-            # en history; el tool loop activo lo verá entre iteraciones via
-            # drainage e integrará la nueva instrucción a la tarea actual.
-            await container.run_agent.record_user_message(body.message, "", "")
-            response = "📝 Mensaje recibido — se incorporará al turno en curso."
+        result = await dispatch_inbound_turn(
+            scope_registry=container.scope_registry,
+            run_agent=container.run_agent,
+            scope=scope,
+            message=body.message,
+            execute=lambda: container.run_agent.execute(body.message),
+        )
     except Exception as exc:
         logger.exception("Error en /chat para agente '%s'", info.id)
         raise HTTPException(status_code=500, detail=str(exc))
-    return ChatResponse(agent_id=info.id, agent_name=info.name, response=response)
+    return ChatResponse(agent_id=info.id, agent_name=info.name, response=result.reply)
 
 
 @router.post("/consolidate", response_model=ConsolidateResponse)

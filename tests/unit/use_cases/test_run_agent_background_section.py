@@ -9,7 +9,6 @@ delegations` con la lista de bullets. La sección está en INGLÉS
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest

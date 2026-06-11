@@ -78,6 +78,23 @@ Secrets are YAML-only (no env vars). `*.secrets.yaml` files are gitignored.
 
 ## Migration Notes
 
+### `drop-per-agent-rest`
+
+La superficie REST per-agente (`channels.rest`: un puerto uvicorn por agente,
+auth `X-API-Key`) se eliminó. Toda la superficie HTTP vive en el **admin server**
+(un puerto global, ruteo por `agent_id`, auth `X-Admin-Key`). Equivalencias:
+
+| Per-agente (eliminado) | Admin server |
+|---|---|
+| `POST /chat` | `POST /admin/chat/turn` |
+| `GET /info` | `GET /admin/agent/info?agent_id=X` |
+| `GET /history` / `DELETE /history` | `GET`/`DELETE /admin/chat/history?agent_id=X` |
+| `POST /consolidate` | `POST /consolidate` con body `{"agent_id": "X"}` (sin agent_id consolida todos) |
+
+Bloques `channels.rest` en YAML existentes se ignoran silenciosamente (el dict
+de channels admite claves arbitrarias). La validación de colisión de puertos
+REST entre agentes se eliminó de `config.py` junto con la superficie.
+
 ### `multi-agent-telegram-broadcast`
 
 The `history` table was extended with native `channel` and `chat_id` columns. No

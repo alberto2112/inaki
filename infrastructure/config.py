@@ -353,7 +353,7 @@ class ChannelsGlobalConfig(BaseModel):
     """Flags transversales de presentación al usuario en cualquier canal.
 
     Se configura SOLO a nivel global (``global.yaml`` → ``channels:``). No hay
-    override per-agent: ``AgentConfig.channels`` (dict de adapters telegram/rest/…)
+    override per-agent: ``AgentConfig.channels`` (dict de adapters telegram/cli/…)
     es una estructura distinta y mantiene su rol. Si el usuario pone estos
     flags en ``agents/{id}.yaml`` por error, el merge los filtra en
     ``load_agent_config`` para no contaminar el dict de adapters.
@@ -1244,7 +1244,7 @@ def _filter_channel_adapters(raw: dict) -> dict:
     (``dict[str, dict[str, Any]]``) comparten clave de YAML pero significan cosas
     distintas. El deep-merge propaga los flags globales al merged del agente; este
     filtro deja solo los valores que son dicts (los adapters como ``telegram``,
-    ``rest``, ``broadcast`` per-grupo, etc.) y descarta scalars.
+    ``cli``, ``broadcast`` per-grupo, etc.) y descarta scalars.
     """
     return {k: v for k, v in raw.items() if isinstance(v, dict)}
 
@@ -1417,15 +1417,12 @@ def _validate_channel_uniqueness(agents: dict[str, AgentConfig]) -> None:
     o donde un mismo agente tiene dos canales con el mismo ``broadcast.port``.
 
     Motivo: un bot de Telegram solo admite UN ``getUpdates`` activo por token
-    (Telegram API), y un socket TCP solo acepta UN bind por ``host:port`` (SO).
-    Si dos agentes declaran el mismo token o el mismo host:port, el daemon
-    levanta pollings/sockets que se pisan → errores ``Conflict`` en loop o
-    ``address already in use``.
+    (Telegram API). Si dos agentes declaran el mismo token, el daemon levanta
+    pollings que se pisan → errores ``Conflict`` en loop.
 
     El modelo canónico: un solo agente expone el canal (entry point) y delega
     a los subagentes vía la tool ``delegate``. Los subagentes NO deben
-    declarar ``channels.telegram`` ni ``channels.rest`` apuntando al mismo
-    token/puerto que el principal.
+    declarar ``channels.telegram`` apuntando al mismo token que el principal.
 
     Broadcast port uniqueness: dentro de un mismo agente, dos canales no pueden
     declarar el mismo ``broadcast.port`` — ambos intentarían hacer ``bind()``
@@ -1434,20 +1431,12 @@ def _validate_channel_uniqueness(agents: dict[str, AgentConfig]) -> None:
     from core.domain.errors import ConfigError
 
     telegram_tokens: dict[str, list[str]] = {}
-    rest_addrs: dict[tuple[str, int], list[str]] = {}
 
     for agent_id, cfg in agents.items():
         tg_cfg = cfg.channels.get("telegram") or {}
         token = tg_cfg.get("token")
         if token:
             telegram_tokens.setdefault(token, []).append(agent_id)
-
-        rest_cfg = cfg.channels.get("rest") or {}
-        if rest_cfg:
-            host = rest_cfg.get("host", "0.0.0.0")
-            port = rest_cfg.get("port")
-            if port is not None:
-                rest_addrs.setdefault((host, int(port)), []).append(agent_id)
 
         # Unicidad de broadcast.port dentro del mismo agente.
         broadcast_ports: dict[int, list[str]] = {}
@@ -1473,7 +1462,6 @@ def _validate_channel_uniqueness(agents: dict[str, AgentConfig]) -> None:
             )
 
     duplicated_tokens = {tok: ids for tok, ids in telegram_tokens.items() if len(ids) > 1}
-    duplicated_addrs = {addr: ids for addr, ids in rest_addrs.items() if len(ids) > 1}
 
     if duplicated_tokens:
         agent_lists = "; ".join(f"agentes [{', '.join(ids)}]" for ids in duplicated_tokens.values())
@@ -1482,15 +1470,4 @@ def _validate_channel_uniqueness(agents: dict[str, AgentConfig]) -> None:
             "Un token solo admite un polling activo: dejá 'channels.telegram' únicamente "
             "en el agente que actúa como entry point; los subagentes reciben mensajes "
             "vía la tool 'delegate'."
-        )
-
-    if duplicated_addrs:
-        addr_lists = "; ".join(
-            f"{host}:{port} usada por [{', '.join(ids)}]"
-            for (host, port), ids in duplicated_addrs.items()
-        )
-        raise ConfigError(
-            f"Dirección REST duplicada entre agentes: {addr_lists}. "
-            "Asigná un 'channels.rest.port' distinto a cada agente o quitá el canal "
-            "REST de los subagentes."
         )

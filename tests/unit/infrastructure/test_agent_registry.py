@@ -96,32 +96,6 @@ def test_registry_rechaza_token_telegram_duplicado(tmp_path: Path) -> None:
     assert "delegate" in msg  # guía al shape correcto
 
 
-def test_registry_rechaza_rest_host_port_duplicado(tmp_path: Path) -> None:
-    """Dos agentes con el mismo host:port REST chocarían al bindear."""
-    agents_dir = tmp_path / "agents"
-    block = '  rest:\n    host: "0.0.0.0"\n    port: 6498\n'
-    _write_agent_with_channels(agents_dir, "uno", block)
-    _write_agent_with_channels(agents_dir, "dos", block)
-
-    with pytest.raises(ConfigError) as exc_info:
-        AgentRegistry(agents_dir, _GLOBAL_RAW)
-
-    msg = str(exc_info.value)
-    assert "6498" in msg
-    assert "uno" in msg and "dos" in msg
-
-
-def test_registry_permite_rest_mismo_host_puertos_distintos(tmp_path: Path) -> None:
-    """Same host, different ports → no conflict."""
-    agents_dir = tmp_path / "agents"
-    _write_agent_with_channels(agents_dir, "a", '  rest:\n    host: "0.0.0.0"\n    port: 6498\n')
-    _write_agent_with_channels(agents_dir, "b", '  rest:\n    host: "0.0.0.0"\n    port: 6499\n')
-
-    registry = AgentRegistry(agents_dir, _GLOBAL_RAW)
-
-    assert {a.id for a in registry.list_all()} == {"a", "b"}
-
-
 def test_registry_permite_un_solo_agente_con_telegram(tmp_path: Path) -> None:
     """Happy path: solo el agente principal declara channels.telegram."""
     agents_dir = tmp_path / "agents"

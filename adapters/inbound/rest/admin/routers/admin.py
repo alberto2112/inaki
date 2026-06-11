@@ -7,8 +7,9 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from adapters.inbound.rest.admin.routers.deps import check_admin_auth
+from adapters.inbound.rest.admin.routers.deps import check_admin_auth, resolver_agente
 from adapters.inbound.rest.admin.schemas import (
+    AgentInfoResponse,
     AgentsResponse,
     ConsolidateRequest,
     ConsolidateResponse,
@@ -45,6 +46,21 @@ async def list_agents(request: Request) -> AgentsResponse:
     """
     app_container = request.app.state.app_container
     return AgentsResponse(agents=list(app_container.agents.keys()))
+
+
+@router.get(
+    "/admin/agent/info",
+    response_model=AgentInfoResponse,
+    dependencies=[Depends(check_admin_auth)],
+)
+async def agent_info(agent_id: str, request: Request) -> AgentInfoResponse:
+    """Metadata de un agente (id, name, description).
+
+    Porteado del ``GET /info`` de la superficie REST per-agente eliminada.
+    """
+    agent_container = resolver_agente(request, agent_id)
+    info = agent_container.run_agent.get_agent_info()
+    return AgentInfoResponse(id=info.id, name=info.name, description=info.description)
 
 
 @router.post(
@@ -99,6 +115,27 @@ async def consolidate_endpoint(
     request: Request,
     body: ConsolidateRequest | None = None,
 ) -> ConsolidateResponse:
+    """Consolida la memoria de un agente o de todos.
+
+    Con ``agent_id`` en el body consolida SOLO ese agente (404 si no existe,
+    503 si tiene ``memory.enabled=false``). Sin body o sin ``agent_id``,
+    consolida todos los agentes (comportamiento original).
+    """
+    if body is not None and body.agent_id is not None:
+        agent_container = resolver_agente(request, body.agent_id)
+        if agent_container.consolidate_memory is None:
+            # memory.enabled=false es una config esperada, no un error interno
+            # → 503 (Service Unavailable), igual que la superficie per-agente.
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"El agente '{body.agent_id}' no tiene 'memory.enabled=true' "
+                    "en su config — consolidate no está disponible."
+                ),
+            )
+        resultado = await agent_container.consolidate_memory.execute()
+        return ConsolidateResponse(resultado=resultado)
+
     app_container = request.app.state.app_container
     resultado = await app_container.consolidate_all_agents.execute()
     return ConsolidateResponse(resultado=resultado)

@@ -2,8 +2,8 @@
 Daemon runner — arranca todos los canales de todos los agentes en un único event loop.
 
 Se ejecuta como servicio systemd. Levanta en paralelo:
-  - Un admin server FastAPI/uvicorn (puerto global)
-  - Un servidor FastAPI/uvicorn por cada agente con canal 'rest'
+  - Un admin server FastAPI/uvicorn (puerto global único — toda la superficie
+    REST vive acá, ruteada por agent_id)
   - Un bot Telegram por cada agente con canal 'telegram'
 
 Maneja SIGTERM/SIGINT para shutdown gracioso (systemd KillMode=process).
@@ -62,34 +62,6 @@ async def _run_admin_server(app_container, admin_cfg, servers: list) -> None:
     server.capture_signals = nullcontext  # type: ignore[method-assign,assignment]
     servers.append(server)
     logger.info("Admin server iniciado en %s:%d", admin_cfg.host, admin_cfg.port)
-    await server.serve()
-
-
-async def _run_rest_server(agent_cfg, container, servers: list) -> None:
-    """Arranca un servidor uvicorn para un agente en su puerto configurado."""
-    import uvicorn
-    from adapters.inbound.rest.app import create_agent_app
-
-    rest_cfg = agent_cfg.channels.get("rest", {})
-    host = rest_cfg.get("host", "0.0.0.0")
-    port = int(rest_cfg.get("port", 6498))
-
-    app = create_agent_app(agent_cfg, container)
-    config = uvicorn.Config(
-        app,
-        host=host,
-        port=port,
-        log_level="info",
-        access_log=True,
-    )
-    server = uvicorn.Server(config)
-    # Desactivamos la captura de signals de uvicorn: los maneja el daemon vía
-    # should_exit para un shutdown coordinado de todos los canales. Ver
-    # comentario equivalente en `_run_admin_server` para el detalle del cambio
-    # `install_signal_handlers` → `capture_signals` (uvicorn >= 0.34).
-    server.capture_signals = nullcontext  # type: ignore[method-assign,assignment]
-    servers.append(server)
-    logger.info("REST server iniciado para '%s' en %s:%d", agent_cfg.id, host, port)
     await server.serve()
 
 
@@ -152,39 +124,21 @@ async def _run_telegram_bot(agent_cfg, container, app_container=None) -> None:
 
 
 def _build_channel_tasks(app_container, registry) -> tuple[list[asyncio.Task], list]:
-    """Construye las tasks de admin/REST/Telegram para una iteración del runner.
+    """Construye las tasks de admin/Telegram para una iteración del runner.
 
     Se llama una vez por arranque y otra vez por cada reload.
     """
     tasks: list[asyncio.Task] = []
     uvicorn_servers: list = []
 
-    # Admin server — global, puerto separado
+    # Admin server — global, puerto único. Toda la superficie REST (chat, tools,
+    # send, gestión) vive acá, ruteada por agent_id.
     admin_cfg = app_container.global_config.admin
     admin_task = asyncio.create_task(
         _run_admin_server(app_container, admin_cfg, uvicorn_servers),
         name="admin",
     )
     tasks.append(admin_task)
-
-    # REST servers
-    for agent_cfg in registry.agents_with_channel("rest"):
-        rest_cfg = agent_cfg.channels.get("rest", {})
-        if not rest_cfg.get("auth_key"):
-            logger.warning(
-                "Agente '%s': channels.rest.auth_key no configurado — servidor REST igualmente levantado sin auth",
-                agent_cfg.id,
-            )
-        try:
-            container = app_container.get_agent(agent_cfg.id)
-        except Exception as exc:
-            logger.error("No se pudo obtener container para '%s': %s", agent_cfg.id, exc)
-            continue
-        task = asyncio.create_task(
-            _run_rest_server(agent_cfg, container, uvicorn_servers),
-            name=f"rest:{agent_cfg.id}",
-        )
-        tasks.append(task)
 
     # Telegram bots
     for agent_cfg in registry.agents_with_channel("telegram"):
@@ -224,11 +178,10 @@ async def _shutdown_iteration(
         server.should_exit = True
 
     # Cancelar telegram bots (no tienen protocolo should_exit).
-    # Los tasks de uvicorn (rest:* y admin) terminarán por su cuenta
-    # cuando should_exit tome efecto, pero igual los esperamos en el gather.
-    _uvicorn_task_prefixes = ("rest:", "admin")
+    # El task de uvicorn (admin) terminará por su cuenta cuando
+    # should_exit tome efecto, pero igual lo esperamos en el gather.
     for task in pending:
-        if not task.get_name().startswith(_uvicorn_task_prefixes):
+        if task.get_name() != "admin":
             task.cancel()
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
@@ -287,14 +240,6 @@ async def run_daemon(
 
         await app_container.startup()
         tasks, uvicorn_servers = _build_channel_tasks(app_container, registry)
-
-        if not tasks:
-            logger.warning(
-                "No hay canales configurados (ningún agente tiene 'rest' ni 'telegram'). "
-                "El daemon no tiene nada que hacer."
-            )
-            await app_container.shutdown()
-            return
 
         logger.info(
             "Daemon iniciado: %d tarea(s) activa(s): %s",

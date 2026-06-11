@@ -520,11 +520,6 @@ user:
 #     #
 #     # Ver docs/configuracion.md y docs/broadcast-smoke.md para detalles y
 #     # prueba de humo E2E (listen / mention / autonomous + rate limiter).
-#
-#   rest:
-#     host: "0.0.0.0"
-#     port: 6498
-#     # auth_key → agents/{id}.secrets.yaml
 
 
 # =============================================================================
@@ -548,5 +543,3 @@ user:
 #       # — o bien, en modo client —
 #       # remote:
 #       #   auth: "shared-secret" # DEBE matchear el del server
-#   rest:
-#     auth_key: "sxc-..."

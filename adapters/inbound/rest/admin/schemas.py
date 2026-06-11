@@ -162,6 +162,17 @@ class AgentsResponse(BaseModel):
     )
 
 
+class AgentInfoResponse(BaseModel):
+    """Respuesta de GET /admin/agent/info — metadata de un agente.
+
+    Porteado del ``GET /info`` de la superficie REST per-agente eliminada.
+    """
+
+    id: str = Field(..., description="ID del agente")
+    name: str = Field(..., description="Nombre del agente")
+    description: str = Field(..., description="Descripción del agente")
+
+
 # ---------------------------------------------------------------------------
 # Tool endpoints schemas (Fase 5 — backend tools/send)
 # ---------------------------------------------------------------------------

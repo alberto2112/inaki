@@ -193,17 +193,11 @@ channels:
 
 ### REST API
 
-```yaml
-channels:
-  rest:
-    host: "0.0.0.0"
-    port: 6498
-    # auth_key → secrets
-```
+All HTTP surface lives on the admin server (single port, routed by `agent_id`, auth via `X-Admin-Key`):
 
-`POST /chat` — send a message and get a response.  
-`GET /info` — agent metadata.  
-`GET /history` — conversation history.
+`POST /admin/chat/turn` — send a message and get a response.  
+`GET /admin/agents` — registered agent ids · `GET /admin/agent/info` — agent metadata.  
+`GET /admin/chat/history` — conversation history.
 
 ### Multi-Pi broadcast
 

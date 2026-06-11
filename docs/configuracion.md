@@ -557,16 +557,16 @@ channels:
                                      # content of each USER/ASSISTANT message
                                      # when building the prompt for the LLM
                                      # (private chats + groups). Default: false.
-  rest:
-    host: "0.0.0.0"
-    port: 6498                       # Each agent has its own port
-
-  # `cli` y `rest` admiten un campo opcional `user:` que enlaza un perfil
-  # per-user del directorio `~/.inaki/users/{channel}/`. Ver la sección
-  # "Per-user context files" más abajo para el detalle.
+  # `cli` admite un campo opcional `user:` que enlaza un perfil per-user del
+  # directorio `~/.inaki/users/{channel}/`. Ver la sección "Per-user context
+  # files" más abajo para el detalle.
   cli:
     user: "alberto"                  # Carga ~/.inaki/users/cli/alberto.md
 ```
+
+> La superficie REST vive íntegramente en el **admin server** (un solo puerto
+> global, ruteo por `agent_id`, auth `X-Admin-Key`). Ya no existe el canal
+> `channels.rest` per-agente.
 
 ---
 
@@ -925,8 +925,6 @@ systemctl status systemd-timesyncd  # or chrony
 channels:
   telegram:
     token: "7xxxxxxx:AAF..."     # Bot token from BotFather
-  rest:
-    auth_key: "sxc-0123456"      # Key for X-API-Key header
 
 # providers not defined here → inherits from global + global.secrets.
 # If the agent needs a different api_key (e.g. another Groq account):

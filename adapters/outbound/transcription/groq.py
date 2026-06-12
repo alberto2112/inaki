@@ -11,9 +11,11 @@ import logging
 
 import httpx
 
-from adapters.outbound.transcription.base import BaseTranscriptionProvider
+from adapters.outbound.transcription.base import (
+    BaseTranscriptionProvider,
+    ResolvedTranscriptionConfig,
+)
 from core.domain.errors import TranscriptionError, TranscriptionFileTooLargeError
-from infrastructure.config import ResolvedTranscriptionConfig
 
 PROVIDER_NAME = "groq"
 

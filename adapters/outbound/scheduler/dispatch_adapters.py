@@ -4,6 +4,7 @@ import asyncio
 import os
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -16,12 +17,26 @@ from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
 
 if TYPE_CHECKING:
     from core.domain.entities.task import ShellExecPayload, WebhookPayload
-    from infrastructure.config import ChannelFallbackConfig
 
 
 # Último recurso de la cascada de routing. Bajo ~/.inaki/ (no /tmp): el
 # contenido puede ser privado y /tmp es world-readable.
 _HARDCODED_FALLBACK = f"file://{Path.home() / '.inaki' / 'data' / 'scheduler-fallback.log'}"
+
+
+@dataclass(frozen=True)
+class ChannelFallbackSettings:
+    """Settings VO del router — el container lo mapea desde ``ChannelFallbackConfig``.
+
+    Atributos:
+        default: Target string usado cuando no hay override específico.
+            ``None`` delega al fallback hardcoded.
+        overrides: Mapa ``channel_type → target string`` para redirigir
+            canales concretos.
+    """
+
+    default: str | None = None
+    overrides: dict[str, str] = field(default_factory=dict)
 
 
 class ChannelRouter:
@@ -41,7 +56,7 @@ class ChannelRouter:
     def __init__(
         self,
         native_sinks: dict[str, IOutboundSink],
-        fallback_config: ChannelFallbackConfig,
+        fallback_config: ChannelFallbackSettings,
         sink_factory: Callable[[str], IOutboundSink],
         hardcoded_fallback: str = _HARDCODED_FALLBACK,
     ) -> None:

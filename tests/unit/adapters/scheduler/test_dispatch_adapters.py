@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from adapters.outbound.scheduler.dispatch_adapters import (
+    ChannelFallbackSettings,
     ChannelRouter,
     HttpCallerAdapter,
     LLMDispatcherAdapter,
@@ -15,7 +16,6 @@ from adapters.outbound.scheduler.dispatch_adapters import (
 from adapters.outbound.sinks.sink_factory import SinkFactory
 from adapters.outbound.sinks.telegram_sink import TelegramSink
 from core.domain.entities.task import WebhookPayload
-from infrastructure.config import ChannelFallbackConfig
 
 
 # ---------------------------------------------------------------------------
@@ -25,7 +25,7 @@ from infrastructure.config import ChannelFallbackConfig
 
 def _make_router_with_telegram(
     bot: MagicMock | None = None,
-    fallback: ChannelFallbackConfig | None = None,
+    fallback: ChannelFallbackSettings | None = None,
 ) -> tuple[ChannelRouter, MagicMock]:
     mock_bot = bot if bot is not None else MagicMock()
     mock_bot.send_message = AsyncMock()
@@ -34,7 +34,7 @@ def _make_router_with_telegram(
     factory = SinkFactory(get_telegram_bot=get_bot)
     router = ChannelRouter(
         native_sinks={"telegram": telegram_sink},
-        fallback_config=fallback or ChannelFallbackConfig(),
+        fallback_config=fallback or ChannelFallbackSettings(),
         sink_factory=factory.from_target,
     )
     return router, mock_bot
@@ -75,7 +75,7 @@ class TestChannelRouterCanalesInboundConFallback:
     """
 
     async def test_cli_prefix_con_default_null_no_lanza(self) -> None:
-        cfg = ChannelFallbackConfig(default="null:")
+        cfg = ChannelFallbackSettings(default="null:")
         router, _ = _make_router_with_telegram(fallback=cfg)
 
         result = await router.send_message("cli:alguno", "texto")
@@ -84,7 +84,7 @@ class TestChannelRouterCanalesInboundConFallback:
         assert result.resolved_target == "null:"
 
     async def test_rest_prefix_con_override_no_lanza(self) -> None:
-        cfg = ChannelFallbackConfig(overrides={"rest": "null:x"})
+        cfg = ChannelFallbackSettings(overrides={"rest": "null:x"})
         router, _ = _make_router_with_telegram(fallback=cfg)
 
         result = await router.send_message("rest:alguno", "texto")
@@ -97,7 +97,7 @@ class TestChannelRouterCanalesInboundConFallback:
         destino = tmp_path / "hc.log"
         router = ChannelRouter(
             native_sinks={},
-            fallback_config=ChannelFallbackConfig(),
+            fallback_config=ChannelFallbackSettings(),
             sink_factory=factory.from_target,
             hardcoded_fallback=f"file://{destino}",
         )
@@ -109,7 +109,7 @@ class TestChannelRouterCanalesInboundConFallback:
         assert destino.exists()
 
     async def test_prefijo_desconocido_cae_en_fallback_no_lanza(self) -> None:
-        cfg = ChannelFallbackConfig(default="null:")
+        cfg = ChannelFallbackSettings(default="null:")
         router, _ = _make_router_with_telegram(fallback=cfg)
 
         result = await router.send_message("mqtt:topic/test", "texto")
@@ -126,7 +126,7 @@ class TestChannelRouterTelegramBotNone:
         factory = SinkFactory(get_telegram_bot=get_bot)
         router = ChannelRouter(
             native_sinks={"telegram": telegram_sink},
-            fallback_config=ChannelFallbackConfig(),
+            fallback_config=ChannelFallbackSettings(),
             sink_factory=factory.from_target,
         )
 

@@ -164,61 +164,9 @@ class TranscriptionConfig(BaseModel):
     max_audio_mb: int = 25  # límite de tamaño de audio (MB) — Groq Whisper: 25
 
 
-# ---------------------------------------------------------------------------
-# ResolvedXConfig — valor compuesto (feature + provider) que recibe el adapter
-# ---------------------------------------------------------------------------
-
-
-class ResolvedLLMConfig(BaseModel):
-    """LLMConfig + credenciales del registry resueltas. Lo recibe el adapter."""
-
-    provider: str
-    model: str
-    temperature: float
-    max_tokens: int
-    reasoning_effort: str | None = None
-    timeout_seconds: int = _LLM_TIMEOUT_FALLBACK
-    api_key: str | None = None
-    base_url: str | None = None
-
-    @property
-    def thinking_active(self) -> bool:
-        """¿Hay que activar thinking mode en este turno?
-
-        Reglas:
-          - ``None`` o cadena vacía → desactivado (default).
-          - ``"low"`` → desactivado. DeepSeek mapea internamente ``low → high``,
-            así que "low" no aporta granularidad real; lo tratamos como off.
-          - Cualquier otro valor (``"medium"``, ``"high"``, ``"max"``, futuros) → activo.
-        """
-        if self.reasoning_effort is None:
-            return False
-        normalized = self.reasoning_effort.strip().lower()
-        return normalized not in ("", "low")
-
-
-class ResolvedEmbeddingConfig(BaseModel):
-    """EmbeddingConfig + credenciales resueltas del registry."""
-
-    provider: str
-    model_dirname: str
-    model: str
-    dimension: int
-    cache_filename: str
-    api_key: str | None = None
-    base_url: str | None = None
-
-
-class ResolvedTranscriptionConfig(BaseModel):
-    """TranscriptionConfig + credenciales resueltas del registry."""
-
-    provider: str
-    model: str
-    language: str | None = None
-    timeout_seconds: int = 60
-    max_audio_mb: int = 25
-    api_key: str | None = None
-    base_url: str | None = None
+# Los DTOs ``Resolved*Config`` (feature + creds compuestas) viven en la capa
+# adapters — cada familia los declara en su ``base.py`` (providers, embedding,
+# transcription). Las factories de infrastructure los componen desde acá.
 
 
 class MemoryLLMOverride(BaseModel):
@@ -236,7 +184,7 @@ class MemoryLLMOverride(BaseModel):
 
     Las credenciales NO viven acá — si el override cambia ``provider``, las creds
     se resuelven automáticamente desde el registry ``providers`` del nivel
-    superior. Ver ``MemoryConfig.resolved_llm_config``.
+    superior. Ver ``AgentContainer._resolve_memory_llm`` (container.py).
 
     ``agent_id`` (delegación a sub-agente):
       Cuando se especifica, la consolidación NO usa el LLM directo — delega
@@ -301,7 +249,8 @@ class MemoryConfig(BaseModel):
         Si no hay override, devuelve el ``base`` tal cual.
 
         Las credenciales se resuelven aparte contra el registry ``providers``
-        — ver ``resolved_llm_config``.
+        — la composición del ``ResolvedLLMConfig`` (DTO de adapters) vive en
+        ``AgentContainer._resolve_memory_llm``.
         """
         if self.llm is None:
             return base
@@ -309,35 +258,6 @@ class MemoryConfig(BaseModel):
         fields_set = self.llm.model_fields_set
         overrides = {f: getattr(self.llm, f) for f in fields_set}
         return base.model_copy(update=overrides)
-
-    def resolved_llm_config(
-        self,
-        base: LLMConfig,
-        providers: "dict[str, ProviderConfig]",
-    ) -> ResolvedLLMConfig:
-        """
-        Resuelve la ``ResolvedLLMConfig`` efectiva para la consolidación de memoria.
-
-        1. Mergea el override (``memory.llm.*``) sobre ``base`` (``llm`` del agente).
-        2. Resuelve credenciales desde el registry ``providers`` según el
-           ``provider`` efectivo tras el merge.
-
-        El check de ``REQUIRES_CREDENTIALS`` (fail-fast si el provider exige
-        creds y no hay entrada en el registry) queda delegado a la factory
-        — ver ``LLMProviderFactory.create_from_resolved``.
-        """
-        merged = self.merged_llm_config(base)
-        provider_cfg = providers.get(merged.provider, ProviderConfig())
-        return ResolvedLLMConfig(
-            provider=merged.provider,
-            model=merged.model,
-            temperature=merged.temperature,
-            max_tokens=merged.max_tokens,
-            reasoning_effort=merged.reasoning_effort,
-            timeout_seconds=merged.timeout_seconds,
-            api_key=provider_cfg.api_key,
-            base_url=provider_cfg.base_url,
-        )
 
 
 class ChatHistoryConfig(BaseModel):

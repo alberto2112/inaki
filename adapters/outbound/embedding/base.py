@@ -1,6 +1,24 @@
 from abc import abstractmethod
+
+from pydantic import BaseModel
+
 from core.ports.outbound.embedding_port import IEmbeddingProvider
-from infrastructure.config import ResolvedEmbeddingConfig
+
+
+class ResolvedEmbeddingConfig(BaseModel):
+    """EmbeddingConfig + credenciales resueltas del registry.
+
+    Vive en adapters: es el contrato de entrada que los providers declaran en
+    SU capa. La factory de infrastructure lo compone desde la config YAML.
+    """
+
+    provider: str
+    model_dirname: str
+    model: str
+    dimension: int
+    cache_filename: str
+    api_key: str | None = None
+    base_url: str | None = None
 
 
 class BaseEmbeddingProvider(IEmbeddingProvider):

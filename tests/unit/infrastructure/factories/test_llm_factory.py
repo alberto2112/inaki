@@ -14,12 +14,11 @@ from __future__ import annotations
 
 import pytest
 
-from adapters.outbound.providers.base import BaseLLMProvider
+from adapters.outbound.providers.base import BaseLLMProvider, ResolvedLLMConfig
 from core.domain.errors import ConfigError
 from infrastructure.config import (
     LLMConfig,
     ProviderConfig,
-    ResolvedLLMConfig,
 )
 from infrastructure.factories.llm_factory import LLMProviderFactory
 

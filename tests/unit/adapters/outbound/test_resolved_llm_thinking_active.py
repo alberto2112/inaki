@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from infrastructure.config import ResolvedLLMConfig
+from adapters.outbound.providers.base import ResolvedLLMConfig
 
 
 def _cfg(reasoning_effort: str | None) -> ResolvedLLMConfig:

@@ -13,10 +13,10 @@ import logging
 import pkgutil
 from pathlib import Path
 
-from adapters.outbound.providers.base import BaseLLMProvider
+from adapters.outbound.providers.base import BaseLLMProvider, ResolvedLLMConfig
 from core.domain.errors import ConfigError
 from core.ports.outbound.llm_port import ILLMProvider
-from infrastructure.config import LLMConfig, ProviderConfig, ResolvedLLMConfig
+from infrastructure.config import LLMConfig, ProviderConfig
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +65,30 @@ class LLMProviderFactory:
         return cls._registry[type_key]
 
     @classmethod
+    def resolve(
+        cls,
+        llm_cfg: LLMConfig,
+        providers: dict[str, ProviderConfig],
+    ) -> ResolvedLLMConfig:
+        """
+        Compone el ``ResolvedLLMConfig`` (feature + creds del registry) que
+        recibe el adapter. NO valida credenciales — el check de
+        ``REQUIRES_CREDENTIALS`` vive en ``create``/``create_from_resolved``,
+        que conocen el adapter concreto.
+        """
+        provider_cfg = providers.get(llm_cfg.provider) or ProviderConfig()
+        return ResolvedLLMConfig(
+            provider=llm_cfg.provider,
+            model=llm_cfg.model,
+            temperature=llm_cfg.temperature,
+            max_tokens=llm_cfg.max_tokens,
+            reasoning_effort=llm_cfg.reasoning_effort,
+            timeout_seconds=llm_cfg.timeout_seconds,
+            api_key=provider_cfg.api_key,
+            base_url=provider_cfg.base_url,
+        )
+
+    @classmethod
     def create(
         cls,
         llm_cfg: LLMConfig,
@@ -86,31 +110,19 @@ class LLMProviderFactory:
             provider_key, provider_cfg.type if provider_cfg else None
         )
 
-        if provider_cfg is None:
-            if adapter_type.REQUIRES_CREDENTIALS:
-                raise ConfigError(
-                    f"Provider '{provider_key}' requiere credenciales pero no existe la "
-                    f"entrada 'providers.{provider_key}' en la configuración."
-                )
-            provider_cfg = ProviderConfig()
+        if provider_cfg is None and adapter_type.REQUIRES_CREDENTIALS:
+            raise ConfigError(
+                f"Provider '{provider_key}' requiere credenciales pero no existe la "
+                f"entrada 'providers.{provider_key}' en la configuración."
+            )
 
-        resolved = ResolvedLLMConfig(
-            provider=provider_key,
-            model=llm_cfg.model,
-            temperature=llm_cfg.temperature,
-            max_tokens=llm_cfg.max_tokens,
-            reasoning_effort=llm_cfg.reasoning_effort,
-            timeout_seconds=llm_cfg.timeout_seconds,
-            api_key=provider_cfg.api_key,
-            base_url=provider_cfg.base_url,
-        )
-        return adapter_type(resolved)
+        return adapter_type(cls.resolve(llm_cfg, providers))
 
     @classmethod
     def create_from_resolved(cls, resolved: ResolvedLLMConfig) -> ILLMProvider:
         """
         Instancia un ``ILLMProvider`` a partir de un ``ResolvedLLMConfig`` ya
-        compuesto (p. ej. por ``MemoryConfig.resolved_llm_config``).
+        compuesto (p. ej. por ``AgentContainer._resolve_memory_llm``).
 
         Valida ``REQUIRES_CREDENTIALS`` contra el adapter para fail-fast cuando
         el provider referenciado por un override no existe en el registry.

@@ -24,7 +24,10 @@ if TYPE_CHECKING:
 from adapters.outbound.delegation.background_queue_adapter import (
     BackgroundDelegationQueueAdapter,
 )
-from adapters.outbound.history.sqlite_history_store import SQLiteHistoryStore
+from adapters.outbound.history.sqlite_history_store import (
+    HistoryStoreSettings,
+    SQLiteHistoryStore,
+)
 from adapters.outbound.messaging.channel_outbound_registry import ChannelOutboundRegistry
 from adapters.outbound.memory.sqlite_memory_repo import SQLiteMemoryRepository
 from adapters.outbound.config_repository.yaml_tool_config_store import YamlToolConfigStore
@@ -34,6 +37,7 @@ from adapters.outbound.scheduler.builtin_tasks import (
     build_face_dedup_task,
 )
 from adapters.outbound.scheduler.dispatch_adapters import (
+    ChannelFallbackSettings,
     ChannelRouter,
     ConsolidationDispatchAdapter,
     HttpCallerAdapter,
@@ -230,7 +234,12 @@ class AgentContainer:
             cache=self._embedding_cache,
             dimension=cfg.embedding.dimension,
         )
-        self._history = SQLiteHistoryStore(cfg.chat_history)
+        self._history = SQLiteHistoryStore(
+            HistoryStoreSettings(
+                db_filename=cfg.chat_history.db_filename,
+                max_messages=cfg.chat_history.max_messages,
+            )
+        )
         self._tools = ToolRegistry(
             embedder=self._embedder,
             cache=self._embedding_cache,
@@ -313,7 +322,7 @@ class AgentContainer:
         if merged == cfg.llm:
             return base_llm
 
-        resolved = cfg.memory.resolved_llm_config(cfg.llm, cfg.providers)
+        resolved = LLMProviderFactory.resolve(merged, cfg.providers)
         logger.info(
             "Agente '%s': LLM de consolidación dedicado — provider=%s, model=%s, "
             "reasoning_effort=%s, max_tokens=%d",
@@ -1292,7 +1301,10 @@ class AppContainer:
         sink_factory = SinkFactory(get_telegram_bot=self._get_telegram_bot)
         channel_router = ChannelRouter(
             native_sinks={"telegram": telegram_sink},
-            fallback_config=scheduler_cfg.channel_fallback,
+            fallback_config=ChannelFallbackSettings(
+                default=scheduler_cfg.channel_fallback.default,
+                overrides=dict(scheduler_cfg.channel_fallback.overrides),
+            ),
             sink_factory=sink_factory.from_target,
         )
         # Reusamos la instancia ya construida en Phase 2a para que la cola de

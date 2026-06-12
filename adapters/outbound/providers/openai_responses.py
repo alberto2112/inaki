@@ -19,11 +19,10 @@ from collections.abc import AsyncIterator
 
 import httpx
 
-from adapters.outbound.providers.base import BaseLLMProvider
+from adapters.outbound.providers.base import BaseLLMProvider, ResolvedLLMConfig
 from core.domain.entities.message import Message, Role
 from core.domain.errors import LLMError
 from core.domain.value_objects.llm_response import LLMResponse
-from infrastructure.config import ResolvedLLMConfig
 
 PROVIDER_NAME = "openai_responses"
 

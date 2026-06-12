@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from adapters.outbound.providers.base import ResolvedLLMConfig
 from infrastructure.config import (
     AgentConfig,
     ChatHistoryConfig,
@@ -20,7 +21,6 @@ from infrastructure.config import (
     MemoryConfig,
     MemoryLLMOverride,
     ProviderConfig,
-    ResolvedLLMConfig,
 )
 from infrastructure.container import AgentContainer
 from infrastructure.factories.llm_factory import LLMProviderFactory

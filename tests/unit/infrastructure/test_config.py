@@ -15,6 +15,7 @@ from infrastructure.config import (
     ProviderConfig,
     SchedulerConfig,
 )
+from infrastructure.factories.llm_factory import LLMProviderFactory
 
 HOME = str(Path.home())
 INAKI_HOME = f"{HOME}/.inaki"
@@ -181,7 +182,7 @@ def test_resolved_llm_config_sin_override_devuelve_base() -> None:
     base = _base_llm()
     cfg = MemoryConfig()
 
-    resultado = cfg.resolved_llm_config(base, _providers_with_groq())
+    resultado = LLMProviderFactory.resolve(cfg.merged_llm_config(base), _providers_with_groq())
 
     # Sin override el merged == base; la resolved trae además las creds del registry.
     assert resultado.provider == base.provider
@@ -214,7 +215,7 @@ def test_resolved_llm_config_merge_parcial_resuelve_caso_del_bug() -> None:
     )
     cfg = MemoryConfig(llm=override)
 
-    resultado = cfg.resolved_llm_config(base, _providers_with_groq())
+    resultado = LLMProviderFactory.resolve(cfg.merged_llm_config(base), _providers_with_groq())
 
     assert resultado.provider == "groq"  # heredado
     assert resultado.model == "llama-3.3-70b-versatile"  # override
@@ -235,13 +236,17 @@ def test_resolved_llm_config_distingue_null_explicito_vs_clave_ausente() -> None
     # Caso 1: null explícito → model_fields_set contiene 'reasoning_effort'.
     override_null = MemoryLLMOverride.model_validate({"reasoning_effort": None})
     assert "reasoning_effort" in override_null.model_fields_set
-    resultado_null = MemoryConfig(llm=override_null).resolved_llm_config(base, providers)
+    resultado_null = LLMProviderFactory.resolve(
+        MemoryConfig(llm=override_null).merged_llm_config(base), providers
+    )
     assert resultado_null.reasoning_effort is None
 
     # Caso 2: clave ausente → model_fields_set NO contiene 'reasoning_effort'.
     override_ausente = MemoryLLMOverride.model_validate({"model": "X"})
     assert "reasoning_effort" not in override_ausente.model_fields_set
-    resultado_ausente = MemoryConfig(llm=override_ausente).resolved_llm_config(base, providers)
+    resultado_ausente = LLMProviderFactory.resolve(
+        MemoryConfig(llm=override_ausente).merged_llm_config(base), providers
+    )
     assert resultado_ausente.reasoning_effort == "high"  # heredado
 
 
@@ -249,7 +254,7 @@ def test_resolved_llm_config_provider_distinto_sin_entry_en_registry_devuelve_ap
     None
 ):
     """
-    Tras el refactor a providers top-level, ``resolved_llm_config`` ya no valida
+    Tras el refactor a providers top-level, ``LLMProviderFactory.resolve`` no valida
     credenciales — delega en la factory (``LLMProviderFactory.create_from_resolved``).
     Si el provider cambió y no hay entry en el registry, devuelve ``api_key=None``
     y la factory es quien levanta ``ConfigError`` al instanciar el adapter.
@@ -258,7 +263,7 @@ def test_resolved_llm_config_provider_distinto_sin_entry_en_registry_devuelve_ap
     override = MemoryLLMOverride(provider="openai", model="gpt-4o-mini")
     cfg = MemoryConfig(llm=override)
 
-    resultado = cfg.resolved_llm_config(base, _providers_with_groq())
+    resultado = LLMProviderFactory.resolve(cfg.merged_llm_config(base), _providers_with_groq())
 
     assert resultado.provider == "openai"
     assert resultado.api_key is None
@@ -274,7 +279,7 @@ def test_resolved_llm_config_mismo_provider_hereda_creds_del_registry() -> None:
     override = MemoryLLMOverride(model="otro-modelo")
     cfg = MemoryConfig(llm=override)
 
-    resultado = cfg.resolved_llm_config(base, _providers_with_groq())
+    resultado = LLMProviderFactory.resolve(cfg.merged_llm_config(base), _providers_with_groq())
 
     assert resultado.provider == "groq"
     assert resultado.api_key == "KEY_BASE"
@@ -290,7 +295,7 @@ def test_resolved_llm_config_provider_distinto_con_entry_en_registry_es_ok() -> 
         "openai": ProviderConfig(api_key="KEY_OVERRIDE"),
     }
 
-    resultado = cfg.resolved_llm_config(base, providers)
+    resultado = LLMProviderFactory.resolve(cfg.merged_llm_config(base), providers)
 
     assert resultado.provider == "openai"
     assert resultado.api_key == "KEY_OVERRIDE"

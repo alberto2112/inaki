@@ -16,9 +16,8 @@ import logging
 
 import httpx
 
-from adapters.outbound.embedding.base import BaseEmbeddingProvider
+from adapters.outbound.embedding.base import BaseEmbeddingProvider, ResolvedEmbeddingConfig
 from core.domain.errors import EmbeddingError
-from infrastructure.config import ResolvedEmbeddingConfig
 
 PROVIDER_NAME = "openai"
 

@@ -12,8 +12,26 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import Any
 
+from pydantic import BaseModel
+
 from core.ports.outbound.transcription_port import ITranscriptionProvider
-from infrastructure.config import ResolvedTranscriptionConfig
+
+
+class ResolvedTranscriptionConfig(BaseModel):
+    """TranscriptionConfig + credenciales resueltas del registry.
+
+    Vive en adapters: es el contrato de entrada que los providers declaran en
+    SU capa. La factory de infrastructure lo compone desde la config YAML.
+    """
+
+    provider: str
+    model: str
+    language: str | None = None
+    timeout_seconds: int = 60
+    max_audio_mb: int = 25
+    api_key: str | None = None
+    base_url: str | None = None
+
 
 # Groq (y OpenAI Whisper) usan la extensión del filename para detectar el formato
 # cuando el content-type multipart no es suficiente.

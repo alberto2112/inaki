@@ -4,21 +4,23 @@ from datetime import datetime, timezone
 
 import pytest
 
-from adapters.outbound.history.sqlite_history_store import SQLiteHistoryStore
+from adapters.outbound.history.sqlite_history_store import (
+    HistoryStoreSettings,
+    SQLiteHistoryStore,
+)
 from core.domain.entities.message import Message, Role
 from core.domain.value_objects.conversation_state import ConversationState
-from infrastructure.config import ChatHistoryConfig
 
 
 @pytest.fixture
 def history_store(tmp_path):
-    cfg = ChatHistoryConfig(db_filename=str(tmp_path / "test_history.db"))
+    cfg = HistoryStoreSettings(db_filename=str(tmp_path / "test_history.db"))
     return SQLiteHistoryStore(cfg)
 
 
 @pytest.fixture
 def history_store_limited(tmp_path):
-    cfg = ChatHistoryConfig(
+    cfg = HistoryStoreSettings(
         db_filename=str(tmp_path / "test_history_limited.db"),
         max_messages=3,
     )

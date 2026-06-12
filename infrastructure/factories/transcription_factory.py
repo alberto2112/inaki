@@ -13,14 +13,13 @@ import logging
 import pkgutil
 from pathlib import Path
 
-from adapters.outbound.transcription.base import BaseTranscriptionProvider
+from adapters.outbound.transcription.base import (
+    BaseTranscriptionProvider,
+    ResolvedTranscriptionConfig,
+)
 from core.domain.errors import ConfigError, UnknownTranscriptionProviderError
 from core.ports.outbound.transcription_port import ITranscriptionProvider
-from infrastructure.config import (
-    ProviderConfig,
-    ResolvedTranscriptionConfig,
-    TranscriptionConfig,
-)
+from infrastructure.config import ProviderConfig, TranscriptionConfig
 
 logger = logging.getLogger(__name__)
 

@@ -19,6 +19,7 @@ import pytest
 
 from core.ports.outbound.scheduler_dispatch_port import SchedulerDispatchPorts
 from adapters.outbound.scheduler.dispatch_adapters import (
+    ChannelFallbackSettings,
     ShellExecAdapter,
     ChannelRouter,
     ConsolidationDispatchAdapter,
@@ -35,7 +36,6 @@ from core.domain.entities.task import (
     TriggerType,
 )
 from core.domain.services.scheduler_service import SchedulerService
-from infrastructure.config import ChannelFallbackConfig
 
 
 @pytest.fixture()
@@ -54,7 +54,7 @@ async def test_channel_send_cli_cae_en_hardcoded_file_y_persiste_metadata(
     factory = SinkFactory(get_telegram_bot=lambda: None)
     router = ChannelRouter(
         native_sinks={},  # Telegram no registrado: cli cae a cascada
-        fallback_config=ChannelFallbackConfig(),  # sin default ni overrides
+        fallback_config=ChannelFallbackSettings(),  # sin default ni overrides
         sink_factory=factory.from_target,
         hardcoded_fallback=f"file://{destino_hardcoded}",
     )

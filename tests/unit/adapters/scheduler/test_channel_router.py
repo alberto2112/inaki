@@ -6,19 +6,21 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from adapters.outbound.scheduler.dispatch_adapters import ChannelRouter
+from adapters.outbound.scheduler.dispatch_adapters import (
+    ChannelFallbackSettings,
+    ChannelRouter,
+)
 from adapters.outbound.sinks.sink_factory import SinkFactory
 from adapters.outbound.sinks.telegram_sink import TelegramSink
 from core.domain.value_objects.dispatch_result import DispatchResult
-from infrastructure.config import ChannelFallbackConfig
 
 
 def _mk_router(
     native_prefixes: dict[str, object] | None = None,
-    fallback: ChannelFallbackConfig | None = None,
+    fallback: ChannelFallbackSettings | None = None,
 ) -> ChannelRouter:
     native = native_prefixes or {}
-    cfg = fallback or ChannelFallbackConfig()
+    cfg = fallback or ChannelFallbackSettings()
     factory = SinkFactory(get_telegram_bot=lambda: AsyncMock())
     # native_prefixes contiene mocks que satisfacen IOutboundSink
     # estructuralmente — pero el tipo declarado en el helper es genérico.
@@ -42,7 +44,7 @@ async def test_router_nativo_prefix_telegram_usa_sink_nativo() -> None:
 
 
 async def test_router_cli_sin_nativo_usa_override() -> None:
-    cfg = ChannelFallbackConfig(overrides={"cli": "null:"})
+    cfg = ChannelFallbackSettings(overrides={"cli": "null:"})
     router = _mk_router(fallback=cfg)
     result = await router.send_message("cli:local", "texto")
     assert result.original_target == "cli:local"
@@ -50,7 +52,7 @@ async def test_router_cli_sin_nativo_usa_override() -> None:
 
 
 async def test_router_cli_sin_nativo_ni_override_usa_default() -> None:
-    cfg = ChannelFallbackConfig(default="null:")
+    cfg = ChannelFallbackSettings(default="null:")
     router = _mk_router(fallback=cfg)
     result = await router.send_message("rest:x", "texto")
     assert result.original_target == "rest:x"
@@ -64,7 +66,7 @@ async def test_router_sin_ningun_fallback_usa_hardcoded(tmp_path) -> None:
     factory = SinkFactory(get_telegram_bot=lambda: None)
     router = ChannelRouter(
         native_sinks={},
-        fallback_config=ChannelFallbackConfig(),
+        fallback_config=ChannelFallbackSettings(),
         sink_factory=factory.from_target,
         hardcoded_fallback=f"file://{destino}",
     )
@@ -75,7 +77,7 @@ async def test_router_sin_ningun_fallback_usa_hardcoded(tmp_path) -> None:
 
 
 async def test_router_override_tiene_prioridad_sobre_default() -> None:
-    cfg = ChannelFallbackConfig(default="null:default", overrides={"cli": "null:override"})
+    cfg = ChannelFallbackSettings(default="null:default", overrides={"cli": "null:override"})
     router = _mk_router(fallback=cfg)
     result = await router.send_message("cli:algo", "t")
     assert result.resolved_target == "null:override"
@@ -86,14 +88,14 @@ async def test_router_native_tiene_prioridad_sobre_override() -> None:
     tg.send = AsyncMock(
         return_value=DispatchResult(original_target="telegram:9", resolved_target="telegram:9")
     )
-    cfg = ChannelFallbackConfig(overrides={"telegram": "null:"})
+    cfg = ChannelFallbackSettings(overrides={"telegram": "null:"})
     router = _mk_router(native_prefixes={"telegram": tg}, fallback=cfg)
     result = await router.send_message("telegram:9", "x")
     assert result.resolved_target == "telegram:9"
 
 
 async def test_router_preserva_original_target_tras_fallback() -> None:
-    cfg = ChannelFallbackConfig(default="null:")
+    cfg = ChannelFallbackSettings(default="null:")
     router = _mk_router(fallback=cfg)
     result = await router.send_message("cli:lo-que-sea", "t")
     # Incluso si el sink delegado devolviera el target resuelto como original,

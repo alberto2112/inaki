@@ -18,7 +18,7 @@ from adapters.outbound.providers.ollama import OllamaProvider
 from adapters.outbound.providers.openai import OpenAIProvider
 from adapters.outbound.providers.openrouter import OpenRouterProvider
 from core.domain.entities.message import Message, Role
-from infrastructure.config import ResolvedLLMConfig
+from adapters.outbound.providers.base import ResolvedLLMConfig
 
 
 SYSTEM_PROMPT = "Eres un asistente de test."

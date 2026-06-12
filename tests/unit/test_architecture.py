@@ -59,10 +59,11 @@ ALLOWLIST_TERCEROS_CORE = frozenset(
 # web_search vive en global.secrets.yaml). Mantener vacío.
 DEUDA_TERCEROS_CORE: frozenset[tuple[str, str]] = frozenset()
 
-# Regla 3 — el grueso se salda mudando los DTOs Resolved*Config de
-# infrastructure/config.py a la capa adapters (patrón Settings VOs). Los imports
-# de infrastructure.container (bot.py, delegate_tool, rest, daemon) requieren
-# ports/VOs propios y se saldan en el refactor de cada adapter.
+# Regla 3 — los DTOs Resolved*Config y los Settings VOs de adapters outbound
+# se saldaron el 2026-06-12 (paso 3 de la auditoría). Lo que queda son imports
+# de infrastructure.container/config en adapters INBOUND (bot.py, daemon, rest,
+# setup_tui, CLIs) + delegate_tool — requieren ports/VOs propios y se saldan
+# en el refactor de cada adapter (pasos 4+).
 DEUDA_ADAPTERS_INFRA = frozenset(
     {
         ("adapters/inbound/cli/knowledge_cli.py", "infrastructure.config"),
@@ -77,21 +78,7 @@ DEUDA_ADAPTERS_INFRA = frozenset(
         ("adapters/inbound/setup_tui/screens/global_page.py", "infrastructure.config"),
         ("adapters/inbound/telegram/bot.py", "infrastructure.config"),
         ("adapters/inbound/telegram/bot.py", "infrastructure.container"),
-        ("adapters/outbound/embedding/base.py", "infrastructure.config"),
-        ("adapters/outbound/embedding/e5_onnx.py", "infrastructure.config"),
-        ("adapters/outbound/embedding/openai.py", "infrastructure.config"),
-        ("adapters/outbound/history/sqlite_history_store.py", "infrastructure.config"),
-        ("adapters/outbound/providers/base.py", "infrastructure.config"),
-        ("adapters/outbound/providers/deepseek.py", "infrastructure.config"),
-        ("adapters/outbound/providers/groq.py", "infrastructure.config"),
-        ("adapters/outbound/providers/ollama.py", "infrastructure.config"),
-        ("adapters/outbound/providers/openai.py", "infrastructure.config"),
-        ("adapters/outbound/providers/openai_responses.py", "infrastructure.config"),
-        ("adapters/outbound/providers/openrouter.py", "infrastructure.config"),
-        ("adapters/outbound/scheduler/dispatch_adapters.py", "infrastructure.config"),
         ("adapters/outbound/tools/delegate_tool.py", "infrastructure.container"),
-        ("adapters/outbound/transcription/base.py", "infrastructure.config"),
-        ("adapters/outbound/transcription/groq.py", "infrastructure.config"),
     }
 )
 

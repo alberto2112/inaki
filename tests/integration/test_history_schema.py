@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import pytest
 
-from adapters.outbound.history.sqlite_history_store import SQLiteHistoryStore
+from adapters.outbound.history.sqlite_history_store import (
+    HistoryStoreSettings,
+    SQLiteHistoryStore,
+)
 from core.domain.entities.message import Message, Role
-from infrastructure.config import ChatHistoryConfig
 
 
 # ---------------------------------------------------------------------------
@@ -26,7 +28,7 @@ from infrastructure.config import ChatHistoryConfig
 @pytest.fixture
 async def store(tmp_path):
     """SQLiteHistoryStore en disco temporal (no :memory: para poder inspeccionar sqlite_master)."""
-    cfg = ChatHistoryConfig(db_filename=str(tmp_path / "history_schema_test.db"))
+    cfg = HistoryStoreSettings(db_filename=str(tmp_path / "history_schema_test.db"))
     s = SQLiteHistoryStore(cfg)
     # Disparar creación de esquema
     await s.load("dummy_agent")
@@ -50,7 +52,7 @@ async def test_indices_existen(tmp_path):
     """Los tres índices requeridos deben aparecer en sqlite_master."""
     import aiosqlite
 
-    cfg = ChatHistoryConfig(db_filename=str(tmp_path / "idx_check.db"))
+    cfg = HistoryStoreSettings(db_filename=str(tmp_path / "idx_check.db"))
     s = SQLiteHistoryStore(cfg)
     await s.load("dummy")  # crea el esquema
 
@@ -69,7 +71,7 @@ async def test_columnas_channel_y_chat_id_existen(tmp_path):
     """Las columnas channel y chat_id deben estar presentes en PRAGMA table_info."""
     import aiosqlite
 
-    cfg = ChatHistoryConfig(db_filename=str(tmp_path / "cols_check.db"))
+    cfg = HistoryStoreSettings(db_filename=str(tmp_path / "cols_check.db"))
     s = SQLiteHistoryStore(cfg)
     await s.load("dummy")
 

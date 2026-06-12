@@ -18,7 +18,7 @@ import pytest
 from adapters.outbound.providers.openai_responses import OpenAIResponsesProvider
 from core.domain.entities.message import Message, Role
 from core.domain.errors import LLMError
-from infrastructure.config import ResolvedLLMConfig
+from adapters.outbound.providers.base import ResolvedLLMConfig
 
 
 def _cfg(**overrides) -> ResolvedLLMConfig:

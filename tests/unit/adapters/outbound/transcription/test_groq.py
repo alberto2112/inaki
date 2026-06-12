@@ -23,7 +23,7 @@ from adapters.outbound.transcription.groq import (
     GroqTranscriptionProvider,
 )
 from core.domain.errors import TranscriptionError, TranscriptionFileTooLargeError
-from infrastructure.config import ResolvedTranscriptionConfig
+from adapters.outbound.transcription.base import ResolvedTranscriptionConfig
 
 DEFAULT_ENDPOINT = "https://api.groq.com/openai/v1/audio/transcriptions"
 

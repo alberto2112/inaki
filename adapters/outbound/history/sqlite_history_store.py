@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncIterator
@@ -26,9 +27,22 @@ import aiosqlite
 from core.domain.entities.message import Message, Role
 from core.domain.value_objects.conversation_state import ConversationState
 from core.ports.outbound.history_port import IHistoryStore
-from infrastructure.config import ChatHistoryConfig
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class HistoryStoreSettings:
+    """Settings VO del store — el container lo mapea desde ``ChatHistoryConfig``.
+
+    El adapter declara lo que necesita (path ya resuelto + límite de mensajes)
+    sin conocer el schema YAML de infrastructure. ``merge_chats`` no viaja acá:
+    es semántica del use case (``MemorySettings``), no del storage.
+    """
+
+    db_filename: str
+    max_messages: int = 0  # 0 = sin límite; N = últimos N mensajes al LLM
+
 
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS history (
@@ -98,7 +112,7 @@ def _build_where_filters(
 
 
 class SQLiteHistoryStore(IHistoryStore):
-    def __init__(self, cfg: ChatHistoryConfig) -> None:
+    def __init__(self, cfg: HistoryStoreSettings) -> None:
         self._db_path = cfg.db_filename
         self._max_n = cfg.max_messages
         Path(cfg.db_filename).parent.mkdir(parents=True, exist_ok=True)

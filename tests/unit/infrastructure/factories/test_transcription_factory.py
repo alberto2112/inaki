@@ -13,7 +13,8 @@ import pytest
 
 from adapters.outbound.transcription.base import BaseTranscriptionProvider
 from core.domain.errors import ConfigError, UnknownTranscriptionProviderError
-from infrastructure.config import ProviderConfig, ResolvedTranscriptionConfig, TranscriptionConfig
+from adapters.outbound.transcription.base import ResolvedTranscriptionConfig
+from infrastructure.config import ProviderConfig, TranscriptionConfig
 from infrastructure.factories.transcription_factory import TranscriptionProviderFactory
 
 

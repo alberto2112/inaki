@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from adapters.outbound.providers.deepseek import DeepSeekProvider
 from core.domain.entities.message import Message, Role
-from infrastructure.config import ResolvedLLMConfig
+from adapters.outbound.providers.base import ResolvedLLMConfig
 
 
 def _cfg() -> ResolvedLLMConfig:

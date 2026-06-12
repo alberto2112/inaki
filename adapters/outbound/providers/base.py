@@ -1,9 +1,45 @@
 from abc import abstractmethod
 from collections.abc import AsyncIterator
+
+from pydantic import BaseModel
+
 from core.domain.entities.message import Message, Role
 from core.domain.value_objects.llm_response import LLMResponse
 from core.ports.outbound.llm_port import ILLMProvider
-from infrastructure.config import ResolvedLLMConfig
+
+
+class ResolvedLLMConfig(BaseModel):
+    """LLMConfig + credenciales del registry resueltas. Lo recibe el adapter.
+
+    Vive en adapters (no en ``infrastructure/config.py``): es el contrato de
+    entrada que los providers declaran en SU capa. Las factories de
+    infrastructure lo componen desde la config YAML — dirección legal
+    (``infrastructure → adapters``); al revés jamás.
+    """
+
+    provider: str
+    model: str
+    temperature: float
+    max_tokens: int
+    reasoning_effort: str | None = None
+    timeout_seconds: int = 60
+    api_key: str | None = None
+    base_url: str | None = None
+
+    @property
+    def thinking_active(self) -> bool:
+        """¿Hay que activar thinking mode en este turno?
+
+        Reglas:
+          - ``None`` o cadena vacía → desactivado (default).
+          - ``"low"`` → desactivado. DeepSeek mapea internamente ``low → high``,
+            así que "low" no aporta granularidad real; lo tratamos como off.
+          - Cualquier otro valor (``"medium"``, ``"high"``, ``"max"``, futuros) → activo.
+        """
+        if self.reasoning_effort is None:
+            return False
+        normalized = self.reasoning_effort.strip().lower()
+        return normalized not in ("", "low")
 
 
 class BaseLLMProvider(ILLMProvider):

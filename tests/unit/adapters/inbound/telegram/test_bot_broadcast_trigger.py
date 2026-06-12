@@ -36,17 +36,15 @@ def agent_cfg_autonomous() -> MagicMock:
     cfg.id = "inaki"
     cfg.name = "Inaki"
     cfg.description = "Asistente"
-    cfg.channels = {
-        "telegram": {
-            "token": "dummy-token",
-            "allowed_user_ids": [],
-            "reactions": False,
-            "broadcast": {
-                "behavior": "autonomous",
-                "bot_username": "inaki_bot",
-                "rate_limiter": 5,
-            },
-        }
+    cfg.telegram = {
+        "token": "dummy-token",
+        "allowed_user_ids": [],
+        "reactions": False,
+        "broadcast": {
+            "behavior": "autonomous",
+            "bot_username": "inaki_bot",
+            "rate_limiter": 5,
+        },
     }
     return cfg
 
@@ -82,8 +80,8 @@ def _build_bot(agent_cfg, container, receiver=None, emitter=None, rate_limiter=N
         from adapters.inbound.telegram.bot import TelegramBot
 
         return TelegramBot(
-            agent_cfg=agent_cfg,
-            container=container,
+            settings=agent_cfg,
+            ports=container,
             broadcast_emitter=emitter,
             broadcast_receiver=receiver,
             rate_limiter=rate_limiter,
@@ -126,15 +124,13 @@ async def test_subscribe_broadcast_trigger_mention_noop(mock_container, mock_rec
     cfg.id = "inaki"
     cfg.name = "Inaki"
     cfg.description = ""
-    cfg.channels = {
-        "telegram": {
-            "token": "dummy-token",
-            "allowed_user_ids": [],
-            "broadcast": {
-                "behavior": "mention",
-                "bot_username": "inaki_bot",
-            },
-        }
+    cfg.telegram = {
+        "token": "dummy-token",
+        "allowed_user_ids": [],
+        "broadcast": {
+            "behavior": "mention",
+            "bot_username": "inaki_bot",
+        },
     }
     bot = _build_bot(cfg, mock_container, receiver=mock_receiver)
     await bot.subscribe_broadcast_trigger()

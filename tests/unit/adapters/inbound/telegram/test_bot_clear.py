@@ -27,9 +27,7 @@ def agent_cfg() -> MagicMock:
     cfg.id = "dev"
     cfg.name = "Inaki"
     cfg.description = "Asistente"
-    cfg.channels = {
-        "telegram": {"token": "dummy-token", "allowed_user_ids": [], "reactions": False}
-    }
+    cfg.telegram = {"token": "dummy-token", "allowed_user_ids": [], "reactions": False}
     return cfg
 
 
@@ -43,7 +41,7 @@ def bot(agent_cfg, mock_container):
         mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
-        return TelegramBot(agent_cfg=agent_cfg, container=mock_container)
+        return TelegramBot(settings=agent_cfg, ports=mock_container)
 
 
 async def test_cmd_clear_llama_clear_history_api_publica(bot, mock_container) -> None:

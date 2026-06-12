@@ -17,12 +17,20 @@ from typing import TYPE_CHECKING, Callable, Literal
 
 if TYPE_CHECKING:
     from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
+    from core.ports.outbound.file_downloader_port import IFileDownloader
+    from core.ports.outbound.telegram_file_repo_port import IFileRecordRepo
+    from core.use_cases.process_photo import ProcessPhotoUseCase
     from core.domain.value_objects.channel_context import ChannelContext
     from core.ports.outbound.background_delegation_port import IBackgroundDelegationQueue
     from core.ports.outbound.knowledge_port import IKnowledgeSource
 
 from adapters.outbound.delegation.background_queue_adapter import (
     BackgroundDelegationQueueAdapter,
+)
+from adapters.inbound.telegram.ports import (
+    TelegramBotPorts,
+    TelegramBotSettings,
+    TranscriptionLimits,
 )
 from adapters.outbound.history.sqlite_history_store import (
     HistoryStoreSettings,
@@ -150,6 +158,40 @@ def build_photos_settings(photos_cfg: PhotosConfig) -> PhotosSettings:
     )
 
 
+def build_telegram_bot_settings(cfg: AgentConfig) -> TelegramBotSettings:
+    """Mapea AgentConfig → slice de config que consume el TelegramBot."""
+    transcription = None
+    if cfg.transcription is not None:
+        transcription = TranscriptionLimits(
+            language=cfg.transcription.language,
+            max_audio_mb=cfg.transcription.max_audio_mb,
+        )
+    return TelegramBotSettings(
+        id=cfg.id,
+        name=cfg.name,
+        description=cfg.description,
+        workspace_path=cfg.workspace.path,
+        transcription=transcription,
+        telegram=cfg.channels.get("telegram") or {},
+    )
+
+
+def build_telegram_bot_ports(container: AgentContainer) -> TelegramBotPorts:
+    """Snapshot de las dependencias del bot. Llamar DESPUÉS de las fases de
+    wiring del AppContainer (scheduler, photos, telegram tools) — los campos
+    opcionales capturan el valor wired, no la referencia al container."""
+    return TelegramBotPorts(
+        run_agent=container.run_agent,
+        scope_registry=container.scope_registry,
+        consolidate_memory=container.consolidate_memory,
+        schedule_task=container.schedule_task,
+        process_photo=container.process_photo,
+        transcription=container.transcription,
+        telegram_file_repo=container.telegram_file_repo,
+        telegram_file_downloader=container.telegram_file_downloader,
+    )
+
+
 class AgentContainer:
     """Container de dependencias para un agente concreto."""
 
@@ -201,15 +243,15 @@ class AgentContainer:
         self.schedule_task: ScheduleTaskUseCase | None = None
 
         # ProcessPhotoUseCase — wired en fase 5 por AppContainer. None si photos no habilitado.
-        self.process_photo = None
+        self.process_photo: ProcessPhotoUseCase | None = None
 
         # IFileRecordRepo — wired en fase 7 si el agente tiene canal Telegram.
         # El bot lo lee defensivamente para persistir file_id de cada media entrante.
-        self.telegram_file_repo: object | None = None
+        self.telegram_file_repo: IFileRecordRepo | None = None
         # IFileDownloader — wired en fase 7. El bot lo usa para pre-descargar
         # media que llegue con caption (entrega un path concreto al LLM en el
         # user_input, sin depender del RAG de tools).
-        self.telegram_file_downloader: object | None = None
+        self.telegram_file_downloader: IFileDownloader | None = None
 
         # Broadcast adapter — wired en fase 4 por AppContainer. None si el agente no
         # tiene ningún canal telegram con bloque broadcast:.
@@ -252,7 +294,9 @@ class AgentContainer:
         # channels.telegram.voice_enabled; si el agente no usa voz, queda None.
         self._transcription = self._resolve_transcription(cfg)
 
-        self.run_agent = RunAgentUseCase(
+        # Anotación explícita: build_telegram_bot_ports (definido antes de la
+        # clase) lee este atributo y mypy no puede inferir el tipo forward.
+        self.run_agent: RunAgentUseCase = RunAgentUseCase(
             llm=self._llm,
             memory=self._memory,
             embedder=self._embedder,

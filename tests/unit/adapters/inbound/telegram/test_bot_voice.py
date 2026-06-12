@@ -44,7 +44,7 @@ def _mk_agent_cfg(
         "reactions": reactions,
         "voice_enabled": voice_enabled,
     }
-    cfg.channels = {"telegram": tg}
+    cfg.telegram = tg
     # Transcription config embebida: max_audio_mb + language.
     cfg.transcription = MagicMock()
     cfg.transcription.max_audio_mb = max_audio_mb
@@ -83,7 +83,7 @@ def _build_bot(agent_cfg, mock_container):
         mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
-        return TelegramBot(agent_cfg=agent_cfg, container=mock_container)
+        return TelegramBot(settings=agent_cfg, ports=mock_container)
 
 
 def _mk_update(
@@ -315,7 +315,7 @@ def test_bot_registra_handlers_voice_audio_video_note(agent_cfg, mock_container)
         mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
-        bot = TelegramBot(agent_cfg=agent_cfg, container=mock_container)
+        bot = TelegramBot(settings=agent_cfg, ports=mock_container)
 
     # Se registran 3 MessageHandlers de audio (además del de texto y los commands).
     registered = [c.args[0] for c in mock_app.add_handler.call_args_list]
@@ -343,7 +343,7 @@ def test_voice_enabled_false_registra_handlers_para_persistencia(mock_container)
         mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
-        bot = TelegramBot(agent_cfg=cfg, container=mock_container)
+        bot = TelegramBot(settings=cfg, ports=mock_container)
 
     registered = [c.args[0] for c in mock_app.add_handler.call_args_list]
     voice_handler_callbacks = [
@@ -365,7 +365,7 @@ def test_handlers_de_voz_se_registran_antes_que_handler_de_texto(agent_cfg, mock
         mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
-        bot = TelegramBot(agent_cfg=agent_cfg, container=mock_container)
+        bot = TelegramBot(settings=agent_cfg, ports=mock_container)
 
     registered = [c.args[0] for c in mock_app.add_handler.call_args_list]
     # Índices donde aparece cada tipo de MessageHandler.

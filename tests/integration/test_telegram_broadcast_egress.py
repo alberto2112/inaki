@@ -33,18 +33,16 @@ def _make_agent_cfg(behavior: str = "mention") -> MagicMock:
     cfg.id = "agente_test"
     cfg.name = "Inaki Test"
     cfg.description = "Asistente de test"
-    cfg.channels = {
-        "telegram": {
-            "token": "fake-token",
-            "allowed_user_ids": [],
-            "reactions": False,
-            "allowed_chat_ids": [],
-            "broadcast": {
-                "behavior": behavior,
-                "bot_username": "inaki_test_bot",
-                "rate_limiter": 5,
-            },
-        }
+    cfg.telegram = {
+        "token": "fake-token",
+        "allowed_user_ids": [],
+        "reactions": False,
+        "allowed_chat_ids": [],
+        "broadcast": {
+            "behavior": behavior,
+            "bot_username": "inaki_test_bot",
+            "rate_limiter": 5,
+        },
     }
     return cfg
 
@@ -98,8 +96,8 @@ def bot_fixture(emit_mock):
         mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
 
         bot = TelegramBot(
-            agent_cfg=agent_cfg,
-            container=container,
+            settings=agent_cfg,
+            ports=container,
             broadcast_emitter=emitter,
             broadcast_receiver=None,
             rate_limiter=rate_limiter,
@@ -179,8 +177,8 @@ async def test_skip_marker_suprime_reply_y_emit(emit_mock):
         mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = MagicMock()
 
         bot = TelegramBot(
-            agent_cfg=agent_cfg,
-            container=container,
+            settings=agent_cfg,
+            ports=container,
             broadcast_emitter=emitter,
             broadcast_receiver=None,
         )
@@ -211,8 +209,8 @@ async def test_skip_marker_con_whitespace(emit_mock):
         mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = MagicMock()
 
         bot = TelegramBot(
-            agent_cfg=agent_cfg,
-            container=container,
+            settings=agent_cfg,
+            ports=container,
             broadcast_emitter=emitter,
             broadcast_receiver=None,
         )
@@ -245,8 +243,8 @@ async def test_skip_marker_con_preamble_o_postamble(emit_mock):
         mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = MagicMock()
 
         bot = TelegramBot(
-            agent_cfg=agent_cfg,
-            container=container,
+            settings=agent_cfg,
+            ports=container,
             broadcast_emitter=emitter,
             broadcast_receiver=None,
         )
@@ -292,8 +290,8 @@ async def test_sin_broadcast_emitter_no_falla():
         mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = MagicMock()
 
         bot = TelegramBot(
-            agent_cfg=agent_cfg,
-            container=container,
+            settings=agent_cfg,
+            ports=container,
             broadcast_emitter=None,
         )
 

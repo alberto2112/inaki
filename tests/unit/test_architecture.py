@@ -76,8 +76,6 @@ DEUDA_ADAPTERS_INFRA = frozenset(
         ("adapters/inbound/setup_tui/screens/_base.py", "infrastructure.config"),
         ("adapters/inbound/setup_tui/screens/agent_detail_page.py", "infrastructure.config"),
         ("adapters/inbound/setup_tui/screens/global_page.py", "infrastructure.config"),
-        ("adapters/inbound/telegram/bot.py", "infrastructure.config"),
-        ("adapters/inbound/telegram/bot.py", "infrastructure.container"),
         ("adapters/outbound/tools/delegate_tool.py", "infrastructure.container"),
     }
 )

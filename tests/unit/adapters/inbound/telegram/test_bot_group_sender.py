@@ -40,16 +40,14 @@ def agent_cfg_autonomous() -> MagicMock:
     cfg.id = "inaki"
     cfg.name = "Inaki"
     cfg.description = "Asistente"
-    cfg.channels = {
-        "telegram": {
-            "token": "dummy-token",
-            "allowed_user_ids": [],
-            "reactions": False,
-            "broadcast": {
-                "behavior": "autonomous",
-                "bot_username": "inaki_bot",
-            },
-        }
+    cfg.telegram = {
+        "token": "dummy-token",
+        "allowed_user_ids": [],
+        "reactions": False,
+        "broadcast": {
+            "behavior": "autonomous",
+            "bot_username": "inaki_bot",
+        },
     }
     return cfg
 
@@ -61,7 +59,7 @@ def _build_bot(agent_cfg, container):
         mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
-        return TelegramBot(agent_cfg=agent_cfg, container=container)
+        return TelegramBot(settings=agent_cfg, ports=container)
 
 
 def _human_update(
@@ -110,7 +108,7 @@ async def test_handle_group_message_snapshot_sender_humano(agent_cfg_autonomous,
 
     update = _human_update(chat_id=-100123, user_id=42, username="juan")
     with patch(
-        "adapters.inbound.telegram.bot.format_group_message", return_value="juan said: hola"
+        "adapters.inbound.telegram.group_flow.format_group_message", return_value="juan said: hola"
     ):
         await bot._handle_group_message(update, "hola", "supergroup")
 
@@ -140,7 +138,7 @@ async def test_handle_group_message_no_snapshot_si_remitente_es_bot(
 
     update = _human_update(chat_id=-100123, user_id=99, username="otro_bot")
     update.message.from_user.is_bot = True
-    with patch("adapters.inbound.telegram.bot.format_group_message", return_value="x"):
+    with patch("adapters.inbound.telegram.group_flow.format_group_message", return_value="x"):
         await bot._handle_group_message(update, "msg de bot", "supergroup")
 
     # El snapshot del bot NO sobrescribe el humano previo.
@@ -155,7 +153,7 @@ async def test_handle_group_message_ultimo_sobrescribe(agent_cfg_autonomous, moc
     bot._set_group_reaction = AsyncMock()
     bot._schedule_group_flush = MagicMock()
 
-    with patch("adapters.inbound.telegram.bot.format_group_message", return_value="x"):
+    with patch("adapters.inbound.telegram.group_flow.format_group_message", return_value="x"):
         await bot._handle_group_message(
             _human_update(chat_id=-100123, user_id=1, username="juan"), "1", "supergroup"
         )

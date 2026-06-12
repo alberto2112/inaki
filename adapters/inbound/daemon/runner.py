@@ -68,6 +68,7 @@ async def _run_admin_server(app_container, admin_cfg, servers: list) -> None:
 async def _run_telegram_bot(agent_cfg, container, app_container=None) -> None:
     """Arranca el bot de Telegram para un agente usando la API async nativa de PTB 21+."""
     from adapters.inbound.telegram.bot import TelegramBot
+    from infrastructure.container import build_telegram_bot_ports, build_telegram_bot_settings
 
     # Leer adapters de broadcast del container (wired en Phase 4 de AppContainer).
     broadcast_adapter = getattr(container, "broadcast_adapter", None)
@@ -76,8 +77,8 @@ async def _run_telegram_bot(agent_cfg, container, app_container=None) -> None:
 
     try:
         bot = TelegramBot(
-            agent_cfg,
-            container,
+            build_telegram_bot_settings(agent_cfg),
+            build_telegram_bot_ports(container),
             broadcast_emitter=broadcast_adapter,
             broadcast_receiver=broadcast_adapter,
             rate_limiter=rate_limiter,

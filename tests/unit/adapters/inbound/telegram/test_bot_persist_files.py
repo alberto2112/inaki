@@ -21,14 +21,14 @@ from core.domain.value_objects.telegram_file import TelegramFileRecord
 def _make_bot(*, has_repo: bool = True, voice_enabled: bool = True, tmp_path=None):
     agent_cfg = MagicMock()
     agent_cfg.id = "test-agent"
-    agent_cfg.channels.get.return_value = {
+    agent_cfg.telegram = {
         "token": "fake-token",
         "allowed_user_ids": [],
         "voice_enabled": voice_enabled,
     }
     agent_cfg.transcription.max_audio_mb = 10
     # workspace usado por _pre_download_media (descargas en <ws>/telegram/)
-    agent_cfg.workspace.path = str(tmp_path) if tmp_path else "/tmp/test-ws"
+    agent_cfg.workspace_path = str(tmp_path) if tmp_path else "/tmp/test-ws"
 
     container = MagicMock()
     container.run_agent = MagicMock()
@@ -200,9 +200,9 @@ async def test_handle_silent_media_persiste_metadata_correcta():
 
 
 async def test_album_con_caption_dispara_pipeline_en_privado(monkeypatch):
-    import adapters.inbound.telegram.bot as bot_mod
+    import adapters.inbound.telegram.media as media_mod
 
-    monkeypatch.setattr(bot_mod, "ALBUM_GATHER_DELAY_SEC", 0.0)
+    monkeypatch.setattr(media_mod, "ALBUM_GATHER_DELAY_SEC", 0.0)
 
     bot, container, repo = _make_bot()
     repo.query_recent.return_value = []  # álbum vacío en repo
@@ -236,10 +236,10 @@ async def test_album_sin_caption_solo_persiste_y_no_dispara_pipeline():
 
 async def test_album_con_caption_recopila_todas_las_fotos_persistidas(monkeypatch, tmp_path):
     """El handler espera, lee TODAS las fotos del media_group_id y las descarga."""
-    import adapters.inbound.telegram.bot as bot_mod
+    import adapters.inbound.telegram.media as media_mod
     from core.domain.value_objects.telegram_file import TelegramFileRecord
 
-    monkeypatch.setattr(bot_mod, "ALBUM_GATHER_DELAY_SEC", 0.0)
+    monkeypatch.setattr(media_mod, "ALBUM_GATHER_DELAY_SEC", 0.0)
 
     bot, container, repo = _make_bot(tmp_path=tmp_path)
 
@@ -425,7 +425,7 @@ async def test_pre_descarga_falla_no_rompe_pipeline(tmp_path):
 async def test_voice_disabled_persiste_pero_no_transcribe():
     """voice_enabled=False NO debe bloquear la persistencia del file_id."""
     bot, container, repo = _make_bot(voice_enabled=False)
-    bot._container.transcription = AsyncMock()  # no debería llamarse
+    bot._ports.transcription = AsyncMock()  # no debería llamarse
 
     update = MagicMock()
     update.effective_user.id = 42
@@ -457,7 +457,7 @@ async def test_voice_disabled_persiste_pero_no_transcribe():
     assert record.content_type == "audio"
     assert record.file_id == "VOZ"
     # NO transcribió ni respondió
-    bot._container.transcription.transcribe.assert_not_awaited()
+    bot._ports.transcription.transcribe.assert_not_awaited()
     msg.reply_text.assert_not_awaited()
 
 

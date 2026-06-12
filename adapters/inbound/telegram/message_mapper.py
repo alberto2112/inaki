@@ -443,3 +443,19 @@ def _render(tokens: list[Token]) -> str:
         i += 1
 
     return "".join(out)
+
+
+# Tipos de chat que Telegram considera "grupos" (no privados).
+_TIPOS_GRUPO = {"group", "supergroup", "channel"}
+
+
+def _safe_optional_str(val: object) -> str | None:
+    """Devuelve ``val`` solo si es ``str`` no vacío; en cualquier otro caso ``None``.
+
+    Filtra ``MagicMock`` (tests que stub ``update = MagicMock()`` no setean estos
+    campos), ``None`` y strings vacíos/blank. ``ChannelContext`` rechaza strings
+    vacíos vía validator — convertir a ``None`` acá evita el ValueError aguas abajo.
+    """
+    if isinstance(val, str) and val.strip():
+        return val
+    return None

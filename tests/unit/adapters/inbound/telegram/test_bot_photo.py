@@ -36,7 +36,7 @@ def _mk_agent_cfg(*, allowed_user_ids: list[int] | None = None) -> MagicMock:
         "reactions": True,
         "voice_enabled": False,  # deshabilitar voz para simplificar
     }
-    cfg.channels = {"telegram": tg}
+    cfg.telegram = tg
     cfg.transcription = None
     cfg.delegation = MagicMock()
     cfg.delegation.enabled = False
@@ -88,7 +88,7 @@ def _build_bot(agent_cfg, mock_container):
         mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
-        return TelegramBot(agent_cfg=agent_cfg, container=mock_container)
+        return TelegramBot(settings=agent_cfg, ports=mock_container)
 
 
 def _mk_photo_size(*, bytes_result: bytes = b"jpeg-data", file_size: int = 9999):
@@ -386,7 +386,7 @@ def test_bot_registra_handler_photo(agent_cfg, mock_container) -> None:
         mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
-        bot = TelegramBot(agent_cfg=agent_cfg, container=mock_container)
+        bot = TelegramBot(settings=agent_cfg, ports=mock_container)
 
     registered = [c.args[0] for c in mock_app.add_handler.call_args_list]
     photo_callbacks = [
@@ -546,7 +546,7 @@ def test_photo_handler_registrado_antes_que_texto(agent_cfg, mock_container) -> 
         mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
-        bot = TelegramBot(agent_cfg=agent_cfg, container=mock_container)
+        bot = TelegramBot(settings=agent_cfg, ports=mock_container)
 
     registered = [c.args[0] for c in mock_app.add_handler.call_args_list]
     text_indices = [
@@ -577,21 +577,19 @@ def _mk_agent_cfg_con_emit_photo(allowed_user_ids: list[int]) -> MagicMock:
     cfg.id = "agente_a"
     cfg.name = "Inaki"
     cfg.description = "Asistente"
-    cfg.channels = {
-        "telegram": {
-            "token": "dummy-token",
-            "allowed_user_ids": allowed_user_ids,
-            "reactions": True,
-            "voice_enabled": False,
-            "broadcast": {
-                "behavior": "mention",
-                "emit": {
-                    "assistant_response": True,
-                    "user_input_photo": True,
-                    "user_input_voice": False,
-                },
+    cfg.telegram = {
+        "token": "dummy-token",
+        "allowed_user_ids": allowed_user_ids,
+        "reactions": True,
+        "voice_enabled": False,
+        "broadcast": {
+            "behavior": "mention",
+            "emit": {
+                "assistant_response": True,
+                "user_input_photo": True,
+                "user_input_voice": False,
             },
-        }
+        },
     }
     cfg.transcription = None
     cfg.delegation = MagicMock()
@@ -608,7 +606,7 @@ async def test_handle_photo_grupo_dispara_emit_event_user_input_photo(mock_conta
         mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
-        bot = TelegramBot(agent_cfg=cfg, container=mock_container, broadcast_emitter=None)
+        bot = TelegramBot(settings=cfg, ports=mock_container, broadcast_emitter=None)
 
     # Spy sobre _emit_event para verificar argumentos sin depender del emitter real
     bot._emit_event = AsyncMock()
@@ -666,7 +664,7 @@ async def test_handle_photo_modo_bang_emite_user_input_photo_sin_assistant_respo
         mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
-        bot = TelegramBot(agent_cfg=cfg, container=container, broadcast_emitter=None)
+        bot = TelegramBot(settings=cfg, ports=container, broadcast_emitter=None)
 
     bot._emit_event = AsyncMock()
 

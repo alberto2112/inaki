@@ -29,17 +29,15 @@ def agent_cfg() -> MagicMock:
     cfg.id = "dev"
     cfg.name = "Inaki"
     cfg.description = "Asistente"
-    cfg.channels = {
-        "telegram": {
-            "token": "dummy-token",
-            "allowed_user_ids": [12345],
-            "reactions": False,
-            "broadcast": {
-                "behavior": "autonomous",
-                "rate_limiter": 5,
-                "rate_limiter_window": 60,
-            },
-        }
+    cfg.telegram = {
+        "token": "dummy-token",
+        "allowed_user_ids": [12345],
+        "reactions": False,
+        "broadcast": {
+            "behavior": "autonomous",
+            "rate_limiter": 5,
+            "rate_limiter_window": 60,
+        },
     }
     return cfg
 
@@ -57,8 +55,8 @@ def bot(agent_cfg, mock_container, rate_limiter):
         from adapters.inbound.telegram.bot import TelegramBot
 
         return TelegramBot(
-            agent_cfg=agent_cfg,
-            container=mock_container,
+            settings=agent_cfg,
+            ports=mock_container,
             rate_limiter=rate_limiter,
         )
 
@@ -263,8 +261,8 @@ async def test_sin_rate_limiter_responde_aviso(agent_cfg, mock_container):
         from adapters.inbound.telegram.bot import TelegramBot
 
         bot = TelegramBot(
-            agent_cfg=agent_cfg,
-            container=mock_container,
+            settings=agent_cfg,
+            ports=mock_container,
             rate_limiter=None,
         )
 

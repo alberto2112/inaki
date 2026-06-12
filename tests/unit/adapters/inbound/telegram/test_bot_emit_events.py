@@ -29,21 +29,19 @@ def _mk_agent_cfg(
     cfg.id = "agente_a"
     cfg.name = "Inaki"
     cfg.description = "Asistente"
-    cfg.channels = {
-        "telegram": {
-            "token": "dummy-token",
-            "allowed_user_ids": [],
-            "voice_enabled": True,
-            "broadcast": {
-                "behavior": "mention",
-                "rate_limiter": 5,
-                "emit": {
-                    "assistant_response": emit_assistant_response,
-                    "user_input_voice": emit_user_input_voice,
-                    "user_input_photo": emit_user_input_photo,
-                },
+    cfg.telegram = {
+        "token": "dummy-token",
+        "allowed_user_ids": [],
+        "voice_enabled": True,
+        "broadcast": {
+            "behavior": "mention",
+            "rate_limiter": 5,
+            "emit": {
+                "assistant_response": emit_assistant_response,
+                "user_input_voice": emit_user_input_voice,
+                "user_input_photo": emit_user_input_photo,
             },
-        }
+        },
     }
     cfg.transcription = MagicMock()
     cfg.transcription.max_audio_mb = 25
@@ -63,8 +61,8 @@ def _build_bot(agent_cfg, *, emitter=None):
         from adapters.inbound.telegram.bot import TelegramBot
 
         return TelegramBot(
-            agent_cfg=agent_cfg,
-            container=container,
+            settings=agent_cfg,
+            ports=container,
             broadcast_emitter=emitter,
         )
 

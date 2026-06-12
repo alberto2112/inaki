@@ -44,7 +44,7 @@ def _make_bot(run_agent_response: str = "ok") -> tuple[TelegramBot, MagicMock]:
     """Crea un TelegramBot con container mockeado. Devuelve (bot, container_mock)."""
     agent_cfg = MagicMock()
     agent_cfg.id = "test-agent"
-    agent_cfg.channels.get.return_value = {
+    agent_cfg.telegram = {
         "token": "fake-token",
         "allowed_user_ids": [],
         "reactions": False,

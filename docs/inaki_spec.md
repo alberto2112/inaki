@@ -141,14 +141,18 @@ inaki/                                  ← repository root
 │   │   │   ├── cli_runner.py          # Interactive terminal chat
 │   │   │   ├── scheduler_cli.py       # inaki scheduler ...
 │   │   │   ├── knowledge_cli.py       # inaki knowledge ...
-│   │   │   ├── setup_cli.py           # inaki setup ...
-│   │   │   └── setup_wizard.py        # Legacy Fernet wizard
+│   │   │   └── setup_cli.py           # inaki setup ...
 │   │   ├── setup_tui/                 # Offline Textual TUI (inaki setup)
 │   │   │   ├── app.py
 │   │   │   ├── screens/, widgets/, modals/, validators/
 │   │   │   └── domain/, _schema.py, _cambios.py
 │   │   ├── telegram/
-│   │   │   ├── bot.py                 # Per-agent TelegramBot (PTB 21+)
+│   │   │   ├── bot.py                 # Per-agent TelegramBot — wiring + turno privado
+│   │   │   ├── ports.py               # TelegramBotPorts/Settings VOs (contrato con core)
+│   │   │   ├── commands.py            # Mixin: comandos slash
+│   │   │   ├── media.py               # Mixin: fotos, voz, video, documentos
+│   │   │   ├── group_flow.py          # Mixin: routing de grupos + buffer-flush
+│   │   │   ├── broadcast.py           # Mixin: emisión/trigger broadcast LAN
 │   │   │   ├── message_mapper.py      # Update → Message, response → text
 │   │   │   └── tools/                 # Telegram-specific tools
 │   │   ├── rest/

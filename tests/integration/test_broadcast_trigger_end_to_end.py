@@ -47,17 +47,15 @@ def _agent_cfg(agent_id: str, bot_username: str) -> MagicMock:
     cfg.id = agent_id
     cfg.name = agent_id.capitalize()
     cfg.description = ""
-    cfg.channels = {
-        "telegram": {
-            "token": "fake-token",
-            "allowed_user_ids": [],
-            "reactions": False,
-            "broadcast": {
-                "behavior": "autonomous",
-                "bot_username": bot_username,
-                "rate_limiter": 5,
-            },
-        }
+    cfg.telegram = {
+        "token": "fake-token",
+        "allowed_user_ids": [],
+        "reactions": False,
+        "broadcast": {
+            "behavior": "autonomous",
+            "bot_username": bot_username,
+            "rate_limiter": 5,
+        },
     }
     return cfg
 
@@ -76,8 +74,8 @@ def _build_bot(agent_cfg, container, emitter, receiver, rate_limiter):
         mock_app.bot.send_message = AsyncMock()
         mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
         return TelegramBot(
-            agent_cfg=agent_cfg,
-            container=container,
+            settings=agent_cfg,
+            ports=container,
             broadcast_emitter=emitter,
             broadcast_receiver=receiver,
             rate_limiter=rate_limiter,
@@ -170,8 +168,8 @@ async def test_broadcast_trigger_dispara_pipeline_del_otro_bot(par_bots):
             break
 
     # B persistió el broadcast con prefijo
-    bot_b._container.run_agent.record_user_message.assert_awaited()
-    record_args = bot_b._container.run_agent.record_user_message.await_args
+    bot_b._ports.run_agent.record_user_message.assert_awaited()
+    record_args = bot_b._ports.run_agent.record_user_message.await_args
     assert "anacleto said:" in record_args.args[0]
     assert "che inaki, qué hora es?" in record_args.args[0]
     assert record_args.kwargs.get("channel") == "telegram"
@@ -179,8 +177,8 @@ async def test_broadcast_trigger_dispara_pipeline_del_otro_bot(par_bots):
 
     # B corrió el pipeline (sin user_input — se deriva del historial).
     # El scope viaja dentro del ctx — execute lo deriva de ahí.
-    bot_b._container.run_agent.execute.assert_awaited()
-    exec_ctx = bot_b._container.run_agent.execute.await_args.kwargs["ctx"]
+    bot_b._ports.run_agent.execute.assert_awaited()
+    exec_ctx = bot_b._ports.run_agent.execute.await_args.kwargs["ctx"]
     assert exec_ctx.channel_type == "telegram"
     assert exec_ctx.chat_id == CHAT_ID
 
@@ -207,11 +205,11 @@ async def test_broadcast_sin_mencion_igualmente_dispara(par_bots):
     await adapter_a.emit(msg)
     for _ in range(40):
         await asyncio.sleep(TICK)
-        if bot_b._container.run_agent.execute.await_count > 0:
+        if bot_b._ports.run_agent.execute.await_count > 0:
             break
 
     # B fire el pipeline aunque no haya mención explícita — el LLM decide
-    bot_b._container.run_agent.execute.assert_awaited()
+    bot_b._ports.run_agent.execute.assert_awaited()
     # A no reaccionó a su propio broadcast
     bot_a._app.bot.send_message.assert_not_awaited()
 
@@ -221,7 +219,7 @@ async def test_broadcast_skip_no_envia(par_bots):
     bot_a, bot_b, adapter_a, adapter_b = par_bots
 
     # Sobrescribimos la respuesta de B para que sea __SKIP__
-    bot_b._container.run_agent.execute.return_value = "__SKIP__"
+    bot_b._ports.run_agent.execute.return_value = "__SKIP__"
 
     msg = BroadcastMessage(
         timestamp=time.time(),
@@ -233,8 +231,8 @@ async def test_broadcast_skip_no_envia(par_bots):
     await adapter_a.emit(msg)
     for _ in range(30):
         await asyncio.sleep(TICK)
-        if bot_b._container.run_agent.execute.await_count > 0:
+        if bot_b._ports.run_agent.execute.await_count > 0:
             break
 
-    bot_b._container.run_agent.execute.assert_awaited()
+    bot_b._ports.run_agent.execute.assert_awaited()
     bot_b._app.bot.send_message.assert_not_awaited()

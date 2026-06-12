@@ -896,6 +896,12 @@ class GlobalConfig(BaseModel):
     """Configuración del pipeline de fotos. None = feature desactivada (no se carga nada)."""
     providers: dict[str, ProviderConfig] = {}
     """Registry top-level de proveedores — credenciales compartidas por vendor."""
+    tool_config: dict[str, dict[str, Any]] = {}
+    """Tool Config Protocol — bloques por namespace de tool (web_search, exchange, ...).
+    Genérico a propósito: las tools (incluidas las de ext/) validan su propio slice;
+    acá solo se almacena y mergea. Los valores sensibles van cifrados (prefijo enc:).
+    Escrito por YamlToolConfigStore cuando el usuario configura desde el chat.
+    Scope global único (no per-agent) — decisión V1 para uso doméstico."""
 
 
 # ---------------------------------------------------------------------------

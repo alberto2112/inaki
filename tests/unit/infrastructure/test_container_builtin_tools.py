@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
+from adapters.outbound.config_repository.yaml_tool_config_store import YamlToolConfigStore
 from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
 from adapters.outbound.tools.tool_registry import ToolRegistry
 from infrastructure.container import AgentContainer
@@ -53,6 +54,11 @@ def _make_container(tmp_path: Path) -> AgentContainer:
             path=str(tmp_path / "workspace"),
             containment="strict",
         ),
+    )
+    container._tool_config_store = YamlToolConfigStore(
+        secrets_path=tmp_path / "global.secrets.yaml",
+        key_path=tmp_path / "secret.key",
+        initial={},
     )
     # _global_config necesario para _build_knowledge_orchestrator
     container._global_config = SimpleNamespace(knowledge=None)  # type: ignore[assignment]

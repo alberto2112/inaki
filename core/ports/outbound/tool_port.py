@@ -29,6 +29,13 @@ class ITool(ABC):
     # `description` se embebe). 100% backward-compat.
     routing_keywords: str = ""
 
+    # Tool Config Protocol (ver core/ports/outbound/tool_config_port.py).
+    # Namespace del bloque tool_config.{namespace} en global.secrets.yaml.
+    # Si una tool lo declara (no-vacío), el container la instancia con el
+    # kwarg `config_store` (IToolConfigStore) — incluidas las tools de ext/.
+    # Default "" → la tool no usa el protocolo y se instancia sin args.
+    config_namespace: str = ""
+
     @abstractmethod
     async def execute(self, **kwargs) -> ToolResult: ...
 

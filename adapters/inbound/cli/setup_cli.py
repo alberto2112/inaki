@@ -5,7 +5,6 @@ Comandos disponibles:
 
   ``inaki setup``           → abre la TUI (alias de ``tui``)
   ``inaki setup tui``       → abre la TUI Textual de configuración offline
-  ``inaki setup secret-key`` → lanza el wizard Fernet (legacy, solo INAKI_SECRET_KEY)
   ``inaki setup webui``     → placeholder (no implementado todavía)
 """
 
@@ -32,14 +31,6 @@ def _setup_default(ctx: typer.Context) -> None:
 def tui() -> None:
     """Abre la TUI interactiva de configuración (offline — no requiere daemon)."""
     _lanzar_tui()
-
-
-@setup_app.command("secret-key")
-def secret_key() -> None:
-    """Wizard de clave Fernet (INAKI_SECRET_KEY). Legacy — solo gestiona secrets del .env."""
-    from adapters.inbound.cli.setup_wizard import run_setup
-
-    run_setup()
 
 
 @setup_app.command("webui")

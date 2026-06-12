@@ -533,6 +533,12 @@ user:
 #   openrouter: { api_key: "sk-or-..." }
 #   groq:       { api_key: "gsk_...",  base_url: "https://api.groq.com/openai/v1" }
 #   openai:     { api_key: "sk-..." }
+# tool_config:                   # Tool Config Protocol — config por namespace de tool.
+#   web_search:                  # Se puede escribir a mano, pero lo normal es decirle
+#     api_key: "tvly-..."        # la key al agente por chat (operation=configure);
+#   exchange:                    # los campos sensibles se cifran solos (enc:).
+#     username: "dominio\\user"
+#     password: "..."
 
 # config/agents/general.secrets.yaml:
 # channels:

@@ -27,6 +27,7 @@ from adapters.outbound.delegation.background_queue_adapter import (
 from adapters.outbound.history.sqlite_history_store import SQLiteHistoryStore
 from adapters.outbound.messaging.channel_outbound_registry import ChannelOutboundRegistry
 from adapters.outbound.memory.sqlite_memory_repo import SQLiteMemoryRepository
+from adapters.outbound.config_repository.yaml_tool_config_store import YamlToolConfigStore
 from adapters.outbound.scope_registry_adapter import InMemoryScopeRegistryAdapter
 from adapters.outbound.scheduler.builtin_tasks import (
     build_consolidate_memory_task,
@@ -55,6 +56,7 @@ from core.domain.services.rate_limiter import FixedWindowRateLimiter
 from core.domain.services.scheduler_service import SchedulerService
 from core.ports.outbound.memory_port import IMemoryRepository
 from core.ports.outbound.scope_registry_port import IScopeRegistry
+from core.ports.outbound.tool_config_port import IToolConfigStore
 from core.ports.outbound.transcription_port import ITranscriptionProvider
 from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
 from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
@@ -152,6 +154,7 @@ class AgentContainer:
         agent_config: AgentConfig,
         global_config: GlobalConfig,
         scope_registry: IScopeRegistry | None = None,
+        tool_config_store: IToolConfigStore | None = None,
     ) -> None:
         cfg = agent_config
         self.agent_config = agent_config
@@ -161,6 +164,15 @@ class AgentContainer:
         # idea normal es que AppContainer pase la MISMA instancia a todos los
         # agentes para que el state esté centralizado por scope.
         self.scope_registry: IScopeRegistry = scope_registry or InMemoryScopeRegistryAdapter()
+
+        # Tool Config Protocol — store compartido entre TODOS los agentes (lo
+        # construye AppContainer con el config_dir real). El fallback local es
+        # solo para tests directos / arranques sueltos.
+        self._tool_config_store: IToolConfigStore = tool_config_store or YamlToolConfigStore(
+            secrets_path=Path.home() / ".inaki" / "config" / "global.secrets.yaml",
+            key_path=Path.home() / ".inaki" / "secret.key",
+            initial=global_config.tool_config,
+        )
 
         # Stash global_config so wire_delegation can access delegation limits (task 5.1)
         self._global_config = global_config
@@ -534,7 +546,7 @@ class AgentContainer:
         self._tools.register(SearchMemoryTool(memory=self._memory, embedder=self._embedder))
         self._tools.register(DeleteMemoryTool(memory=self._memory))
         self._tools.register(UpdateMemoryTool(memory=self._memory, embedder=self._embedder))
-        self._tools.register(WebSearchTool())
+        self._tools.register(WebSearchTool(config_store=self._tool_config_store))
         self._tools.register(ReadFileTool(workspace=workspace_path, containment=ws_cfg.containment))
         self._tools.register(
             WriteFileTool(workspace=workspace_path, containment=ws_cfg.containment)
@@ -1076,10 +1088,15 @@ class AgentContainer:
                     )
                     continue
 
-                # Registrar tools
+                # Registrar tools. Tool Config Protocol: si la clase declara
+                # config_namespace, recibe el store como kwarg `config_store`
+                # (el contrato zero-arg se mantiene para el resto).
                 for tool_cls in getattr(module, "TOOLS", []) or []:
                     try:
-                        tool_instance = tool_cls()
+                        if getattr(tool_cls, "config_namespace", ""):
+                            tool_instance = tool_cls(config_store=self._tool_config_store)
+                        else:
+                            tool_instance = tool_cls()
                         # Verificar colisión de nombres antes de registrar
                         if tool_instance.name in self._tools._tools:
                             logger.warning(
@@ -1159,10 +1176,25 @@ class AgentContainer:
 class AppContainer:
     """Container raíz. Carga todos los agentes al arrancar."""
 
-    def __init__(self, global_config: GlobalConfig, registry: AgentRegistry) -> None:
+    def __init__(
+        self,
+        global_config: GlobalConfig,
+        registry: AgentRegistry,
+        config_dir: Path | None = None,
+    ) -> None:
         self.global_config = global_config
         self.registry = registry
         self.agents: dict[str, AgentContainer] = {}
+
+        # Tool Config Protocol — UN store para toda la app. Las escrituras del
+        # configure-desde-chat van a global.secrets.yaml del config_dir activo;
+        # la vista en memoria se actualiza al instante para todos los agentes.
+        resolved_config_dir = config_dir or Path.home() / ".inaki" / "config"
+        self.tool_config_store: IToolConfigStore = YamlToolConfigStore(
+            secrets_path=resolved_config_dir / "global.secrets.yaml",
+            key_path=resolved_config_dir.parent / "secret.key",
+            initial=global_config.tool_config,
+        )
 
         # Registro de bots de Telegram — el daemon runner los registra al arrancar
         self._telegram_bots: dict[str, object] = {}
@@ -1180,7 +1212,10 @@ class AppContainer:
         for agent_cfg in registry.list_all():
             try:
                 self.agents[agent_cfg.id] = AgentContainer(
-                    agent_cfg, global_config, scope_registry=self.scope_registry
+                    agent_cfg,
+                    global_config,
+                    scope_registry=self.scope_registry,
+                    tool_config_store=self.tool_config_store,
                 )
                 logger.info("AgentContainer creado para '%s'", agent_cfg.id)
             except Exception as exc:

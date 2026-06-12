@@ -24,13 +24,13 @@ No Makefile or CI. All commands are direct calls.
 
 Inaki is a multi-agent AI assistant following **strict hexagonal architecture**:
 
-- **`core/`** — Domain layer. Entities, ports (interfaces), use cases, domain services and errors. **NEVER imports from `adapters/` or `infrastructure/`**. Allowed imports: stdlib, `core/`, and the third-party allowlist `pydantic` + `croniter` (the rule `tests/unit/test_architecture.py` actually enforces).
+- **`core/`** — Domain layer. Entities, ports (interfaces), use cases, domain services and errors. **NEVER imports from `adapters/` or `infrastructure/`**. Allowed imports: stdlib, `core/`, and the third-party allowlist `pydantic` + `croniter` + `numpy` (numpy: 512-float face embeddings on Pi 5 — pure Python would be unviable).
 - **`adapters/`** — Concrete implementations of ports. Inbound (CLI, Telegram, REST, daemon) and outbound (LLM providers, tools, memory/history repos, embedding, skills, scheduler).
 - **`infrastructure/`** — Wiring and cross-cutting. `container.py` is the **single place** where all adapters are instantiated and injected into use cases.
 - **`ext/`** — User extensions auto-discovered via `manifest.py`.
 
 Dependency direction: `adapters → core ←  infrastructure`. Never reversed.
-Enforced by `tests/unit/test_architecture.py` — falla si `core/` importa `adapters/` o `infrastructure/` (incluye TYPE_CHECKING).
+Enforced by `tests/unit/test_architecture.py` (3 reglas, incluyen TYPE_CHECKING e imports locales): (1) `core/` no importa `adapters/` ni `infrastructure/`; (2) terceros en `core/` limitados al allowlist; (3) `adapters/` no importa `infrastructure/`. Las reglas 2 y 3 son **ratchet**: la deuda preexistente (auditoría 2026-06-11) está listada en las constantes `DEUDA_*` del test — violaciones nuevas fallan, y saldar deuda exige borrar la entrada de la lista (solo puede achicarse). NUNCA agregar entradas a `DEUDA_*`: resolver el acoplamiento (patrón Settings VOs).
 
 ### Key Wiring Rules
 
@@ -62,6 +62,7 @@ Secrets are YAML-only (no env vars). `*.secrets.yaml` files are gitignored.
 - **Embedding dimension is 384** (e5-small ONNX). Changing models requires dropping and recreating the memory DB — no auto-migration.
 - **All use cases** are classes with an async `execute()` method, injected via constructor in `container.py`.
 - **Tool results** must be `ToolResult` objects, never raw strings.
+- **Tool Config Protocol** — Tools que necesitan credenciales configurables por chat declaran `config_namespace` en la clase y reciben `config_store: IToolConfigStore` en el constructor (inyectado por `container.py`, también para tools de `ext/`). Persistencia en `tool_config.{namespace}` de `global.secrets.yaml`; sensibles cifrados `enc:` con `~/.inaki/secret.key`. NUNCA crear un YAML de config propio por tool — eso era el patrón legacy (4 islas eliminadas).
 - **Message roles** use `Role` enum (`Role.USER`, `Role.ASSISTANT`, etc.), not string literals.
 - **Workspace containment** — `read_file`, `write_file` y `patch_file` usan `workspace.containment` (strict/warn/off). `shell_exec` NO tiene contención — opera en cualquier path. Ver `docs/configuracion.md`.
 - **Tool loop** — LLM can call tools iteratively up to `tools.tool_call_max_iterations` (default 5) with a circuit breaker for repeated failures.
@@ -78,6 +79,36 @@ Secrets are YAML-only (no env vars). `*.secrets.yaml` files are gitignored.
 - **`message_face_metadata` side-table** — En `history.db`. Key por `history.id`. `ON DELETE CASCADE` limpia metadata cuando se borra el historial.
 
 ## Migration Notes
+
+### `tool-config-protocol`
+
+Se eliminaron las 4 islas de configuración per-tool (`web_search_config.yaml`,
+`exchange_config.yaml`, `fal_music_config.yaml`, `replicate_music_config.yaml` —
+cada una con su propio YAML + `CryptoService`), `CryptoService` mismo (Fernet +
+`~/.inaki/.env`, único habitante de `core/services/`), el wizard
+`inaki setup secret-key` (`setup_wizard.py`) y la dependencia `python-dotenv`.
+El wizard escribía la clave en `{repo}/.env` mientras `CryptoService` la leía
+de `~/.inaki/.env` — nunca fueron el mismo archivo.
+
+Reemplazo: **Tool Config Protocol** (`core/ports/outbound/tool_config_port.py`,
+`IToolConfigStore` sync). La función de configurar credenciales conversando con
+el agente (`operation=configure` / `show_config`) se PRESERVA — lo que cambia
+es el storage: todo va al bloque `tool_config.{namespace}` de
+`global.secrets.yaml` (sistema de 4 capas), con campos sensibles cifrados
+(Fernet, prefijo `enc:`, clave auto-generada en `~/.inaki/secret.key` 0600).
+`YamlToolConfigStore` (adapters — `cryptography` NO vuelve al core) escribe con
+ruamel preservando comentarios; los writes son efectivos al instante sin
+reiniciar. Una tool adopta el protocolo declarando `config_namespace` (class
+attr de `ITool`) — el container la instancia con `config_store=...` (aplica
+también a tools de `ext/`, cuyo contrato deja de ser estrictamente zero-arg).
+Ver `docs/configuracion.md` → "Tool Config Protocol".
+
+**Pasos del operador**: borrar los archivos huérfanos
+(`~/.inaki/config/{web_search,exchange,fal_music,replicate_music}_config.yaml`,
+`~/.inaki/.env`). Las credenciales viejas cifradas no son recuperables — basta
+decirle la key al agente por chat (ej: "configurá web_search con la key tvly-...")
+o escribirla a mano bajo `tool_config:` en `global.secrets.yaml`.
+`DEUDA_TERCEROS_CORE` en `test_architecture.py` quedó vacía y debe mantenerse así.
 
 ### `drop-per-agent-rest`
 

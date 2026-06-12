@@ -15,7 +15,6 @@ Modos de uso:
   inaki --remote URL --remote-key KEY chat → conectarse a daemon remoto con auth key explícita
   inaki setup                              → TUI interactiva de configuración (offline)
   inaki setup tui                          → ídem
-  inaki setup secret-key                   → wizard Fernet legacy (INAKI_SECRET_KEY)
   inaki setup webui                        → placeholder (no disponible aún)
   inaki tool <name> [--arg k=v ...]        → ejecuta una tool del agente sin LLM
   inaki tool --list                        → lista tools del agente
@@ -103,7 +102,7 @@ def _run_daemon(config_dir: Path, agents_dir: Path, global_config, registry) -> 
     logger = logging.getLogger(__name__)
     logger.info("Iniciando Inaki en modo daemon")
 
-    initial_container = AppContainer(global_config, registry)
+    initial_container = AppContainer(global_config, registry, config_dir=config_dir)
 
     # Crea ~/.inaki/users/{channel}/ por cada canal configurado en cualquier agente.
     # Lazy + idempotente: cero costo si ya existen. Habilita la convención per-user
@@ -115,7 +114,7 @@ def _run_daemon(config_dir: Path, agents_dir: Path, global_config, registry) -> 
     def bootstrap_fn():
         gc, reg = _bootstrap(config_dir, agents_dir)
         ensure_user_channel_dirs(Path.home(), reg.list_all())
-        return AppContainer(gc, reg), reg
+        return AppContainer(gc, reg, config_dir=config_dir), reg
 
     asyncio.run(run_daemon(bootstrap_fn, initial=(initial_container, registry)))
 

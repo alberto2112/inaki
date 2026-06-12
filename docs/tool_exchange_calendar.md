@@ -9,64 +9,59 @@ Allows reading, searching, creating, updating, and deleting Outlook calendar eve
 
 | File | Role |
 |------|------|
-| `adapters/outbound/tools/exchange_calendar_tool.py` | Facade: validation, schema, routing to the engine |
-| `adapters/outbound/tools/exchange_calendar/engine.py` | Core logic: accounts, operation dispatch |
-| `adapters/outbound/tools/exchange_calendar/config_store.py` | Credential persistence (`~/.config/inaki/exchange_config.yaml`) |
-| `adapters/outbound/tools/exchange_calendar/calendar_env.py` | `.env` loading, mailbox map resolution |
-| `adapters/outbound/tools/exchange_calendar/reader.py` | Read operations (read, search) |
-| `adapters/outbound/tools/exchange_calendar/writer.py` | Write operations (create, update, delete) |
-| `core/services/crypto_service.py` | Fernet symmetric encryption for the `password` field |
+| `ext/exchange_calendar/tools/exchange_calendar_tool.py` | Facade: validation, schema, routing to the engine |
+| `ext/exchange_calendar/tools/engine/engine.py` | Core logic: accounts, operation dispatch |
+| `ext/exchange_calendar/tools/engine/config_store.py` | Credential persistence — wrapper over the Tool Config Protocol |
+| `ext/exchange_calendar/tools/engine/calendar_env.py` | Env-var fallbacks, mailbox map resolution |
+| `ext/exchange_calendar/tools/engine/reader.py` | Read operations (read, search) |
+| `ext/exchange_calendar/tools/engine/writer.py` | Write operations (create, update, delete) |
+| `core/ports/outbound/tool_config_port.py` | `IToolConfigStore` — the Tool Config Protocol port |
 
 ---
 
 ## Configuration
 
-### First time — interactive wizard
-
-```bash
-python main.py setup
-```
-
-The wizard generates `INAKI_SECRET_KEY` (Fernet key) and writes it to `.env`.
-This key is used to encrypt the `password` field in the configuration file.
-
-> **Important:** store `INAKI_SECRET_KEY` in a safe place.
-> Without it you won't be able to decrypt the saved credentials.
+Credentials live in the `tool_config.exchange` block of
+`~/.inaki/config/global.secrets.yaml` via the **Tool Config Protocol**
+(see `docs/configuracion.md` → "Tool Config Protocol"). No wizard, no `.env`:
+the `password` field is encrypted at rest with the auto-generated key in
+`~/.inaki/secret.key`.
 
 ### Configuration from the chat
 
-Once the key is generated, the user can configure Exchange directly in the conversation:
+The user configures Exchange directly in the conversation:
 
 ```
 you > configure Exchange: user domain\alberto, password ****, server mail.company.com
 ```
 
-The LLM invokes `operation=configure` and the credentials are persisted in `~/.config/inaki/exchange_config.yaml`.
+The LLM invokes `operation=configure` and the credentials are persisted in
+`tool_config.exchange` (effective immediately, no restart needed).
 
-### Configuration file
+### Configuration block
 
-Location: `~/.config/inaki/exchange_config.yaml`
+Inside `~/.inaki/config/global.secrets.yaml`:
 
 ```yaml
-# Inaki — Exchange Calendar configuration
-# The password field is encrypted. Do not edit it manually.
-
-username: dominio\alberto
-password: "enc:gAAAAABh..."   # encrypted with Fernet
-mail: alberto@empresa.com
-ews_url: https://mail.empresa.com/EWS/Exchange.asmx
-timezone: Europe/Madrid
-
-calendars:
-  - aliases: [juan, juancho]
-    email: juan@empresa.com
+tool_config:
+  exchange:
+    username: dominio\alberto
+    password: "enc:gAAAAABh..."   # encrypted with Fernet
+    mail: alberto@empresa.com
+    ews_url: https://mail.empresa.com/EWS/Exchange.asmx
+    timezone: Europe/Madrid
+    calendars:
+      - aliases: [juan, juancho]
+        email: juan@empresa.com
 ```
 
 Only `password` is encrypted. Everything else is plain text and auditable.
 
 ### Fallback to environment variables
 
-If `~/.config/inaki/exchange_config.yaml` does not exist, the engine reads environment variables as a fallback (useful for development):
+If `tool_config.exchange` is empty, the engine reads process environment
+variables as a fallback (useful for development; `.env` files are no longer
+loaded):
 
 | Variable | Description |
 |----------|-------------|
@@ -79,25 +74,13 @@ If `~/.config/inaki/exchange_config.yaml` does not exist, the engine reads envir
 
 Priority: **config store > environment variables**.
 
-### Docker
-
-```dockerfile
-# Mount the user's configuration directory as a volume
--v ~/.config/inaki:/root/.config/inaki
-
-# Pass the encryption key via env
---env INAKI_SECRET_KEY=<your_key>
-```
-
-With this configuration the `exchange_config.yaml` file persists across container restarts and the encryption key is injected securely without including it in the image.
-
 ---
 
 ## Operations
 
 ### `configure` — save credentials
 
-Persists credentials in `~/.config/inaki/exchange_config.yaml`.
+Persists credentials in `tool_config.exchange` of `global.secrets.yaml`.
 Merges with existing configuration: only overwrites the fields that are provided.
 
 **Required parameters:** `username`, `password`, `mail`

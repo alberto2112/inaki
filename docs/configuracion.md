@@ -86,17 +86,6 @@ After saving any field, the TUI validates cross-references:
 If there's an issue, a warning notification is shown **but the change is preserved** —
 the TUI does not undo the save. The operator must correct the field in question.
 
-### Legacy Fernet wizard
-
-The interactive `INAKI_SECRET_KEY` (Fernet) wizard is accessible at:
-
-```bash
-inaki setup secret-key
-```
-
-**Do not confuse with `inaki setup`** — that command opens the TUI. The Fernet wizard is the
-legacy command that existed before the TUI and only manages `INAKI_SECRET_KEY` in the `.env`.
-
 ### Web interface (V2)
 
 ```bash
@@ -534,6 +523,43 @@ providers:
 
 An entry declared in `global.yaml` (e.g. with `base_url`) is completed with
 the `api_key` from this file — there is no need to repeat fields.
+
+### Tool Config Protocol — `tool_config:`
+
+Credentials for tools (builtin and `ext/`) live under the `tool_config:` block,
+one namespace per tool. **The user can configure them from any channel by just
+talking to the agent** — the tool exposes `operation=configure` and persists
+here via the protocol (`IToolConfigStore`); hand-editing the YAML works too.
+
+```yaml
+tool_config:
+  web_search:
+    api_key: "enc:gAAAA..."     # cifrada en reposo (Fernet, clave en ~/.inaki/secret.key)
+    search_depth: basic         # los campos no sensibles quedan en plano
+    max_results: 5
+  exchange:
+    username: "dominio\\alberto"
+    password: "enc:gAAAA..."
+    mail: alberto@empresa.com
+    ews_url: https://mail.empresa.com/EWS/Exchange.asmx
+    timezone: Europe/Madrid
+```
+
+How it works: a tool declares `config_namespace` (class attr) and the container
+injects the store at construction. `configure` writes take effect immediately
+(no restart) and survive restarts. Sensitive fields are encrypted at rest with
+the auto-generated key in `~/.inaki/secret.key` (0600) and shown masked by
+`show_config`. Threat model honesty: key and data share the disk — encryption
+protects against accidental YAML disclosure, not against an attacker with
+filesystem access. **Back up `secret.key`**: if it's lost, encrypted values are
+unrecoverable (the tool will simply ask you to configure again).
+
+Without credentials the tool still registers; the LLM receives a
+`CONFIGURATION REQUIRED` error instructing it to ask the user and call
+`configure` — that's the protocol's conversational UX.
+
+Current consumers: `web_search` (builtin), `exchange_calendar`/`exchange_mail`,
+`fal_music`, `replicate_music` (ext).
 
 ---
 
@@ -1000,8 +1026,7 @@ Default layout:
 ├── data/              # SQLite DBs (inaki.db, history.db, scheduler.db, embedding_cache.db)
 ├── models/            # ONNX models (e.g. e5-small/)
 ├── mem/               # Digest markdown — one file per scope (digest_{channel}_{chat_id}.md)
-├── ext/               # User extensions
-└── .env               # INAKI_SECRET_KEY
+└── ext/               # User extensions
 ```
 
 If you need to move storage to a different root (e.g. dedicated disk on Pi 5), pass

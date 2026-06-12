@@ -114,9 +114,6 @@ inaki/                                  ← repository root
 │   │       ├── outbound_sink_port.py  # IOutboundSink (response to channel)
 │   │       └── daemon_client_port.py  # IDaemonClient (CLI ↔ remote daemon)
 │   │
-│   ├── services/
-│   │   └── crypto_service.py          # CryptoService (Fernet, secrets)
-│   │
 │   └── use_cases/
 │       ├── run_agent.py               # RunAgentUseCase — one conversation turn
 │       ├── run_agent_one_shot.py      # RunAgentOneShotUseCase — turn without history

@@ -2,33 +2,25 @@
 
 Operations:
   - search       : ejecuta una búsqueda (operación por defecto)
-  - configure    : guarda api_key y defaults en ~/.inaki/config/web_search_config.yaml
+  - configure    : guarda api_key y defaults via Tool Config Protocol
   - show_config  : devuelve la configuración actual con api_key enmascarada
 
-La api_key se cifra en disco con CryptoService (Fernet). El resto de campos
-se almacenan en plano para que el YAML siga siendo legible por humanos.
-
-YAML layout example::
-
-    # Inaki — Web Search configuration
-    # El campo api_key está cifrado. No lo edites manualmente.
-
-    api_key: "enc:gAAAAABh..."
-    search_depth: basic
-    max_results: 5
+Primer consumidor del Tool Config Protocol (ver
+``core/ports/outbound/tool_config_port.py``): las credenciales se persisten
+en ``tool_config.web_search`` de ``global.secrets.yaml`` — el usuario puede
+pasarle la api_key al agente conversando, sin editar YAML a mano. La api_key
+se cifra en reposo (``enc:``); el resto de campos quedan en plano.
 """
 
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any
 
 import httpx
-import yaml
 
+from core.ports.outbound.tool_config_port import IToolConfigStore
 from core.ports.outbound.tool_port import ITool, ToolResult
-from core.services.crypto_service import CryptoService
 
 logger = logging.getLogger(__name__)
 
@@ -38,73 +30,6 @@ _DEFAULT_MAX_RESULTS = 5
 _HTTP_TIMEOUT = 20.0
 
 _SENSITIVE_FIELDS: frozenset[str] = frozenset({"api_key"})
-_CONFIG_FILENAME = "web_search_config.yaml"
-_CONFIG_HEADER = (
-    "# Inaki — Web Search configuration\n"
-    "# El campo api_key está cifrado. No lo edites manualmente.\n\n"
-)
-
-
-def _config_dir() -> Path:
-    config = Path.home() / ".inaki" / "config"
-    config.mkdir(parents=True, exist_ok=True)
-    return config
-
-
-class _WebSearchConfigStore:
-    """Reads and writes ``web_search_config.yaml`` with selective field encryption."""
-
-    def __init__(self, crypto: CryptoService) -> None:
-        self._crypto = crypto
-        self._path = _config_dir() / _CONFIG_FILENAME
-
-    def load(self) -> dict[str, Any]:
-        """Return config dict with sensitive fields decrypted. Empty dict if no file."""
-        if not self._path.exists():
-            return {}
-        with self._path.open("r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-        return self._decrypt_fields(data)
-
-    def save(self, data: dict[str, Any]) -> None:
-        """Encrypt sensitive fields and write YAML. Merges with existing config."""
-        current = self.load()
-        merged = {**current, **{k: v for k, v in data.items() if v not in (None, "")}}
-        to_write = self._encrypt_fields(merged)
-        with self._path.open("w", encoding="utf-8") as f:
-            f.write(_CONFIG_HEADER)
-            yaml.dump(to_write, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
-
-    def exists(self) -> bool:
-        return self._path.exists()
-
-    def masked(self) -> dict[str, Any]:
-        """Return config with sensitive fields masked. Reads raw file (no decryption)."""
-        if not self._path.exists():
-            return {}
-        with self._path.open("r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-        result = dict(data)
-        for field in _SENSITIVE_FIELDS:
-            if result.get(field):
-                result[field] = "***"
-        return result
-
-    def _encrypt_fields(self, data: dict[str, Any]) -> dict[str, Any]:
-        result = dict(data)
-        for field in _SENSITIVE_FIELDS:
-            val = result.get(field)
-            if val and isinstance(val, str) and not self._crypto.is_encrypted(val):
-                result[field] = self._crypto.encrypt(val)
-        return result
-
-    def _decrypt_fields(self, data: dict[str, Any]) -> dict[str, Any]:
-        result = dict(data)
-        for field in _SENSITIVE_FIELDS:
-            val = result.get(field)
-            if val and isinstance(val, str):
-                result[field] = self._crypto.decrypt(val)
-        return result
 
 
 class WebSearchTool(ITool):
@@ -128,6 +53,7 @@ class WebSearchTool(ITool):
         "what's happening with, recent events, find online, look up. "
         "cherche sur internet, recherche web, dernières nouvelles, prix actuel, quoi de neuf."
     )
+    config_namespace = "web_search"
     parameters_schema = {
         "type": "object",
         "properties": {
@@ -158,8 +84,8 @@ class WebSearchTool(ITool):
         "required": [],
     }
 
-    def __init__(self) -> None:
-        self._store = _WebSearchConfigStore(CryptoService())
+    def __init__(self, config_store: IToolConfigStore) -> None:
+        self._store = config_store
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         operation = str(kwargs.get("operation") or "search").strip().lower()
@@ -186,7 +112,7 @@ class WebSearchTool(ITool):
         if not query:
             return self._error("Falta el parámetro 'query'. No reintentes sin un query válido.")
 
-        config = self._store.load()
+        config = self._store.get(self.config_namespace)
         api_key = config.get("api_key")
         if not api_key:
             return self._error(
@@ -300,7 +226,7 @@ class WebSearchTool(ITool):
                 "No se proveyeron campos. Al menos 'api_key' es requerido para la primera configuración."
             )
 
-        self._store.save(data)
+        self._store.set(self.config_namespace, data, sensitive=_SENSITIVE_FIELDS)
 
         return ToolResult(
             tool_name=self.name,
@@ -313,7 +239,7 @@ class WebSearchTool(ITool):
         )
 
     def _do_show_config(self) -> ToolResult:
-        masked = self._store.masked()
+        masked = self._store.masked(self.config_namespace)
         if not masked:
             return ToolResult(
                 tool_name=self.name,

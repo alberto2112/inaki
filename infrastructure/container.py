@@ -10,7 +10,6 @@ Este es el ÚNICO lugar donde se instancian adaptadores concretos.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Literal
@@ -59,9 +58,7 @@ from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRep
 from adapters.outbound.embedding.sqlite_embedding_cache import SqliteEmbeddingCache
 from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
 from adapters.outbound.tools.tool_registry import ToolRegistry
-from core.domain.entities.task import ScheduledTask, TaskStatus
 from core.domain.errors import AgentNotFoundError, InakiError
-from core.domain.utils.cron import next_cron_occurrence, resolve_timezone
 from core.domain.services.broadcast_buffer import BroadcastBuffer
 from core.domain.value_objects.channel_context import current_channel_context
 from core.domain.services.rate_limiter import FixedWindowRateLimiter
@@ -94,6 +91,7 @@ from infrastructure.daemon_reloader import DaemonReloader
 from infrastructure.factories.embedding_factory import EmbeddingProviderFactory
 from infrastructure.factories.llm_factory import LLMProviderFactory
 from infrastructure.factories.transcription_factory import TranscriptionProviderFactory
+from infrastructure.scheduler_reconciler import SchedulerReconciler
 
 logger = logging.getLogger(__name__)
 
@@ -1341,6 +1339,12 @@ class AppContainer:
             on_mutation=self._on_scheduler_mutation,
             max_active_tasks=scheduler_cfg.max_tasks_per_agent,
         )
+        # Reconcilia las tareas builtin contra la config en startup(). El *cómo*
+        # (seed/update/reset + recompute next_run en tz del usuario) vive en el
+        # colaborador; el *qué* (qué builtin, qué agente) lo deciden los wrappers.
+        self._scheduler_reconciler = SchedulerReconciler(
+            self.scheduler_repo, global_config.user.timezone
+        )
         telegram_sink = TelegramSink(get_telegram_bot=self._get_telegram_bot)
         sink_factory = SinkFactory(get_telegram_bot=self._get_telegram_bot)
         channel_router = ChannelRouter(
@@ -1658,75 +1662,8 @@ class AppContainer:
     def _on_scheduler_mutation(self) -> None:
         self.scheduler_service.invalidate()
 
-    async def _reconcile_builtin_task(self, target: ScheduledTask) -> None:
-        """
-        Garantiza que una tarea builtin en la DB refleja la config actual:
-          - no existe → seed con schedule de config + next_run computado
-          - schedule cambió en config → update + recompute next_run
-          - status = FAILED (arrastre de corridas viejas rotas) → reset a pending
-          - next_run NULL → recompute
-
-        El cron se evalúa SIEMPRE en la timezone del usuario via el helper
-        central (`core.domain.utils.cron`), igual que el repo y el service.
-        """
-        await self.scheduler_repo.ensure_schema()
-        existing = await self.scheduler_repo.get_task(target.id)
-
-        if existing is None:
-            # seed_builtin computa next_run si es recurrente y viene None
-            await self.scheduler_repo.seed_builtin(target)
-            logger.info("Tarea builtin %s sembrada con schedule '%s'", target.name, target.schedule)
-            return
-
-        cron_tz = resolve_timezone(self.global_config.user.timezone)
-        now = datetime.now(timezone.utc)
-        needs_save = False
-        new_schedule = existing.schedule
-        new_next_run = existing.next_run
-        new_status = existing.status
-        new_retry = existing.retry_count
-
-        if existing.schedule != target.schedule:
-            new_schedule = target.schedule
-            new_next_run = next_cron_occurrence(new_schedule, cron_tz, after=now)
-            logger.info(
-                "%s: schedule actualizado '%s' → '%s'",
-                target.name,
-                existing.schedule,
-                target.schedule,
-            )
-            needs_save = True
-
-        if new_status == TaskStatus.FAILED:
-            new_status = TaskStatus.PENDING
-            new_retry = 0
-            if new_next_run is None or new_next_run <= now:
-                new_next_run = next_cron_occurrence(new_schedule, cron_tz, after=now)
-            logger.info(
-                "%s: estado FAILED reseteado a PENDING (next_run=%s)",
-                target.name,
-                new_next_run,
-            )
-            needs_save = True
-
-        if new_next_run is None:
-            new_next_run = next_cron_occurrence(new_schedule, cron_tz, after=now)
-            logger.info("%s: next_run era NULL → recomputado a %s", target.name, new_next_run)
-            needs_save = True
-
-        if needs_save:
-            updated = existing.model_copy(
-                update={
-                    "schedule": new_schedule,
-                    "next_run": new_next_run,
-                    "status": new_status,
-                    "retry_count": new_retry,
-                }
-            )
-            await self.scheduler_repo.save_task(updated)
-
     async def _reconcile_consolidate_memory_task(self) -> None:
-        await self._reconcile_builtin_task(
+        await self._scheduler_reconciler.reconcile_builtin_task(
             build_consolidate_memory_task(self.global_config.memory.schedule)
         )
 
@@ -1747,7 +1684,7 @@ class AppContainer:
             logger.warning("face_dedup_nightly: no hay agentes con photos wired — omitido")
             return
 
-        await self._reconcile_builtin_task(
+        await self._scheduler_reconciler.reconcile_builtin_task(
             build_face_dedup_task(photos_cfg.dedup.schedule, agent_id)
         )
 

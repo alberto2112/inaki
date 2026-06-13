@@ -17,13 +17,13 @@ from adapters.inbound.rest.admin.routers.chat import router as chat_router
 from adapters.inbound.rest.admin.routers.tools import router as tools_router
 
 if TYPE_CHECKING:
-    from infrastructure.container import AppContainer
+    from adapters.inbound.rest.admin.ports import AdminAppContainer
 
 logger = logging.getLogger(__name__)
 
 
 def create_admin_app(
-    app_container: "AppContainer",
+    app_container: "AdminAppContainer",
     admin_auth_key: str | None,
 ) -> FastAPI:
     """Crea la instancia FastAPI del admin server."""

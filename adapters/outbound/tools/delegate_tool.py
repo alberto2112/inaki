@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Protocol
 
 from core.domain.errors import ToolLoopMaxIterationsError
 from core.domain.value_objects.delegation_result import DelegationResult
@@ -32,10 +32,39 @@ from core.ports.outbound.tool_port import ITool, ToolResult
 from core.use_cases._result_parser import parse_delegation_result
 
 if TYPE_CHECKING:
+    from core.domain.value_objects.channel_context import ChannelContext
     from core.ports.outbound.background_delegation_port import IBackgroundDelegationQueue
-    from infrastructure.container import AgentContainer
+    from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 
 logger = logging.getLogger(__name__)
+
+
+# Interfaces estructurales que `delegate` necesita de los containers — declaradas
+# acá (el consumidor define lo que requiere) para no acoplar el tool a
+# `infrastructure.container.AgentContainer`. El `AgentContainer` real las
+# satisface por duck-typing; la dirección hexagonal queda intacta
+# (adapters NO importa infrastructure).
+class _HasSystemPrompt(Protocol):
+    system_prompt: str
+
+
+class DelegationTarget(Protocol):
+    """Container destino: ejecutar one-shot + leer el system_prompt del sub-agente.
+
+    ``agent_config`` es read-only (``@property``): el concreto ``AgentConfig`` es
+    un subtipo de ``_HasSystemPrompt`` y un miembro mutable sería invariante.
+    """
+
+    run_agent_one_shot: RunAgentOneShotUseCase
+
+    @property
+    def agent_config(self) -> _HasSystemPrompt: ...
+
+
+class DelegationCaller(Protocol):
+    """Container llamador: el contexto del turno en curso para resolver el scope."""
+
+    def get_channel_context(self) -> ChannelContext | None: ...
 
 # ---------------------------------------------------------------------------
 # Result-format footer — task 6.2
@@ -127,11 +156,11 @@ class DelegateTool(ITool):
         self,
         *,
         allowed_targets: list[str],
-        get_agent_container: Callable[[str], "AgentContainer | None"],
+        get_agent_container: Callable[[str], "DelegationTarget | None"],
         max_iterations_per_sub: int,
         timeout_seconds: int,
         caller_agent_id: str,
-        caller_container: "AgentContainer",
+        caller_container: "DelegationCaller",
         queue: "IBackgroundDelegationQueue | None" = None,
     ) -> None:
         """

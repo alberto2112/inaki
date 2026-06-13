@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING
 from fastapi import HTTPException, Request
 
 if TYPE_CHECKING:
-    from infrastructure.container import AgentContainer
+    from adapters.inbound.rest.admin.ports import AdminAgentContainer
 
 
-def resolver_agente(request: Request, agent_id: str) -> "AgentContainer":
+def resolver_agente(request: Request, agent_id: str) -> "AdminAgentContainer":
     """Resuelve el AgentContainer para el agent_id dado o levanta 404."""
     app_container = request.app.state.app_container
     if agent_id not in app_container.agents:

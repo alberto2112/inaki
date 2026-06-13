@@ -15,7 +15,8 @@ import pytest
 
 from core.domain.entities.background_task import BackgroundTaskView
 from core.domain.value_objects.llm_response import LLMResponse
-from core.use_cases.run_agent import RunAgentUseCase, _render_in_flight_section
+from core.use_cases._turn_pipeline import render_in_flight_section
+from core.use_cases.run_agent import RunAgentUseCase
 from infrastructure.container import build_run_agent_settings
 
 
@@ -37,18 +38,18 @@ def _view(
 
 
 # ---------------------------------------------------------------------------
-# Pure function — `_render_in_flight_section`
+# Pure function — `render_in_flight_section`
 # ---------------------------------------------------------------------------
 
 
 class TestRenderInFlightSection:
     def test_seccion_arranca_con_heading_en_ingles(self) -> None:
-        out = _render_in_flight_section([_view()])
+        out = render_in_flight_section([_view()])
 
         assert out.startswith("## In-flight background delegations")
 
     def test_bullet_incluye_id_target_elapsed_y_preview(self) -> None:
-        out = _render_in_flight_section(
+        out = render_in_flight_section(
             [
                 _view(id="bg-7", target="researcher", preview="averiguá saldo", elapsed=32),
             ]
@@ -60,7 +61,7 @@ class TestRenderInFlightSection:
 
     def test_multiple_tasks_se_listan_como_bullets_separados(self) -> None:
         """Triangulación: el formato escala a N tasks."""
-        out = _render_in_flight_section(
+        out = render_in_flight_section(
             [
                 _view(id="bg-1", target="researcher", preview="a", elapsed=10),
                 _view(id="bg-2", target="coder", preview="b", elapsed=3),
@@ -72,7 +73,7 @@ class TestRenderInFlightSection:
 
     def test_instruccion_explica_el_marker(self) -> None:
         """El LLM debe entender qué significa recibir un mensaje `[bg-N] ...`."""
-        out = _render_in_flight_section([_view()])
+        out = render_in_flight_section([_view()])
 
         assert "`[bg-N] ...`" in out
         assert "NOT user input" in out

@@ -20,14 +20,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from datetime import datetime, timezone
-from core.domain.entities.background_task import BackgroundTaskView
 from core.domain.entities.message import Message, Role
 from core.domain.entities.skill import Skill
 from core.domain.errors import ToolLoopMaxIterationsError
 from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
-from core.domain.services.prepend_timestamps import prepend_timestamps
-from core.domain.services.sticky_selector import apply_sticky
 from core.domain.value_objects.agent_context import AgentContext
 from core.domain.value_objects.agent_info import AgentInfoDTO
 from core.domain.value_objects.channel_context import (
@@ -46,133 +42,20 @@ from core.ports.outbound.memory_port import IMemoryRepository
 from core.ports.outbound.skill_port import ISkillRepository
 from core.ports.outbound.tool_port import IToolExecutor
 from core.use_cases._tool_loop import run_tool_loop
+from core.use_cases._turn_pipeline import (
+    INFLIGHT_CLARIFICATIONS_SECTION,
+    assemble_turn_messages,
+    extract_trailing_user_batch,
+    prefetch_knowledge,
+    render_in_flight_section,
+    run_semantic_routing,
+    should_bypass_routing_for_short_input,
+    warn_if_token_budget_exceeded,
+    write_debug_phase2,
+)
 from core.domain.value_objects.agent_settings import RunAgentSettings
 
 logger = logging.getLogger(__name__)
-
-
-def _extract_trailing_user_batch(history: list[Message]) -> str:
-    """Extrae los `role=user` consecutivos al final del historial, concatenados con `\\n`.
-
-    Representa "lo que el usuario (o los usuarios/bots de un grupo) acaban de decir
-    desde el último turno del assistant". Vacío si no hay nada al final.
-    """
-    trailing: list[str] = []
-    for msg in reversed(history):
-        if msg.role == Role.USER:
-            trailing.append(msg.content)
-        else:
-            break
-    trailing.reverse()
-    return "\n".join(trailing)
-
-
-def _coalesce_consecutive_same_role(messages: list[Message]) -> list[Message]:
-    """Junta mensajes consecutivos con el mismo rol en uno solo, content joined con `\\n`.
-
-    Necesario cuando el historial puede contener múltiples `role=user` seguidos
-    (caso del buffer de grupo): muchos providers de LLM exigen alternación estricta
-    user/assistant. Solo coalesce mensajes "limpios" — preserva intactos los que
-    tengan `tool_calls` o `tool_call_id` (semántica de tool loop).
-    """
-    if not messages:
-        return []
-    result: list[Message] = [messages[0]]
-    for msg in messages[1:]:
-        prev = result[-1]
-        if (
-            msg.role == prev.role
-            and msg.tool_calls is None
-            and msg.tool_call_id is None
-            and prev.tool_calls is None
-            and prev.tool_call_id is None
-        ):
-            result[-1] = Message(
-                role=prev.role,
-                content=prev.content + "\n" + msg.content,
-                timestamp=prev.timestamp,
-            )
-        else:
-            result.append(msg)
-    return result
-
-
-# Texto que se inyecta como sección del system prompt para que el LLM sepa
-# interpretar mensajes role=user que aparezcan EN MEDIO de un tool loop como
-# aclaraciones/correcciones/aborts del trabajo en curso (feature
-# in-flight-message-injection). En INGLÉS por convención del proyecto
-# (system-prompts-language).
-_INFLIGHT_CLARIFICATIONS_SECTION = (
-    "## In-flight user clarifications\n\n"
-    "While you are working through tool calls, the user may send additional "
-    "messages on the same conversation. These messages will appear as new "
-    "`role=user` entries interleaved with your tool results — they are NOT a "
-    "new conversation turn.\n\n"
-    "Treat them as clarifications, corrections, additional constraints, or "
-    "abort signals for the work you are currently doing. Incorporate them into "
-    "the in-progress task without restarting completed steps when possible. "
-    "If the user clearly asks you to stop or change direction, abandon the "
-    "current branch and follow the new instruction. Respond once when the "
-    "combined task is complete — do not send a separate reply per injected "
-    "message."
-)
-
-
-def _render_in_flight_section(snap: list[BackgroundTaskView]) -> str:
-    """Construye la sección del system prompt que lista delegaciones in-flight.
-
-    Texto en INGLÉS por convención del proyecto: todo lo que va al LLM va en
-    inglés, aunque el resto del codebase esté en español
-    (``convention/system-prompts-language``). El prompt_preview de cada bullet
-    se preserva verbatim (puede venir en español del agente padre).
-
-    Pure function: no side effects, deterministic por input.
-    """
-    bullets = "\n".join(
-        f'- {v.id} → {v.target_agent_id} | status: {v.status} | started {v.elapsed_seconds}s ago | "{v.prompt_preview}"'
-        for v in snap
-    )
-    return (
-        "## In-flight background delegations\n\n"
-        "You have one or more delegations launched via `delegate(... wait=false)` running in\n"
-        "the background. When they finish, you will receive a message starting with `[bg-N] ...`.\n"
-        "That message is NOT user input — it is the result of YOUR own delegation. Process it\n"
-        "directly: no greetings, no preambles. A `[bg-N] failed: ...` message means that\n"
-        "delegation errored — report the failure to the user, do NOT keep waiting for it.\n\n"
-        "If the user asks how a delegation is going, ANSWER FROM THE LIST BELOW — it is your\n"
-        "live source of truth. State the task_id, its status, and how long it has been running.\n"
-        "`queued` = waiting for a free slot, `running` = the child agent is working now. Never\n"
-        "say you don't know: the data is right here. A delegation that finished (success or\n"
-        "failure) is NOT in this list — its result already arrived as a `[bg-N] ...` message,\n"
-        "so check the conversation for it instead.\n\n"
-        "Do NOT re-launch a task that is already `queued` or `running` below — that would\n"
-        "duplicate the work. Wait for its `[bg-N]` result first.\n\n"
-        "Currently in flight:\n"
-        f"{bullets}"
-    )
-
-
-def _should_bypass_routing_for_short_input(
-    *,
-    user_input: str,
-    min_words_threshold: int,
-    prev_state: ConversationState,
-) -> bool:
-    """Decide si el turno debe saltear el embed + re-selección de semantic routing.
-
-    Se skipea cuando todas estas condiciones se cumplen:
-      - el threshold está activado (``> 0``),
-      - el input tiene MENOS palabras que el threshold,
-      - existe alguna selección sticky previa (skills o tools) de la cual heredar.
-
-    Si no hay sticky previo (primer turno o TTL ya expiró) el routing corre normal,
-    aunque el input sea corto — no hay contexto del cual heredar.
-    """
-    if min_words_threshold <= 0:
-        return False
-    if len(user_input.split()) >= min_words_threshold:
-        return False
-    return bool(prev_state.sticky_skills or prev_state.sticky_tools)
 
 
 @dataclass
@@ -506,7 +389,13 @@ class RunAgentUseCase:
         ephemeral: bool,
         skip_marker: str | None,
     ) -> str:
-        """Cuerpo del turno. ``channel``/``chat_id`` llegan ya normalizados por ``execute``."""
+        """Cuerpo del turno. ``channel``/``chat_id`` llegan ya normalizados por ``execute``.
+
+        Orquestador puro: encadena las fases de ``_turn_pipeline`` (routing,
+        knowledge, ensamblado de mensajes) y el ``run_tool_loop``, reteniendo
+        acá solo lo que toca estado del use case (historial, persistencia,
+        sticky state, debug de foto).
+        """
         agent_id = self._settings.agent_id
 
         # Snapshot antes del primer await para evitar carrera con flushes concurrentes
@@ -520,13 +409,13 @@ class RunAgentUseCase:
         if self._background_queue is not None:
             inflight_snap = self._background_queue.snapshot_inflight(agent_id)
             if inflight_snap:
-                extra_sections_snapshot.append(_render_in_flight_section(inflight_snap))
+                extra_sections_snapshot.append(render_in_flight_section(inflight_snap))
 
         # Sección estática que le explica al LLM cómo interpretar mensajes
         # role=user que aparezcan en medio del tool loop (in-flight-message-injection).
         # Siempre presente: si nunca aparece un mensaje mid-loop, el LLM
         # ignora la guidance sin costo. ~100 palabras.
-        extra_sections_snapshot.append(_INFLIGHT_CLARIFICATIONS_SECTION)
+        extra_sections_snapshot.append(INFLIGHT_CLARIFICATIONS_SECTION)
 
         # Aislar historial por (channel, chat_id) salvo que merge_chats esté activo.
         # Sin filtro, el LLM recibiría mensajes de otros chats del mismo agente
@@ -542,7 +431,7 @@ class RunAgentUseCase:
         if user_input is not None:
             query: str = user_input
         else:
-            query = _extract_trailing_user_batch(history)
+            query = extract_trailing_user_batch(history)
             if not query:
                 logger.warning(
                     "execute() llamado sin user_input pero el historial no tiene "
@@ -554,128 +443,32 @@ class RunAgentUseCase:
                 return ""
 
         digest_text = self._read_digest(channel=channel, chat_id=chat_id)
-        all_skills = await self._skills.list_all()
-        all_schemas = self._tools.get_schemas()
-        skills_routing_active = len(all_skills) > self._settings.skills_min_skills
-        tools_routing_active = (
-            tools_override is None and len(all_schemas) > self._settings.tools_min_tools
-        )
-        retrieved_skills: list[Skill] = all_skills
-        tool_schemas: list[dict] = tools_override if tools_override is not None else all_schemas
-
         prev_state = await self._history.load_state(agent_id, channel=channel, chat_id=chat_id)
-        new_sticky_skills = dict(prev_state.sticky_skills)
-        new_sticky_tools = dict(prev_state.sticky_tools)
-        state_dirty = False
 
-        routing_bypass = _should_bypass_routing_for_short_input(
-            user_input=query,
-            min_words_threshold=self._settings.min_words_threshold,
+        routing = await run_semantic_routing(
+            query=query,
+            tools_override=tools_override,
             prev_state=prev_state,
+            settings=self._settings,
+            embedder=self._embedder,
+            skills=self._skills,
+            tools=self._tools,
         )
-
-        # query_vec se calcula como máximo una vez por turno y se reutiliza
-        # tanto para semantic routing como para knowledge pre-fetch.
-        query_vec: list[float] | None = None
-
-        if routing_bypass:
-            # Input corto con selección sticky previa → heredar intacta.
-            # No se calcula embedding, no se toca el TTL, no se persiste estado.
-            if skills_routing_active and prev_state.sticky_skills:
-                skills_by_id = {s.id: s for s in all_skills}
-                retrieved_skills = [
-                    skills_by_id[i] for i in prev_state.sticky_skills if i in skills_by_id
-                ]
-            if tools_routing_active and prev_state.sticky_tools:
-                schemas_by_name = {sch["function"]["name"]: sch for sch in all_schemas}
-                tool_schemas = [
-                    schemas_by_name[n] for n in prev_state.sticky_tools if n in schemas_by_name
-                ]
-            logger.info(
-                "[routing] short-input bypass (agent=%s words=%d threshold=%d sticky_skills=%d sticky_tools=%d)",
-                agent_id,
-                len(query.split()),
-                self._settings.min_words_threshold,
-                len(prev_state.sticky_skills),
-                len(prev_state.sticky_tools),
-            )
-        elif skills_routing_active or tools_routing_active:
-            query_vec = await self._embedder.embed_query(query)
-            if skills_routing_active:
-                routing_skills = await self._skills.retrieve(
-                    query_vec,
-                    top_k=self._settings.skills_top_k,
-                    min_score=self._settings.skills_min_score,
-                )
-                routing_ids = {s.id for s in routing_skills}
-                active_ids, new_sticky_skills = apply_sticky(
-                    routing_ids, prev_state.sticky_skills, self._settings.skills_sticky_ttl
-                )
-                skills_by_id = {s.id: s for s in all_skills}
-                retrieved_skills = [skills_by_id[i] for i in active_ids if i in skills_by_id]
-                state_dirty = True
-            if tools_routing_active:
-                routing_schemas = await self._tools.get_schemas_relevant(
-                    query_vec,
-                    top_k=self._settings.tools_top_k,
-                    min_score=self._settings.tools_min_score,
-                )
-                routing_names = {sch["function"]["name"] for sch in routing_schemas}
-                active_names, new_sticky_tools = apply_sticky(
-                    routing_names, prev_state.sticky_tools, self._settings.tools_sticky_ttl
-                )
-                schemas_by_name = {sch["function"]["name"]: sch for sch in all_schemas}
-                tool_schemas = [schemas_by_name[n] for n in active_names if n in schemas_by_name]
-                state_dirty = True
-
-        # Pre-fetch de knowledge: se ejecuta post-routing, reutilizando query_vec si ya fue
-        # calculado. Se saltea si el bypass está activo (misma condición que routing bypass).
-        from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
-
-        knowledge_chunks: list[KnowledgeChunk] = []
-        if (
-            not routing_bypass
-            and self._knowledge_orchestrator is not None
-            and self._knowledge_orchestrator.pre_fetch_enabled
-        ):
-            if query_vec is None:
-                # Routing no corrió pero hay orquestrador → calcular embedding ahora
-                query_vec = await self._embedder.embed_query(query)
-            knowledge_chunks = await self._knowledge_orchestrator.retrieve_all(
-                query_vec=query_vec,
-                top_k=self._knowledge_orchestrator.default_top_k_per_source,
-                min_score=self._knowledge_orchestrator.default_min_score,
-            )
-            logger.debug(
-                "[knowledge] pre-fetch completado (agent=%s chunks=%d)",
-                agent_id,
-                len(knowledge_chunks),
-            )
-
-        # Verificación de presupuesto de tokens (heurística: len(texto) / 4).
-        # El threshold se almacena en el orquestrador para evitar pasar GlobalConfig aquí.
-        if self._knowledge_orchestrator is not None:
-            threshold = self._knowledge_orchestrator.token_budget_threshold
-            if threshold > 0:
-                chunks_tokens = sum(len(c.content) // 4 for c in knowledge_chunks)
-                digest_tokens = len(digest_text) // 4
-                skills_tokens = sum(
-                    len(getattr(s, "instructions", "") or "") // 4 for s in retrieved_skills
-                )
-                total_estimado = chunks_tokens + digest_tokens + skills_tokens
-
-                if total_estimado > threshold:
-                    logger.warning(
-                        "[knowledge] presupuesto de tokens superado "
-                        "(agent=%s total_estimado=%d threshold=%d "
-                        "chunks_tokens=%d digest_tokens=%d skills_tokens=%d)",
-                        agent_id,
-                        total_estimado,
-                        threshold,
-                        chunks_tokens,
-                        digest_tokens,
-                        skills_tokens,
-                    )
+        knowledge_chunks, _ = await prefetch_knowledge(
+            routing_bypass=routing.routing_bypass,
+            orchestrator=self._knowledge_orchestrator,
+            embedder=self._embedder,
+            query=query,
+            query_vec=routing.query_vec,
+            agent_id=agent_id,
+        )
+        warn_if_token_budget_exceeded(
+            orchestrator=self._knowledge_orchestrator,
+            knowledge_chunks=knowledge_chunks,
+            digest_text=digest_text,
+            retrieved_skills=routing.retrieved_skills,
+            agent_id=agent_id,
+        )
 
         user_context = self._read_user_context(ctx)
         sender_name, sender_username, sender_first_name, sender_last_name = self._snapshot_sender(
@@ -685,7 +478,7 @@ class RunAgentUseCase:
             agent_id=agent_id,
             user_context=user_context,
             memory_digest=digest_text,
-            skills=retrieved_skills,
+            skills=routing.retrieved_skills,
             timezone=self._user_timezone,
             workspace_root=self._settings.workspace_root or None,
             channel=channel or None,
@@ -701,27 +494,15 @@ class RunAgentUseCase:
             extra_sections=extra_sections_snapshot or None,
         )
 
-        user_msg: Message | None = None
-        if user_input is not None:
-            # Seteamos el timestamp acá (en lugar de delegarlo al adapter de
-            # historial al persistir) para que ``prepend_timestamps`` también
-            # alcance al user_msg del turno actual cuando el canal lo pida.
-            user_msg = Message(
-                role=Role.USER,
-                content=user_input,
-                timestamp=datetime.now(timezone.utc),
-            )
-            messages: list[Message] = history + [user_msg]
-        else:
-            # Los mensajes ya están en el historial individualmente. Coalescer
-            # consecutivos mismo-rol para que el LLM reciba alternación limpia.
-            messages = _coalesce_consecutive_same_role(history)
-
-        if channel and channel in self._settings.timestamp_channels:
-            messages = prepend_timestamps(messages)
+        user_msg, messages = assemble_turn_messages(
+            history=history,
+            user_input=user_input,
+            channel=channel,
+            timestamp_channels=self._settings.timestamp_channels,
+        )
 
         if self._photo_debug_path:
-            self._write_debug_phase2(
+            write_debug_phase2(
                 debug_path=self._photo_debug_path,
                 user_input=user_input,
                 channel=channel,
@@ -760,7 +541,7 @@ class RunAgentUseCase:
                 tools=self._tools,
                 messages=messages,
                 system_prompt=system_prompt,
-                tool_schemas=tool_schemas,
+                tool_schemas=routing.tool_schemas,
                 max_iterations=self._settings.tool_call_max_iterations,
                 circuit_breaker_threshold=self._settings.circuit_breaker_threshold,
                 agent_id=self._settings.agent_id,
@@ -786,12 +567,12 @@ class RunAgentUseCase:
         skip_persist = skip_marker is not None and skip_marker.upper() in response.upper()
 
         if not ephemeral and not skip_persist:
-            if state_dirty:
+            if routing.state_dirty:
                 await self._history.save_state(
                     agent_id,
                     ConversationState(
-                        sticky_skills=new_sticky_skills,
-                        sticky_tools=new_sticky_tools,
+                        sticky_skills=routing.new_sticky_skills,
+                        sticky_tools=routing.new_sticky_tools,
                     ),
                     channel=channel,
                     chat_id=chat_id,
@@ -822,59 +603,6 @@ class RunAgentUseCase:
         """
         await self._history.clear(self._settings.agent_id, channel=channel, chat_id=chat_id)
 
-    @staticmethod
-    def _write_debug_phase2(
-        *,
-        debug_path: str,
-        user_input: str | None,
-        channel: str,
-        chat_id: str,
-        history: list,
-        messages: list,
-        extra_sections: list[str],
-        system_prompt: str,
-    ) -> None:
-        lines: list[str] = [
-            "",
-            "--- Fase 2: RunAgentUseCase.execute() ---",
-            f"Timestamp: {datetime.now().isoformat()}",
-            f"channel={channel!r}  chat_id={chat_id!r}",
-            f"user_input (photo text_context): {user_input!r}",
-            "",
-            f"Historial cargado ({len(history)} mensajes para channel={channel!r}, chat_id={chat_id!r}):",
-        ]
-        for i, msg in enumerate(history, 1):
-            content_preview = (msg.content or "")[:300].replace("\n", "\\n")
-            lines.append(f"  [{i}] role={msg.role.value}  content={content_preview!r}")
-        lines += [
-            "",
-            f"Mensajes enviados al LLM ({len(messages)} en total, historial + user_input):",
-        ]
-        for i, msg in enumerate(messages, 1):
-            content_preview = (msg.content or "")[:300].replace("\n", "\\n")
-            lines.append(f"  [{i}] role={msg.role.value}  content={content_preview!r}")
-        lines += [
-            "",
-            f"Extra sections inyectadas ({len(extra_sections)}):",
-        ]
-        for i, sec in enumerate(extra_sections, 1):
-            lines.append(f"  [{i}] {sec[:500]!r}")
-        if not extra_sections:
-            lines.append("  (ninguna)")
-        lines += [
-            "",
-            "--- System Prompt ---",
-            system_prompt,
-            "--- Fin System Prompt ---",
-            "",
-        ]
-        try:
-            with open(debug_path, "a", encoding="utf-8") as fh:
-                fh.write("\n".join(lines))
-            logger.debug("photo-debug Phase 2 escrito en %s", debug_path)
-        except OSError as exc:
-            logger.warning("No se pudo escribir photo-debug Phase 2: %s", exc)
-
     async def inspect(
         self,
         user_input: str,
@@ -901,7 +629,7 @@ class RunAgentUseCase:
         prev_state = await self._history.load_state(
             self._settings.agent_id, channel=channel, chat_id=chat_id
         )
-        routing_bypass = _should_bypass_routing_for_short_input(
+        routing_bypass = should_bypass_routing_for_short_input(
             user_input=user_input,
             min_words_threshold=self._settings.min_words_threshold,
             prev_state=prev_state,
@@ -940,22 +668,16 @@ class RunAgentUseCase:
                 selected_schemas = [sch for sch, _ in scored_tools]
                 tool_scores = [(sch["function"]["name"], sc) for sch, sc in scored_tools]
 
-        # Pre-fetch de knowledge — espeja execute(): skip en bypass o si pre-fetch está deshabilitado.
-        from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
-
-        knowledge_chunks: list[KnowledgeChunk] = []
-        if (
-            not routing_bypass
-            and self._knowledge_orchestrator is not None
-            and self._knowledge_orchestrator.pre_fetch_enabled
-        ):
-            if query_vec is None:
-                query_vec = await self._embedder.embed_query(user_input)
-            knowledge_chunks = await self._knowledge_orchestrator.retrieve_all(
-                query_vec=query_vec,
-                top_k=self._knowledge_orchestrator.default_top_k_per_source,
-                min_score=self._knowledge_orchestrator.default_min_score,
-            )
+        # Pre-fetch de knowledge — misma fase que execute(): skip en bypass o
+        # si pre-fetch está deshabilitado.
+        knowledge_chunks, _ = await prefetch_knowledge(
+            routing_bypass=routing_bypass,
+            orchestrator=self._knowledge_orchestrator,
+            embedder=self._embedder,
+            query=user_input,
+            query_vec=query_vec,
+            agent_id=self._settings.agent_id,
+        )
 
         inspect_ctx = current_channel_context()
         user_context = self._read_user_context(inspect_ctx)

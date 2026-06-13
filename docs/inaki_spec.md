@@ -449,14 +449,18 @@ class ITool(ABC):
 
 ### `RunAgentUseCase`
 
-Orchestrates a full conversation turn:
+Orchestrates a full conversation turn. The phases live as free functions in
+`_turn_pipeline.py` (same contract as `_tool_loop.py`: explicit dependencies,
+no `self`) and `_execute_turn` chains them:
 
 1. Load history scoped by `(agent_id, channel, chat_id)`
-2. If semantic routing is active: generate input embedding and filter relevant tools/skills via cosine similarity
-3. Build `AgentContext` and dynamic system prompt (base + memory digest + skills)
-4. Call the LLM via `run_tool_loop()` — see S7
-5. Persist `user` / `assistant` messages in history (never `tool` or `tool_result`)
-6. Return `ChatTurnResult`
+2. `run_semantic_routing()` — if active: generate input embedding, filter relevant tools/skills via cosine similarity, apply sticky TTL (with short-input bypass)
+3. `prefetch_knowledge()` — retrieve knowledge chunks reusing the query embedding (shared with `inspect()`)
+4. Build `AgentContext` and dynamic system prompt (base + memory digest + skills)
+5. `assemble_turn_messages()` — direct `user_input` vs history-derived coalesced batch
+6. Call the LLM via `run_tool_loop()` — see S7
+7. Persist `user` / `assistant` messages in history (never `tool` or `tool_result`)
+8. Return `ChatTurnResult`
 
 ### `_tool_loop.run_tool_loop()`
 

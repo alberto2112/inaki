@@ -106,7 +106,7 @@ async def run_tool_loop(
         initial_db_user_count: Cantidad de mensajes ``role=user`` que YA están
             en history.db al inicio del turno. Si se provee, se usa como baseline
             del drain en vez de contar desde ``messages``. Esto es necesario
-            cuando ``messages`` viene coalesced (``_coalesce_consecutive_same_role``)
+            cuando ``messages`` viene coalesced (``coalesce_consecutive_same_role``)
             y su conteo NO refleja la realidad de la DB — sin este parámetro, el
             drain re-introduce mensajes que ya están dentro del bloque coalesced,
             produciendo duplicación visible al LLM. Default ``None`` →

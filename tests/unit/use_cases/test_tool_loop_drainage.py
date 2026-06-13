@@ -336,7 +336,7 @@ async def test_initial_db_user_count_respeta_coalesce():
 
     Escenario history-derived (modo flush de grupo):
     - DB tiene 3 user-msgs consecutivos [u1, u2, u3].
-    - `_coalesce_consecutive_same_role` los une en `[user("u1\\nu2\\nu3")]`.
+    - `coalesce_consecutive_same_role` los une en `[user("u1\\nu2\\nu3")]`.
     - SIN initial_db_user_count: el loop cuenta 1 user_msg en messages,
       pero la DB tiene 3 → drain reinyecta [u2, u3] como duplicados visibles
       al LLM ("historial clonado").

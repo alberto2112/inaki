@@ -47,6 +47,15 @@ class KnowledgeConfigError(InakiError):
     """
 
 
+class KnowledgeError(InakiError):
+    """Error en una operación de gestión de knowledge (ingest/reindex/delete).
+
+    A diferencia de KnowledgeConfigError (problema de configuración), esto cubre
+    fallos de runtime al gestionar el índice: fuente indexable inexistente,
+    source_id ambiguo, archivo no encontrado al ingerir, etc.
+    """
+
+
 class ToolError(InakiError):
     """Error al ejecutar una tool."""
 

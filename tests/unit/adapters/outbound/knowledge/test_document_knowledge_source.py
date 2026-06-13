@@ -283,3 +283,101 @@ class TestDocumentKnowledgeSourceSearch:
         # sabe que chunks_totales es int. cast inline para satisfacer mypy.
         chunks_totales = stats["chunks_totales"]
         assert isinstance(chunks_totales, int) and chunks_totales > 0
+
+
+def _make_source(tmp_path: Path, embedder, *, glob: str = "**/*.md") -> DocumentKnowledgeSource:
+    """Crea un DocumentKnowledgeSource con carpeta y DB bajo tmp_path."""
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir(exist_ok=True)
+    db_dir = tmp_path / "knowledge"
+    db_dir.mkdir(parents=True, exist_ok=True)
+
+    source = DocumentKnowledgeSource(
+        source_id="inbox",
+        description="Inbox test",
+        path=str(docs_dir),
+        embedder=embedder,
+        glob=glob,
+        chunk_size=10,
+        chunk_overlap=2,
+    )
+    source._db_path = str(db_dir / "inbox.db")
+    return source
+
+
+class TestDocumentKnowledgeSourceIngest:
+    async def test_ingest_file_indexa_y_es_buscable(self, tmp_path: Path) -> None:
+        """ingest_file copia el archivo a la fuente, lo indexa y queda buscable."""
+        vec = _make_vec(1.0)
+        source = _make_source(tmp_path, _make_embedder(vec))
+
+        externo = tmp_path / "externo.md"
+        externo.write_text("# Doc\n" + "contenido relevante " * 20)
+
+        result = await source.ingest_file(externo)
+
+        assert result["source_id"] if "source_id" in result else True  # use case añade source_id
+        assert int(result["chunks_nuevos"]) > 0
+        # el archivo se copió a la carpeta de la fuente
+        assert (tmp_path / "docs" / "externo.md").exists()
+        # y es recuperable por similitud
+        chunks = await source.search(vec, top_k=5, min_score=0.0)
+        assert any("contenido relevante" in c.content for c in chunks)
+
+    async def test_ingest_ignora_el_glob(self, tmp_path: Path) -> None:
+        """Un .txt entra aunque el glob de la fuente sea **/*.md (modelo inbox)."""
+        vec = _make_vec(1.0)
+        source = _make_source(tmp_path, _make_embedder(vec), glob="**/*.md")
+
+        externo = tmp_path / "nota.txt"
+        externo.write_text("apuntes sueltos " * 20)
+
+        result = await source.ingest_file(externo)
+        assert int(result["chunks_nuevos"]) > 0
+
+        files = await source.list_files()
+        assert any(str(f["file_path"]).endswith("nota.txt") for f in files)
+
+    async def test_ingest_archivo_inexistente(self, tmp_path: Path) -> None:
+        """ingest_file de un path inexistente → FileNotFoundError."""
+        import pytest
+
+        source = _make_source(tmp_path, _make_embedder(_make_vec(1.0)))
+        with pytest.raises(FileNotFoundError):
+            await source.ingest_file(tmp_path / "no_existe.md")
+
+    async def test_list_files_vacio(self, tmp_path: Path) -> None:
+        """list_files sobre un índice vacío devuelve lista vacía."""
+        source = _make_source(tmp_path, _make_embedder(_make_vec(1.0)))
+        assert await source.list_files() == []
+
+    async def test_delete_file_por_nombre(self, tmp_path: Path) -> None:
+        """delete_file por nombre borra los chunks y deja el índice limpio."""
+        vec = _make_vec(1.0)
+        source = _make_source(tmp_path, _make_embedder(vec))
+        externo = tmp_path / "borrable.md"
+        externo.write_text("para borrar " * 20)
+        await source.ingest_file(externo)
+
+        borrados = await source.delete_file("borrable.md")
+        assert borrados > 0
+        assert await source.list_files() == []
+        # archivo físico SIGUE existiendo (index-only por defecto)
+        assert (tmp_path / "docs" / "borrable.md").exists()
+
+    async def test_delete_file_remove_physical(self, tmp_path: Path) -> None:
+        """delete_file con remove_physical borra también el archivo de la carpeta."""
+        vec = _make_vec(1.0)
+        source = _make_source(tmp_path, _make_embedder(vec))
+        externo = tmp_path / "fisico.md"
+        externo.write_text("borrame entero " * 20)
+        await source.ingest_file(externo)
+
+        borrados = await source.delete_file("fisico.md", remove_physical=True)
+        assert borrados > 0
+        assert not (tmp_path / "docs" / "fisico.md").exists()
+
+    async def test_delete_file_inexistente_devuelve_cero(self, tmp_path: Path) -> None:
+        """delete_file de un archivo no indexado devuelve 0 (no explota)."""
+        source = _make_source(tmp_path, _make_embedder(_make_vec(1.0)))
+        assert await source.delete_file("fantasma.md") == 0

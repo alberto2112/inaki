@@ -591,6 +591,15 @@ class AgentContainer:
                 embedder=self._embedder,
             )
         )
+        # Gestión del knowledge (ingest/reindex/list/stats/delete) expuesta al LLM.
+        # Comparte la MISMA lista viva de fuentes que el orchestrator: las fuentes
+        # indexables añadidas por extensiones en _register_extensions() quedan
+        # incluidas sin reconstruir el use case.
+        from adapters.outbound.tools.knowledge_admin_tool import KnowledgeAdminTool
+        from core.use_cases.manage_knowledge import ManageKnowledgeUseCase
+
+        self._manage_knowledge = ManageKnowledgeUseCase(sources=self._pending_knowledge_sources)
+        self._tools.register(KnowledgeAdminTool(manage_knowledge=self._manage_knowledge))
         # Tools de gestión directa de memoria — el LLM puede buscar por
         # similitud y borrar/editar entries por id. Sin filtro de scope: el
         # agente puede tocar cualquier recuerdo del mismo agent_id.

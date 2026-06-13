@@ -150,4 +150,4 @@ If `enabled: false`, pre-fetch is skipped but the user can still invoke `knowled
 | Document adapter | `adapters/outbound/knowledge/document_knowledge_source.py` |
 | SQLite adapter | `adapters/outbound/knowledge/sqlite_knowledge_source.py` |
 | Explicit search tool | `adapters/outbound/tools/knowledge_search_tool.py` |
-| Management CLI | `adapters/inbound/cli/knowledge_cli.py` |
+| Management CLI | `inaki/knowledge_cli.py` |

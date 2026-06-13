@@ -46,8 +46,21 @@ def webui() -> None:
 
 
 def _lanzar_tui() -> None:
-    """Construye y ejecuta SetupApp."""
-    from adapters.inbound.setup_tui.app import SetupApp
+    """Construye y ejecuta SetupApp.
 
-    app = SetupApp()
+    Composition root: acá (en ``inaki/``, fuera de ``adapters/``) es legítimo
+    importar las clases de schema de ``infrastructure.config`` e inyectarlas en
+    el ``SetupContainer`` — los screens del setup_tui las consumen sin conocer
+    a infrastructure.
+    """
+    from adapters.inbound.setup_tui.app import SetupApp
+    from adapters.inbound.setup_tui.di import build_setup_container
+    from infrastructure.config import AgentConfig, GlobalConfig
+
+    container = build_setup_container(
+        config_dir=None,
+        global_schema=GlobalConfig,
+        agent_schema=AgentConfig,
+    )
+    app = SetupApp(container)
     app.run()

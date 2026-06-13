@@ -82,17 +82,19 @@ class AgentDetailPage(BasePage):
     def compose_body(self) -> ComposeResult:
         from textual.widgets import Label
 
-        from infrastructure.config import AgentConfig
+        if self._container is None:
+            yield SectionHeader(f"ERROR AL CARGAR AGENT {self._agent_id}")
+            yield Label("  [red]Sin contenedor de configuración[/red]", markup=True)
+            return
 
         current: dict[str, Any] = {}
         error_msg: str | None = None
-        if self._container is not None:
-            try:
-                from core.ports.config_repository import LayerName
+        try:
+            from core.ports.config_repository import LayerName
 
-                current = self._container.repo.read_layer(LayerName.AGENT, agent_id=self._agent_id)
-            except Exception as exc:
-                error_msg = f"{type(exc).__name__}: {exc}"
+            current = self._container.repo.read_layer(LayerName.AGENT, agent_id=self._agent_id)
+        except Exception as exc:
+            error_msg = f"{type(exc).__name__}: {exc}"
 
         if error_msg is not None:
             yield SectionHeader(f"ERROR AL CARGAR AGENT {self._agent_id}")
@@ -103,10 +105,12 @@ class AgentDetailPage(BasePage):
             )
             return
 
-        # Generar secciones usando AgentConfig como schema.
+        # Generar secciones usando el schema de agente (clase inyectada vía el container).
         # Los campos de memory.llm se marcan como triestados para que el usuario
         # pueda elegir entre heredar del global, valor propio o null explícito.
-        sections = sections_for_model(AgentConfig, current, tristate_paths=_TRISTATE_PATHS)
+        sections = sections_for_model(
+            self._container.agent_schema, current, tristate_paths=_TRISTATE_PATHS
+        )
 
         for section_name, fields in sections:
             yield SectionHeader(section_name)

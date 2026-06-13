@@ -709,7 +709,7 @@ CREATE TABLE IF NOT EXISTS task_logs (
 
 | Component | File | Class/Function |
 |-----------|------|----------------|
-| CLI | [adapters/inbound/cli/scheduler_cli.py](../adapters/inbound/cli/scheduler_cli.py) | `scheduler_app` (Typer), commands: `list_cmd`, `show_cmd`, `edit_cmd`, `enable_cmd`, `disable_cmd`, `rm_cmd` |
+| CLI | [inaki/scheduler_cli.py](../inaki/scheduler_cli.py) | `scheduler_app` (Typer), commands: `list_cmd`, `show_cmd`, `edit_cmd`, `enable_cmd`, `disable_cmd`, `rm_cmd` |
 | Use Case | [core/use_cases/schedule_task.py](../core/use_cases/schedule_task.py) | `ScheduleTaskUseCase`, `ISchedulerUseCase` |
 | Service | [core/domain/services/scheduler_service.py](../core/domain/services/scheduler_service.py) | `SchedulerService` |
 | Entities | [core/domain/entities/task.py](../core/domain/entities/task.py) | `ScheduledTask`, `TaskKind`, `TriggerType`, `TaskStatus`, payloads |

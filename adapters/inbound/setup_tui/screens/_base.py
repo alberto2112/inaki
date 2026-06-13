@@ -243,14 +243,12 @@ class BasePage(Screen):
         from core.domain.errors import ReferenciaInvalidaError
 
         try:
-            from infrastructure.config import GlobalConfig
-
             from adapters.inbound.setup_tui.validators.cross_refs import (
                 validate_global_config,
             )
 
             efectiva = container.get_effective_config.execute()
-            cfg = GlobalConfig(**efectiva.datos)
+            cfg = container.global_schema(**efectiva.datos)
             available_agents = container.list_agents.execute()
             available_providers = [p.key for p in container.list_providers.execute()]
             validate_global_config(cfg, available_agents, available_providers)

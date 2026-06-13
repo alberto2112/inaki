@@ -25,12 +25,13 @@ No Makefile or CI. All commands are direct calls.
 Inaki is a multi-agent AI assistant following **strict hexagonal architecture**:
 
 - **`core/`** — Domain layer. Entities, ports (interfaces), use cases, domain services and errors. **NEVER imports from `adapters/` or `infrastructure/`**. Allowed imports: stdlib, `core/`, and the third-party allowlist `pydantic` + `croniter` + `numpy` (numpy: 512-float face embeddings on Pi 5 — pure Python would be unviable).
-- **`adapters/`** — Concrete implementations of ports. Inbound (CLI, Telegram, REST, daemon) and outbound (LLM providers, tools, memory/history repos, embedding, skills, scheduler).
+- **`adapters/`** — Concrete implementations of ports. Inbound (Telegram, REST admin, interactive CLI chat) and outbound (LLM providers, tools, memory/history repos, embedding, skills, scheduler). **NUNCA importa `infrastructure/`** — si un adapter "necesita" el container o el schema, declara un Protocol/Settings VO de lo que usa y el composition root se lo inyecta.
 - **`infrastructure/`** — Wiring and cross-cutting. `container.py` is the **single place** where all adapters are instantiated and injected into use cases.
+- **`inaki/`** — **Composition root** (entry points). Acá viven `cli.py`, `daemon_runner.py` y los sub-CLIs (`scheduler_cli`, `knowledge_cli`, `setup_cli`). Está FUERA de la regla hexagonal: un composition root importando `infrastructure/` es legítimo — es su trabajo ensamblar. Los entry points NUEVOS van acá, NO bajo `adapters/inbound/`.
 - **`ext/`** — User extensions auto-discovered via `manifest.py`.
 
-Dependency direction: `adapters → core ←  infrastructure`. Never reversed.
-Enforced by `tests/unit/test_architecture.py` (3 reglas, incluyen TYPE_CHECKING e imports locales): (1) `core/` no importa `adapters/` ni `infrastructure/`; (2) terceros en `core/` limitados al allowlist; (3) `adapters/` no importa `infrastructure/`. Las reglas 2 y 3 son **ratchet**: la deuda preexistente (auditoría 2026-06-11) está listada en las constantes `DEUDA_*` del test — violaciones nuevas fallan, y saldar deuda exige borrar la entrada de la lista (solo puede achicarse). NUNCA agregar entradas a `DEUDA_*`: resolver el acoplamiento (patrón Settings VOs).
+Dependency direction: `adapters → core ←  infrastructure`, con `inaki/` (composition root) por encima de todo. Never reversed.
+Enforced by `tests/unit/test_architecture.py` (3 reglas, incluyen TYPE_CHECKING e imports locales): (1) `core/` no importa `adapters/` ni `infrastructure/`; (2) terceros en `core/` limitados al allowlist; (3) `adapters/` no importa `infrastructure/`. Las reglas 2 y 3 son **ratchet**: `DEUDA_*` quedó **vacía** el 2026-06-13 (toda la deuda de la auditoría saldada). NUNCA agregar entradas a `DEUDA_*`: resolver el acoplamiento (Settings VOs, Protocols estructurales, o reubicar composition-roots a `inaki/`).
 
 ### Key Wiring Rules
 

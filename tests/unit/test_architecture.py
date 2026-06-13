@@ -67,13 +67,7 @@ DEUDA_TERCEROS_CORE: frozenset[tuple[str, str]] = frozenset()
 # (2026-06-13). Lo único que queda es la introspección del schema Pydantic en
 # el setup_tui, que necesita las clases reales (GlobalConfig/AgentConfig) para
 # generar formularios — se salda inyectándolas desde el composition root.
-DEUDA_ADAPTERS_INFRA = frozenset(
-    {
-        ("adapters/inbound/setup_tui/screens/_base.py", "infrastructure.config"),
-        ("adapters/inbound/setup_tui/screens/agent_detail_page.py", "infrastructure.config"),
-        ("adapters/inbound/setup_tui/screens/global_page.py", "infrastructure.config"),
-    }
-)
+DEUDA_ADAPTERS_INFRA: frozenset[tuple[str, str]] = frozenset()
 
 
 def _imports_de(archivo: Path) -> list[str]:

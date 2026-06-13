@@ -19,7 +19,7 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Label
 
-from adapters.inbound.setup_tui.di import SetupContainer, build_setup_container
+from adapters.inbound.setup_tui.di import SetupContainer
 from adapters.inbound.setup_tui.modals._dialog import dialog_css
 
 # ---------------------------------------------------------------------------
@@ -123,18 +123,17 @@ class SetupApp(App):
 
     def __init__(
         self,
-        container: SetupContainer | None = None,
-        config_dir: Path | None = None,
+        container: SetupContainer,
         **kwargs,  # type: ignore[no-untyped-def]
     ) -> None:
         """
         Args:
-            container: Contenedor pre-construido (útil en tests). Si es ``None``
-                       se construye uno via ``build_setup_container``.
-            config_dir: Override del directorio de config (para tests).
+            container: Contenedor offline ya construido por el composition root
+                       (use cases de config + clases de schema Pydantic). El
+                       setup_tui no lo construye para no importar infrastructure.
         """
         super().__init__(**kwargs)
-        self.container: SetupContainer = container or build_setup_container(config_dir)
+        self.container: SetupContainer = container
 
     def compose(self) -> ComposeResult:
         # El MainMenuPage se monta en on_mount para poder hacer push_screen.

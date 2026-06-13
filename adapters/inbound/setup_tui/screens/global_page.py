@@ -65,17 +65,19 @@ class GlobalPage(BasePage):
     def compose_body(self) -> ComposeResult:
         from textual.widgets import Label
 
-        from infrastructure.config import GlobalConfig
+        if self._container is None:
+            yield SectionHeader("ERROR AL CARGAR CONFIG")
+            yield Label("  [red]Sin contenedor de configuración[/red]", markup=True)
+            return
 
         # Cargar valores actuales
         current: dict[str, Any] = {}
         error_msg: str | None = None
-        if self._container is not None:
-            try:
-                efectiva = self._container.get_effective_config.execute()
-                current = efectiva.datos
-            except Exception as exc:
-                error_msg = f"{type(exc).__name__}: {exc}"
+        try:
+            efectiva = self._container.get_effective_config.execute()
+            current = efectiva.datos
+        except Exception as exc:
+            error_msg = f"{type(exc).__name__}: {exc}"
 
         # Si la lectura falló (ej. YAML malformado, claves duplicadas) mostramos
         # el error en lugar de un schema con todos los campos vacíos.
@@ -88,8 +90,10 @@ class GlobalPage(BasePage):
             )
             return
 
-        # Generar secciones con el schema mapper
-        sections = sections_for_model(GlobalConfig, current, section_prefix="APP")
+        # Generar secciones con el schema mapper (clase inyectada vía el container)
+        sections = sections_for_model(
+            self._container.global_schema, current, section_prefix="APP"
+        )
 
         for section_name, fields in sections:
             yield SectionHeader(section_name)

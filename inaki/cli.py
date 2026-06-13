@@ -33,7 +33,7 @@ import typer
 
 from inaki.knowledge_cli import knowledge_app
 from inaki.scheduler_cli import scheduler_app
-from adapters.inbound.cli.setup_cli import setup_app
+from inaki.setup_cli import setup_app
 from inaki import __version__
 
 app = typer.Typer(

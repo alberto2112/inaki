@@ -138,12 +138,10 @@ inaki/                                  ← repository root
 │   ├── inbound/
 │   │   ├── turn_dispatch.py           # dispatch_inbound_turn() — in-flight routing compartido
 │   │   ├── cli/
-│   │   │   ├── cli_runner.py          # Interactive terminal chat
-│   │   │   ├── scheduler_cli.py       # inaki scheduler ...
-│   │   │   ├── knowledge_cli.py       # inaki knowledge ...
-│   │   │   └── setup_cli.py           # inaki setup ...
+│   │   │   └── cli_runner.py          # Interactive terminal chat
 │   │   ├── setup_tui/                 # Offline Textual TUI (inaki setup)
 │   │   │   ├── app.py
+│   │   │   ├── di.py                  # SetupContainer (schema Pydantic inyectado)
 │   │   │   ├── screens/, widgets/, modals/, validators/
 │   │   │   └── domain/, _schema.py, _cambios.py
 │   │   ├── telegram/
@@ -158,10 +156,9 @@ inaki/                                  ← repository root
 │   │   ├── rest/
 │   │   │   └── admin/                 # Admin REST server — única superficie HTTP
 │   │   │       ├── app.py             # create_admin_app()
+│   │   │       ├── ports.py           # AdminAgentContainer/AppContainer Protocols
 │   │   │       ├── schemas.py
 │   │   │       └── routers/           # admin, chat, tools, deps
-│   │   └── daemon/
-│   │       └── runner.py              # DaemonRunner — starts all agents
 │   │
 │   ├── broadcast/
 │   │   └── tcp.py                     # BroadcastTCPServer / BroadcastTCPClient
@@ -269,8 +266,12 @@ inaki/                                  ← repository root
 │   ├── unit/
 │   └── integration/
 │
-├── inaki/
+├── inaki/                             # Composition root (importa infrastructure)
 │   ├── cli.py                         # Entry point (typer)
+│   ├── daemon_runner.py               # run_daemon — arranca todos los canales
+│   ├── scheduler_cli.py              # inaki scheduler ...
+│   ├── knowledge_cli.py              # inaki knowledge ...
+│   ├── setup_cli.py                  # inaki setup (inyecta schema al setup_tui)
 │   └── __version__
 ├── main.py
 └── pyproject.toml

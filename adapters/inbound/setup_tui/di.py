@@ -14,6 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from pydantic import BaseModel
+
 from adapters.outbound.config_repository.yaml_repository import YamlRepository
 from core.use_cases.config.create_agent import CreateAgentUseCase
 from core.use_cases.config.delete_agent import DeleteAgentUseCase
@@ -46,15 +48,27 @@ class SetupContainer:
     list_providers: ListProvidersUseCase
     upsert_provider: UpsertProviderUseCase
     delete_provider: DeleteProviderUseCase
+    # Clases de schema Pydantic inyectadas por el composition root (inaki/).
+    # Los screens las usan para introspección (``sections_for_model``) y
+    # validación — así el setup_tui NO importa ``infrastructure.config``.
+    global_schema: type[BaseModel]
+    agent_schema: type[BaseModel]
 
 
-def build_setup_container(config_dir: Path | None = None) -> SetupContainer:
+def build_setup_container(
+    config_dir: Path | None,
+    global_schema: type[BaseModel],
+    agent_schema: type[BaseModel],
+) -> SetupContainer:
     """
     Construye el contenedor offline para la TUI de setup.
 
     Args:
         config_dir: Directorio raíz de config. ``None`` → usa el default
                     (``~/.inaki/config/`` o ``INAKI_CONFIG_DIR`` env var).
+        global_schema: clase Pydantic ``GlobalConfig`` — la inyecta el
+                       composition root (el setup_tui no importa infrastructure).
+        agent_schema: clase Pydantic ``AgentConfig`` — ídem.
 
     Returns:
         ``SetupContainer`` con todos los use cases cableados.
@@ -72,4 +86,6 @@ def build_setup_container(config_dir: Path | None = None) -> SetupContainer:
         list_providers=ListProvidersUseCase(repo),
         upsert_provider=UpsertProviderUseCase(repo),
         delete_provider=DeleteProviderUseCase(repo),
+        global_schema=global_schema,
+        agent_schema=agent_schema,
     )

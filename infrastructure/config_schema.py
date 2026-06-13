@@ -122,6 +122,19 @@ class LLMConfig(BaseModel):
     fallback de 60s para no fallar el bootstrap por config mal definida.
     """
 
+    request_delay_seconds: float = 2.0
+    """Espera mínima (segundos) ANTES de cada llamada al provider dentro del
+    loop agéntico, EXCEPTO la primera del turno.
+
+    Default ``2.0``. Evita saturar el rate limiter del provider cuando el modelo
+    encadena varias tool calls en un mismo turno (cada iteración del loop es un
+    ``llm.complete()``): sin throttle, 5 tool calls disparan 5 requests
+    back-to-back. La primera llamada del turno NO se demora (sería latencia pura
+    sin proteger nada — el rate limiter se satura por las llamadas encadenadas).
+    ``0`` desactiva el throttle. Valores negativos se clampean a ``0``; valores
+    no parseables caen al default ``2.0`` para no fallar el bootstrap.
+    """
+
     @field_validator("timeout_seconds", mode="before")
     @classmethod
     def _coerce_timeout(cls, v: object) -> int:
@@ -130,6 +143,15 @@ class LLMConfig(BaseModel):
             return n if n > 0 else _LLM_TIMEOUT_FALLBACK
         except (TypeError, ValueError):
             return _LLM_TIMEOUT_FALLBACK
+
+    @field_validator("request_delay_seconds", mode="before")
+    @classmethod
+    def _coerce_request_delay(cls, v: object) -> float:
+        try:
+            n = float(v)  # type: ignore[arg-type]
+            return n if n >= 0 else 0.0
+        except (TypeError, ValueError):
+            return 2.0
 
 
 class EmbeddingConfig(BaseModel):

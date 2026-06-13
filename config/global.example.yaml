@@ -103,6 +103,12 @@ llm:
                               # Aumentar para respuestas largas (código, análisis)
                               # Considerar coste en Pi 5 con modelos locales
 
+  request_delay_seconds: 2.0  # Espera (segundos) antes de cada llamada al provider
+                              # dentro del loop agéntico, EXCEPTO la primera del turno.
+                              # Evita saturar el rate limiter cuando el modelo encadena
+                              # varias tool calls (cada iteración = un request). La 1ª
+                              # llamada no se demora. 0 = desactivado.
+
   # Las credenciales NO van acá — se resuelven desde `providers.{provider}`.
 
 

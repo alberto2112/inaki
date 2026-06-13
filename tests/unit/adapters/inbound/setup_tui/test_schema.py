@@ -104,6 +104,15 @@ class TestSectionsForModelLLMConfig:
         assert temp_field is not None
         assert temp_field.default == "0.7"
 
+    def test_request_delay_seconds_aparece_como_scalar_con_default(self):
+        """El throttle del provider se expone en la TUI como scalar con default 2.0."""
+        secciones = sections_for_model(LLMConfig, {})
+        all_fields = [f for _, fields in secciones for f in fields]
+        delay_field = next((f for f in all_fields if f.label == "request_delay_seconds"), None)
+        assert delay_field is not None
+        assert delay_field.kind == "scalar"
+        assert delay_field.default == "2.0"
+
 
 class TestSectionsForModelMemoryConfig:
     """Verifica que enabled y schedule se detectan correctamente."""

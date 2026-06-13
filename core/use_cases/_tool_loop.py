@@ -18,6 +18,7 @@ Contrato con el provider:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
@@ -79,6 +80,7 @@ async def run_tool_loop(
     agent_id: str,
     intermediate_sink: IIntermediateSink | None = None,
     thinking_indicator: bool = False,
+    request_delay_seconds: float = 0.0,
     history_store: IHistoryStore | None = None,
     scope: Scope | None = None,
     initial_db_user_count: int | None = None,
@@ -96,6 +98,11 @@ async def run_tool_loop(
         max_iterations: Límite de iteraciones del loop.
         circuit_breaker_threshold: Número de fallos de una tool antes de abrir el circuit breaker.
         agent_id: ID del agente (solo para logging).
+        request_delay_seconds: Espera (segundos) antes de cada ``llm.complete()``
+            EXCEPTO la primera del turno. Espacia las llamadas encadenadas al
+            provider para no saturar su rate limiter cuando el modelo hace varias
+            tool calls seguidas. Default ``0.0`` → sin throttle (comportamiento
+            legacy). El valor de producción llega desde ``config.llm.request_delay_seconds``.
         history_store: Si se provee junto con ``scope``, el loop drena mensajes
             ``role=user`` aparecidos en history.db entre iteraciones (feature
             ``in-flight-message-injection``). Cuando hay drain no-vacío, el
@@ -148,6 +155,13 @@ async def run_tool_loop(
     if llm.thinking_active and thinking_indicator:
         await sink.emit("Thinking...")
 
+    # Throttle del provider: una vez que hicimos al menos una llamada en este
+    # turno, espaciamos las siguientes ``request_delay_seconds`` para no saturar
+    # el rate limiter cuando el modelo encadena tool calls. La PRIMERA llamada no
+    # se demora. El flag es independiente del contador de iteraciones (que se
+    # resetea con el drain in-flight): lo que importa es si ya pegamos al provider.
+    made_llm_call = False
+
     iteration = 0
     while iteration < max_iterations:
         # Checkpoint A — drenar antes de llamar al LLM. Cualquier mensaje
@@ -168,11 +182,15 @@ async def run_tool_loop(
             )
             iteration = 0
 
+        if made_llm_call and request_delay_seconds > 0:
+            await asyncio.sleep(request_delay_seconds)
+
         response = await llm.complete(
             working_messages,
             system_prompt,
             tools=tool_schemas if tool_schemas else None,
         )
+        made_llm_call = True
         last_text = response.text
 
         if not response.tool_calls:
@@ -285,6 +303,10 @@ async def run_tool_loop(
     # usuario información accionable sobre por qué se agotó el loop.
     if not last_text.strip():
         try:
+            # Misma cortesía con el rate limiter: esta llamada sigue inmediata
+            # a la última del loop, así que la espaciamos también.
+            if request_delay_seconds > 0:
+                await asyncio.sleep(request_delay_seconds)
             fallback = await llm.complete(
                 working_messages,
                 system_prompt,

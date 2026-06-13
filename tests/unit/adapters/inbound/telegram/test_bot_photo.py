@@ -33,6 +33,9 @@ def _mk_agent_cfg(*, allowed_user_ids: list[int] | None = None) -> MagicMock:
     tg = {
         "token": "dummy-token",
         "allowed_user_ids": allowed_user_ids or [],
+        # 99 = chat_id default de _mk_update — autoriza los tests de grupo
+        # (en grupos la auth es por allowed_chat_ids, no por allowed_user_ids).
+        "allowed_chat_ids": [99],
         "reactions": True,
         "voice_enabled": False,  # deshabilitar voz para simplificar
     }
@@ -580,6 +583,8 @@ def _mk_agent_cfg_con_emit_photo(allowed_user_ids: list[int]) -> MagicMock:
     cfg.telegram = {
         "token": "dummy-token",
         "allowed_user_ids": allowed_user_ids,
+        # 99 = chat_id default de _mk_update — autoriza los tests de grupo.
+        "allowed_chat_ids": [99],
         "reactions": True,
         "voice_enabled": False,
         "broadcast": {

@@ -2,9 +2,11 @@
 TelegramBot — adaptador inbound para Telegram.
 
 Un bot por agente. Se levanta solo si el agente tiene channels.telegram.token en su config.
-Valida que el user_id esté en allowed_user_ids (si la lista no está vacía).
-Para grupos, también valida allowed_chat_ids y despacha según el behavior configurado
-(listen / mention / autonomous).
+Autorización por contexto (``_is_authorized``):
+- Privados: el user_id debe estar en allowed_user_ids (lista vacía = todos).
+- Grupos: el chat_id debe estar en allowed_chat_ids (lista vacía = no responde en
+  grupos); allowed_user_ids NO aplica en grupos.
+Despacha según el behavior configurado (listen / mention / autonomous).
 """
 
 from __future__ import annotations
@@ -198,22 +200,41 @@ class TelegramBot(
     def _is_allowed_chat(self, chat_id: int) -> bool:
         """Verifica si el chat_id del grupo está en la lista de permitidos.
 
-        Lista vacía = sin restricción de grupo (todos los grupos autorizados).
-        Solo aplica a mensajes grupales; los privados no pasan por esta verificación.
+        Lista vacía = el bot NO responde en grupos (solo chats privados).
+        Solo aplica a mensajes grupales; los privados se filtran por ``_is_allowed``.
         """
-        if not self._allowed_chat_ids:
-            return True
         return str(chat_id) in self._allowed_chat_ids
+
+    def _is_authorized(self, update: Update) -> bool:
+        """Matriz de autorización por contexto del mensaje.
+
+        - Grupo: autorizado solo si el ``chat_id`` está en ``allowed_chat_ids``.
+          El filtro ``allowed_user_ids`` NO aplica — cualquier miembro de un
+          grupo autorizado puede interactuar.
+        - Privado: autorizado según ``allowed_user_ids`` (lista vacía = todos).
+        - Update sin emisor o sin chat (defensivo): rechazado.
+
+        Guardián único de los handlers de mensaje (texto, foto, voz, media). Los
+        comandos slash NO lo usan: siguen siendo admin-only vía ``_is_allowed``.
+        """
+        chat = update.effective_chat
+        user = update.effective_user
+        if chat is None or user is None:
+            return False
+        if chat.type in _TIPOS_GRUPO:
+            return self._is_allowed_chat(chat.id)
+        return self._is_allowed(user.id)
 
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
         message = update.message
         if user is None or message is None:
             return
-        if not self._is_allowed(user.id):
+        if not self._is_authorized(update):
             logger.warning(
-                "Mensaje rechazado de user_id=%s (no autorizado)",
+                "Mensaje rechazado de user_id=%s chat_id=%s (no autorizado)",
                 user.id,
+                message.chat.id,
             )
             return
 

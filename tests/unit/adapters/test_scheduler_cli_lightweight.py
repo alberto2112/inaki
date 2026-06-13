@@ -27,12 +27,12 @@ def test_lightweight_bootstrap_does_not_import_app_container(tmp_path: Path) -> 
     config_dir = tmp_path / "config"
     _write_minimal_config(config_dir)
 
-    from adapters.inbound.cli.scheduler_cli import _bootstrap_uc
+    from inaki.scheduler_cli import _bootstrap_uc
 
     ctx = MagicMock()
     ctx.obj = {"config_dir": config_dir}
 
-    with patch("adapters.inbound.cli.scheduler_cli._create_lightweight_uc") as mock_create:
+    with patch("inaki.scheduler_cli._create_lightweight_uc") as mock_create:
         mock_uc = MagicMock()
         mock_create.return_value = (mock_uc, MagicMock())
         _bootstrap_uc(ctx)
@@ -45,12 +45,12 @@ def test_lightweight_bootstrap_returns_use_case(tmp_path: Path) -> None:
     config_dir = tmp_path / "config"
     _write_minimal_config(config_dir)
 
-    from adapters.inbound.cli.scheduler_cli import _bootstrap_uc
+    from inaki.scheduler_cli import _bootstrap_uc
 
     ctx = MagicMock()
     ctx.obj = {"config_dir": config_dir}
 
-    with patch("adapters.inbound.cli.scheduler_cli._create_lightweight_uc") as mock_create:
+    with patch("inaki.scheduler_cli._create_lightweight_uc") as mock_create:
         mock_uc = MagicMock()
         mock_cfg = MagicMock()
         mock_create.return_value = (mock_uc, mock_cfg)
@@ -62,7 +62,7 @@ def test_lightweight_bootstrap_returns_use_case(tmp_path: Path) -> None:
 
 def test_reload_callback_silences_all_exceptions(tmp_path: Path) -> None:
     """El callback de reload no debe propagar ninguna excepción."""
-    from adapters.inbound.cli.scheduler_cli import _notify_daemon_reload
+    from inaki.scheduler_cli import _notify_daemon_reload
 
     # Simula que el daemon no está corriendo
     with patch("adapters.outbound.daemon_client.DaemonClient") as MockClient:
@@ -73,7 +73,7 @@ def test_reload_callback_silences_all_exceptions(tmp_path: Path) -> None:
 
 
 def test_reload_callback_calls_scheduler_reload(tmp_path: Path) -> None:
-    from adapters.inbound.cli.scheduler_cli import _notify_daemon_reload
+    from inaki.scheduler_cli import _notify_daemon_reload
 
     with patch("adapters.outbound.daemon_client.DaemonClient") as MockClient:
         instance = MockClient.return_value
@@ -85,7 +85,7 @@ def test_reload_callback_calls_scheduler_reload(tmp_path: Path) -> None:
 
 
 def test_reload_callback_silences_connect_error() -> None:
-    from adapters.inbound.cli.scheduler_cli import _notify_daemon_reload
+    from inaki.scheduler_cli import _notify_daemon_reload
     from core.domain.errors import DaemonNotRunningError
 
     with patch("adapters.outbound.daemon_client.DaemonClient") as MockClient:

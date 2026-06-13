@@ -108,11 +108,11 @@ class TestKnowledgeIndex:
 
         with (
             patch(
-                "adapters.inbound.cli.knowledge_cli._load_global_config",
+                "inaki.knowledge_cli._load_global_config",
                 return_value=global_cfg,
             ),
             patch(
-                "adapters.inbound.cli.knowledge_cli._build_document_source",
+                "inaki.knowledge_cli._build_document_source",
                 return_value=mock_source,
             ),
         ):
@@ -126,7 +126,7 @@ class TestKnowledgeIndex:
         global_cfg = _build_global_config_mock(docs_dir)
 
         with patch(
-            "adapters.inbound.cli.knowledge_cli._load_global_config",
+            "inaki.knowledge_cli._load_global_config",
             return_value=global_cfg,
         ):
             result = runner.invoke(app, ["knowledge", "index", "fuente-inexistente"])
@@ -149,11 +149,11 @@ class TestKnowledgeIndex:
 
         with (
             patch(
-                "adapters.inbound.cli.knowledge_cli._load_global_config",
+                "inaki.knowledge_cli._load_global_config",
                 return_value=global_cfg,
             ),
             patch(
-                "adapters.inbound.cli.knowledge_cli._build_document_source",
+                "inaki.knowledge_cli._build_document_source",
                 return_value=mock_source,
             ),
         ):
@@ -170,7 +170,7 @@ class TestKnowledgeList:
         global_cfg = _build_global_config_mock(docs_dir)
 
         with patch(
-            "adapters.inbound.cli.knowledge_cli._load_global_config",
+            "inaki.knowledge_cli._load_global_config",
             return_value=global_cfg,
         ):
             result = runner.invoke(app, ["knowledge", "list"])
@@ -188,7 +188,7 @@ class TestKnowledgeList:
         )
 
         with patch(
-            "adapters.inbound.cli.knowledge_cli._load_global_config",
+            "inaki.knowledge_cli._load_global_config",
             return_value=global_cfg,
         ):
             result = runner.invoke(app, ["knowledge", "list"])
@@ -216,11 +216,11 @@ class TestKnowledgeStats:
 
         with (
             patch(
-                "adapters.inbound.cli.knowledge_cli._load_global_config",
+                "inaki.knowledge_cli._load_global_config",
                 return_value=global_cfg,
             ),
             patch(
-                "adapters.inbound.cli.knowledge_cli._build_document_source",
+                "inaki.knowledge_cli._build_document_source",
                 return_value=mock_source,
             ),
         ):
@@ -238,7 +238,7 @@ class TestKnowledgeStats:
         global_cfg = _build_global_config_mock(docs_dir)
 
         with patch(
-            "adapters.inbound.cli.knowledge_cli._load_global_config",
+            "inaki.knowledge_cli._load_global_config",
             return_value=global_cfg,
         ):
             result = runner.invoke(app, ["knowledge", "stats", "no-existe"])

@@ -31,8 +31,8 @@ from typing import Any, Optional
 
 import typer
 
-from adapters.inbound.cli.knowledge_cli import knowledge_app
-from adapters.inbound.cli.scheduler_cli import scheduler_app
+from inaki.knowledge_cli import knowledge_app
+from inaki.scheduler_cli import scheduler_app
 from adapters.inbound.cli.setup_cli import setup_app
 from inaki import __version__
 
@@ -97,7 +97,7 @@ def _run_daemon(config_dir: Path, agents_dir: Path, global_config, registry) -> 
     """
     import logging
     from infrastructure.container import AppContainer
-    from adapters.inbound.daemon.runner import run_daemon
+    from inaki.daemon_runner import run_daemon
 
     logger = logging.getLogger(__name__)
     logger.info("Iniciando Inaki en modo daemon")

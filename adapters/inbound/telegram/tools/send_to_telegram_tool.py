@@ -51,6 +51,15 @@ class SendToTelegramTool(ITool):
         "first photo). The destination is automatic — you cannot choose which "
         "chat receives the file."
     )
+    routing_keywords = (
+        "mandame esto por telegram, mándamelo por telegram, pásame el archivo por telegram, "
+        "súbelo aquí, mándamelo por aquí, pásame el archivo por aquí, "
+        "enviame la foto por telegram, sube esto al chat, adjunta el archivo, manda el documento, "
+        "mandame la foto, mandame el video, mandame el audio, envia el archivo. "
+        "send this to telegram, send me the file on telegram, attach the file, send the photo, "
+        "send the document, send the video, send the audio, send files to telegram. "
+        "envoyer ce fichier sur telegram, envoie-moi le fichier, joindre le fichier, envoyer la photo, envoyer le fichier par ici"
+    )
     parameters_schema = {
         "type": "object",
         "properties": {

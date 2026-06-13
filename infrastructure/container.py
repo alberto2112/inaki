@@ -698,7 +698,7 @@ class AgentContainer:
         # Build and register the delegate tool.
         # (run_agent_one_shot is already set in __init__ — no construction here.)
         # REQ-DG-10 / REQ-BGD-*: background_queue puede ser None hasta que
-        # `AppContainer` lo wiree (Phase 6). Mientras tanto el path sync sigue
+        # `AppContainer._wire_all_delegation` lo inyecte. Mientras tanto el path sync sigue
         # funcionando; el path async (`wait=False`) reporta failed con razón
         # "background_delegation_unavailable" — fail-fast en lugar de silenciar.
         delegate_tool = DelegateTool(
@@ -1237,6 +1237,24 @@ class AppContainer:
         self.registry = registry
         self.agents: dict[str, AgentContainer] = {}
 
+        # El ORDEN de estas llamadas es el contrato (two-phase init): primero
+        # poblar self.agents, luego construir dispatcher/queue/scheduler que los
+        # necesitan, y al final los wirings per-agente. La secuencia explícita
+        # reemplaza los viejos comentarios "Phase N" cuyos números se habían
+        # desincronizado del orden real de ejecución.
+        self._init_shared_state(config_dir)
+        self._build_agent_containers()
+        self._build_background_delegation_queue()
+        self._wire_all_delegation()
+        self._build_consolidation()
+        self._build_scheduler()
+        self._wire_scheduler_tool()
+        self._wire_broadcast_adapters()
+        self._wire_photos()
+        self._wire_telegram_tools()
+        self._wire_memory_extractors()
+
+    def _init_shared_state(self, config_dir: Path | None) -> None:
         # Tool Config Protocol — UN store para toda la app. Las escrituras del
         # configure-desde-chat van a global.secrets.yaml del config_dir activo;
         # la vista en memoria se actualiza al instante para todos los agentes.
@@ -1244,7 +1262,7 @@ class AppContainer:
         self.tool_config_store: IToolConfigStore = YamlToolConfigStore(
             secrets_path=resolved_config_dir / "global.secrets.yaml",
             key_path=resolved_config_dir.parent / "secret.key",
-            initial=global_config.tool_config,
+            initial=self.global_config.tool_config,
         )
 
         # Registro de bots de Telegram — el daemon runner los registra al arrancar
@@ -1259,12 +1277,14 @@ class AppContainer:
         # aislados por agent_id en la tupla `(agent_id, channel, chat_id)`.
         self.scope_registry: IScopeRegistry = InMemoryScopeRegistryAdapter()
 
-        # Phase 1: build all AgentContainers (existing loop, unchanged)
-        for agent_cfg in registry.list_all():
+    def _build_agent_containers(self) -> None:
+        # Un AgentContainer por agente declarado. Debe correr primero: todo el
+        # wiring posterior resuelve hermanos contra self.agents.
+        for agent_cfg in self.registry.list_all():
             try:
                 self.agents[agent_cfg.id] = AgentContainer(
                     agent_cfg,
-                    global_config,
+                    self.global_config,
                     scope_registry=self.scope_registry,
                     tool_config_store=self.tool_config_store,
                 )
@@ -1272,11 +1292,12 @@ class AppContainer:
             except Exception as exc:
                 logger.error("Error creando container para agente '%s': %s", agent_cfg.id, exc)
 
-        # Phase 2a: dispatcher + cola de background-delegation.
+    def _build_background_delegation_queue(self) -> None:
+        # Dispatcher + cola de background-delegation.
         # Se construyen AHORA porque la cola necesita el dispatcher (para inyectar
         # resultados al scope original) y un resolver de RunAgentOneShotUseCase
         # por target. Ambos requieren que ``self.agents`` esté poblado, así que
-        # vivimos POST-Phase 1 y PRE-Phase 2 (wire_delegation).
+        # corre tras _build_agent_containers y antes de _wire_all_delegation.
         # Reusamos UNA sola instancia de LLMDispatcherAdapter entre scheduler y
         # queue — comparten el dict de locks-por-scope (REQ-BGD-6).
         self._llm_dispatcher = LLMDispatcherAdapter(self.agents)
@@ -1288,22 +1309,23 @@ class AppContainer:
         self.background_queue = BackgroundDelegationQueueAdapter(
             dispatcher=self._llm_dispatcher,
             one_shot_resolver=_resolve_one_shot,
-            max_iterations_per_sub=global_config.delegation.max_iterations_per_sub,
-            timeout_seconds=global_config.delegation.timeout_seconds,
+            max_iterations_per_sub=self.global_config.delegation.max_iterations_per_sub,
+            timeout_seconds=self.global_config.delegation.timeout_seconds,
             max_concurrent=3,
         )
 
-        # Phase 2: wire delegation AFTER all containers are built so that the
+    def _wire_all_delegation(self) -> None:
+        # Wire delegation AFTER all containers are built so that the
         # get_agent_container closure can resolve any sibling (two-phase init).
         # Solo los agentes regulares reciben el delegate tool; los sub-agentes son
         # el destino de la delegación (not the source) y se ejecutan one-shot.
         def _get_agent_container(agent_id: str) -> "AgentContainer | None":
             return self.agents.get(agent_id)
 
-        sub_agent_ids = [cfg.id for cfg in registry.list_sub_agents()]
+        sub_agent_ids = [cfg.id for cfg in self.registry.list_sub_agents()]
 
         for agent_id, container in self.agents.items():
-            if registry.is_sub_agent(agent_id):
+            if self.registry.is_sub_agent(agent_id):
                 continue
             try:
                 container.wire_delegation(
@@ -1314,6 +1336,7 @@ class AppContainer:
             except Exception as exc:
                 logger.error("Error en wire_delegation para agente '%s': %s", agent_id, exc)
 
+    def _build_consolidation(self) -> None:
         # Global consolidation use case — itera agentes habilitados con delay.
         # El filtro por `consolidate_memory is not None` es equivalente a filtrar
         # por `memory.enabled` (invariante: AgentContainer construye el use case
@@ -1325,14 +1348,15 @@ class AppContainer:
         }
         self.consolidate_all_agents = ConsolidateAllAgentsUseCase(
             enabled_agents=enabled_consolidators,
-            delay_seconds=global_config.memory.delay_seconds,
+            delay_seconds=self.global_config.memory.delay_seconds,
         )
 
+    def _build_scheduler(self) -> None:
         # Scheduler wiring
-        scheduler_cfg = global_config.scheduler
+        scheduler_cfg = self.global_config.scheduler
         self.scheduler_repo = SQLiteSchedulerRepo(
             scheduler_cfg.db_filename,
-            user_timezone=global_config.user.timezone,
+            user_timezone=self.global_config.user.timezone,
         )
         self.schedule_task_uc = ScheduleTaskUseCase(
             repo=self.scheduler_repo,
@@ -1343,7 +1367,7 @@ class AppContainer:
         # (seed/update/reset + recompute next_run en tz del usuario) vive en el
         # colaborador; el *qué* (qué builtin, qué agente) lo deciden los wrappers.
         self._scheduler_reconciler = SchedulerReconciler(
-            self.scheduler_repo, global_config.user.timezone
+            self.scheduler_repo, self.global_config.user.timezone
         )
         telegram_sink = TelegramSink(get_telegram_bot=self._get_telegram_bot)
         sink_factory = SinkFactory(get_telegram_bot=self._get_telegram_bot)
@@ -1355,7 +1379,7 @@ class AppContainer:
             ),
             sink_factory=sink_factory.from_target,
         )
-        # Reusamos la instancia ya construida en Phase 2a para que la cola de
+        # Reusamos la instancia ya construida en _build_background_delegation_queue para que la cola de
         # background-delegation y el scheduler compartan el dict de locks-por-scope
         # (REQ-BGD-6). Sin esto, race entre un bg-result y un scheduled trigger
         # sobre el mismo scope volvería a estar mal serializada.
@@ -1371,39 +1395,41 @@ class AppContainer:
             dispatch=dispatch_ports,
             max_retries=scheduler_cfg.max_retries,
             output_truncation_size=scheduler_cfg.output_truncation_size,
-            user_timezone=global_config.user.timezone,
+            user_timezone=self.global_config.user.timezone,
             retry_backoff_seconds=scheduler_cfg.retry_backoff_seconds,
         )
 
-        # Phase 3: wire scheduler tool into each agent now that schedule_task_uc is ready.
+    def _wire_scheduler_tool(self) -> None:
+        # Wire scheduler tool into each agent now that schedule_task_uc is ready.
         # Sub-agentes excluidos: se ejecutan one-shot y no programan tareas directamente.
-        user_timezone = global_config.user.timezone
+        user_timezone = self.global_config.user.timezone
         for agent_id, container in self.agents.items():
-            if registry.is_sub_agent(agent_id):
+            if self.registry.is_sub_agent(agent_id):
                 continue
             try:
                 container.wire_scheduler(self.schedule_task_uc, user_timezone)
             except Exception as exc:
                 logger.error("Error en wire_scheduler para agente '%s': %s", agent_id, exc)
 
-        # Phase 4: wire broadcast adapters.
-        # Runs AFTER Phase 1 (todos los containers existen) y después de Phase 2+3.
+    def _wire_broadcast_adapters(self) -> None:
+        # Wire broadcast adapters — requiere todos los containers ya construidos.
         # Por cada agente con un canal telegram que incluya bloque broadcast:, se
         # instancia un TcpBroadcastAdapter (+ BroadcastBuffer + FixedWindowRateLimiter)
         # y se almacena en el container. El lifecycle (start/stop) se gestiona en
         # AppContainer.startup() / shutdown().
         self._broadcast_adapters: list[object] = []  # TcpBroadcastAdapter instances
-        for agent_cfg in registry.list_regular():
+        for agent_cfg in self.registry.list_regular():
             try:
                 self._wire_broadcast_for_agent(agent_cfg)
             except Exception as exc:
                 logger.error("Error en wire_broadcast para agente '%s': %s", agent_cfg.id, exc)
 
-        # Phase 5: wire photos — singletons compartidos (vision lazy, face registry)
+    def _wire_photos(self) -> None:
+        # Wire photos — singletons compartidos (vision lazy, face registry)
         # + per-agent wiring (scene describer, annotator, metadata repo, use case, tools).
         self._vision_adapter = None
         self._face_registry_adapter = None
-        photos_cfg = getattr(global_config, "photos", None)
+        photos_cfg = getattr(self.global_config, "photos", None)
         if photos_cfg is not None and photos_cfg.enabled:
             try:
                 from pathlib import Path
@@ -1434,23 +1460,24 @@ class AppContainer:
                 logger.error("Error inicializando photos singletons: %s", exc)
 
         for agent_id, container in self.agents.items():
-            if registry.is_sub_agent(agent_id):
+            if self.registry.is_sub_agent(agent_id):
                 continue
             try:
                 container.wire_photos(
                     self._vision_adapter,
                     self._face_registry_adapter,
-                    global_config,
+                    self.global_config,
                 )
             except Exception as exc:
                 logger.error("Error en wire_photos para agente '%s': %s", agent_id, exc)
 
-        # Phase 7: wire telegram tools (send_to_telegram + download_from_telegram).
+    def _wire_telegram_tools(self) -> None:
+        # Wire telegram tools (send_to_telegram + download_from_telegram).
         # El repo telegram_files es singleton compartido (cada record lleva agent_id).
         # DB en la misma carpeta que history.db / faces.db.
         self._telegram_file_repo = None
         if any(
-            (cfg.channels.get("telegram", {}) or {}).get("token") for cfg in registry.list_regular()
+            (cfg.channels.get("telegram", {}) or {}).get("token") for cfg in self.registry.list_regular()
         ):
             from pathlib import Path
 
@@ -1468,7 +1495,7 @@ class AppContainer:
             logger.info("telegram_files.db inicializado: %s", files_db_path)
 
         for agent_id, container in self.agents.items():
-            if registry.is_sub_agent(agent_id):
+            if self.registry.is_sub_agent(agent_id):
                 continue
             try:
                 # functools.partial captura agent_id por valor (no por referencia
@@ -1482,14 +1509,15 @@ class AppContainer:
             except Exception as exc:
                 logger.error("Error en wire_telegram_tools para agente '%s': %s", agent_id, exc)
 
-        # Phase 6: wire memory extractor sub-agents.
+    def _wire_memory_extractors(self) -> None:
+        # Wire memory extractor sub-agents.
         # Si memory.llm.agent_id apunta a un sub-agente, le pasamos su
         # run_agent_one_shot al ConsolidateMemoryUseCase. Si el agent_id
         # no existe o no es un sub-agente, se loggea ERROR y la consolidación
         # cae de vuelta al prompt hardcodeado + LLM resuelto (graceful).
-        delegation_cfg = global_config.delegation
+        delegation_cfg = self.global_config.delegation
         for agent_id, container in self.agents.items():
-            if registry.is_sub_agent(agent_id):
+            if self.registry.is_sub_agent(agent_id):
                 continue
             if container.consolidate_memory is None:
                 continue
@@ -1506,7 +1534,7 @@ class AppContainer:
                     extractor_id,
                 )
                 continue
-            if not registry.is_sub_agent(extractor_id):
+            if not self.registry.is_sub_agent(extractor_id):
                 logger.error(
                     "Agente '%s': memory.llm.agent_id='%s' debe apuntar a un "
                     "sub-agente (en agents/sub-agents/), no a un agente regular — "
@@ -1536,7 +1564,7 @@ class AppContainer:
         - Si broadcast.remote → rol client; host/port derivados de remote.host ("ip:port").
         - Se almacena ``broadcast_adapter`` y ``broadcast_rate_limiter`` en el
           AgentContainer correspondiente.
-        - Si el agente no tiene container (falló en Phase 1) se omite silenciosamente.
+        - Si el agente no tiene container (falló en _build_agent_containers) se omite silenciosamente.
         """
         from adapters.broadcast.tcp import TcpBroadcastAdapter
 

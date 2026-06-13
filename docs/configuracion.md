@@ -191,6 +191,12 @@ llm:
   model: "anthropic/claude-3-5-haiku"
   temperature: 0.7
   max_tokens: 2048
+  request_delay_seconds: 2.0  # Throttle: wait (seconds) before each provider call
+                              # inside the agentic loop, EXCEPT the first of the turn.
+                              # Prevents saturating the provider rate limiter when the
+                              # model chains several tool calls (each loop iteration is
+                              # one llm.complete()). The first call is never delayed.
+                              # 0 disables it. Negative → 0; unparseable → default 2.0.
 
 embedding:
   provider: "e5_onnx"     # e5_onnx (local ONNX, does not require api_key) | openai

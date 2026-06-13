@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from core.domain.entities.message import Message, Role
 from core.domain.errors import ToolLoopMaxIterationsError
@@ -694,3 +694,88 @@ async def test_thinking_propagates_to_working_messages_during_tool_loop():
     working_messages = second_call_args[0]
     asst_msg = next(m for m in working_messages if m.role == Role.ASSISTANT and m.tool_calls)
     assert asst_msg.thinking == "paso 1: necesito llamar la tool"
+
+
+# ---------------------------------------------------------------------------
+# Throttle del provider (request_delay_seconds)
+# ---------------------------------------------------------------------------
+
+
+async def test_throttle_sleeps_between_calls_but_not_before_first():
+    """Con request_delay_seconds > 0: duerme antes de cada llamada salvo la primera.
+
+    Secuencia: tool_call → tool_call → final = 3 llamadas a llm.complete().
+    Esperamos exactamente 2 sleeps (antes de la 2ª y la 3ª), cada uno con el
+    delay configurado. La PRIMERA llamada nunca se demora.
+    """
+    llm = _make_llm(
+        _tool_call_response("mytool"),
+        _tool_call_response("mytool"),
+        "Respuesta final",
+    )
+    tools = _make_tools()
+
+    with patch("core.use_cases._tool_loop.asyncio.sleep", new=AsyncMock()) as sleep_mock:
+        result = await run_tool_loop(
+            llm=llm,
+            tools=tools,
+            messages=_base_messages(),
+            system_prompt="Prompt",
+            tool_schemas=[{"name": "mytool"}],
+            max_iterations=5,
+            circuit_breaker_threshold=3,
+            agent_id="agent",
+            request_delay_seconds=2.0,
+        )
+
+    assert result == "Respuesta final"
+    assert llm.complete.await_count == 3
+    assert sleep_mock.await_count == 2
+    # Todos los sleeps usan el delay configurado.
+    for call in sleep_mock.await_args_list:
+        assert call.args == (2.0,)
+
+
+async def test_throttle_no_sleep_on_single_llm_call():
+    """Una sola llamada al provider (sin tool calls) → sin sleeps."""
+    llm = _make_llm("Respuesta directa")
+    tools = _make_tools()
+
+    with patch("core.use_cases._tool_loop.asyncio.sleep", new=AsyncMock()) as sleep_mock:
+        await run_tool_loop(
+            llm=llm,
+            tools=tools,
+            messages=_base_messages(),
+            system_prompt="Prompt",
+            tool_schemas=[{"name": "mytool"}],
+            max_iterations=5,
+            circuit_breaker_threshold=3,
+            agent_id="agent",
+            request_delay_seconds=2.0,
+        )
+
+    sleep_mock.assert_not_awaited()
+
+
+async def test_throttle_disabled_by_default_no_sleep():
+    """Sin pasar request_delay_seconds (default 0.0) → nunca duerme, ni con varias iteraciones."""
+    llm = _make_llm(
+        _tool_call_response("mytool"),
+        _tool_call_response("mytool"),
+        "Respuesta final",
+    )
+    tools = _make_tools()
+
+    with patch("core.use_cases._tool_loop.asyncio.sleep", new=AsyncMock()) as sleep_mock:
+        await run_tool_loop(
+            llm=llm,
+            tools=tools,
+            messages=_base_messages(),
+            system_prompt="Prompt",
+            tool_schemas=[{"name": "mytool"}],
+            max_iterations=5,
+            circuit_breaker_threshold=3,
+            agent_id="agent",
+        )
+
+    sleep_mock.assert_not_awaited()

@@ -108,6 +108,7 @@ class RunAgentSettings(BaseModel, frozen=True):
     tools_sticky_ttl: int = 3
     tool_call_max_iterations: int = 5
     circuit_breaker_threshold: int = 2
+    request_delay_seconds: float = 2.0
     timestamp_channels: frozenset[str] = frozenset()
     memory: MemorySettings = MemorySettings()
 
@@ -118,6 +119,7 @@ class OneShotSettings(BaseModel, frozen=True):
     agent_id: str
     system_prompt: str = ""
     circuit_breaker_threshold: int = 2
+    request_delay_seconds: float = 2.0
 
 
 class PhotosSettings(BaseModel, frozen=True):

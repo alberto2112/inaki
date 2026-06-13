@@ -547,6 +547,7 @@ class RunAgentUseCase:
                 agent_id=self._settings.agent_id,
                 intermediate_sink=intermediate_sink,
                 thinking_indicator=self._thinking_indicator,
+                request_delay_seconds=self._settings.request_delay_seconds,
                 # in-flight-message-injection: activamos drainage pasando el
                 # history store y el scope del turno. El loop releerá history
                 # entre iteraciones y drenará mensajes role=user nuevos.

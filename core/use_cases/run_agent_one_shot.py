@@ -114,6 +114,7 @@ class RunAgentOneShotUseCase:
                 circuit_breaker_threshold=self._cfg.circuit_breaker_threshold,
                 agent_id=self._cfg.agent_id,
                 thinking_indicator=self._thinking_indicator,
+                request_delay_seconds=self._cfg.request_delay_seconds,
             ),
             timeout=timeout_seconds,
         )

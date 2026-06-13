@@ -142,6 +142,7 @@ def build_run_agent_settings(cfg: AgentConfig) -> RunAgentSettings:
         tools_sticky_ttl=cfg.tools.sticky_ttl,
         tool_call_max_iterations=cfg.tools.tool_call_max_iterations,
         circuit_breaker_threshold=cfg.tools.circuit_breaker_threshold,
+        request_delay_seconds=cfg.llm.request_delay_seconds,
         timestamp_channels=timestamp_channels,
         memory=build_memory_settings(cfg.memory),
     )
@@ -320,6 +321,7 @@ class AgentContainer:
                 agent_id=cfg.id,
                 system_prompt=cfg.system_prompt,
                 circuit_breaker_threshold=cfg.tools.circuit_breaker_threshold,
+                request_delay_seconds=cfg.llm.request_delay_seconds,
             ),
             thinking_indicator=global_config.channels.thinking_indicator,
         )

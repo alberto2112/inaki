@@ -45,7 +45,6 @@ class TelegramGroupFlowMixin:
     _app: Application
     _behavior: str
     _bot_username: str | None
-    _allowed_chat_ids: list[str]
     _broadcast_receiver: BroadcastReceiver | None
     _rate_limiter: Any
     _rate_limit_max: int
@@ -53,7 +52,6 @@ class TelegramGroupFlowMixin:
     _last_group_sender: dict[str, dict[str, str | None]]
     _group_min_delay: float
     _group_max_delay: float
-    _is_allowed_chat: Callable[[int], bool]
     _set_group_reaction: Callable[..., Coroutine[Any, Any, None]]
     _emit_event: Callable[..., Coroutine[Any, Any, None]]
 
@@ -77,14 +75,9 @@ class TelegramGroupFlowMixin:
         chat_id = chat.id
         chat_id_str = str(chat_id)
 
-        if self._allowed_chat_ids and not self._is_allowed_chat(chat_id):
-            logger.debug(
-                "Grupo no whitelisted ignorado (chat_id=%s, agent=%s)",
-                chat_id,
-                self._settings.id,
-            )
-            return
-
+        # La autorización del grupo (allowed_chat_ids) ya se resolvió upstream en
+        # ``_is_authorized`` — todos los handlers de mensaje la chequean antes de
+        # llegar acá. No se repite el check.
         behavior = self._behavior
 
         if behavior == "listen":

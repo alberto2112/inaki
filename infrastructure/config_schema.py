@@ -542,10 +542,13 @@ class TelegramChannelConfig(BaseModel):
     """Token del bot de Telegram (BotFather). Requerido para que el canal levante."""
 
     allowed_user_ids: list[int] = Field(default_factory=list)
-    """IDs de usuarios autorizados a interactuar directamente. Lista vacía = sin restricción."""
+    """IDs de usuarios autorizados en CHATS PRIVADOS. Lista vacía = sin restricción.
+    NO aplica en grupos (los grupos se controlan solo por ``allowed_chat_ids``)."""
 
     allowed_chat_ids: list[int] = Field(default_factory=list)
-    """IDs de grupos autorizados. Lista vacía = solo chats privados de usuarios en allowed_user_ids."""
+    """IDs de grupos autorizados. Lista vacía = el bot NO responde en grupos (solo
+    chats privados). En un grupo autorizado cualquier usuario puede interactuar:
+    ``allowed_user_ids`` no se evalúa en grupos."""
 
     reactions: bool = False
     """Si True, el bot envía una reacción emoji tras procesar un mensaje."""
@@ -810,4 +813,3 @@ class GlobalConfig(BaseModel):
     acá solo se almacena y mergea. Los valores sensibles van cifrados (prefijo enc:).
     Escrito por YamlToolConfigStore cuando el usuario configura desde el chat.
     Scope global único (no per-agent) — decisión V1 para uso doméstico."""
-

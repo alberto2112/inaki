@@ -424,6 +424,30 @@ por turno vs varios segundos del turno completo). Si en el futuro la perf
 importara, agregar `IHistoryStore.load_since(after_id)` para leer solo el delta
 en vez de toda la historia del scope.
 
+### `telegram-group-auth`
+
+La matriz de autorización del canal Telegram se separó por contexto. El guardián
+único es `TelegramBot._is_authorized(update)`, que compone los dos building blocks
+existentes según el tipo de chat:
+
+- **Privado**: filtra por `allowed_user_ids` (lista vacía = todos). Sin cambios.
+- **Grupo**: filtra SOLO por `allowed_chat_ids`. `allowed_user_ids` ya **no aplica**
+  en grupos — cualquier miembro de un grupo autorizado puede interactuar.
+- **`allowed_chat_ids` vacío**: el bot **NO responde en grupos** (solo privados).
+
+**Breaking change de comportamiento** (sin migración de DB ni de config): antes,
+`allowed_chat_ids: []` significaba "todos los grupos aceptados" — el código
+contradecía su propio docstring. Ahora vacío = ningún grupo. Configs que tenían
+`allowed_chat_ids: []` y dependían de responder en grupos **dejan de hacerlo**.
+
+**Paso del operador**: para seguir respondiendo en un grupo, agregar su `chat_id`
+a `channels.telegram.allowed_chat_ids` (obtenible con `/chatid` dentro del grupo).
+
+La matriz aplica uniforme a los 4 handlers de mensaje (texto, foto, voz, media
+silenciosa). Los **comandos slash** (`/start`, `/clear`, `/scheduler`, etc.) quedan
+fuera: siguen siendo admin-only por `allowed_user_ids` vía `_is_allowed`, incluso
+en grupos autorizados (`/chatid` mantiene su bypass de `allowed_chat_ids`).
+
 ## Git workflow
 
 - Never create a branch without asking me for the name first.

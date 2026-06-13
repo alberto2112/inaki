@@ -66,7 +66,7 @@ class TelegramMediaMixin:
     _settings: TelegramBotSettings
     _ports: TelegramBotPorts
     _voice_enabled: bool
-    _is_allowed: Callable[[int], bool]
+    _is_authorized: Callable[[Update], bool]
     _set_reaction: Callable[..., Coroutine[Any, Any, None]]
     _run_pipeline: Callable[..., Coroutine[Any, Any, None]]
     _handle_group_message: Callable[..., Coroutine[Any, Any, None]]
@@ -94,7 +94,7 @@ class TelegramMediaMixin:
         message = update.message
         if user is None or chat is None or message is None:
             return
-        if not self._is_allowed(user.id):
+        if not self._is_authorized(update):
             logger.warning(
                 "Foto rechazada de user_id=%s (no autorizado)",
                 user.id,
@@ -500,7 +500,7 @@ class TelegramMediaMixin:
         user = update.effective_user
         if user is None:
             return
-        if not self._is_allowed(user.id):
+        if not self._is_authorized(update):
             return
 
         await self._persist_incoming_file(update)
@@ -550,7 +550,7 @@ class TelegramMediaMixin:
         message = update.message
         if user is None or message is None:
             return
-        if not self._is_allowed(user.id):
+        if not self._is_authorized(update):
             logger.warning(
                 "Audio rechazado de user_id=%s (no autorizado)",
                 user.id,

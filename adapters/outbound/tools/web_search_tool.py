@@ -7,7 +7,7 @@ Operations:
 
 Primer consumidor del Tool Config Protocol (ver
 ``core/ports/outbound/tool_config_port.py``): las credenciales se persisten
-en ``tool_config.web_search`` de ``global.secrets.yaml`` — el usuario puede
+en ``tool_config.web_search`` de ``config/tool_config.yaml`` — el usuario puede
 pasarle la api_key al agente conversando, sin editar YAML a mano. La api_key
 se cifra en reposo (``enc:``); el resto de campos quedan en plano.
 """

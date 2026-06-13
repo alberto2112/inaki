@@ -7,16 +7,21 @@ from pathlib import Path
 
 import httpx
 import respx
+import yaml
 
 from adapters.outbound.config_repository.yaml_tool_config_store import YamlToolConfigStore
 from adapters.outbound.tools.web_search_tool import _TAVILY_ENDPOINT, WebSearchTool
 
 
 def _make_tool(tmp_path: Path, initial: dict | None = None) -> WebSearchTool:
+    # El store lee su propio tool_config.yaml; pre-sembramos escribiendo el archivo.
+    if initial:
+        (tmp_path / "tool_config.yaml").write_text(
+            yaml.safe_dump({"tool_config": initial}), encoding="utf-8"
+        )
     store = YamlToolConfigStore(
-        secrets_path=tmp_path / "global.secrets.yaml",
+        store_path=tmp_path / "tool_config.yaml",
         key_path=tmp_path / "secret.key",
-        initial=initial,
     )
     return WebSearchTool(config_store=store)
 
@@ -58,8 +63,8 @@ async def test_configure_persiste_y_search_la_usa(tmp_path: Path):
     payload = json.loads(route.calls.last.request.content)
     assert payload["api_key"] == "tvly-nueva"
     assert payload["max_results"] == 3
-    # y en disco quedó cifrada
-    contenido = (tmp_path / "global.secrets.yaml").read_text(encoding="utf-8")
+    # y en disco quedó cifrada (en el archivo propio del store)
+    contenido = (tmp_path / "tool_config.yaml").read_text(encoding="utf-8")
     assert "tvly-nueva" not in contenido
     assert "enc:" in contenido
 

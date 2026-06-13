@@ -56,9 +56,8 @@ def _make_container(tmp_path: Path) -> AgentContainer:
         ),
     )
     container._tool_config_store = YamlToolConfigStore(
-        secrets_path=tmp_path / "global.secrets.yaml",
+        store_path=tmp_path / "tool_config.yaml",
         key_path=tmp_path / "secret.key",
-        initial={},
     )
     # _global_config necesario para _build_knowledge_orchestrator
     container._global_config = SimpleNamespace(knowledge=None)  # type: ignore[assignment]

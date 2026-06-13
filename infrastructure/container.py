@@ -86,6 +86,7 @@ from infrastructure.config import (
     MemoryConfig,
     PhotosConfig,
     TelegramChannelConfig,
+    migrate_tool_config_to_own_file,
 )
 from infrastructure.daemon_reloader import DaemonReloader
 from infrastructure.factories.embedding_factory import EmbeddingProviderFactory
@@ -213,9 +214,8 @@ class AgentContainer:
         # construye AppContainer con el config_dir real). El fallback local es
         # solo para tests directos / arranques sueltos.
         self._tool_config_store: IToolConfigStore = tool_config_store or YamlToolConfigStore(
-            secrets_path=Path.home() / ".inaki" / "config" / "global.secrets.yaml",
+            store_path=Path.home() / ".inaki" / "config" / "tool_config.yaml",
             key_path=Path.home() / ".inaki" / "secret.key",
-            initial=global_config.tool_config,
         )
 
         # Stash global_config so wire_delegation can access delegation limits (task 5.1)
@@ -1264,14 +1264,17 @@ class AppContainer:
         self._wire_memory_extractors()
 
     def _init_shared_state(self, config_dir: Path | None) -> None:
-        # Tool Config Protocol — UN store para toda la app. Las escrituras del
-        # configure-desde-chat van a global.secrets.yaml del config_dir activo;
-        # la vista en memoria se actualiza al instante para todos los agentes.
+        # Tool Config Protocol — UN store para toda la app, dueño de su propio
+        # archivo ``config/tool_config.yaml`` (NO vive en global.secrets.yaml: ese
+        # es del operador y el daemon no lo pisa). El store lo lee al construirse,
+        # así la config sobrevive al reinicio. La vista en memoria se actualiza al
+        # instante para todos los agentes. Migración idempotente justo antes para
+        # cubrir el path de ``--config-dir`` override (que saltea ensure_user_config).
         resolved_config_dir = config_dir or Path.home() / ".inaki" / "config"
+        migrate_tool_config_to_own_file(resolved_config_dir)
         self.tool_config_store: IToolConfigStore = YamlToolConfigStore(
-            secrets_path=resolved_config_dir / "global.secrets.yaml",
+            store_path=resolved_config_dir / "tool_config.yaml",
             key_path=resolved_config_dir.parent / "secret.key",
-            initial=self.global_config.tool_config,
         )
 
         # Registro de bots de Telegram — el daemon runner los registra al arrancar
@@ -1486,7 +1489,8 @@ class AppContainer:
         # DB en la misma carpeta que history.db / faces.db.
         self._telegram_file_repo = None
         if any(
-            (cfg.channels.get("telegram", {}) or {}).get("token") for cfg in self.registry.list_regular()
+            (cfg.channels.get("telegram", {}) or {}).get("token")
+            for cfg in self.registry.list_regular()
         ):
             from pathlib import Path
 

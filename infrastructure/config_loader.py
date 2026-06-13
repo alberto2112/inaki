@@ -197,6 +197,75 @@ def ensure_user_config(config_dir: Path, agents_dir: Path) -> None:
             raise
         logger.info("Secrets file creado: %s", secrets_yaml)
 
+    migrate_tool_config_to_own_file(config_dir)
+
+
+def migrate_tool_config_to_own_file(config_dir: Path) -> None:
+    """Migración one-shot: mueve el bloque ``tool_config:`` de
+    ``global.secrets.yaml`` a su propio ``tool_config.yaml``.
+
+    El store ahora es dueño de su archivo (``tool_config.yaml``) y el operador
+    recupera ``global.secrets.yaml`` como archivo de SOLO credenciales que el
+    daemon no pisa. Esta función traslada el bloque de instalaciones previas.
+
+    Idempotente: si ``tool_config.yaml`` ya existe, o ``global.secrets.yaml`` no
+    tiene el bloque, no hace nada. Orden seguro: escribe el archivo nuevo ANTES
+    de limpiar el viejo — en el peor caso quedan duplicados (benigno: el store
+    solo lee ``tool_config.yaml``), nunca pérdida de datos. La ``secret.key`` no
+    cambia, así que los ``enc:`` siguen descifrándose.
+    """
+    store_path = config_dir / "tool_config.yaml"
+    secrets_path = config_dir / "global.secrets.yaml"
+
+    if store_path.exists() or not secrets_path.exists():
+        return
+
+    from ruamel.yaml import YAML
+
+    yaml_rt = YAML()
+    yaml_rt.preserve_quotes = True
+    try:
+        with secrets_path.open("r", encoding="utf-8") as f:
+            secrets_doc = yaml_rt.load(f) or {}
+    except OSError as exc:
+        logger.error("Migración tool_config: no se pudo leer %s (%s)", secrets_path, exc)
+        return
+
+    bloque = secrets_doc.get("tool_config")
+    if not bloque:
+        return  # nada que migrar
+
+    # 1) Escribir el archivo nuevo PRIMERO (datos a salvo antes de limpiar).
+    try:
+        with store_path.open("w", encoding="utf-8") as f:
+            yaml_rt.dump({"tool_config": bloque}, f)
+        store_path.chmod(0o600)
+    except OSError as exc:
+        logger.error(
+            "Migración tool_config: no se pudo escribir %s (%s) — abortando, "
+            "los datos quedan en global.secrets.yaml",
+            store_path,
+            exc,
+        )
+        return
+
+    # 2) Recién ahora, limpiar el bloque de global.secrets.yaml (resto intacto).
+    try:
+        del secrets_doc["tool_config"]
+        with secrets_path.open("w", encoding="utf-8") as f:
+            yaml_rt.dump(secrets_doc, f)
+    except OSError as exc:
+        logger.warning(
+            "Migración tool_config: %s creado, pero no se pudo limpiar el bloque "
+            "viejo de %s (%s) — duplicado benigno, el store ignora el bloque en secrets",
+            store_path,
+            secrets_path,
+            exc,
+        )
+        return
+
+    logger.info("Migración tool_config: bloque movido de %s a %s", secrets_path, store_path)
+
 
 class _HasChannels(Protocol):
     """Subset estructural de ``AgentConfig`` que ``ensure_user_channel_dirs``

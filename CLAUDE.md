@@ -90,7 +90,7 @@ Secrets are YAML-only (no env vars). `*.secrets.yaml` files are gitignored.
 - **All use cases** are classes with an async `execute()` method, injected via constructor in `container.py`.
 - **RunAgent — fases del turno** — `RunAgentUseCase._execute_turn` es un orquestador delgado: las fases (semantic routing + sticky, knowledge pre-fetch, presupuesto de tokens, ensamblado de mensajes, secciones in-flight, debug de foto) viven como funciones libres en `core/use_cases/_turn_pipeline.py` — mismo contrato que `_tool_loop.py`: dependencias explícitas (ports, settings VO, VOs), sin `self`, testeables aisladas. `run_semantic_routing` devuelve un `RoutingOutcome` (incluye `query_vec` para reusar en `prefetch_knowledge`, que también comparte `inspect()`). Para tocar una fase: editar la función en `_turn_pipeline.py`, NO re-inline en el use case.
 - **Tool results** must be `ToolResult` objects, never raw strings.
-- **Tool Config Protocol** — Tools que necesitan credenciales configurables por chat declaran `config_namespace` en la clase y reciben `config_store: IToolConfigStore` en el constructor (inyectado por `container.py`, también para tools de `ext/`). Persistencia en `tool_config.{namespace}` de `global.secrets.yaml`; sensibles cifrados `enc:` con `~/.inaki/secret.key`. NUNCA crear un YAML de config propio por tool — eso era el patrón legacy (4 islas eliminadas).
+- **Tool Config Protocol** — Tools que necesitan credenciales configurables por chat declaran `config_namespace` en la clase y reciben `config_store: IToolConfigStore` en el constructor (inyectado por `container.py`, también para tools de `ext/`). Persistencia en `tool_config.{namespace}` de **`config/tool_config.yaml`** — archivo PROPIO del store (dueño: el daemon), NO `global.secrets.yaml` (ese es del operador y el daemon no lo pisa). El store **lee su propio archivo al construirse** (la config sobrevive al reinicio) y `tool_config` NO participa del merge de 4 capas. Sensibles cifrados `enc:` con `~/.inaki/secret.key`. NUNCA crear un YAML de config propio por tool — eso era el patrón legacy (4 islas eliminadas); el archivo único compartido por namespace NO es una isla.
 - **Message roles** use `Role` enum (`Role.USER`, `Role.ASSISTANT`, etc.), not string literals.
 - **TelegramBot — estructura** — `bot.py` conserva wiring + auth + turno privado (`_run_pipeline`); los handlers viven en mixins por responsabilidad (`commands.py`, `media.py`, `group_flow.py`, `broadcast.py`), cada uno declarando el slice de estado que consume como anotaciones de clase (contrato mypy). El bot NO recibe `AgentContainer`/`AgentConfig`: recibe `TelegramBotPorts` + `TelegramBotSettings` (`ports.py`, tipados contra core), construidos por `build_telegram_bot_settings/ports` en `container.py`. Todo el estado se inicializa en `TelegramBot.__init__`.
 - **Workspace containment** — `read_file`, `write_file` y `patch_file` usan `workspace.containment` (strict/warn/off). `shell_exec` NO tiene contención — opera en cualquier path. Ver `docs/configuracion.md`.
@@ -109,6 +109,37 @@ Secrets are YAML-only (no env vars). `*.secrets.yaml` files are gitignored.
 - **`message_face_metadata` side-table** — En `history.db`. Key por `history.id`. `ON DELETE CASCADE` limpia metadata cuando se borra el historial.
 
 ## Migration Notes
+
+### `tool-config-own-file`
+
+El store del Tool Config Protocol dejó de vivir dentro de `global.secrets.yaml`
+y pasó a su **propio archivo daemon-owned**: `config/tool_config.yaml`. Razón:
+`global.secrets.yaml` lo escribe el operador a mano (api keys de providers,
+tokens) pero el daemon le reescribía el bloque `tool_config:` en runtime — dos
+dueños en un archivo, dolor para quien despliega. Ahora el operador recupera
+`global.secrets.yaml` como archivo de SOLO credenciales que el daemon no toca.
+
+**Fix de bug incluido**: `load_global_config` construía `GlobalConfig` SIN pasar
+`tool_config=`, así que `global_config.tool_config` salía SIEMPRE `{}` y el store
+(que se sembraba de ahí vía `initial=`) nunca leía el disco al arrancar → tras
+cualquier reinicio del daemon TODA la config de tools (exchange, web_search…) era
+invisible en memoria hasta reconfigurar. Se resuelve por diseño: el store ahora
+**lee su propio `tool_config.yaml`** en `__init__` (sin `initial`, sin depender
+del loader). El campo `GlobalConfig.tool_config` se eliminó (estaba muerto).
+
+**Migración automática en caliente** (`migrate_tool_config_to_own_file` en
+`config_loader.py`, llamada desde `ensure_user_config` y desde
+`AppContainer._init_shared_state`): al arrancar, si existe el bloque `tool_config:`
+en `global.secrets.yaml` y no existe `config/tool_config.yaml`, mueve el bloque al
+archivo nuevo y lo limpia del secrets (preserva el resto + comentarios, ruamel).
+Orden seguro: escribe el archivo nuevo ANTES de limpiar el viejo — peor caso,
+duplicado benigno (el store solo lee `tool_config.yaml`), nunca pérdida. La
+`secret.key` NO cambia → los `enc:` siguen descifrándose, sin reconfigurar.
+
+**Sin pasos manuales del operador.** Si se desea, tras verificar que
+`config/tool_config.yaml` quedó poblado, el bloque viejo ya no está en
+`global.secrets.yaml`. No tocar el `secrets_path` del store de vuelta a
+`global.secrets.yaml`: el archivo propio es la decisión.
 
 ### `tool-config-protocol`
 

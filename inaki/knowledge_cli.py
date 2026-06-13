@@ -2,9 +2,16 @@
 knowledge_cli — comandos de gestión de fuentes de conocimiento.
 
 Sub-app de Typer con comandos:
-  knowledge index <source-id>   — indexa o re-indexa una fuente
-  knowledge list                — lista fuentes configuradas
-  knowledge stats <source-id>   — muestra estadísticas del índice de una fuente
+  knowledge index <source-id>            — indexa o re-indexa una fuente
+  knowledge ingest <source-id> <path>    — incorpora un archivo suelto e indexa
+  knowledge list                         — lista fuentes configuradas
+  knowledge docs <source-id>             — lista los archivos indexados de una fuente
+  knowledge stats <source-id>            — muestra estadísticas del índice de una fuente
+  knowledge delete <source-id> <file>    — borra un archivo del índice
+
+Este CLI opera OFFLINE: construye la fuente directamente desde la config, sin
+daemon. La misma capacidad está disponible para el LLM (tool ``knowledge_admin``)
+y de forma remota vía ``inaki tool knowledge_admin`` / ``POST /admin/tool/invoke``.
 """
 
 from __future__ import annotations
@@ -13,6 +20,8 @@ import asyncio
 from pathlib import Path
 
 import typer
+
+from core.domain.errors import KnowledgeError
 
 knowledge_app = typer.Typer(help="Manage document knowledge sources.")
 
@@ -115,6 +124,41 @@ def knowledge_index(
     )
 
 
+@knowledge_app.command("ingest")
+def knowledge_ingest(
+    ctx: typer.Context,
+    source_id: str = typer.Argument(..., help="ID of the document knowledge source."),
+    path: Path = typer.Argument(
+        ...,
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        help="Path to the file to ingest and index.",
+    ),
+) -> None:
+    """Ingest a single file into a document source and index it (inbox model)."""
+    config_dir: Path | None = ctx.obj.get("config_dir") if ctx.obj else None
+
+    global_cfg = _load_global_config(config_dir)
+    fuente_cfg = _get_source_config(global_cfg, source_id)
+    source = _build_document_source(fuente_cfg, global_cfg)
+
+    typer.echo(f"Ingesting '{path}' into source '{source_id}' ...")
+
+    async def _run():
+        return await source.ingest_file(path)
+
+    try:
+        result = asyncio.run(_run())
+    except (FileNotFoundError, KnowledgeError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(
+        f"Done. Stored at: {result['stored_path']}, new chunks: {result['chunks_nuevos']}"
+    )
+
+
 @knowledge_app.command("list")
 def knowledge_list(
     ctx: typer.Context,
@@ -170,3 +214,63 @@ def knowledge_stats(
             "%Y-%m-%d %H:%M:%S UTC"
         )
         typer.echo(f"Last indexed:    {ts}")
+
+
+@knowledge_app.command("docs")
+def knowledge_docs(
+    ctx: typer.Context,
+    source_id: str = typer.Argument(..., help="ID of the knowledge source."),
+) -> None:
+    """List the files indexed in a knowledge source."""
+    config_dir: Path | None = ctx.obj.get("config_dir") if ctx.obj else None
+
+    global_cfg = _load_global_config(config_dir)
+    fuente_cfg = _get_source_config(global_cfg, source_id)
+    source = _build_document_source(fuente_cfg, global_cfg)
+
+    async def _run():
+        return await source.list_files()
+
+    files = asyncio.run(_run())
+
+    if not files:
+        typer.echo(f"No documents indexed in source '{source_id}'.")
+        return
+
+    typer.echo(f"{len(files)} document(s) indexed in '{source_id}':")
+    for f in files:
+        typer.echo(f"  {f['file_path']}  ({f['chunk_count']} chunks)")
+
+
+@knowledge_app.command("delete")
+def knowledge_delete(
+    ctx: typer.Context,
+    source_id: str = typer.Argument(..., help="ID of the knowledge source."),
+    file_path: str = typer.Argument(
+        ..., help="File to remove from the index (filename or full path as shown by 'docs')."
+    ),
+    remove_file: bool = typer.Option(
+        False,
+        "--remove-file",
+        help="Also delete the physical file (only if it lives inside the source folder).",
+    ),
+) -> None:
+    """Delete a file's chunks from a knowledge source index."""
+    config_dir: Path | None = ctx.obj.get("config_dir") if ctx.obj else None
+
+    global_cfg = _load_global_config(config_dir)
+    fuente_cfg = _get_source_config(global_cfg, source_id)
+    source = _build_document_source(fuente_cfg, global_cfg)
+
+    async def _run():
+        return await source.delete_file(file_path, remove_physical=remove_file)
+
+    borrados = asyncio.run(_run())
+
+    if borrados == 0:
+        typer.echo(
+            f"Error: '{file_path}' not found in the index of '{source_id}'.", err=True
+        )
+        raise typer.Exit(code=1)
+
+    typer.echo(f"Done. Deleted {borrados} chunk(s) of '{file_path}' from '{source_id}'.")

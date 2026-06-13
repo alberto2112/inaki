@@ -244,3 +244,108 @@ class TestKnowledgeStats:
             result = runner.invoke(app, ["knowledge", "stats", "no-existe"])
 
         assert result.exit_code == 1
+
+
+class TestKnowledgeIngest:
+    def test_ingest_ok(self, runner, docs_dir: Path, tmp_path: Path) -> None:
+        """ingest de un archivo existente muestra stored_path y chunks."""
+        global_cfg = _build_global_config_mock(docs_dir)
+        archivo = tmp_path / "nota.txt"
+        archivo.write_text("contenido a ingerir")
+
+        mock_source = MagicMock()
+        mock_source.ingest_file = AsyncMock(
+            return_value={"stored_path": str(docs_dir / "nota.txt"), "chunks_nuevos": 4}
+        )
+
+        with (
+            patch("inaki.knowledge_cli._load_global_config", return_value=global_cfg),
+            patch("inaki.knowledge_cli._build_document_source", return_value=mock_source),
+        ):
+            result = runner.invoke(app, ["knowledge", "ingest", "test-docs", str(archivo)])
+
+        assert result.exit_code == 0, result.output
+        assert "Done" in result.output
+        assert "4" in result.output
+
+    def test_ingest_path_inexistente_exits_2(self, runner, docs_dir: Path) -> None:
+        """ingest de un path inexistente → typer valida exists=True (exit 2)."""
+        global_cfg = _build_global_config_mock(docs_dir)
+        with patch("inaki.knowledge_cli._load_global_config", return_value=global_cfg):
+            result = runner.invoke(
+                app, ["knowledge", "ingest", "test-docs", "/no/existe.txt"]
+            )
+        assert result.exit_code == 2
+
+
+class TestKnowledgeDocs:
+    def test_docs_lists_indexed_files(self, runner, docs_dir: Path) -> None:
+        """docs lista los archivos indexados de una fuente."""
+        global_cfg = _build_global_config_mock(docs_dir)
+
+        mock_source = MagicMock()
+        mock_source.list_files = AsyncMock(
+            return_value=[{"file_path": "/docs/a.md", "mtime": 1.0, "chunk_count": 4}]
+        )
+
+        with (
+            patch("inaki.knowledge_cli._load_global_config", return_value=global_cfg),
+            patch("inaki.knowledge_cli._build_document_source", return_value=mock_source),
+        ):
+            result = runner.invoke(app, ["knowledge", "docs", "test-docs"])
+
+        assert result.exit_code == 0, result.output
+        assert "a.md" in result.output
+
+
+class TestKnowledgeDelete:
+    def test_delete_ok(self, runner, docs_dir: Path) -> None:
+        """delete de un archivo presente borra los chunks."""
+        global_cfg = _build_global_config_mock(docs_dir)
+
+        mock_source = MagicMock()
+        mock_source.delete_file = AsyncMock(return_value=3)
+
+        with (
+            patch("inaki.knowledge_cli._load_global_config", return_value=global_cfg),
+            patch("inaki.knowledge_cli._build_document_source", return_value=mock_source),
+        ):
+            result = runner.invoke(app, ["knowledge", "delete", "test-docs", "a.md"])
+
+        assert result.exit_code == 0, result.output
+        assert "3" in result.output
+        mock_source.delete_file.assert_awaited_once_with("a.md", remove_physical=False)
+
+    def test_delete_not_found_exits_1(self, runner, docs_dir: Path) -> None:
+        """delete de un archivo no indexado → exit 1."""
+        global_cfg = _build_global_config_mock(docs_dir)
+
+        mock_source = MagicMock()
+        mock_source.delete_file = AsyncMock(return_value=0)
+
+        with (
+            patch("inaki.knowledge_cli._load_global_config", return_value=global_cfg),
+            patch("inaki.knowledge_cli._build_document_source", return_value=mock_source),
+        ):
+            result = runner.invoke(app, ["knowledge", "delete", "test-docs", "fantasma.md"])
+
+        assert result.exit_code == 1
+        assert "not found" in result.output
+
+    def test_delete_remove_file_flag(self, runner, docs_dir: Path) -> None:
+        """--remove-file propaga remove_physical=True al source."""
+        global_cfg = _build_global_config_mock(docs_dir)
+
+        mock_source = MagicMock()
+        mock_source.delete_file = AsyncMock(return_value=2)
+
+        with (
+            patch("inaki.knowledge_cli._load_global_config", return_value=global_cfg),
+            patch("inaki.knowledge_cli._build_document_source", return_value=mock_source),
+        ):
+            result = runner.invoke(
+                app, ["knowledge", "delete", "test-docs", "a.md", "--remove-file"]
+            )
+
+        assert result.exit_code == 0, result.output
+        mock_source.delete_file.assert_awaited_once_with("a.md", remove_physical=True)

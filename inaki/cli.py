@@ -19,6 +19,13 @@ Modos de uso:
   inaki tool <name> [--arg k=v ...]        → ejecuta una tool del agente sin LLM
   inaki tool --list                        → lista tools del agente
   inaki send <channel>:<chat_id> --text ...→ envía mensaje/archivo via canal (sin LLM, persiste)
+  inaki knowledge index <source>           → indexa/re-indexa una fuente de documentos
+  inaki knowledge ingest <source> <path>   → incorpora un archivo suelto al índice
+  inaki knowledge list                     → lista las fuentes configuradas
+  inaki knowledge docs <source>            → lista los archivos indexados de una fuente
+  inaki knowledge stats <source>           → estadísticas del índice de una fuente
+  inaki knowledge delete <source> <file>   → borra un archivo del índice
+  inaki scheduler ...                      → gestión de tareas programadas (ver --help)
 """
 
 from __future__ import annotations

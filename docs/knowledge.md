@@ -108,19 +108,65 @@ KNOWLEDGE_SOURCES = [_build_mi_fuente]
 
 The factory receives `(agent_config, global_config, embedder)` and must return an object that implements `IKnowledgeSource` (`core/ports/outbound/knowledge_port.py`). If the factory raises an exception, it is logged as WARNING and the remaining sources continue working.
 
+If you also want the source to be **manageable** (ingest/reindex/list/delete via the `knowledge_admin` tool and the CLI), implement `IIndexableKnowledgeSource` instead — it extends `IKnowledgeSource` with the management methods. Plain `IKnowledgeSource` sources stay read-only and are skipped by management operations (this is intentional, to preserve Liskov: a read-only source must not be forced to implement `index()`).
+
 The guaranteed registration order is: **(1) memory** → **(2) config sources** → **(3) extension sources**.
 
 ---
 
 ## Can I Send a Document Directly in Chat?
 
-That mechanism does not exist today. You cannot paste a `.md` in the chat and have it indexed. The flow is always:
+**Yes.** Send a `.md`/`.txt`/`.pdf` file through a channel (e.g. Telegram) with a
+caption like *"save this in the knowledge base"* and the agent ingests it into the
+RAG. No copying files by hand, no CLI.
 
-```
-Copy file to the folder → inaki knowledge index <id> → active querying
+How it works (and why it needs zero channel-specific code): the channel already
+hands the downloaded file path to the LLM. The LLM then calls the **`knowledge_admin`**
+tool with `operation=ingest`, which copies the file into a `document` source folder
+and indexes it on the spot — regardless of that source's `glob` (a `.txt` is
+accepted even if the glob is `**/*.md`).
+
+> Requirement: at least one `type: document` source must be configured. If there
+> is exactly one, the agent uses it implicitly; with several, name the source.
+
+### Managing Knowledge from Chat (the `knowledge_admin` tool)
+
+The LLM can manage the index conversationally. One tool, several operations:
+
+| Operation | What it does | Natural request |
+|-----------|--------------|-----------------|
+| `ingest`  | Add+index a file | "save this document" |
+| `list`    | Show indexed files | "what documents do you have?" |
+| `stats`   | Index statistics | "how big is the knowledge base?" |
+| `delete`  | Remove a file from the index | "delete that document" |
+| `reindex` | Re-scan a source | "re-index the docs" |
+| `sources` | List manageable sources | "which knowledge sources can you manage?" |
+
+Only `document` sources are manageable (they implement `IIndexableKnowledgeSource`).
+Memory and external SQLite sources are read-only and are never touched by these
+operations.
+
+### Managing Knowledge from the CLI / remotely
+
+The same capability is available offline via the CLI and remotely via the admin
+server — all backed by the same logic, no duplicated implementations:
+
+```bash
+inaki knowledge ingest <id> <path>      # add a single file and index it
+inaki knowledge docs <id>               # list indexed files
+inaki knowledge delete <id> <file>      # remove a file from the index
+inaki knowledge delete <id> <file> --remove-file   # ...and delete the physical file
+inaki knowledge index <id>              # re-index the whole source
+inaki knowledge stats <id>              # index statistics
+
+# Against a running (possibly remote) daemon, via the generic tool gateway:
+inaki tool knowledge_admin --arg operation=list
+inaki --remote http://raspi.local:6497 tool knowledge_admin --arg operation=stats
 ```
 
-A `knowledge_add_document` tool that automates this would be a natural extension of the current pipeline but is not implemented.
+There is **no dedicated knowledge REST endpoint** on purpose: `POST /admin/tool/invoke`
+already invokes any tool, including `knowledge_admin`. Capability lives once (use
+case + tool); every surface is a thin client.
 
 ---
 
@@ -146,8 +192,10 @@ If `enabled: false`, pre-fetch is skipped but the user can still invoke `knowled
 | Role | File |
 |------|------|
 | Full YAML reference | `docs/configuracion.md` — `knowledge:` section |
-| `IKnowledgeSource` port | `core/ports/outbound/knowledge_port.py` |
+| Ports (read-only + indexable) | `core/ports/outbound/knowledge_port.py` |
+| Management use case | `core/use_cases/manage_knowledge.py` |
 | Document adapter | `adapters/outbound/knowledge/document_knowledge_source.py` |
 | SQLite adapter | `adapters/outbound/knowledge/sqlite_knowledge_source.py` |
 | Explicit search tool | `adapters/outbound/tools/knowledge_search_tool.py` |
+| Management tool (LLM) | `adapters/outbound/tools/knowledge_admin_tool.py` |
 | Management CLI | `inaki/knowledge_cli.py` |

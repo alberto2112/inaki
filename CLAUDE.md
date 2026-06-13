@@ -33,6 +33,31 @@ Inaki is a multi-agent AI assistant following **strict hexagonal architecture**:
 Dependency direction: `adapters → core ←  infrastructure`, con `inaki/` (composition root) por encima de todo. Never reversed.
 Enforced by `tests/unit/test_architecture.py` (3 reglas, incluyen TYPE_CHECKING e imports locales): (1) `core/` no importa `adapters/` ni `infrastructure/`; (2) terceros en `core/` limitados al allowlist; (3) `adapters/` no importa `infrastructure/`. Las reglas 2 y 3 son **ratchet**: `DEUDA_*` quedó **vacía** el 2026-06-13 (toda la deuda de la auditoría saldada). NUNCA agregar entradas a `DEUDA_*`: resolver el acoplamiento (Settings VOs, Protocols estructurales, o reubicar composition-roots a `inaki/`).
 
+### Capacidades vs canales — la regla del canal THIN (LEER antes de agregar un canal)
+
+Una **capacidad** (gestionar knowledge, agendar tareas, gestionar memoria, etc.)
+se implementa UNA vez y se expone por TRES superficies que comparten la misma
+lógica — NUNCA se re-implementa por canal:
+
+1. **Use case en `core/`** — la lógica vive acá (ej. `core/use_cases/manage_knowledge.py`).
+2. **Tool del LLM** (`adapters/outbound/tools/`) — envuelve el use case; le da `routing_keywords` si los humanos la invocan en lenguaje natural. Así el LLM (y por ende CUALQUIER canal) llega a la capacidad.
+3. **Gateway admin único** — `POST /admin/tool/invoke` ya invoca cualquier tool; `inaki tool <name>` es su cliente. NO crear endpoints REST por capacidad (sería deuda redundante).
+
+Un **canal** (Telegram, y mañana Slack, etc.) es un **inbound adapter THIN**: solo
+traduce su I/O nativo a un turno. **NO implementa pasarelas de CLIs ni lógica de
+capacidades.** Ejemplo concreto: "mandar un documento y que entre al RAG" NO tiene
+una sola línea de código en Telegram — el canal ya entrega el path del archivo al
+LLM (`media.py` inyecta `__FILE__ <name> at <path>`) y el LLM llama la tool
+`knowledge_admin`. Un canal nuevo hereda la capacidad GRATIS con solo entregar el
+input al pipeline.
+
+**ANTIPATRÓN explícito**: que cada canal nuevo "implemente las pasarelas de los CLI
+disponibles". Eso es una explosión N×M (N canales × M capacidades) y multiplica los
+composition-roots paralelos. Si te encontrás replicando un comando de CLI dentro de
+un canal, parás: la capacidad va a un use case + tool, y el canal solo dispara turnos.
+El CLI offline (`inaki/`) puede construir el use case directo para bootstrap sin daemon
+— eso es legítimo (es un composition root), no una pasarela en un canal.
+
 ### Key Wiring Rules
 
 - **`infrastructure/container.py`** — `AgentContainer` (per-agent DI) and `AppContainer` (root, all agents). Registering a new tool, provider, or repo happens here and ONLY here.
@@ -73,6 +98,7 @@ Secrets are YAML-only (no env vars). `*.secrets.yaml` files are gitignored.
 - **Scheduler cron evaluation** — TODA computación de "próxima ocurrencia" de un cron pasa por `core/domain/utils/cron.py::next_cron_occurrence()` (evalúa en `user.timezone`, devuelve UTC). NUNCA llamar `croniter` directo para next_run: evaluar cron en dos lugares con tz distintas causó el bug histórico de doble ejecución separada por el offset DST (repo en local, service en UTC).
 - **Tool semantic routing** — ALL tools (including builtins) go through RAG selection when `len(all_schemas) > tools.semantic_routing_min_tools` (default 10). There is NO automatic injection of builtins. Only `top_k` (default 5) tools reach the LLM per turn.
 - **`ITool.routing_keywords`** — Optional field (default `""`). Content is concatenated with `description` **only for embedding** — never sent to the LLM schema. Pattern: `description` in English (LLM comprehension), `routing_keywords` in multilingual es/en/fr (retrieval). Reason: `multilingual-e5-small` matches query↔text much better within the same language than cross-lingual. Use this for tools that users invoke with natural language (scheduler, web_search, memory). Omit for tools the LLM selects by reasoning (FS tools, delegate, create_tool). Cache hash includes both fields — changing either invalidates the embedding cache.
+- **Knowledge — read-only vs indexable** — `IKnowledgeSource` (search) es read-only por Liskov. Las fuentes gestionables (solo `DocumentKnowledgeSource`) implementan `IIndexableKnowledgeSource` (index/ingest_file/list_files/delete_file/get_stats). La gestión (ingest/reindex/list/stats/delete) vive en `ManageKnowledgeUseCase` (recibe la **lista viva** de fuentes del orchestrator → ve las de extensiones), expuesta al LLM por la tool `knowledge_admin` y al operador por `inaki knowledge ...`. Ingest = modelo inbox: copia el archivo a la carpeta de la fuente e indexa **ignorando el glob**. Telegram NO tiene código de knowledge (ver "regla del canal THIN"). NUNCA agregar `index()` a `IKnowledgeSource`: rompería las fuentes read-only (memoria, sqlite).
 - **Codebase language** — Variables, docstrings, comments, and error messages are in Spanish.
 - **Target platform** — Raspberry Pi 5 (ARM64, 4GB RAM) via systemd. See `systemd/inaki.service`.
 - **Photo handling** — `ProcessPhotoUseCase` orquesta reconocimiento facial (InsightFace, lazy-load en primera foto) + descripción de escena (LLM multimodal). `IVisionPort.detect_and_embed` devuelve `list[FaceDetection]` (bbox + embedding 512 floats). Ver `docs/face-recognition.md`.

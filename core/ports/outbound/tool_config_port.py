@@ -16,9 +16,10 @@ Contrato para una tool que adopta el protocolo:
    al LLM a pedírselas al usuario y reinvocar con ``configure``.
 
 Los valores viven en el bloque ``tool_config.{namespace}`` de
-``global.secrets.yaml`` (sistema de 4 capas — editable a mano también). Los
-campos declarados sensibles se cifran en reposo con prefijo ``enc:``; el
-``get`` los devuelve descifrados de forma transparente.
+``~/.inaki/config/tool_config.yaml`` — un archivo propio del store (NO
+``global.secrets.yaml``, que es del operador y el daemon no pisa). Editable a
+mano también. Los campos declarados sensibles se cifran en reposo con prefijo
+``enc:``; el ``get`` los devuelve descifrados de forma transparente.
 
 Los métodos son SINCRÓNICOS a propósito: operan sobre un dict en memoria y
 archivos YAML de pocos KB, y los consumidores incluyen engines sincrónicos

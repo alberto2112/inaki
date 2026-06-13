@@ -146,6 +146,7 @@ The CLI always works.
 | `config/global.yaml` | ✅ yes | System base config (LLM provider, embeddings, memory, paths) |
 | `config/global.secrets.yaml` | ❌ no | Credentials registry (`providers.<name>.api_key`) |
 | `config/global.secrets.yaml.example` | ✅ yes | Reference of what secrets exist |
+| `config/tool_config.yaml` | ❌ no | Tool Config Protocol store (daemon-owned; `enc:` secrets inside). Not part of the 4-layer merge |
 | `config/agents/{id}.yaml` | ✅ yes | Agent config: id, name, description, system_prompt, overrides, channels |
 | `config/agents/{id}.secrets.yaml` | ❌ no | Agent secrets: tokens, auth_key |
 | `config/agents/{id}.secrets.yaml.example` | ✅ yes | Reference of agent secrets |
@@ -524,12 +525,18 @@ providers:
 An entry declared in `global.yaml` (e.g. with `base_url`) is completed with
 the `api_key` from this file — there is no need to repeat fields.
 
-### Tool Config Protocol — `tool_config:`
+---
 
-Credentials for tools (builtin and `ext/`) live under the `tool_config:` block,
-one namespace per tool. **The user can configure them from any channel by just
-talking to the agent** — the tool exposes `operation=configure` and persists
-here via the protocol (`IToolConfigStore`); hand-editing the YAML works too.
+## `config/tool_config.yaml` — Tool Config Protocol
+
+Credentials and settings for tools (builtin and `ext/`) live in their **own file**,
+`config/tool_config.yaml`, under a `tool_config:` root with one namespace per tool.
+This file is **owned by the daemon**: the store reads it at startup and rewrites it
+on `configure`. It is kept **separate from `global.secrets.yaml`** — that one is
+yours, hand-authored (`providers.*`, tokens), and the daemon never touches it. It
+does **not** participate in the 4-layer merge. **The user can configure tools from
+any channel by just talking to the agent** — the tool exposes `operation=configure`
+and persists here via the protocol (`IToolConfigStore`); hand-editing the YAML works too.
 
 ```yaml
 tool_config:
@@ -560,6 +567,12 @@ Without credentials the tool still registers; the LLM receives a
 
 Current consumers: `web_search` (builtin), `exchange_calendar`/`exchange_mail`,
 `fal_music`, `replicate_music` (ext).
+
+**Migration from previous versions:** earlier builds stored `tool_config:` inside
+`global.secrets.yaml`. On first startup the daemon moves that block to
+`config/tool_config.yaml` automatically (`migrate_tool_config_to_own_file`),
+preserving the rest of `global.secrets.yaml`. `secret.key` is unchanged, so
+encrypted (`enc:`) values keep decrypting — no reconfiguration needed.
 
 ---
 

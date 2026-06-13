@@ -56,7 +56,7 @@ ALLOWLIST_TERCEROS_CORE = frozenset(
 # ---------------------------------------------------------------------------
 
 # Regla 2 — deuda saldada el 2026-06-11 (CryptoService eliminado; la api_key de
-# web_search vive en global.secrets.yaml). Mantener vacío.
+# web_search vive en config/tool_config.yaml). Mantener vacío.
 DEUDA_TERCEROS_CORE: frozenset[tuple[str, str]] = frozenset()
 
 # Regla 3 — saldos de la auditoría: DTOs Resolved*Config + Settings VOs de

@@ -1,10 +1,22 @@
-"""YamlToolConfigStore — IToolConfigStore sobre global.secrets.yaml.
+"""YamlToolConfigStore — IToolConfigStore sobre su propio ``tool_config.yaml``.
 
-Persiste el bloque ``tool_config:`` dentro de ``global.secrets.yaml`` (capa 2
-del merge de 4 capas), preservando el resto del archivo y sus comentarios
+El store es **dueño** de un archivo dedicado (``~/.inaki/config/tool_config.yaml``):
+lo LEE al construirse (siembra ``_data``) y lo ESCRIBE en cada ``set``. NO vive
+dentro de ``global.secrets.yaml`` — ese archivo es del operador (api keys de
+providers, tokens), escrito a mano, y el daemon no lo pisa. Separar por dueño
+(operador vs daemon) es lo que hace operable el servicio para quien lo despliega.
+
+El archivo cuelga todo de una raíz ``tool_config:`` con un bloque por namespace
+de tool (``web_search``, ``exchange``, ...). Se preservan comentarios y formato
 (ruamel). Los campos sensibles se cifran con Fernet y prefijo ``enc:`` — la
-sensibilidad queda codificada en la representación, así ``masked()`` no
-necesita conocer qué campos son sensibles.
+sensibilidad queda codificada en la representación, así ``masked()`` no necesita
+conocer qué campos son sensibles.
+
+Que el store lea su PROPIO archivo (en vez de recibir un ``initial`` desde el
+merge de config) es deliberado: el ``tool_config`` ya NO participa del merge de
+4 capas. Así la config sobrevive al reinicio del daemon sin depender de que el
+loader la propague — y desaparece el wart del "flattening" (un ``set`` parcial
+ya no vuelca una vista mergeada hacia otro archivo).
 
 La clave Fernet vive en ``~/.inaki/secret.key`` (archivo plano, 0600). Se
 auto-genera en el primer ``set`` con campos sensibles. ADVERTENCIA honesta
@@ -37,25 +49,31 @@ _MASK = "***"
 
 
 class YamlToolConfigStore(IToolConfigStore):
-    """Store del Tool Config Protocol respaldado por global.secrets.yaml."""
+    """Store del Tool Config Protocol respaldado por su propio tool_config.yaml."""
 
-    def __init__(
-        self,
-        secrets_path: Path,
-        key_path: Path,
-        initial: dict[str, dict[str, Any]] | None = None,
-    ) -> None:
-        """``initial`` es la vista mergeada de ``tool_config`` post-load (4 capas),
-        con los valores sensibles aún cifrados (``enc:``) tal como están en disco.
+    def __init__(self, store_path: Path, key_path: Path) -> None:
+        """``store_path`` es el archivo propio del store (``tool_config.yaml``).
+        Se lee al construir: ``_data`` queda sembrado con el bloque ``tool_config``
+        del disco, con los valores sensibles aún cifrados (``enc:``) tal como están.
         """
-        self._secrets_path = secrets_path
+        self._store_path = store_path
         self._key_path = key_path
         self._fernet: Fernet | None = None
-        self._data: dict[str, dict[str, Any]] = {
-            ns: dict(valores) for ns, valores in (initial or {}).items()
-        }
         self._yaml = YAML()
         self._yaml.preserve_quotes = True
+        self._data: dict[str, dict[str, Any]] = self._cargar_de_disco()
+
+    def _cargar_de_disco(self) -> dict[str, dict[str, Any]]:
+        """Lee el bloque ``tool_config`` de ``store_path``. ``{}`` si no existe.
+
+        Los ``enc:`` quedan tal cual; se descifran perezosamente en ``get``.
+        """
+        if not self._store_path.exists():
+            return {}
+        with self._store_path.open("r", encoding="utf-8") as f:
+            documento = self._yaml.load(f) or {}
+        bloque = documento.get("tool_config") or {}
+        return {ns: dict(valores) for ns, valores in bloque.items()}
 
     # ------------------------------------------------------------------
     # IToolConfigStore
@@ -134,26 +152,26 @@ class YamlToolConfigStore(IToolConfigStore):
     # ------------------------------------------------------------------
 
     def _persistir(self) -> None:
-        """Reescribe SOLO el bloque tool_config del secrets.yaml (resto intacto)."""
+        """Reescribe el bloque tool_config de ``store_path`` (preserva comentarios)."""
         documento: dict[str, Any] = {}
-        if self._secrets_path.exists():
-            with self._secrets_path.open("r", encoding="utf-8") as f:
+        if self._store_path.exists():
+            with self._store_path.open("r", encoding="utf-8") as f:
                 documento = self._yaml.load(f) or {}
 
         documento["tool_config"] = {ns: dict(vals) for ns, vals in self._data.items()}
 
-        self._secrets_path.parent.mkdir(parents=True, exist_ok=True)
-        # Write atómico: tmp en el mismo dir + os.replace (evita secrets a medias).
+        self._store_path.parent.mkdir(parents=True, exist_ok=True)
+        # Write atómico: tmp en el mismo dir + os.replace (evita archivos a medias).
         fd, tmp_str = tempfile.mkstemp(
-            dir=self._secrets_path.parent, prefix=".tool_config_", suffix=".yaml"
+            dir=self._store_path.parent, prefix=".tool_config_", suffix=".yaml"
         )
         tmp = Path(tmp_str)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 self._yaml.dump(documento, f)
             os.chmod(tmp, 0o600)
-            os.replace(tmp, self._secrets_path)
+            os.replace(tmp, self._store_path)
         except Exception:
             tmp.unlink(missing_ok=True)
             raise
-        logger.info("tool_config persistido en %s", self._secrets_path)
+        logger.info("tool_config persistido en %s", self._store_path)

@@ -15,6 +15,30 @@ class SchedulerReloadResponse(BaseModel):
     reloaded: bool = True
 
 
+class SchedulerRunRequest(BaseModel):
+    """Body para POST /scheduler/run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: int = Field(..., description="ID de la tarea a disparar on-demand")
+
+
+class SchedulerRunResponse(BaseModel):
+    """Respuesta de POST /scheduler/run — disparo manual NO destructivo.
+
+    El daemon ejecuta el trigger una vez sin tocar el estado de scheduling
+    (status/next_run/executions_remaining). ``success=False`` indica que el
+    trigger falló al ejecutar, no que la tarea no exista (eso es 404).
+    """
+
+    task_id: int = Field(..., description="ID de la tarea disparada")
+    success: bool = Field(..., description="True si el trigger se ejecutó sin error")
+    output: str | None = Field(
+        None, description="Salida del trigger (None si el trigger no produce texto)"
+    )
+    error: str | None = Field(None, description="Mensaje de error si success=False")
+
+
 class DaemonReloadResponse(BaseModel):
     """Respuesta de POST /admin/reload — el daemon va a cerrar canales y volver a levantar."""
 

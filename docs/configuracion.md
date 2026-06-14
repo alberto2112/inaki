@@ -295,6 +295,7 @@ per-agent REST server.
 | POST | `/inspect` | Inspect the prompt pipeline for an agent |
 | POST | `/consolidate` | Consolidate memory — body `{"agent_id": "X"}` for one agent, empty for all |
 | POST | `/scheduler/reload` | Reload scheduler |
+| POST | `/scheduler/run` | Fire a task now — body `{"task_id": N}`. Non-destructive test run: dispatches the trigger once without touching `status`/`next_run`/`executions_remaining`. `404` if the task does not exist. Client: `inaki scheduler run <ID>` |
 | POST | `/admin/reload` | Hot-reload the daemon (closes channels, reloads config, restarts) |
 | GET | `/admin/agents` | List registered agent ids |
 | GET | `/admin/agent/info` | Agent metadata (`?agent_id=X` → id, name, description) |

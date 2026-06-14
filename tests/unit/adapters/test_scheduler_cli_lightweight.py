@@ -93,3 +93,92 @@ def test_reload_callback_silences_connect_error() -> None:
         instance.scheduler_reload.side_effect = DaemonNotRunningError()
         # No debe levantar
         _notify_daemon_reload("http://127.0.0.1:6497", None)
+
+
+# ---------------------------------------------------------------------------
+# comando `run` — cliente THIN sobre el daemon
+# ---------------------------------------------------------------------------
+
+
+def test_run_cmd_success_imprime_output(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    from inaki.scheduler_cli import scheduler_app
+
+    mock_client = MagicMock()
+    mock_client.health.return_value = True
+    mock_client.scheduler_run.return_value = {
+        "task_id": 100,
+        "success": True,
+        "output": "resultado del trigger",
+        "error": None,
+    }
+
+    with patch("inaki.scheduler_cli._bootstrap_daemon_client", return_value=mock_client):
+        result = CliRunner().invoke(
+            scheduler_app, ["run", "100"], obj={"config_dir": tmp_path}
+        )
+
+    assert result.exit_code == 0
+    assert "resultado del trigger" in result.stdout
+    assert "schedule unchanged" in result.stdout
+    mock_client.scheduler_run.assert_called_once_with(100)
+
+
+def test_run_cmd_trigger_failed_exit_1(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    from inaki.scheduler_cli import scheduler_app
+
+    mock_client = MagicMock()
+    mock_client.health.return_value = True
+    mock_client.scheduler_run.return_value = {
+        "task_id": 100,
+        "success": False,
+        "output": None,
+        "error": "boom",
+    }
+
+    with patch("inaki.scheduler_cli._bootstrap_daemon_client", return_value=mock_client):
+        result = CliRunner().invoke(
+            scheduler_app, ["run", "100"], obj={"config_dir": tmp_path}
+        )
+
+    assert result.exit_code == 1
+
+
+def test_run_cmd_task_not_found_exit_1(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    from core.domain.errors import TaskNotFoundError
+    from inaki.scheduler_cli import scheduler_app
+
+    mock_client = MagicMock()
+    mock_client.health.return_value = True
+    mock_client.scheduler_run.side_effect = TaskNotFoundError("Task 999 not found")
+
+    with patch("inaki.scheduler_cli._bootstrap_daemon_client", return_value=mock_client):
+        result = CliRunner().invoke(
+            scheduler_app, ["run", "999"], obj={"config_dir": tmp_path}
+        )
+
+    assert result.exit_code == 1
+    assert "not found" in result.output
+
+
+def test_run_cmd_requiere_daemon_vivo(tmp_path: Path) -> None:
+    """Si el daemon no responde health, el comando aborta sin llamar scheduler_run."""
+    from typer.testing import CliRunner
+
+    from inaki.scheduler_cli import scheduler_app
+
+    mock_client = MagicMock()
+    mock_client.health.return_value = False
+
+    with patch("inaki.scheduler_cli._bootstrap_daemon_client", return_value=mock_client):
+        result = CliRunner().invoke(
+            scheduler_app, ["run", "100"], obj={"config_dir": tmp_path}
+        )
+
+    assert result.exit_code == 1
+    mock_client.scheduler_run.assert_not_called()

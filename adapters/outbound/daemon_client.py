@@ -16,6 +16,7 @@ from core.domain.errors import (
     DaemonClientError,
     DaemonNotRunningError,
     DaemonTimeoutError,
+    TaskNotFoundError,
     UnknownAgentError,
 )
 from core.domain.value_objects.chat_turn_result import ChatTurnResult
@@ -70,6 +71,43 @@ class DaemonClient:
             return resp.status_code == 200
         except (httpx.ConnectError, httpx.TimeoutException):
             return False
+
+    # ------------------------------------------------------------------
+    # scheduler_run — dispara una tarea on-demand (NO destructivo)
+    # ------------------------------------------------------------------
+
+    def scheduler_run(self, task_id: int) -> dict[str, Any]:
+        """Dispara una tarea on-demand en el daemon (POST /scheduler/run).
+
+        Ejecución NO destructiva: el daemon corre el trigger una vez sin tocar
+        el estado de scheduling. A diferencia de ``scheduler_reload`` (silencioso
+        ante fallos de conexión), este método PROPAGA errores — el usuario está
+        testeando una tarea y espera ver el resultado o el motivo del fallo.
+
+        Usa ``chat_timeout`` porque un trigger ``agent_send`` corre un turno LLM
+        completo, que puede tardar.
+
+        Retorna el dict con claves task_id, success, output, error. Un
+        ``success=False`` NO es excepción: indica que el trigger ejecutó pero
+        falló (el endpoint respondió 200).
+
+        Raises:
+            DaemonNotRunningError: si el daemon no es alcanzable.
+            DaemonTimeoutError: si la respuesta supera el timeout.
+            TaskNotFoundError: si la tarea no existe (HTTP 404).
+            DaemonAuthError: si la autenticación falla (HTTP 401/403).
+            DaemonClientError: para otros errores HTTP del daemon.
+        """
+        return self._post(
+            "/scheduler/run",
+            json={"task_id": task_id},
+            timeout=self._chat_timeout,
+            error_map={
+                404: TaskNotFoundError,
+                401: DaemonAuthError,
+                403: DaemonAuthError,
+            },
+        )
 
     # ------------------------------------------------------------------
     # daemon_reload — POST /admin/reload (cierra y reabre todos los canales)

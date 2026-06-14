@@ -17,7 +17,10 @@ from adapters.inbound.rest.admin.schemas import (
     HealthResponse,
     InspectRequest,
     SchedulerReloadResponse,
+    SchedulerRunRequest,
+    SchedulerRunResponse,
 )
+from core.domain.errors import TaskNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +75,31 @@ async def scheduler_reload(request: Request) -> SchedulerReloadResponse:
     scheduler_service = request.app.state.app_container.scheduler_service
     await scheduler_service.invalidate()
     return SchedulerReloadResponse()
+
+
+@router.post(
+    "/scheduler/run",
+    response_model=SchedulerRunResponse,
+    dependencies=[Depends(check_admin_auth)],
+)
+async def scheduler_run(body: SchedulerRunRequest, request: Request) -> SchedulerRunResponse:
+    """Dispara una tarea on-demand, fuera de su agenda (NO destructivo).
+
+    Pensado para testear: ejecuta el trigger una vez sin tocar el estado de
+    scheduling (status/next_run/executions_remaining). 404 si la tarea no existe;
+    ``success=False`` en el body si el trigger ejecutó pero falló.
+    """
+    scheduler_service = request.app.state.app_container.scheduler_service
+    try:
+        result = await scheduler_service.run_task_now(body.task_id)
+    except TaskNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Task {body.task_id} not found")
+    return SchedulerRunResponse(
+        task_id=result.task_id,
+        success=result.success,
+        output=result.output,
+        error=result.error,
+    )
 
 
 @router.post(

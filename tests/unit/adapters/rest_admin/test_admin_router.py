@@ -8,6 +8,8 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from adapters.inbound.rest.admin.app import create_admin_app
+from core.domain.errors import TaskNotFoundError
+from core.domain.value_objects.manual_run_result import ManualRunResult
 from core.use_cases.run_agent import AgentInfoDTO, InspectResult
 
 
@@ -97,6 +99,57 @@ async def test_scheduler_reload_401_without_key(admin_app) -> None:
 async def test_scheduler_reload_401_with_wrong_key(admin_app) -> None:
     async with AsyncClient(transport=ASGITransport(app=admin_app), base_url="http://test") as ac:
         resp = await ac.post("/scheduler/reload", headers={"X-Admin-Key": "wrong"})
+    assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# POST /scheduler/run — requiere auth
+# ---------------------------------------------------------------------------
+
+
+async def test_scheduler_run_200_success(admin_app, mock_app_container) -> None:
+    mock_app_container.scheduler_service.run_task_now = AsyncMock(
+        return_value=ManualRunResult(task_id=100, success=True, output="ok", error=None)
+    )
+    async with AsyncClient(transport=ASGITransport(app=admin_app), base_url="http://test") as ac:
+        resp = await ac.post(
+            "/scheduler/run", json={"task_id": 100}, headers={"X-Admin-Key": "test-secret"}
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data == {"task_id": 100, "success": True, "output": "ok", "error": None}
+    mock_app_container.scheduler_service.run_task_now.assert_awaited_once_with(100)
+
+
+async def test_scheduler_run_200_trigger_failed_success_false(admin_app, mock_app_container) -> None:
+    """El trigger ejecutó pero falló → 200 con success=False (NO es 404)."""
+    mock_app_container.scheduler_service.run_task_now = AsyncMock(
+        return_value=ManualRunResult(task_id=100, success=False, output=None, error="boom")
+    )
+    async with AsyncClient(transport=ASGITransport(app=admin_app), base_url="http://test") as ac:
+        resp = await ac.post(
+            "/scheduler/run", json={"task_id": 100}, headers={"X-Admin-Key": "test-secret"}
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is False
+    assert data["error"] == "boom"
+
+
+async def test_scheduler_run_404_task_not_found(admin_app, mock_app_container) -> None:
+    mock_app_container.scheduler_service.run_task_now = AsyncMock(
+        side_effect=TaskNotFoundError("Task 999 not found")
+    )
+    async with AsyncClient(transport=ASGITransport(app=admin_app), base_url="http://test") as ac:
+        resp = await ac.post(
+            "/scheduler/run", json={"task_id": 999}, headers={"X-Admin-Key": "test-secret"}
+        )
+    assert resp.status_code == 404
+
+
+async def test_scheduler_run_401_without_key(admin_app) -> None:
+    async with AsyncClient(transport=ASGITransport(app=admin_app), base_url="http://test") as ac:
+        resp = await ac.post("/scheduler/run", json={"task_id": 100})
     assert resp.status_code == 401
 
 

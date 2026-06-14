@@ -106,6 +106,22 @@ def _bootstrap_uc(ctx: typer.Context) -> tuple["ISchedulerUseCase", "GlobalConfi
     return _create_lightweight_uc(config_dir)
 
 
+def _bootstrap_daemon_client(ctx: typer.Context) -> Any:
+    """Construye el DaemonClient para `run` — necesita el daemon VIVO.
+
+    A diferencia del resto de comandos (bootstrap liviano sobre el repo), `run`
+    no ejecuta local: los triggers ``agent_send`` / ``channel_send`` requieren el
+    wiring completo del daemon y los canales conectados. Devuelve ``(client, _)``.
+    """
+    from inaki.cli import _build_daemon_client, _resolve_dirs
+
+    config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
+    config_dir, _ = _resolve_dirs(config_dir_override)
+
+    client, _ = _build_daemon_client(config_dir)
+    return client
+
+
 def _notify_after_mutation(global_config: "GlobalConfig") -> None:
     """Despierta el loop del daemon tras una mutación desde CLI.
 
@@ -324,6 +340,40 @@ def show_cmd(
             yaml.safe_dump(task.model_dump(mode="json"), sort_keys=False, allow_unicode=True),
             nl=False,
         )
+
+
+@scheduler_app.command("run")
+def run_cmd(
+    ctx: typer.Context,
+    task_id: int = typer.Argument(..., metavar="ID"),
+) -> None:
+    """Run a scheduled task now, out of band (non-destructive test fire).
+
+    Dispara la tarea via el daemon SIN tocar su agenda: status, next_run y
+    executions_remaining quedan intactos (un oneshot no se marca COMPLETED, un
+    recurrente no decrementa). Pensado para testear. Requiere el daemon corriendo
+    — los triggers agent_send/channel_send no funcionan sin él. La corrida queda
+    registrada en los logs marcada como manual (trigger=manual).
+    """
+    from inaki.cli import _handle_daemon_errors, _require_daemon
+
+    client = _bootstrap_daemon_client(ctx)
+    _require_daemon(client)
+
+    try:
+        result = _handle_daemon_errors(lambda: client.scheduler_run(task_id))
+    except TaskNotFoundError:
+        typer.echo(f"Error: task {task_id} not found", err=True)
+        raise typer.Exit(code=1)
+
+    if result.get("success"):
+        output = result.get("output")
+        if output:
+            typer.echo(output)
+        typer.echo(f"Task {task_id} ran manually — schedule unchanged.")
+    else:
+        typer.echo(f"Error: task {task_id} failed: {result.get('error')}", err=True)
+        raise typer.Exit(code=1)
 
 
 @scheduler_app.command("edit")

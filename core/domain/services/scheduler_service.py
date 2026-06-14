@@ -38,8 +38,9 @@ from core.domain.entities.task import (
     WebhookPayload,
 )
 from core.domain.entities.task_log import TaskLog
-from core.domain.errors import InvalidTriggerTypeError
+from core.domain.errors import InvalidTriggerTypeError, TaskNotFoundError
 from core.domain.utils.cron import next_cron_occurrence, resolve_timezone
+from core.domain.value_objects.manual_run_result import ManualRunResult
 
 if TYPE_CHECKING:
     from core.ports.outbound.scheduler_dispatch_port import SchedulerDispatchPorts
@@ -84,6 +85,59 @@ class SchedulerService:
             self._task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._task
+
+    async def run_task_now(self, task_id: int) -> ManualRunResult:
+        """Dispara una tarea on-demand, fuera de su agenda — NO destructivo.
+
+        Pensado para TESTEAR tareas: ejecuta el trigger UNA sola vez (sin la
+        máquina de reintentos del loop) y NO toca ``status`` / ``next_run`` /
+        ``executions_remaining`` — la tarea sigue su agenda intacta, sin
+        consumirse (un oneshot no pasa a COMPLETED, un recurrente no decrementa).
+
+        Si ``log_enabled``, deja rastro en ``task_logs`` con
+        ``metadata={"trigger": "manual"}`` para que la corrida manual sea
+        distinguible de las programadas en ``inaki scheduler logs``.
+
+        Raises:
+            TaskNotFoundError: si ``task_id`` no existe.
+        """
+        task = await self._repo.get_task(task_id)
+        if task is None:
+            raise TaskNotFoundError(f"Task {task_id} not found")
+
+        started_at = datetime.now(timezone.utc)
+        output: str | None = None
+        error: str | None = None
+        dispatch_metadata: dict | None = None
+        success = False
+        try:
+            output, dispatch_metadata = await self._dispatch_trigger(task)
+            success = True
+        except Exception as exc:
+            error = str(exc)
+            logger.warning("Manual run de task %s falló: %s", task_id, exc)
+
+        if task.log_enabled:
+            await self._repo.save_log(
+                TaskLog(
+                    task_id=task.id,
+                    started_at=started_at,
+                    finished_at=datetime.now(timezone.utc),
+                    status="success" if success else "failed",
+                    output=output[: self._output_truncation_size] if output else None,
+                    error=error,
+                    # Merge con la metadata del dispatch (target original/resuelto en
+                    # channel_send) + marcador de origen manual.
+                    metadata={**(dispatch_metadata or {}), "trigger": "manual"},
+                )
+            )
+
+        return ManualRunResult(
+            task_id=task.id,
+            success=success,
+            output=output,
+            error=error,
+        )
 
     async def _loop(self) -> None:
         while True:

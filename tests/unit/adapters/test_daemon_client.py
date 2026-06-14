@@ -8,9 +8,11 @@ import pytest
 
 from adapters.outbound.daemon_client import DaemonClient
 from core.domain.errors import (
+    DaemonAuthError,
     DaemonClientError,
     DaemonNotRunningError,
     DaemonTimeoutError,
+    TaskNotFoundError,
 )
 
 
@@ -94,6 +96,54 @@ def test_scheduler_reload_no_auth_header_when_no_key(client_no_auth: DaemonClien
         client_no_auth.scheduler_reload()
         _, kwargs = mock_post.call_args
         assert "X-Admin-Key" not in kwargs.get("headers", {})
+
+
+# ---------------------------------------------------------------------------
+# scheduler_run() — a diferencia de reload, PROPAGA errores
+# ---------------------------------------------------------------------------
+
+
+def test_scheduler_run_returns_dict_on_200(client: DaemonClient) -> None:
+    with patch("httpx.post") as mock_post:
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {
+            "task_id": 100,
+            "success": True,
+            "output": "ok",
+            "error": None,
+        }
+        mock_post.return_value = mock_resp
+        result = client.scheduler_run(100)
+        assert result["success"] is True
+        # El body lleva el task_id
+        _, kwargs = mock_post.call_args
+        assert kwargs["json"] == {"task_id": 100}
+
+
+def test_scheduler_run_raises_task_not_found_on_404(client: DaemonClient) -> None:
+    with patch("httpx.post") as mock_post:
+        mock_resp = MagicMock(status_code=404)
+        mock_resp.text = "Task 999 not found"
+        mock_post.return_value = mock_resp
+        with pytest.raises(TaskNotFoundError):
+            client.scheduler_run(999)
+
+
+def test_scheduler_run_raises_auth_error_on_401(client: DaemonClient) -> None:
+    with patch("httpx.post") as mock_post:
+        mock_resp = MagicMock(status_code=401)
+        mock_resp.text = "Unauthorized"
+        mock_post.return_value = mock_resp
+        with pytest.raises(DaemonAuthError):
+            client.scheduler_run(100)
+
+
+def test_scheduler_run_raises_not_running_on_connect_error(client: DaemonClient) -> None:
+    import httpx
+
+    with patch("httpx.post", side_effect=httpx.ConnectError("refused")):
+        with pytest.raises(DaemonNotRunningError):
+            client.scheduler_run(100)
 
 
 # ---------------------------------------------------------------------------

@@ -322,6 +322,41 @@ Without `--json` it shows YAML with all fields: id, name, description, task_kind
 
 ---
 
+### `inaki scheduler run <ID>`
+
+Fires a task **now**, out of band — a non-destructive test run.
+
+```
+inaki scheduler run <ID>
+```
+
+Intended for **testing** a task without waiting for (or disturbing) its schedule.
+The trigger is dispatched **once** (no retry machinery) and the scheduling state
+is left **untouched**: `status`, `next_run` and `executions_remaining` do not
+change. A one-shot is **not** marked `COMPLETED`; a recurrent task is **not**
+decremented and its `next_run` does not advance — the task keeps its agenda
+intact.
+
+If `log_enabled = true`, the run leaves a `TaskLog` tagged with
+`metadata = {"trigger": "manual"}`, so a manual fire is distinguishable from a
+scheduled one in the logs.
+
+> **Requires the daemon running.** Unlike the other CLI commands (which run on a
+> lightweight bootstrap over the repo), `run` dispatches through the daemon:
+> `agent_send` and `channel_send` triggers need the full daemon wiring and live
+> channel connections. It calls the admin endpoint `POST /scheduler/run`; if the
+> daemon is down it exits with an error telling you to start it.
+
+**Outcomes**:
+
+| Result | Behavior |
+|--------|----------|
+| Task not found | Exits non-zero (`404` from the daemon) |
+| Trigger ran OK | Prints the trigger output (if any) + `"Task <ID> ran manually — schedule unchanged."` |
+| Trigger ran but failed | Prints the error to stderr and exits non-zero (the schedule is still left untouched) |
+
+---
+
 ### `inaki scheduler edit <ID>`
 
 Interactive editing in `$EDITOR` via YAML round-trip.

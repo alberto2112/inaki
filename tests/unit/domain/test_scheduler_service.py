@@ -19,6 +19,7 @@ from core.domain.entities.task import (
     WebhookPayload,
 )
 from core.domain.entities.task_log import TaskLog
+from core.domain.errors import TaskNotFoundError
 from core.domain.services.scheduler_service import SchedulerService
 from core.domain.value_objects.dispatch_result import DispatchResult
 
@@ -472,3 +473,112 @@ async def test_agent_send_sin_output_channel_no_construye_sink(
     service._dispatch.channel_sender.build_intermediate_sink.assert_not_called()
     call_kwargs = service._dispatch.llm_dispatcher.dispatch.await_args.kwargs  # type: ignore[union-attr]
     assert call_kwargs["intermediate_sink"] is None
+
+
+# ---------------------------------------------------------------------------
+# run_task_now — disparo manual on-demand, NO destructivo
+# ---------------------------------------------------------------------------
+
+
+async def test_run_task_now_task_inexistente_levanta_not_found(
+    service: SchedulerService, mock_repo: AsyncMock
+) -> None:
+    mock_repo.get_task.return_value = None
+
+    with pytest.raises(TaskNotFoundError):
+        await service.run_task_now(999)
+
+
+async def test_run_task_now_no_toca_estado_de_scheduling_oneshot(
+    service: SchedulerService, mock_repo: AsyncMock
+) -> None:
+    """LA garantía clave: un oneshot disparado a mano NO pasa a COMPLETED ni se
+    consume — status / next_run / executions_remaining quedan intactos."""
+    task = _make_task(task_id=500, task_kind=TaskKind.ONESHOT)
+    mock_repo.get_task.return_value = task
+
+    result = await service.run_task_now(500)
+
+    assert result.success is True
+    assert result.output == "ok"  # ConsolidateMemoryPayload → consolidate_all
+    # NADA que mute la agenda de la tarea
+    mock_repo.update_status.assert_not_awaited()
+    mock_repo.update_after_execution.assert_not_awaited()
+    mock_repo.update_enabled.assert_not_awaited()
+    mock_repo.save_task.assert_not_awaited()
+
+
+async def test_run_task_now_no_toca_estado_de_scheduling_recurrente(
+    service: SchedulerService, mock_repo: AsyncMock
+) -> None:
+    """Una recurrente disparada a mano NO avanza next_run ni decrementa
+    executions_remaining."""
+    task = _make_task(task_id=501, task_kind=TaskKind.RECURRENT, executions_remaining=3)
+    mock_repo.get_task.return_value = task
+
+    await service.run_task_now(501)
+
+    mock_repo.update_after_execution.assert_not_awaited()
+    mock_repo.update_status.assert_not_awaited()
+
+
+async def test_run_task_now_loguea_marcador_manual(
+    service: SchedulerService, mock_repo: AsyncMock
+) -> None:
+    """La corrida manual deja un TaskLog con metadata {'trigger': 'manual'}."""
+    task = _make_channel_task()
+    mock_repo.get_task.return_value = task
+    service._dispatch.channel_sender.send_message = AsyncMock(  # type: ignore[method-assign]
+        return_value=DispatchResult(original_target="cli:local", resolved_target="null:")
+    )
+
+    await service.run_task_now(task.id)
+
+    mock_repo.save_log.assert_awaited_once()
+    log: TaskLog = mock_repo.save_log.call_args[0][0]
+    assert log.status == "success"
+    assert log.task_id == task.id
+    # Mergea la metadata del dispatch con el marcador de origen manual
+    assert log.metadata == {
+        "original_target": "cli:local",
+        "resolved_target": "null:",
+        "trigger": "manual",
+    }
+
+
+async def test_run_task_now_falla_un_solo_intento_sin_reintentos(
+    service: SchedulerService, mock_repo: AsyncMock
+) -> None:
+    """A diferencia de _execute_task, el run manual NO reintenta: un solo
+    dispatch, y el fallo se reporta en el resultado (no rompe la agenda)."""
+    task = _make_task(task_id=502, task_kind=TaskKind.ONESHOT)
+    mock_repo.get_task.return_value = task
+    service._dispatch_trigger = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
+
+    result = await service.run_task_now(502)
+
+    assert result.success is False
+    assert result.error == "boom"
+    service._dispatch_trigger.assert_awaited_once()  # type: ignore[attr-defined]
+    # Falló pero NO marca FAILED ni toca la agenda
+    mock_repo.update_status.assert_not_awaited()
+    mock_repo.update_after_execution.assert_not_awaited()
+    # Deja el log de fallo marcado como manual
+    log: TaskLog = mock_repo.save_log.call_args[0][0]
+    assert log.status == "failed"
+    assert log.metadata == {"trigger": "manual"}
+
+
+async def test_run_task_now_respeta_log_disabled(
+    service: SchedulerService, mock_repo: AsyncMock
+) -> None:
+    """Con log_enabled=False no se persiste TaskLog (igual que el loop normal)."""
+    task = _make_task(task_id=503, task_kind=TaskKind.ONESHOT).model_copy(
+        update={"log_enabled": False}
+    )
+    mock_repo.get_task.return_value = task
+
+    result = await service.run_task_now(503)
+
+    assert result.success is True
+    mock_repo.save_log.assert_not_awaited()

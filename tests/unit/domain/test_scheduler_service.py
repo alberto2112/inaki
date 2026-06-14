@@ -582,3 +582,32 @@ async def test_run_task_now_respeta_log_disabled(
 
     assert result.success is True
     mock_repo.save_log.assert_not_awaited()
+
+
+async def test_run_task_now_agent_send_dispatch_es_ephemeral(
+    service: SchedulerService, mock_repo: AsyncMock
+) -> None:
+    """LA garantía pedida: un agent_send disparado a mano NO persiste el turno —
+    el dispatch se hace con ephemeral=True (carga contexto, no deja rastro)."""
+    task = _make_agent_task(output_channel=None)
+    mock_repo.get_task.return_value = task
+    service._dispatch.llm_dispatcher.dispatch = AsyncMock(return_value="reply")  # type: ignore[method-assign]
+
+    await service.run_task_now(task.id)
+
+    call_kwargs = service._dispatch.llm_dispatcher.dispatch.await_args.kwargs  # type: ignore[union-attr]
+    assert call_kwargs["ephemeral"] is True
+
+
+async def test_execute_task_programado_agent_send_dispatch_no_es_ephemeral(
+    service: SchedulerService, mock_repo: AsyncMock
+) -> None:
+    """La corrida PROGRAMADA persiste como siempre: ephemeral=False (default).
+    Garantiza que el flag del run manual no se filtró al loop normal."""
+    task = _make_agent_task(output_channel=None)
+    service._dispatch.llm_dispatcher.dispatch = AsyncMock(return_value="reply")  # type: ignore[method-assign]
+
+    await service._execute_task(task)
+
+    call_kwargs = service._dispatch.llm_dispatcher.dispatch.await_args.kwargs  # type: ignore[union-attr]
+    assert call_kwargs["ephemeral"] is False

@@ -341,6 +341,18 @@ If `log_enabled = true`, the run leaves a `TaskLog` tagged with
 `metadata = {"trigger": "manual"}`, so a manual fire is distinguishable from a
 scheduled one in the logs.
 
+**`agent_send` runs ephemeral.** A manually-run `agent_send` dispatches with
+`ephemeral=True`: the agent loads the conversation history for context but the
+turn is **not persisted** and the sticky state is left untouched — testing a task
+does not pollute the real conversation. The scheduled run (the normal loop) still
+persists as before; the flag applies **only** to the manual path. Other trigger
+types ignore it.
+
+> **Side effects still happen.** Ephemeral only suppresses history persistence.
+> A `channel_send` (or an `agent_send` with `output_channel`) **still sends a real
+> message** to its target on a manual run. `run` is a test of the *trigger*, not a
+> dry run with zero side effects.
+
 > **Requires the daemon running.** Unlike the other CLI commands (which run on a
 > lightweight bootstrap over the repo), `run` dispatches through the daemon:
 > `agent_send` and `channel_send` triggers need the full daemon wiring and live

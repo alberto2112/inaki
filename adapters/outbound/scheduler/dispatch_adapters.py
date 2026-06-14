@@ -138,6 +138,7 @@ class LLMDispatcherAdapter:
         intermediate_sink: IIntermediateSink | None = None,
         channel: str = "",
         chat_id: str = "",
+        ephemeral: bool = False,
     ) -> str:
         agent = self._agents.get(agent_id)
         if agent is None:
@@ -149,6 +150,7 @@ class LLMDispatcherAdapter:
                 intermediate_sink=intermediate_sink,
                 channel=channel,
                 chat_id=chat_id,
+                ephemeral=ephemeral,
             )
 
 

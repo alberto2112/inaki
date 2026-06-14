@@ -14,4 +14,5 @@ class ILLMDispatcher(Protocol):
         intermediate_sink: IIntermediateSink | None = None,
         channel: str = "",
         chat_id: str = "",
+        ephemeral: bool = False,
     ) -> str: ...

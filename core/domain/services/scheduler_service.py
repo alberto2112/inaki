@@ -111,7 +111,10 @@ class SchedulerService:
         dispatch_metadata: dict | None = None
         success = False
         try:
-            output, dispatch_metadata = await self._dispatch_trigger(task)
+            # ephemeral=True: un agent_send disparado a mano NO persiste el turno
+            # en el historial — testear una tarea no debe ensuciar la conversación
+            # real (los demás triggers ignoran el flag).
+            output, dispatch_metadata = await self._dispatch_trigger(task, ephemeral=True)
             success = True
         except Exception as exc:
             error = str(exc)
@@ -334,12 +337,20 @@ class SchedulerService:
                     last_run=now,
                 )
 
-    async def _dispatch_trigger(self, task: ScheduledTask) -> tuple[str | None, dict | None]:
+    async def _dispatch_trigger(
+        self, task: ScheduledTask, ephemeral: bool = False
+    ) -> tuple[str | None, dict | None]:
         """Ejecuta el trigger y devuelve ``(output, dispatch_metadata)``.
 
         ``dispatch_metadata`` contiene ``{original_target, resolved_target}`` cuando
         hubo un envío por canal (directo o via ``output_channel``); ``None`` en caso
         contrario.
+
+        ``ephemeral`` solo aplica al trigger ``agent_send``: con ``True`` el turno
+        del agente NO se persiste en el historial (carga contexto pero no deja
+        rastro ni toca el estado sticky). Lo usa ``run_task_now`` para que un
+        disparo manual de prueba no ensucie la conversación real. Los demás
+        triggers lo ignoran.
         """
         payload = task.trigger_payload
         if isinstance(payload, ChannelSendPayload):
@@ -378,6 +389,7 @@ class SchedulerService:
                 intermediate_sink=live_sink,
                 channel=channel,
                 chat_id=chat_id,
+                ephemeral=ephemeral,
             )
             if payload.output_channel:
                 dr = await self._dispatch.channel_sender.send_message(

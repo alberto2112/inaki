@@ -40,6 +40,12 @@ class FakeMemory:
     async def update(self, memory_id, content=None, tags=None, relevance=None, embedding=None):
         return None
 
+    async def load_unreconciled(self, agent_id, channel=None, chat_id=None):
+        return []
+
+    async def mark_reconciled(self, ids) -> int:
+        return 0
+
 
 def _make_container(tmp_path: Path) -> AgentContainer:
     embedder = FakeEmbedder()

@@ -32,6 +32,12 @@ class IConsolidator(Protocol):
     async def consolidate_all(self) -> str: ...
 
 
+class IReconciler(Protocol):
+    """Dispara la reconciliación de memoria de un agente concreto."""
+
+    async def reconcile(self, agent_id: str) -> str: ...
+
+
 class IHttpCaller(Protocol):
     """Ejecuta un trigger webhook contra una URL externa."""
 
@@ -56,5 +62,6 @@ class SchedulerDispatchPorts:
     channel_sender: IChannelSender
     llm_dispatcher: ILLMDispatcher
     consolidator: IConsolidator
+    reconciler: IReconciler
     http_caller: IHttpCaller
     shell_executor: IShellExecutor

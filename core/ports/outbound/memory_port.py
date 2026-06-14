@@ -95,3 +95,36 @@ class IMemoryRepository(Protocol):
         soft-deleted (no se permite editar un recuerdo borrado).
         """
         ...
+
+    async def load_unreconciled(
+        self,
+        agent_id: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+    ) -> list[MemoryEntry]:
+        """Devuelve recuerdos activos (deleted=0) que aún no fueron reconciliados (reconciled=0).
+
+        Filtra siempre por ``agent_id``. Si ``channel`` o ``chat_id`` son distintos de
+        ``None``, aplica también ese filtro (match exacto). ``None`` significa "sin filtro
+        por ese campo" — devuelve recuerdos de todos los scopes del agente.
+
+        Resultados ordenados por created_at ASC (los más viejos primero) para que el
+        protocolo de reconciliación los procese en orden cronológico.
+        """
+        ...
+
+    async def mark_reconciled(self, ids: list[str]) -> int:
+        """Marca como reconciliados los recuerdos con los ids dados.
+
+        Actualiza ``reconciled=1`` para cada id de la lista que exista y NO esté
+        ya marcado. Si ``ids`` está vacío, es un no-op que devuelve 0 sin tocar
+        la base de datos.
+
+        Devuelve el número de filas efectivamente actualizadas (puede ser menor
+        que ``len(ids)`` si algún id no existe o ya estaba reconciliado).
+
+        IMPORTANTE: opera SOLO sobre la lista de ids recibida — NUNCA actualiza
+        en lote global por agent_id. Esto preserva granularidad y evita el bug
+        histórico de ``mark_infused`` que marcaba global.
+        """
+        ...

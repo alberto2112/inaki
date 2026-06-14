@@ -20,3 +20,6 @@ class MemoryEntry(BaseModel):
     deleted: bool = (
         False  # soft-delete flag — entries con deleted=True no participan en search/get_recent
     )
+    reconciled: bool = (
+        False  # indica si el recuerdo ya pasó por el protocolo de reconciliación (análogo a deleted)
+    )

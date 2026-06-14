@@ -3,6 +3,7 @@ from __future__ import annotations
 from core.domain.entities.task import (
     AgentSendPayload,
     ConsolidateMemoryPayload,
+    ReconcileMemoryPayload,
     ScheduledTask,
     TaskKind,
     TriggerType,
@@ -10,6 +11,11 @@ from core.domain.entities.task import (
 
 CONSOLIDATE_MEMORY_TASK_ID = 1
 FACE_DEDUP_TASK_ID = 2
+
+# Los IDs de reconciliación arrancan en 10 para dejar espacio a builtin tasks
+# futuras no-memoria sin colisionar con IDs de usuario (que arrancan en 100).
+# Los IDs 3-9 quedan reservados para builtins de otras features.
+_RECONCILE_MEMORY_BASE_ID = 10
 
 
 def build_consolidate_memory_task(schedule: str) -> ScheduledTask:
@@ -27,6 +33,30 @@ def build_consolidate_memory_task(schedule: str) -> ScheduledTask:
         task_kind=TaskKind.RECURRENT,
         trigger_type=TriggerType.CONSOLIDATE_MEMORY,
         trigger_payload=ConsolidateMemoryPayload(),
+        schedule=schedule,
+        executions_remaining=None,
+    )
+
+
+def build_reconcile_memory_task(schedule: str, agent_id: str, task_id: int) -> ScheduledTask:
+    """
+    Construye la definición de la tarea builtin ``reconcile_memory`` para un
+    agente concreto.
+
+    A diferencia de ``consolidate_memory`` (que es global y usa un único task_id),
+    la reconciliación es per-agent: hay una tarea builtin por agente que tenga
+    ``memory.reconcile_enabled=True``. El ``task_id`` debe ser único por agente
+    y se calcula en el container (base + índice ordinal del agente).
+
+    El cron viene de ``memory.reconcile_schedule`` del agente.
+    """
+    return ScheduledTask(
+        id=task_id,
+        name=f"reconcile_memory_{agent_id}",
+        description=f"Reconciliación de memoria del agente '{agent_id}' (protocolo reflection)",
+        task_kind=TaskKind.RECURRENT,
+        trigger_type=TriggerType.RECONCILE_MEMORY,
+        trigger_payload=ReconcileMemoryPayload(agent_id=agent_id),
         schedule=schedule,
         executions_remaining=None,
     )

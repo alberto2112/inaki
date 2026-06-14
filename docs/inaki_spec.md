@@ -331,6 +331,7 @@ class MemoryEntry(BaseModel):
     channel: str | None = None       # scope (channel, chat_id) of origin
     chat_id: str | None = None
     deleted: int = 0                 # soft-delete: 0 = active, 1 = deleted
+    reconciled: int = 0              # 0 = pending reconciliation, 1 = already processed
 ```
 
 ```python
@@ -479,6 +480,19 @@ LLM-tools loop until `tool_call_max_iterations` (default 5) is exhausted or the 
 3. Generate embedding for each memory (`embed_passage`)
 4. Persist in `IMemoryRepository` (DELETE + INSERT to avoid UNIQUE bug in `vec0`)
 5. If everything succeeds: archive and clear history. If it fails: history remains intact (transactional)
+
+### `ReconcileMemoryUseCase`
+
+Revisits existing memories to resolve contradictions and redundancies. Runs as a nightly scheduled task (`reconcile_memory_{agent_id}`, cron from `memory.reconcile_schedule`).
+
+1. `load_unreconciled(agent_id)` — fetches seeds: active memories with `reconciled=0`
+2. For each seed: `search_with_scores()` retrieves the `top_k` most similar neighbors by cosine similarity within the same `(channel, chat_id)` scope; neighbors below `reconcile_similarity_threshold` are discarded
+3. An LLM (the agent's own or a dedicated `memory_reconciler` sub-agent) receives the cluster and decides one action per group: `merge` (creates a new entry + soft-deletes the originals), `supersede` (soft-deletes outdated entries), `downweight` (reduces relevance), or `keep` (no-op)
+4. Actions are applied; processed seeds are marked `reconciled=1` via `mark_reconciled(ids)` — **never globally**
+5. Entries created by `merge` are born with `reconciled=True` (anti-loop: they are not re-processed until a new neighbor surfaces)
+6. Best-effort per cluster: a cluster that fails does not abort the rest (unlike `ConsolidateMemoryUseCase`, which is transactional)
+
+**Canonical case:** "estoy enfermo, tomo tratamiento X" (old) + "ya me recuperé" (new) → `merge` into a single updated memory that preserves the timeline, soft-deleting the originals.
 
 ### `ProcessPhotoUseCase`
 
@@ -701,7 +715,7 @@ Configured in `knowledge.sources`. Three types: `document` (Markdown, PDF on dis
 
 Tasks are persisted in `scheduler.db` (or in `history.db`, depending on config). The dispatcher (`SchedulerDispatchPorts`) routes execution based on task type: to `LLMDispatcherAdapter`, to `ConsolidationDispatchAdapter`, or to `HttpCallerAdapter`.
 
-Built-in tasks registered automatically: `consolidate_memory` (nightly, cron from `memory.schedule`) and `face_dedup` (if `photos.dedup.enabled`).
+Built-in tasks registered automatically: `consolidate_memory` (nightly, cron from `memory.schedule`), `reconcile_memory_{agent_id}` (one per agent with `memory.reconcile_enabled: true`, cron from `memory.reconcile_schedule`), and `face_dedup` (if `photos.dedup.enabled`).
 
 ---
 

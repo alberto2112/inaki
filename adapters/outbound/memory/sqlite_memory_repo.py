@@ -27,25 +27,33 @@ logger = logging.getLogger(__name__)
 
 _CREATE_MEMORIES = """
 CREATE TABLE IF NOT EXISTS memories (
-    id         TEXT PRIMARY KEY,
-    content    TEXT NOT NULL,
-    relevance  REAL NOT NULL,
-    tags       TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    agent_id   TEXT,
-    channel    TEXT,
-    chat_id    TEXT,
-    deleted    INTEGER NOT NULL DEFAULT 0
+    id           TEXT PRIMARY KEY,
+    content      TEXT NOT NULL,
+    relevance    REAL NOT NULL,
+    tags         TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    agent_id     TEXT,
+    channel      TEXT,
+    chat_id      TEXT,
+    deleted      INTEGER NOT NULL DEFAULT 0,
+    reconciled   INTEGER NOT NULL DEFAULT 0
 )
 """
 
-# Partial index: solo indexa los recuerdos activos. Hace que las queries
-# habituales (search/get_recent que filtran por deleted=0) usen un índice
-# más chico y rápido.
+# Partial index sobre recuerdos activos: hace que las queries habituales
+# (search/get_recent que filtran por deleted=0) usen un índice más chico.
 _CREATE_SCOPE_INDEX = """
 CREATE INDEX IF NOT EXISTS idx_memories_scope
     ON memories(agent_id, channel, chat_id, created_at DESC)
     WHERE deleted = 0
+"""
+
+# Partial index sobre recuerdos pendientes de reconciliación: acelera
+# load_unreconciled que filtra por reconciled=0 AND deleted=0.
+_CREATE_RECONCILED_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_memories_unreconciled
+    ON memories(agent_id, channel, chat_id, created_at ASC)
+    WHERE reconciled = 0 AND deleted = 0
 """
 
 _CREATE_EMBEDDINGS = """
@@ -76,7 +84,25 @@ class SQLiteMemoryRepository(IMemoryRepository):
         await conn.execute(_CREATE_MEMORIES)
         await conn.execute(_CREATE_SCOPE_INDEX)
         await conn.execute(_CREATE_EMBEDDINGS)
+        await self._migrate_reconciled_column(conn)
+        await conn.execute(_CREATE_RECONCILED_INDEX)
         await conn.commit()
+
+    async def _migrate_reconciled_column(self, conn: aiosqlite.Connection) -> None:
+        """Migración en caliente idempotente: agrega columna ``reconciled`` si no existe.
+
+        Las DBs creadas antes de la introducción del flag ``reconciled`` no tienen
+        la columna. Detectamos su ausencia consultando ``PRAGMA table_info`` y
+        ejecutamos ``ALTER TABLE`` solo si hace falta — idempotente, seguro de
+        correr en cada arranque.
+        """
+        rows = await conn.execute_fetchall("PRAGMA table_info(memories)")
+        columnas = {row["name"] for row in rows}
+        if "reconciled" not in columnas:
+            await conn.execute(
+                "ALTER TABLE memories ADD COLUMN reconciled INTEGER NOT NULL DEFAULT 0"
+            )
+            logger.info("Migración aplicada: columna 'reconciled' agregada a memories")
 
     async def store(self, entry: MemoryEntry) -> None:
         async with self._conn() as conn:
@@ -84,8 +110,9 @@ class SQLiteMemoryRepository(IMemoryRepository):
             await conn.execute(
                 """
                 INSERT OR REPLACE INTO memories
-                    (id, content, relevance, tags, created_at, agent_id, channel, chat_id, deleted)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, content, relevance, tags, created_at, agent_id, channel, chat_id,
+                     deleted, reconciled)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     entry.id,
@@ -97,6 +124,7 @@ class SQLiteMemoryRepository(IMemoryRepository):
                     entry.channel,
                     entry.chat_id,
                     int(entry.deleted),
+                    int(entry.reconciled),
                 ),
             )
             # vec0 (sqlite-vec) no soporta INSERT OR REPLACE: el path REPLACE
@@ -133,7 +161,7 @@ class SQLiteMemoryRepository(IMemoryRepository):
             rows = await conn.execute_fetchall(
                 """
                 SELECT m.id, m.content, m.relevance, m.tags, m.created_at,
-                       m.agent_id, m.channel, m.chat_id, m.deleted
+                       m.agent_id, m.channel, m.chat_id, m.deleted, m.reconciled
                 FROM memory_embeddings e
                 JOIN memories m ON e.id = m.id
                 WHERE e.embedding MATCH ?
@@ -168,7 +196,7 @@ class SQLiteMemoryRepository(IMemoryRepository):
             rows = await conn.execute_fetchall(
                 """
                 SELECT m.id, m.content, m.relevance, m.tags, m.created_at,
-                       m.agent_id, m.channel, m.chat_id, m.deleted,
+                       m.agent_id, m.channel, m.chat_id, m.deleted, m.reconciled,
                        e.distance
                 FROM memory_embeddings e
                 JOIN memories m ON e.id = m.id
@@ -232,7 +260,8 @@ class SQLiteMemoryRepository(IMemoryRepository):
 
         where = f"WHERE {' AND '.join(clauses)} "
         sql = (
-            "SELECT id, content, relevance, tags, created_at, agent_id, channel, chat_id, deleted "
+            "SELECT id, content, relevance, tags, created_at, agent_id, channel, chat_id, "
+            "deleted, reconciled "
             f"FROM memories {where}ORDER BY created_at DESC LIMIT ?"
         )
         params.append(limit)
@@ -249,7 +278,7 @@ class SQLiteMemoryRepository(IMemoryRepository):
             row = await (
                 await conn.execute(
                     "SELECT id, content, relevance, tags, created_at, "
-                    "agent_id, channel, chat_id, deleted "
+                    "agent_id, channel, chat_id, deleted, reconciled "
                     "FROM memories WHERE id = ?",
                     (memory_id,),
                 )
@@ -278,7 +307,7 @@ class SQLiteMemoryRepository(IMemoryRepository):
             row = await (
                 await conn.execute(
                     "SELECT id, content, relevance, tags, created_at, "
-                    "agent_id, channel, chat_id, deleted "
+                    "agent_id, channel, chat_id, deleted, reconciled "
                     "FROM memories WHERE id = ?",
                     (memory_id,),
                 )
@@ -325,7 +354,7 @@ class SQLiteMemoryRepository(IMemoryRepository):
                 row = await (
                     await conn.execute(
                         "SELECT id, content, relevance, tags, created_at, "
-                        "agent_id, channel, chat_id, deleted "
+                        "agent_id, channel, chat_id, deleted, reconciled "
                         "FROM memories WHERE id = ? AND deleted = 0",
                         (memory_id,),
                     )
@@ -362,7 +391,7 @@ class SQLiteMemoryRepository(IMemoryRepository):
             row = await (
                 await conn.execute(
                     "SELECT id, content, relevance, tags, created_at, "
-                    "agent_id, channel, chat_id, deleted "
+                    "agent_id, channel, chat_id, deleted, reconciled "
                     "FROM memories WHERE id = ? AND deleted = 0",
                     (memory_id,),
                 )
@@ -376,9 +405,9 @@ class SQLiteMemoryRepository(IMemoryRepository):
         return self._row_to_entry(row)
 
     def _row_to_entry(self, row) -> MemoryEntry:
-        # `channel`, `chat_id`, `deleted` pueden no existir en filas de DBs
-        # pre-migración; SQLite Row no implementa .get(), así que probamos con
-        # KeyError-guard.
+        # `channel`, `chat_id`, `deleted`, `reconciled` pueden no existir en
+        # filas de DBs pre-migración; SQLite Row no implementa .get(), así que
+        # probamos con KeyError-guard.
         try:
             channel = row["channel"]
         except (KeyError, IndexError):
@@ -391,6 +420,10 @@ class SQLiteMemoryRepository(IMemoryRepository):
             deleted = bool(row["deleted"])
         except (KeyError, IndexError):
             deleted = False
+        try:
+            reconciled = bool(row["reconciled"])
+        except (KeyError, IndexError):
+            reconciled = False
         return MemoryEntry(
             id=row["id"],
             content=row["content"],
@@ -402,4 +435,57 @@ class SQLiteMemoryRepository(IMemoryRepository):
             channel=channel,
             chat_id=chat_id,
             deleted=deleted,
+            reconciled=reconciled,
         )
+
+    async def load_unreconciled(
+        self,
+        agent_id: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+    ) -> list[MemoryEntry]:
+        """Devuelve recuerdos activos (deleted=0) pendientes de reconciliación (reconciled=0).
+
+        Siempre filtra por ``agent_id``. ``channel`` y ``chat_id`` son opcionales;
+        ``None`` significa sin filtro por ese campo.
+        Ordenados por created_at ASC para procesar primero los más viejos.
+        """
+        clauses: list[str] = ["reconciled = 0", "deleted = 0", "agent_id = ?"]
+        params: list[object] = [agent_id]
+        if channel is not None:
+            clauses.append("channel = ?")
+            params.append(channel)
+        if chat_id is not None:
+            clauses.append("chat_id = ?")
+            params.append(chat_id)
+
+        where = f"WHERE {' AND '.join(clauses)} "
+        sql = (
+            "SELECT id, content, relevance, tags, created_at, agent_id, channel, chat_id, "
+            "deleted, reconciled "
+            f"FROM memories {where}ORDER BY created_at ASC"
+        )
+
+        async with self._conn() as conn:
+            await self._ensure_schema(conn)
+            rows = await conn.execute_fetchall(sql, tuple(params))
+        return [self._row_to_entry(row) for row in rows]
+
+    async def mark_reconciled(self, ids: list[str]) -> int:
+        """Marca como reconciliados los recuerdos con los ids dados.
+
+        No-op si ``ids`` está vacío. Devuelve el número de filas actualizadas.
+        Opera SOLO sobre los ids dados — nunca actualiza en lote global por
+        agent_id para preservar granularidad.
+        """
+        if not ids:
+            return 0
+        placeholders = ", ".join("?" * len(ids))
+        sql = f"UPDATE memories SET reconciled = 1 WHERE id IN ({placeholders})"
+        async with self._conn() as conn:
+            await self._ensure_schema(conn)
+            cursor = await conn.execute(sql, tuple(ids))
+            await conn.commit()
+        afectadas = cursor.rowcount
+        logger.debug("mark_reconciled: %d memorias marcadas como reconciliadas", afectadas)
+        return afectadas

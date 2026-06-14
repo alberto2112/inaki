@@ -44,6 +44,7 @@ from core.ports.outbound.embedding_port import IEmbeddingProvider
 from core.ports.outbound.history_port import IHistoryStore
 from core.ports.outbound.llm_port import ILLMProvider
 from core.ports.outbound.memory_port import IMemoryRepository
+from core.use_cases._json_extract import extract_json_array
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from core.domain.value_objects.agent_settings import MemorySettings
 
@@ -406,44 +407,6 @@ class ConsolidateMemoryUseCase:
                 exc,
             )
 
-    @staticmethod
-    def _extract_json_array(raw: str) -> str | None:
-        """Localiza el primer array JSON top-level dentro de ``raw``.
-
-        Necesario porque los modelos con razonamiento leakean texto ANTES o
-        DESPUÉS del array (preámbulos, secciones ``## Reasoning``, etc.). Un
-        ``rfind(']')`` ingenuo se rompe en cuanto ese texto contiene un ``]``
-        (markdown links ``[x](url)``, listas, código), por eso escaneamos desde
-        el primer ``[`` contando profundidad de brackets e **ignorando** los que
-        caen dentro de string literals (respeta comillas y escapes). Devuelve el
-        substring del array balanceado, o ``None`` si no hay uno.
-        """
-        start = raw.find("[")
-        if start == -1:
-            return None
-        depth = 0
-        in_string = False
-        escaped = False
-        for i in range(start, len(raw)):
-            ch = raw[i]
-            if in_string:
-                if escaped:
-                    escaped = False
-                elif ch == "\\":
-                    escaped = True
-                elif ch == '"':
-                    in_string = False
-                continue
-            if ch == '"':
-                in_string = True
-            elif ch == "[":
-                depth += 1
-            elif ch == "]":
-                depth -= 1
-                if depth == 0:
-                    return raw[start : i + 1]
-        return None
-
     def _parse_facts(self, raw: str) -> list[dict]:
         """Extrae y valida el JSON de recuerdos del LLM."""
         raw = raw.strip()
@@ -459,7 +422,7 @@ class ConsolidateMemoryUseCase:
         except json.JSONDecodeError:
             # Fallback: el modelo agregó texto antes/después del array JSON.
             # Extraemos el primer array balanceado y parseamos SOLO eso.
-            candidate = self._extract_json_array(raw)
+            candidate = extract_json_array(raw)
             if candidate is None:
                 raise ConsolidationError(
                     f"El LLM no devolvió JSON válido. Respuesta: {raw[:300]}"

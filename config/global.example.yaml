@@ -193,6 +193,47 @@ memory:
   # enabled: true             # Flag PER-AGENT — va en agents/{id}.yaml, NO acá
 
   # ---------------------------------------------------------------------------
+  # [memory.reconcile_*] — Job periódico de reconciliación de memoria (OPCIONAL)
+  # ---------------------------------------------------------------------------
+  # La reconciliación («reflection») detecta recuerdos contradictorios o
+  # desactualizados y los fusiona, reemplaza o despondera usando un LLM.
+  # Es opt-in (reconcile_enabled: false por defecto) porque es más costosa que
+  # la consolidación ordinaria (una llamada LLM por cluster de recuerdos similares).
+  #
+  # Activación mínima (un agente específico en agents/{id}.yaml):
+  #   memory:
+  #     reconcile_enabled: true
+  #
+  # Campos (todos OPCIONALES — los defaults son conservadores):
+
+  # reconcile_enabled: false       # Habilita el job de reconciliación para ESTE agente.
+                                   # Solo tiene efecto en agents/{id}.yaml.
+
+  # reconcile_schedule: "0 4 * * 1" # Cron de la tarea builtin. Default: lunes 04:00 (tz usuario).
+
+  # reconcile_similarity_threshold: 0.80 # Similitud coseno mínima (0.0-1.0) para
+                                   # agrupar dos recuerdos en un cluster.
+                                   # 0.80 = conservador (solo recuerdos muy parecidos).
+
+  # reconcile_top_k: 10            # Vecinos máximos a considerar por seed al armar un cluster.
+
+  # ---------------------------------------------------------------------------
+  # [memory.reconcile_llm] — Sub-agente reconciliador (OPCIONAL)
+  # ---------------------------------------------------------------------------
+  # Por defecto la reconciliación usa el LLM del agente + el prompt hardcodeado.
+  # Si se especifica reconcile_llm.agent_id, delega a ese sub-agente via one-shot.
+  # El sub-agente de referencia está en config/agents/sub-agents/memory_reconciler.example.yaml.
+  #
+  # Ejemplo:
+  #   memory:
+  #     reconcile_enabled: true
+  #     reconcile_llm:
+  #       agent_id: memory_reconciler   # debe existir en agents/sub-agents/
+  #
+  # Si agent_id no resuelve a un sub-agente válido, el arranque loggea ERROR y
+  # la reconciliación cae de vuelta al prompt hardcodeado + LLM del agente (graceful).
+
+  # ---------------------------------------------------------------------------
   # [memory.llm] — LLM dedicado para la consolidación (OPCIONAL)
   # ---------------------------------------------------------------------------
   # Permite usar un LLM DISTINTO al del agente (llm.*) SOLO para consolidar la

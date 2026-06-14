@@ -87,6 +87,7 @@ inaki daemon
     │
     ├── app_container.startup()
     │   ├── _reconcile_consolidate_memory_task()   [see section below]
+    │   ├── _reconcile_reconcile_memory_tasks()    [see Memory Reconciliation Flow]
     │   └── scheduler_service.start()
     │       ├── repo.ensure_schema()
     │       ├── _handle_missed_on_startup()
@@ -430,3 +431,98 @@ between consolidation runs.
 
 **Idempotency:** running the UC twice in a row is safe — the second
 run sees `load_uninfused → []` and returns without touching anything.
+
+---
+
+## Memory Reconciliation Flow
+
+Memory reconciliation is independent of consolidation and runs as a nightly scheduled builtin task per agent (`reconcile_memory_{agent_id}`, cron from `memory.reconcile_schedule`). It requires `memory.reconcile_enabled: true` in the agent's YAML.
+
+### Builtin Task Reconciliation at Startup
+
+Mirrors the `consolidate_memory` pattern:
+
+```
+AppContainer.startup()
+│
+└── _reconcile_reconcile_memory_tasks()
+    │
+    ├── For each agent with memory.reconcile_enabled = true:
+    │   ├── target_schedule ← agent_config.memory.reconcile_schedule
+    │   ├── task_name ← f"reconcile_memory_{agent_id}"
+    │   ├── existing ← scheduler_repo.get_task_by_name(task_name)
+    │   │
+    │   ├── If existing is None:
+    │   │   └── scheduler_repo.seed_builtin(build_reconcile_memory_task(agent_id, target_schedule))
+    │   │
+    │   └── If existing exists → same check pattern as consolidate_memory:
+    │       schedule changed, FAILED status, NULL next_run → save if needed
+    │
+    └── For each agent with memory.reconcile_enabled = false:
+        └── If task exists in DB → disable it (does NOT delete)
+```
+
+### Automatic Trigger (nightly)
+
+```
+SchedulerService._loop()
+│
+└── _dispatch_trigger(task)
+    │
+    └── isinstance(payload, ReconcileMemoryPayload):
+        │
+        └── return await dispatch.reconciler.reconcile(payload.agent_id)
+            │
+            └── ReconcileMemoryUseCase.execute()
+```
+
+### Per-agent: `ReconcileMemoryUseCase.execute()`
+
+```
+ReconcileMemoryUseCase.execute()
+│
+├── seeds ← memory.load_unreconciled(agent_id)
+│   # SELECT WHERE agent_id = ? AND reconciled = 0 AND deleted = 0
+│   └── If empty: return "No memories pending reconciliation."  (idempotent no-op)
+│
+├── For each seed (SEED-BASED mode, best-effort):
+│   │
+│   ├── neighbors ← memory.search_with_scores(seed.embedding, top_k=reconcile_top_k)
+│   │   # KNN via sqlite-vec; returns list of (MemoryEntry, score)
+│   │
+│   ├── Filter: score < reconcile_similarity_threshold → discard
+│   ├── Filter: channel or chat_id ≠ seed's scope → discard
+│   │   (scope filter done in use case — search_with_scores has no native scope support)
+│   │
+│   ├── cluster ← [seed] + filtered_neighbors
+│   │   └── If cluster size == 1: mark seed reconciled, continue (no LLM call needed)
+│   │
+│   ├── llm.complete(cluster_prompt)
+│   │   └── Returns JSON array of actions:
+│   │       [{"action": "merge",      "ids": [...], "new_content": "..."},
+│   │        {"action": "supersede",  "ids": [...], "winner_id": "..."},
+│   │        {"action": "downweight", "id":  "...", "new_relevance": 0.3},
+│   │        {"action": "keep",       "id":  "..."}]
+│   │
+│   ├── Apply actions:
+│   │   ├── merge:      memory.store(new_entry, reconciled=True)
+│   │   │               memory.delete(old_ids)  ← soft-delete
+│   │   ├── supersede:  memory.delete(loser_ids)  ← soft-delete
+│   │   ├── downweight: memory.update(id, relevance=new_relevance)
+│   │   └── keep:       no-op
+│   │
+│   ├── memory.mark_reconciled([seed.id, *neighbor_ids])
+│   │   # UPDATE SET reconciled = 1 WHERE id IN (...)
+│   │   # NEVER global — only the seeds processed in this run
+│   │
+│   └── except Exception:
+│       └── log WARNING and continue to next seed (best-effort per cluster)
+│
+└── return f"✓ {processed} cluster(s) reconciled."
+```
+
+**Anti-loop:** entries created by `merge` are born with `reconciled=True`. They won't appear as seeds in future runs until a new consolidation introduces a neighboring memory with `reconciled=0` — at that point the new entry is the seed, and the merged memory may surface as a neighbor again.
+
+**Best-effort:** unlike consolidation (which is transactional), a cluster failure does not abort the rest. Seeds from a failed cluster remain `reconciled=0` and are retried in the next scheduled run.
+
+**Scope filtering:** `search_with_scores` does not filter by `(channel, chat_id)` natively (V1 limitation). The use case retrieves `reconcile_top_k` neighbors and discards those outside the seed's scope in application code. The `top_k` must be generous enough to find enough in-scope neighbors despite the oversample.

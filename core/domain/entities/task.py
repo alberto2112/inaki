@@ -21,6 +21,7 @@ class TriggerType(str, Enum):
     AGENT_SEND = "agent_send"
     SHELL_EXEC = "shell_exec"
     CONSOLIDATE_MEMORY = "consolidate_memory"
+    RECONCILE_MEMORY = "reconcile_memory"
     WEBHOOK = "webhook"
 
 
@@ -78,6 +79,18 @@ class ConsolidateMemoryPayload(BaseModel):
     type: Literal["consolidate_memory"] = "consolidate_memory"
 
 
+class ReconcileMemoryPayload(BaseModel):
+    """
+    Dispara la reconciliación de memoria de un agente concreto.
+
+    ``agent_id`` identifica el agente cuya ``ReconcileMemoryUseCase`` se ejecuta.
+    El ``AppContainer`` resuelve la instancia en runtime desde su registry de agentes.
+    """
+
+    type: Literal["reconcile_memory"] = "reconcile_memory"
+    agent_id: str
+
+
 class WebhookPayload(BaseModel):
     type: Literal["webhook"] = "webhook"
     url: str
@@ -93,6 +106,7 @@ TriggerPayload = Annotated[
     | AgentSendPayload
     | ShellExecPayload
     | ConsolidateMemoryPayload
+    | ReconcileMemoryPayload
     | WebhookPayload,
     Field(discriminator="type"),
 ]

@@ -246,6 +246,50 @@ class MemoryConfig(BaseModel):
     Si es ``None``, consolidación reusa el LLM del agente.
     """
 
+    reconcile_enabled: bool = False
+    """
+    Habilita el job periódico de reconciliación de memoria («reflection»).
+
+    Cuando es ``True``, el daemon registra una tarea builtin ``reconcile_memory``
+    por cada agente que tenga ``memory.enabled=True`` y ``reconcile_enabled=True``.
+    La tarea dispara ``ReconcileMemoryUseCase.execute()`` según el cron
+    ``reconcile_schedule``.
+
+    Default ``False`` — la feature está opt-in por ser una operación más
+    costosa que la consolidación ordinaria (una llamada LLM por cluster).
+    """
+
+    reconcile_schedule: str = "0 4 * * 1"
+    """
+    Expresión cron para el job de reconciliación. Evaluada en la tz del usuario.
+    Default: lunes a las 04:00 (``"0 4 * * 1"``).
+    """
+
+    reconcile_similarity_threshold: float = 0.80
+    """
+    Umbral de similitud coseno (0.0-1.0) para considerar dos recuerdos como
+    parte del mismo cluster que debe reconciliarse.
+    Default ``0.80`` (conservador — solo recuerdos muy similares se agrupan).
+    """
+
+    reconcile_top_k: int = 10
+    """
+    Número de vecinos por similitud a considerar al armar un cluster de
+    reconciliación. Un valor generoso compensa que ``search_with_scores``
+    no filtra por scope nativamente (limitación V1).
+    Default ``10``.
+    """
+
+    reconcile_llm: MemoryLLMOverride | None = None
+    """
+    Override opcional del LLM usado SOLO para la reconciliación de memoria.
+    Si es ``None``, la reconciliación usa el LLM del agente directamente
+    con el prompt hardcodeado. Si ``reconcile_llm.agent_id`` está seteado,
+    delega al sub-agente ``memory_reconciler`` via ``RunAgentOneShotUseCase``.
+    Los demás campos de override (provider, model, etc.) se ignoran cuando
+    ``agent_id`` está seteado — el sub-agente usa su propia config LLM.
+    """
+
     # La resolución del digest path y de keep_last_messages (lógica de dominio
     # que solo core consume) vive en core/domain/value_objects/agent_settings.py
     # (``MemorySettings``). El container traduce este modelo a ese VO.

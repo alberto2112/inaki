@@ -14,6 +14,7 @@ from core.domain.value_objects.dispatch_result import DispatchResult
 from core.ports.outbound.intermediate_sink_port import IIntermediateSink
 from core.ports.outbound.outbound_sink_port import IOutboundSink
 from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
+from core.use_cases.reconcile_memory import ReconcileMemoryUseCase
 
 if TYPE_CHECKING:
     from core.domain.entities.task import ShellExecPayload, WebhookPayload
@@ -162,6 +163,28 @@ class ConsolidationDispatchAdapter:
 
     async def consolidate_all(self) -> str:
         return await self._uc.execute()
+
+
+class ReconcileDispatchAdapter:
+    """Thin wrapper que expone ``reconcile(agent_id)`` al ``SchedulerService``.
+
+    Resuelve la instancia de ``ReconcileMemoryUseCase`` del agente en runtime
+    desde el dict de use cases registrados por ``AppContainer``. Si el agente
+    no existe o no tiene reconciliación habilitada, lanza ``ValueError`` (el
+    scheduler lo captura como fallo del trigger y aplica backoff + log).
+    """
+
+    def __init__(self, reconcilers: dict[str, ReconcileMemoryUseCase]) -> None:
+        self._reconcilers = reconcilers
+
+    async def reconcile(self, agent_id: str) -> str:
+        uc = self._reconcilers.get(agent_id)
+        if uc is None:
+            raise ValueError(
+                f"reconcile_memory: no hay ReconcileMemoryUseCase para el agente '{agent_id}'. "
+                "Verificá que memory.reconcile_enabled=True en su config."
+            )
+        return await uc.execute()
 
 
 class ShellExecAdapter:

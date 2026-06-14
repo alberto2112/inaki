@@ -25,6 +25,7 @@ from adapters.outbound.scheduler.dispatch_adapters import (
     ConsolidationDispatchAdapter,
     HttpCallerAdapter,
     LLMDispatcherAdapter,
+    ReconcileDispatchAdapter,
 )
 from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRepo
 from adapters.outbound.sinks.sink_factory import SinkFactory
@@ -62,6 +63,7 @@ async def test_channel_send_cli_cae_en_hardcoded_file_y_persiste_metadata(
         channel_sender=router,
         llm_dispatcher=LLMDispatcherAdapter({}),
         consolidator=ConsolidationDispatchAdapter(None),  # type: ignore[arg-type]
+        reconciler=ReconcileDispatchAdapter({}),
         http_caller=HttpCallerAdapter(),
         shell_executor=ShellExecAdapter(),
     )

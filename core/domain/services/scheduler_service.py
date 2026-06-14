@@ -31,6 +31,7 @@ from core.domain.entities.task import (
     AgentSendPayload,
     ChannelSendPayload,
     ConsolidateMemoryPayload,
+    ReconcileMemoryPayload,
     ScheduledTask,
     ShellExecPayload,
     TaskKind,
@@ -404,6 +405,8 @@ class SchedulerService:
             return await self._dispatch.shell_executor.run(payload), None
         elif isinstance(payload, ConsolidateMemoryPayload):
             return await self._dispatch.consolidator.consolidate_all(), None
+        elif isinstance(payload, ReconcileMemoryPayload):
+            return await self._dispatch.reconciler.reconcile(payload.agent_id), None
         elif isinstance(payload, WebhookPayload):
             return await self._dispatch.http_caller.call(payload), None
         else:

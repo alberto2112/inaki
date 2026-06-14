@@ -25,6 +25,7 @@ The scheduler is a background task execution engine that runs continuously withi
 - **Message sending** to channels (Telegram, etc.) on a programmed basis
 - **Shell command execution** with timeout and environment control
 - **Memory consolidation** for all enabled agents periodically
+- **Memory reconciliation** — per-agent nightly task that resolves contradictions and redundancies in long-term memory
 - **Flexible scheduling**: cron expressions for recurring tasks, ISO datetime for one-shot tasks
 - **Execution tracking**: logs with status, output, errors, and retry counter
 - **Task lifecycle**: `PENDING → RUNNING → [COMPLETED | FAILED | MISSED]`
@@ -208,6 +209,7 @@ else:
 | `agent_send` | `llm_dispatcher.dispatch(agent_id, prompt, tools)` → str result; if `output_channel` is defined, sends result to the channel |
 | `shell_exec` | `ShellExecAdapter` (port `IShellExecutor`): subprocess with command/working_dir/env_vars/timeout → stdout; RuntimeError if exit code != 0. On timeout the process is **killed** (no orphans). |
 | `consolidate_memory` | `consolidator.consolidate_all()` → str result |
+| `reconcile_memory` | `reconciler.reconcile(agent_id)` → str result. Runs `ReconcileMemoryUseCase` for the specified agent. |
 
 ### 3.4 Finalization (`_finalize_task()`)
 
@@ -525,6 +527,26 @@ class ConsolidateMemoryPayload(BaseModel):
 
 ---
 
+### `reconcile_memory`
+
+Runs memory reconciliation for a specific agent. Created automatically as one builtin task per agent with `memory.reconcile_enabled: true`.
+
+```python
+class ReconcileMemoryPayload(BaseModel):
+    type: Literal["reconcile_memory"] = "reconcile_memory"
+    agent_id: str   # Agent whose memories are reconciled
+```
+
+**Example**:
+```json
+{
+  "type": "reconcile_memory",
+  "agent_id": "general"
+}
+```
+
+---
+
 ## 6. Action types (TaskKind)
 
 ### `recurrent`
@@ -675,6 +697,34 @@ executions_remaining: null (infinite)
 5. If `status == FAILED` → resets to `PENDING`
 6. If `next_run == NULL` → recalculates
 7. If the payload is corrupt (`ValidationError`) → deletes and re-creates clean
+
+### IDs 10+ — `reconcile_memory_{agent_id}`
+
+One builtin task is created per agent that has `memory.reconcile_enabled: true`. IDs are allocated starting at `_RECONCILE_MEMORY_BASE_ID = 10`.
+
+```
+id:           10  (10 for the first agent, 11 for the second, etc.)
+name:         reconcile_memory_{agent_id}
+description:  Memory reconciliation for agent {agent_id}
+task_kind:    RECURRENT
+trigger_type: reconcile_memory
+schedule:     configurable via memory.reconcile_schedule (default: "0 4 * * 1")
+executions_remaining: null (infinite)
+```
+
+**Reconciliation on startup** (`AppContainer._reconcile_reconcile_memory_tasks`):
+
+Same pattern as `consolidate_memory` (ID 1):
+
+1. For each agent with `memory.reconcile_enabled: true`, reads `memory.reconcile_schedule` from config
+2. Queries the corresponding task in the DB by name `reconcile_memory_{agent_id}`
+3. If it doesn't exist → creates it (`seed_builtin`)
+4. If the schedule changed → updates + recalculates `next_run`
+5. If `status == FAILED` → resets to `PENDING`
+6. If `next_run == NULL` → recalculates
+7. If the payload is corrupt (`ValidationError`) → deletes and re-creates clean
+
+Tasks are added/removed automatically when agents enable or disable `reconcile_enabled`.
 
 ---
 

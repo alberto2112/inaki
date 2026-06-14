@@ -47,9 +47,10 @@ class MemoryEntry(BaseModel):
     channel: str | None = None    # Scope: channel of origin (e.g. "telegram", "cli")
     chat_id: str | None = None    # Scope: chat_id of origin; NULL = pre-migration global
     deleted: int = 0              # Soft-delete: 0 = active, 1 = deleted (reversible)
+    reconciled: int = 0           # 0 = pending reconciliation, 1 = already processed
 ```
 
-> Memory is **scoped** by `(agent_id, channel, chat_id)`. Entries with `channel=NULL, chat_id=NULL` are pre-migration globals and are still searchable. `search()`, `get_recent()` and `search_with_scores()` always filter `deleted=0`.
+> Memory is **scoped** by `(agent_id, channel, chat_id)`. Entries with `channel=NULL, chat_id=NULL` are pre-migration globals and are still searchable. `search()`, `get_recent()` and `search_with_scores()` always filter `deleted=0`. `reconciled=0` marks entries pending reconciliation; entries created by a `merge` action are born with `reconciled=1` to prevent re-processing until new neighbors appear.
 > `created_at` reflects when the fact occurred in conversation — the LLM extractor includes it in the JSON as a `timestamp` field.
 
 **History SQLite schema** (`data/history.db`):
@@ -83,12 +84,17 @@ CREATE TABLE memories (
     agent_id   TEXT,              -- Scoped per agent
     channel    TEXT,              -- Scope: channel of origin; NULL = pre-migration global
     chat_id    TEXT,              -- Scope: chat_id of origin; NULL = pre-migration global
-    deleted    INTEGER NOT NULL DEFAULT 0  -- Soft-delete: 0=active, 1=deleted
+    deleted    INTEGER NOT NULL DEFAULT 0,  -- Soft-delete: 0=active, 1=deleted
+    reconciled INTEGER NOT NULL DEFAULT 0   -- 0=pending reconciliation, 1=already processed
 );
 
 CREATE INDEX idx_memories_scope
     ON memories(agent_id, channel, chat_id, created_at DESC)
     WHERE deleted = 0;  -- partial index over active entries only
+
+CREATE INDEX idx_memories_unreconciled
+    ON memories(agent_id)
+    WHERE reconciled = 0 AND deleted = 0;  -- partial index for reconciliation seed lookup
 
 CREATE VIRTUAL TABLE memory_embeddings USING vec0(
     id        TEXT PRIMARY KEY,

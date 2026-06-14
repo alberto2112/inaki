@@ -42,6 +42,8 @@ from adapters.outbound.scope_registry_adapter import InMemoryScopeRegistryAdapte
 from adapters.outbound.scheduler.builtin_tasks import (
     build_consolidate_memory_task,
     build_face_dedup_task,
+    build_reconcile_memory_task,
+    _RECONCILE_MEMORY_BASE_ID,
 )
 from adapters.outbound.scheduler.dispatch_adapters import (
     ChannelFallbackSettings,
@@ -49,6 +51,7 @@ from adapters.outbound.scheduler.dispatch_adapters import (
     ConsolidationDispatchAdapter,
     HttpCallerAdapter,
     LLMDispatcherAdapter,
+    ReconcileDispatchAdapter,
     ShellExecAdapter,
 )
 from core.ports.outbound.scheduler_dispatch_port import SchedulerDispatchPorts
@@ -69,6 +72,7 @@ from core.ports.outbound.tool_config_port import IToolConfigStore
 from core.ports.outbound.transcription_port import ITranscriptionProvider
 from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
 from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
+from core.use_cases.reconcile_memory import ReconcileMemoryUseCase
 from core.use_cases.run_agent import RunAgentUseCase
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from core.use_cases.schedule_task import ScheduleTaskUseCase
@@ -116,6 +120,10 @@ def build_memory_settings(memory_cfg: MemoryConfig) -> MemorySettings:
         channels_infused=(
             tuple(memory_cfg.channels_infused) if memory_cfg.channels_infused else None
         ),
+        reconcile_enabled=memory_cfg.reconcile_enabled,
+        reconcile_schedule=memory_cfg.reconcile_schedule,
+        reconcile_similarity_threshold=memory_cfg.reconcile_similarity_threshold,
+        reconcile_top_k=memory_cfg.reconcile_top_k,
     )
 
 
@@ -346,6 +354,20 @@ class AgentContainer:
                 delay_seconds=cfg.memory.delay_seconds,
             )
 
+        # ReconcileMemoryUseCase: solo se instancia cuando memory.enabled=True y
+        # reconcile_enabled=True. El sub-agente reconciliador se wirea post-
+        # construcción vía _wire_memory_reconcilers (análogo a _wire_memory_extractors).
+        self.reconcile_memory: ReconcileMemoryUseCase | None = None
+        if cfg.memory.enabled and cfg.memory.reconcile_enabled:
+            llm_reconciler = self._resolve_reconcile_llm(cfg, self._llm)
+            self.reconcile_memory = ReconcileMemoryUseCase(
+                llm=llm_reconciler,
+                memory=self._memory,
+                embedder=self._embedder,
+                agent_id=cfg.id,
+                memory_config=build_memory_settings(cfg.memory),
+            )
+
     @staticmethod
     def _resolve_memory_llm(cfg: AgentConfig, base_llm):
         """
@@ -369,6 +391,42 @@ class AgentContainer:
         resolved = LLMProviderFactory.resolve(merged, cfg.providers)
         logger.info(
             "Agente '%s': LLM de consolidación dedicado — provider=%s, model=%s, "
+            "reasoning_effort=%s, max_tokens=%d",
+            cfg.id,
+            resolved.provider,
+            resolved.model,
+            resolved.reasoning_effort,
+            resolved.max_tokens,
+        )
+        return LLMProviderFactory.create_from_resolved(resolved)
+
+    @staticmethod
+    def _resolve_reconcile_llm(cfg: AgentConfig, base_llm):
+        """
+        Devuelve el ``ILLMProvider`` que debe inyectarse en
+        ``ReconcileMemoryUseCase``.
+
+        Análogo a ``_resolve_memory_llm`` pero usa ``cfg.memory.reconcile_llm``
+        como override. Si ``reconcile_llm`` es ``None`` o su config efectiva
+        es idéntica al ``base_llm``, reusa la instancia base (sin duplicar
+        clientes HTTP). Si ``reconcile_llm.agent_id`` está seteado, este
+        método IGUAL resuelve el LLM (será ignorado en runtime cuando el
+        sub-agente reconciliador esté wired en ``_wire_memory_reconcilers``).
+        """
+        reconcile_override = cfg.memory.reconcile_llm
+        if reconcile_override is None:
+            return base_llm
+
+        # Reusar la misma infraestructura de merge que usa la consolidación,
+        # pero partiendo de reconcile_llm en lugar de memory.llm.
+        temp_mem = cfg.memory.model_copy(update={"llm": reconcile_override})
+        merged = temp_mem.merged_llm_config(cfg.llm)
+        if merged == cfg.llm:
+            return base_llm
+
+        resolved = LLMProviderFactory.resolve(merged, cfg.providers)
+        logger.info(
+            "Agente '%s': LLM de reconciliación dedicado — provider=%s, model=%s, "
             "reasoning_effort=%s, max_tokens=%d",
             cfg.id,
             resolved.provider,
@@ -1258,12 +1316,14 @@ class AppContainer:
         self._build_background_delegation_queue()
         self._wire_all_delegation()
         self._build_consolidation()
+        self._build_reconciliation()
         self._build_scheduler()
         self._wire_scheduler_tool()
         self._wire_broadcast_adapters()
         self._wire_photos()
         self._wire_telegram_tools()
         self._wire_memory_extractors()
+        self._wire_memory_reconcilers()
 
     def _init_shared_state(self, config_dir: Path | None) -> None:
         # Tool Config Protocol — UN store para toda la app, dueño de su propio
@@ -1365,6 +1425,16 @@ class AppContainer:
             delay_seconds=self.global_config.memory.delay_seconds,
         )
 
+    def _build_reconciliation(self) -> None:
+        # Recolecta los use cases de reconciliación (per-agent, solo los habilitados).
+        # El dict se pasa al ReconcileDispatchAdapter para que el scheduler
+        # pueda invocar el use case correcto al disparar la task builtin.
+        self._enabled_reconcilers: dict[str, ReconcileMemoryUseCase] = {
+            agent_id: container.reconcile_memory
+            for agent_id, container in self.agents.items()
+            if container.reconcile_memory is not None
+        }
+
     def _build_scheduler(self) -> None:
         # Scheduler wiring
         scheduler_cfg = self.global_config.scheduler
@@ -1401,6 +1471,7 @@ class AppContainer:
             channel_sender=channel_router,
             llm_dispatcher=self._llm_dispatcher,
             consolidator=ConsolidationDispatchAdapter(self.consolidate_all_agents),
+            reconciler=ReconcileDispatchAdapter(self._enabled_reconcilers),
             http_caller=HttpCallerAdapter(),
             shell_executor=ShellExecAdapter(),
         )
@@ -1569,6 +1640,54 @@ class AppContainer:
                 extractor_id,
             )
 
+    def _wire_memory_reconcilers(self) -> None:
+        """Wire del sub-agente reconciliador para cada agente con reconcile_enabled=True.
+
+        Si ``memory.reconcile_llm.agent_id`` apunta a un sub-agente válido, le
+        pasamos su ``run_agent_one_shot`` al ``ReconcileMemoryUseCase`` vía
+        ``set_reconciler``. Si el ``agent_id`` no existe o no es un sub-agente,
+        se loggea ERROR y la reconciliación usa el prompt hardcodeado + LLM resuelto
+        (graceful — mismo patrón que ``_wire_memory_extractors``).
+        """
+        delegation_cfg = self.global_config.delegation
+        for agent_id, container in self.agents.items():
+            if self.registry.is_sub_agent(agent_id):
+                continue
+            if container.reconcile_memory is None:
+                continue
+            reconcile_llm = container.agent_config.memory.reconcile_llm
+            reconciler_id = reconcile_llm.agent_id if reconcile_llm is not None else None
+            if not reconciler_id:
+                continue
+            reconciler_container = self.agents.get(reconciler_id)
+            if reconciler_container is None:
+                logger.error(
+                    "Agente '%s': memory.reconcile_llm.agent_id='%s' no existe — "
+                    "reconciliación usará el prompt hardcodeado + LLM del agente",
+                    agent_id,
+                    reconciler_id,
+                )
+                continue
+            if not self.registry.is_sub_agent(reconciler_id):
+                logger.error(
+                    "Agente '%s': memory.reconcile_llm.agent_id='%s' debe apuntar a un "
+                    "sub-agente (en agents/sub-agents/), no a un agente regular — "
+                    "reconciliación usará el prompt hardcodeado + LLM del agente",
+                    agent_id,
+                    reconciler_id,
+                )
+                continue
+            container.reconcile_memory.set_reconciler(
+                reconciler_container.run_agent_one_shot,
+                max_iterations=delegation_cfg.max_iterations_per_sub,
+                timeout_seconds=delegation_cfg.timeout_seconds,
+            )
+            logger.info(
+                "Agente '%s': memory reconciler wired → sub-agente '%s'",
+                agent_id,
+                reconciler_id,
+            )
+
     def _wire_broadcast_for_agent(self, agent_cfg: AgentConfig) -> None:
         """
         Instancia y almacena el TcpBroadcastAdapter para un agente, si aplica.
@@ -1710,6 +1829,36 @@ class AppContainer:
             build_consolidate_memory_task(self.global_config.memory.schedule)
         )
 
+    async def _reconcile_reconcile_memory_tasks(self) -> None:
+        """Reconcilia las tareas builtin de reconciliación de memoria.
+
+        Hay UNA tarea por agente que tenga ``memory.reconcile_enabled=True``.
+        Los IDs de tarea se asignan secuencialmente a partir de
+        ``_RECONCILE_MEMORY_BASE_ID`` — estables porque el orden del registry
+        es determinista (orden de carga de los archivos de config).
+        """
+        agentes_con_reconcile = [
+            agent_cfg
+            for agent_cfg in self.registry.list_all()
+            if not self.registry.is_sub_agent(agent_cfg.id)
+            and agent_cfg.memory.enabled
+            and agent_cfg.memory.reconcile_enabled
+        ]
+        for idx, agent_cfg in enumerate(agentes_con_reconcile):
+            task_id = _RECONCILE_MEMORY_BASE_ID + idx
+            task = build_reconcile_memory_task(
+                schedule=agent_cfg.memory.reconcile_schedule,
+                agent_id=agent_cfg.id,
+                task_id=task_id,
+            )
+            await self._scheduler_reconciler.reconcile_builtin_task(task)
+            logger.info(
+                "reconcile_memory task reconciliada — agente='%s' schedule='%s' task_id=%d",
+                agent_cfg.id,
+                agent_cfg.memory.reconcile_schedule,
+                task_id,
+            )
+
     async def _reconcile_face_dedup_task(self) -> None:
         """No-op si photos está deshabilitado o si dedup.enabled=False."""
         photos_cfg = getattr(self.global_config, "photos", None)
@@ -1736,6 +1885,7 @@ class AppContainer:
         adapters de broadcast. Llamar en el daemon lifecycle."""
         if self.global_config.scheduler.enabled:
             await self._reconcile_consolidate_memory_task()
+            await self._reconcile_reconcile_memory_tasks()
             await self._reconcile_face_dedup_task()
             await self.scheduler_service.start()
             logger.info("SchedulerService iniciado")

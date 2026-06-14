@@ -61,6 +61,12 @@ class FakeMemory:
     async def update(self, *args, **kwargs):
         return None
 
+    async def load_unreconciled(self, *args, **kwargs):
+        return []
+
+    async def mark_reconciled(self, *args, **kwargs) -> int:
+        return 0
+
 
 class FakeKnowledgeSource(IKnowledgeSource):
     """Fuente de conocimiento mínima para tests."""

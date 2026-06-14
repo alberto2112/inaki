@@ -57,6 +57,10 @@ class MemorySettings(BaseModel, frozen=True):
     min_relevance_score: float = 0.5
     keep_last_messages: int = 0
     channels_infused: tuple[str, ...] | None = None
+    reconcile_enabled: bool = False
+    reconcile_schedule: str = "0 4 * * 1"
+    reconcile_similarity_threshold: float = 0.80
+    reconcile_top_k: int = 10
 
     def resolved_digest_path(self, channel: str | None, chat_id: str | None) -> Path:
         """

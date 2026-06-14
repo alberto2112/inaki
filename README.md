@@ -8,7 +8,7 @@ Personal AI assistant designed to run as a systemd service on a **Raspberry Pi 5
 
 - **Multi-agent** — define multiple agents with independent configs, LLM providers, and personalities
 - **Multi-channel** — CLI, Telegram bot, and REST API simultaneously on the same daemon
-- **Long-term memory** — per-scope RAG (SQLite + sqlite-vec) with nightly LLM-powered consolidation
+- **Long-term memory** — per-scope RAG (SQLite + sqlite-vec) with nightly LLM-powered consolidation and optional memory reconciliation (resolves contradictions and merges outdated facts automatically)
 - **Semantic routing** — tools and skills are selected via embedding similarity, not hardcoded lists
 - **Scheduler** — one-shot and recurring tasks (cron) with a built-in TUI and CLI
 - **Agent delegation** — agents can delegate to other agents synchronously or in the background

@@ -602,13 +602,32 @@ llm:
 # embedding:
 #   provider: "e5_onnx"
 
-# Memory — ONLY valid per-agent flag
+# Memory — flags valid ONLY per-agent.
 # The rest of memory.* is defined in global.yaml and MUST NOT be overridden here.
 memory:
   enabled: true        # If false, this agent does NOT participate in the global
                        # nightly consolidation. Default: true.
                        # The command `inaki consolidate --agent {id}` ignores
                        # this flag and consolidates the specified agent anyway.
+
+  # Memory reconciliation (optional — default: disabled)
+  reconcile_enabled: false            # Enables the reconciliation feature for this agent.
+                                      # When true, a builtin task `reconcile_memory_{id}`
+                                      # is created in scheduler.db automatically.
+  reconcile_schedule: "0 4 * * 1"    # Cron for the builtin reconcile task.
+                                      # Default: lunes 4am (user timezone). Reconciled on
+                                      # daemon startup: if changed, the DB row is updated.
+  reconcile_similarity_threshold: 0.80  # Minimum cosine similarity (0.0–1.0) for two
+                                         # memories to be considered neighbors and grouped
+                                         # into a cluster for LLM evaluation. Default: 0.80.
+  reconcile_top_k: 10                # Max neighbors retrieved per seed via `search_with_scores`.
+                                     # Must be generous enough to compensate for the lack of
+                                     # native scope filtering in the vector search. Default: 10.
+  reconcile_llm:                     # Optional dedicated sub-agent for reconciliation.
+    agent_id: memory_reconciler      # Must be a configured agent (see example YAML at
+                                     # config/agents/sub-agents/memory_reconciler.example.yaml).
+                                     # If absent, the agent's own LLM is used with a
+                                     # hardcoded prompt.
 
 # Workspace — path containment for file tools (read_file, write_file, patch_file, edit_file)
 # shell_exec is NOT affected by this config.
@@ -1019,6 +1038,7 @@ channels:
 | `channels.telegram.voice_enabled` | Per-agent. Default `true`. If `true`, requires a `transcription:` block. |
 | `memory.db_filename` / `digest_filename` / `default_top_k` / `min_relevance_score` / `schedule` / `delay_seconds` / `keep_last_messages` | **Only in `global.yaml`**. An agent cannot override them (semantically it makes no sense: the memory is globally shared). |
 | `memory.enabled` | **Only per-agent in `agents/{id}.yaml`**. Default `true`. Filters which agents participate in the global nightly consolidation. |
+| `memory.reconcile_enabled` / `reconcile_schedule` / `reconcile_similarity_threshold` / `reconcile_top_k` / `reconcile_llm` | **Only per-agent in `agents/{id}.yaml`**. Default `false` for `reconcile_enabled`. Activating it causes a builtin task `reconcile_memory_{id}` to be auto-created in `scheduler.db`. |
 | `channels` | Only in the agent. Does not exist in global. |
 | `channels.*.token` / `auth_key` | Only in `*.secrets.yaml`. |
 | `system_prompt` | Required on each agent. No default value. |
@@ -1237,6 +1257,56 @@ composes the override with the registry credentials.
 **When NOT to use it:** if your base LLM already works well for consolidation,
 omit the entire block. The default behavior (`memory.llm` absent)
 reuses the agent's provider.
+
+---
+
+## Memory reconciliation — `memory.reconcile_*`
+
+Memory reconciliation is an optional per-agent process that resolves contradictions and redundancies in long-term memory. It complements consolidation: while consolidation *extracts* new memories from conversation history, reconciliation *reviews existing memories* to keep them consistent over time.
+
+**Canonical case:** the agent stored "estoy enfermo, tomo tratamiento X" months ago. After a new conversation, "ya me recuperé" lands in memory. The reconciliation process groups those two entries (cosine similarity ≥ `reconcile_similarity_threshold`) and the LLM decides to `merge` them into a single updated memory that preserves the timeline — soft-deleting the originals.
+
+### How it works
+
+1. `load_unreconciled(agent_id)` — seeds: active memories with `reconciled=0`
+2. For each seed: `search_with_scores()` retrieves the `reconcile_top_k` most similar neighbors; entries below `reconcile_similarity_threshold` or outside the same `(channel, chat_id)` scope are discarded
+3. The LLM receives the cluster and returns a JSON array of actions:
+   - `merge` — creates a new unified memory + soft-deletes the originals
+   - `supersede` — soft-deletes outdated entries, keeps the winner
+   - `downweight` — reduces relevance of the entry (no delete)
+   - `keep` — no-op
+4. Actions are applied; processed seeds are marked `reconciled=1` via `mark_reconciled(ids)` — **never globally** (only the seeds of the current run)
+5. Entries created by `merge` are born with `reconciled=True` — anti-loop: they won't be re-processed until a new neighbor surfaces in a future run
+
+**Best-effort:** a cluster that fails does not abort the rest (unlike consolidation, which is transactional).
+
+### Enabling per agent
+
+In `agents/{id}.yaml`:
+
+```yaml
+memory:
+  enabled: true
+  reconcile_enabled: true                # activates the feature
+  reconcile_schedule: "0 4 * * 1"        # default: Mondays at 4am (user timezone)
+  reconcile_similarity_threshold: 0.80   # 0.0–1.0; higher = tighter clusters
+  reconcile_top_k: 10                    # neighbors per seed
+  reconcile_llm:                         # optional sub-agent
+    agent_id: memory_reconciler
+```
+
+When `reconcile_enabled: true`, a builtin task `reconcile_memory_{id}` is created automatically in `scheduler.db` on the next startup. Changing `reconcile_schedule` and restarting the daemon is enough to apply the new cron — no manual DB edit needed.
+
+### Dedicated sub-agent (`memory_reconciler`)
+
+By default the agent's own LLM is used with a hardcoded prompt. For higher quality or to avoid consuming the agent's rate limit, you can route reconciliation through a dedicated sub-agent:
+
+1. Copy `config/agents/sub-agents/memory_reconciler.example.yaml` to `config/agents/memory_reconciler.yaml` and adjust the LLM config.
+2. Set `memory.reconcile_llm.agent_id: memory_reconciler` on each agent that should use it.
+
+### DB migration
+
+Requires a new column `reconciled INTEGER NOT NULL DEFAULT 0` in the `memories` table of `inaki.db`. The `SQLiteMemoryRepository._ensure_schema()` handles this automatically on first startup — no manual steps needed. If your DB predates this feature, `ALTER TABLE` adds the column with default `0` and all existing memories become seeds for the first reconciliation run.
 
 ## Scheduler — `channel_fallback` (channel routing)
 

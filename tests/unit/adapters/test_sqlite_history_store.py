@@ -193,10 +193,11 @@ async def test_new_messages_are_uninfused_by_default(history_store):
 
 
 async def test_mark_infused_moves_messages_out_of_uninfused(history_store):
+    # Sin channel/chat_id → columnas quedan en "" (valor por defecto de append).
     for i in range(3):
         await history_store.append("agent1", Message(role=Role.USER, content=f"msg {i}"))
 
-    affected = await history_store.mark_infused("agent1")
+    affected = await history_store.mark_infused("agent1", channel="", chat_id="")
     assert affected == 3
 
     uninfused = await history_store.load_uninfused("agent1")
@@ -210,10 +211,10 @@ async def test_mark_infused_moves_messages_out_of_uninfused(history_store):
 async def test_mark_infused_returns_zero_when_nothing_pending(history_store):
     for i in range(2):
         await history_store.append("agent1", Message(role=Role.USER, content=f"msg {i}"))
-    await history_store.mark_infused("agent1")
+    await history_store.mark_infused("agent1", channel="", chat_id="")
 
     # Segundo mark sobre mensajes ya infused → 0 filas afectadas
-    affected = await history_store.mark_infused("agent1")
+    affected = await history_store.mark_infused("agent1", channel="", chat_id="")
     assert affected == 0
 
 
@@ -224,7 +225,7 @@ async def test_mark_infused_only_touches_current_uninfused(history_store):
     """
     await history_store.append("agent1", Message(role=Role.USER, content="old 1"))
     await history_store.append("agent1", Message(role=Role.USER, content="old 2"))
-    await history_store.mark_infused("agent1")
+    await history_store.mark_infused("agent1", channel="", chat_id="")
 
     await history_store.append("agent1", Message(role=Role.USER, content="new 1"))
     await history_store.append("agent1", Message(role=Role.USER, content="new 2"))
@@ -237,12 +238,59 @@ async def test_mark_infused_isolated_per_agent(history_store):
     await history_store.append("agent_a", Message(role=Role.USER, content="a1"))
     await history_store.append("agent_b", Message(role=Role.USER, content="b1"))
 
-    await history_store.mark_infused("agent_a")
+    await history_store.mark_infused("agent_a", channel="", chat_id="")
 
     uninfused_a = await history_store.load_uninfused("agent_a")
     uninfused_b = await history_store.load_uninfused("agent_b")
     assert uninfused_a == []
     assert len(uninfused_b) == 1  # agent_b intacto
+
+
+async def test_mark_infused_scoped_only_marks_matching_scope(history_store):
+    """mark_infused con channel/chat_id NO debe tocar mensajes de otros scopes del mismo agente."""
+    await history_store.append(
+        "agent1", Message(role=Role.USER, content="scope A"), channel="telegram", chat_id="1"
+    )
+    await history_store.append(
+        "agent1", Message(role=Role.USER, content="scope B"), channel="telegram", chat_id="2"
+    )
+
+    affected = await history_store.mark_infused("agent1", channel="telegram", chat_id="1")
+    assert affected == 1
+
+    # El scope A queda marcado, el scope B sigue uninfused.
+    uninfused = await history_store.load_uninfused("agent1")
+    assert len(uninfused) == 1
+    assert uninfused[0].content == "scope B"
+
+
+async def test_mark_infused_channel_none_uses_is_null_logic(history_store):
+    """
+    channel=None / chat_id=None activa IS NULL en el SQL (mensajes pre-migración).
+    El schema actual tiene NOT NULL DEFAULT '' en esas columnas, así que en la
+    práctica las filas siempre tienen '' o un valor. Este test verifica que con
+    None se filtra solo el scope correcto: channel='' es DISTINTO de channel=None
+    (IS NULL no coincide con '').
+    """
+    # Dos mensajes: uno en scope ("", "") y otro en scope ("telegram", "1").
+    await history_store.append(
+        "agent1", Message(role=Role.USER, content="scope vacio"), channel="", chat_id=""
+    )
+    await history_store.append(
+        "agent1", Message(role=Role.USER, content="scope telegram"), channel="telegram", chat_id="1"
+    )
+
+    # mark_infused con channel=None → IS NULL → no matchea ninguno (NOT NULL schema)
+    affected = await history_store.mark_infused("agent1", channel=None, chat_id=None)
+    assert affected == 0  # IS NULL no matchea '' ni 'telegram'
+
+    # mark_infused con channel="" → matchea el scope vacío
+    affected = await history_store.mark_infused("agent1", channel="", chat_id="")
+    assert affected == 1
+
+    uninfused = await history_store.load_uninfused("agent1")
+    assert len(uninfused) == 1
+    assert uninfused[0].content == "scope telegram"
 
 
 # SC-08

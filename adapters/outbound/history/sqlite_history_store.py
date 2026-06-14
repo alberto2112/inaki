@@ -276,18 +276,41 @@ class SQLiteHistoryStore(IHistoryStore):
         )
         return [self._row_to_message(r) for r in rows]
 
-    async def mark_infused(self, agent_id: str) -> int:
+    async def mark_infused(
+        self,
+        agent_id: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+    ) -> int:
+        # Construir el WHERE dinámicamente.
+        # Para channel/chat_id con valor None se usa IS NULL (matchea NULLs en la BD).
+        # Para valores no-None se usa = ? (matchea el valor exacto).
+        # Nunca se omite el filtro — None NO significa "sin filtro".
+        sql = "UPDATE history SET infused = 1 WHERE agent_id = ? AND infused = 0"
+        params: list = [agent_id]
+
+        if channel is None:
+            sql += " AND channel IS NULL"
+        else:
+            sql += " AND channel = ?"
+            params.append(channel)
+
+        if chat_id is None:
+            sql += " AND chat_id IS NULL"
+        else:
+            sql += " AND chat_id = ?"
+            params.append(chat_id)
+
         async with self._conn() as conn:
             await self._ensure_schema(conn)
-            cursor = await conn.execute(
-                "UPDATE history SET infused = 1 WHERE agent_id = ? AND infused = 0",
-                (agent_id,),
-            )
+            cursor = await conn.execute(sql, tuple(params))
             await conn.commit()
             if cursor.rowcount > 0:
                 logger.info(
-                    "Historial de '%s': %d mensaje(s) marcado(s) como infused",
+                    "Historial de '%s' scope=(channel=%r, chat_id=%r): %d mensaje(s) marcado(s) como infused",
                     agent_id,
+                    channel,
+                    chat_id,
                     cursor.rowcount,
                 )
             return cursor.rowcount or 0

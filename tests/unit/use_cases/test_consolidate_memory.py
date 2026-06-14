@@ -82,20 +82,21 @@ async def test_consolidation_attributes_agent_id_to_stored_memory(
 async def test_consolidation_marks_messages_as_infused_after_persist(
     use_case, mock_llm, mock_memory, mock_history, messages_in_history
 ):
-    """Tras persistir los recuerdos, se marcan los mensajes como infused."""
+    """Tras persistir los recuerdos del scope, se marcan los mensajes como infused."""
     mock_llm.complete.return_value = LLMResponse.of_text(
         '[{"content": "Le gusta Python", "relevance": 0.9, "tags": []}]'
     )
 
     await use_case.execute()
 
-    mock_history.mark_infused.assert_called_once_with("test")
+    # messages_in_history no tiene channel/chat_id → scope (None, None).
+    mock_history.mark_infused.assert_called_once_with("test", channel=None, chat_id=None)
 
 
 async def test_consolidation_mark_infused_called_before_trim(
     use_case, mock_llm, mock_memory, mock_history, messages_in_history
 ):
-    """mark_infused debe ocurrir ANTES del trim para que el gate cierre a tiempo."""
+    """mark_infused por-scope debe ocurrir ANTES del trim para que el gate cierre a tiempo."""
     mock_llm.complete.return_value = LLMResponse.of_text("[]")
     call_order: list[str] = []
     mock_history.mark_infused.side_effect = lambda *a, **kw: call_order.append("mark_infused") or 0
@@ -109,7 +110,7 @@ async def test_consolidation_mark_infused_called_before_trim(
 async def test_consolidation_mark_infused_failure_aborts_and_skips_trim(
     use_case, mock_llm, mock_memory, mock_history, messages_in_history
 ):
-    """Si mark_infused falla, propagamos y NO truncamos."""
+    """Si mark_infused del scope falla, propagamos ConsolidationError y NO truncamos."""
     mock_llm.complete.return_value = LLMResponse.of_text(
         '[{"content": "fact", "relevance": 0.9, "tags": []}]'
     )
@@ -537,6 +538,18 @@ async def test_consolidation_groups_by_channel_and_chat_id(
     }
     assert scopes_persisted == {("telegram", "-1001"), ("telegram", "-1002"), ("cli", "")}
 
+    # mark_infused se llama una vez por scope con el scope correcto.
+    assert mock_history.mark_infused.call_count == 3
+    scopes_marked = {
+        (call.kwargs["channel"], call.kwargs["chat_id"])
+        for call in mock_history.mark_infused.call_args_list
+    }
+    assert scopes_marked == {
+        ("telegram", "-1001"),
+        ("telegram", "-1002"),
+        ("cli", ""),
+    }
+
 
 async def test_consolidation_isolates_messages_per_scope_in_extractor_prompt(
     use_case, mock_llm, mock_memory, mock_history
@@ -667,16 +680,25 @@ async def test_digest_written_per_scope_to_distinct_files(
     assert "(cli,)" in digest_cli.read_text()
 
 
-async def test_consolidation_aborts_when_one_scope_fails_no_trim_no_mark(
+async def test_consolidation_aborts_when_one_scope_fails_marks_prev_scopes_no_trim(
     mock_llm, mock_memory, mock_embedder, mock_history, memory_config
 ):
-    """Si UN scope falla en el extractor, se aborta sin marcar infused ni truncar."""
+    """
+    Si el 2º scope falla en el extractor, se aborta sin truncar.
+    El 1º scope (ya procesado exitosamente) SÍ queda marcado como infused.
+    El trim NO corre.
+
+    Semántica nueva: mark_infused se llama por-scope dentro del loop.
+    Si el scope fallido es el 2º, el 1º ya fue marcado y no se reprocesará
+    en la próxima corrida.
+    """
     mock_history.load_uninfused.return_value = [
         Message(role=Role.USER, content="A", channel="telegram", chat_id="1"),
         Message(role=Role.USER, content="B", channel="telegram", chat_id="2"),
     ]
     mock_memory.get_recent.return_value = []
-    # Primer scope OK, segundo scope falla.
+    # Primer scope OK (LLM devuelve []) → mark_infused llamado para ese scope.
+    # Segundo scope falla en el LLM → ConsolidationError propagado, trim no corre.
     mock_llm.complete.side_effect = [
         LLMResponse.of_text("[]"),
         Exception("LLM 503"),
@@ -694,5 +716,9 @@ async def test_consolidation_aborts_when_one_scope_fails_no_trim_no_mark(
     with pytest.raises(ConsolidationError):
         await uc.execute()
 
-    mock_history.mark_infused.assert_not_called()
+    # El primer scope SÍ fue marcado — no se reprocesará en la próxima corrida.
+    mock_history.mark_infused.assert_called_once_with(
+        "test", channel="telegram", chat_id="1"
+    )
+    # El trim NO corre — el segundo scope falló y no fue procesado.
     mock_history.trim.assert_not_called()

@@ -99,12 +99,23 @@ class IHistoryStore(ABC):
         ...
 
     @abstractmethod
-    async def mark_infused(self, agent_id: str) -> int:
+    async def mark_infused(
+        self,
+        agent_id: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+    ) -> int:
         """
-        Marca todos los mensajes del agente con `infused=1`. Retorna el número
-        de filas afectadas. Se llama tras una extracción exitosa, antes del
-        trim, para que las siguientes corridas no vuelvan a procesar las
-        mismas filas.
+        Marca como ``infused=1`` los mensajes del scope ``(agent_id, channel, chat_id)``.
+
+        ``channel`` y ``chat_id`` identifican el scope EXACTO:
+        - ``None`` significa que ese campo es ``NULL`` en la fila (recuerdos
+          pre-migración), NO "sin filtro". Se usa ``IS NULL`` en el SQL.
+        - Un valor no-``None`` filtra con ``= ?`` exacto.
+
+        Se llama dentro del loop de consolidación, tras procesar exitosamente
+        cada scope, para que los scopes anteriores queden marcados incluso si
+        un scope posterior falla. Retorna el número de filas afectadas.
         """
         ...
 

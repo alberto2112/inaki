@@ -176,7 +176,7 @@ async def test_load_uninfused_sin_channels_retorna_todos(store):
 async def test_load_uninfused_excluye_infused(store):
     """load_uninfused no retorna mensajes ya marcados como infused."""
     await store.append("agente", _user_msg("para infusar"), channel="telegram", chat_id="1")
-    await store.mark_infused("agente")
+    await store.mark_infused("agente", channel="telegram", chat_id="1")
     await store.append("agente", _user_msg("nuevo"), channel="telegram", chat_id="1")
 
     msgs = await store.load_uninfused("agente")

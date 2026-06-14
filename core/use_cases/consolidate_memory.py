@@ -14,16 +14,22 @@ Flujo:
        c. Para cada hecho: generar embedding + construir MemoryEntry
           (con ``channel``/``chat_id`` del grupo) + persistir
        d. Regenerar digest markdown del scope ``(channel, chat_id)``
-       e. Esperar ``delay_seconds`` antes del siguiente grupo
+       e. Marcar los mensajes de ESE scope como ``infused=1`` — DENTRO
+          del loop, justo después de procesar el scope exitosamente.
+          Razón: si un scope posterior falla, los scopes ya procesados
+          quedan marcados y no se reprocesan en la próxima corrida.
+          El mark global final se eliminó para evitar el bug de doble
+          extracción cuando un scope falla a mitad del loop.
+       f. Esperar ``delay_seconds`` antes del siguiente grupo
           (excepto el último) para no saturar el LLM remoto.
-  5. Marcar TODOS los mensajes del agente como `infused = 1` después
-     de procesar todos los grupos.
-  6. `history.trim(agent_id, keep_last=resolved_keep_last)`.
+  5. `history.trim(agent_id, keep_last=resolved_keep_last)` — solo
+     si TODOS los scopes tuvieron éxito (llegamos hasta aquí).
 
-Si falla la extracción/persistencia de UN grupo, abortamos: NO marcamos
-infused, NO truncamos, historial intacto. Los recuerdos de los grupos
-anteriores ya quedaron en el storage vectorial — son inocuos: el próximo
-intento volverá a ver los mismos mensajes uninfused y los reextraerá.
+Si falla la extracción/persistencia de UN scope, abortamos: los scopes
+anteriores ya quedaron marcados (infused=1) y sus recuerdos en la DB;
+el scope fallido y los siguientes conservan infused=0 y se reintentarán
+en la próxima corrida. El trim NO corre si hay un fallo — el historial
+de los scopes no marcados queda intacto.
 Para evitar duplicados a largo plazo, los embeddings idénticos (mismo
 ``content``) se reemplazan por id en el adaptador SQLite.
 """
@@ -183,15 +189,30 @@ class ConsolidateMemoryUseCase:
             len(groups),
         )
 
-        # 3. Procesar cada grupo. Si UN grupo falla, abortamos sin marcar
-        # infused ni truncar — el caller ve el error y los grupos previos ya
-        # tienen sus recuerdos en la DB (idempotencia por id en SQLite).
+        # 3. Procesar cada grupo. Si UN scope falla, abortamos sin truncar.
+        # Los scopes procesados exitosamente antes del fallo YA quedaron
+        # marcados (infused=1) dentro del loop — no se reprocesan en el
+        # próximo intento. El scope fallido y los siguientes conservan
+        # infused=0 y se reintentarán en la próxima corrida.
         total_stored = 0
         scope_keys = list(groups.keys())
         for idx, scope in enumerate(scope_keys):
             channel, chat_id = scope
             stored = await self._consolidate_scope(channel, chat_id, groups[scope])
             total_stored += stored
+
+            # Marcar los mensajes de ESTE scope como infused inmediatamente
+            # tras procesarlo exitosamente. Si mark_infused falla, abortamos
+            # con ConsolidationError — el trim no corre.
+            try:
+                await self._history.mark_infused(
+                    self._agent_id, channel=channel, chat_id=chat_id
+                )
+            except Exception as exc:
+                raise ConsolidationError(
+                    f"Error marcando mensajes como infused "
+                    f"(channel={channel!r}, chat_id={chat_id!r}): {exc}"
+                ) from exc
 
             # Delay entre scopes (no antes del primero, no después del último).
             is_last = idx == len(scope_keys) - 1
@@ -203,17 +224,7 @@ class ConsolidateMemoryUseCase:
                 )
                 await asyncio.sleep(self._delay_seconds)
 
-        # 4. Marcar todos los mensajes del agente como infused ANTES del trim.
-        # Esto es el gate que evita que la próxima corrida reprocese mensajes
-        # que sigan vivos en el buffer (por el keep_last del trim). Si falla,
-        # abortamos — los recuerdos ya están persistidos en inaki.db pero el
-        # error queda visible y se puede reintentar.
-        try:
-            await self._history.mark_infused(self._agent_id)
-        except Exception as exc:
-            raise ConsolidationError(f"Error marcando mensajes como infused: {exc}") from exc
-
-        # 5. Truncar historial (solo si llegamos hasta aquí sin errores).
+        # 4. Truncar historial (solo si llegamos hasta aquí sin errores).
         keep_last = self._memory_cfg.resolved_keep_last_messages()
         try:
             await self._history.trim(self._agent_id, keep_last=keep_last)

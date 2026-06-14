@@ -182,7 +182,8 @@ async def test_set_extractor_empty_response_no_op(
     result = await use_case.execute()
 
     mock_memory.store.assert_not_called()
-    # Pero el flujo completa (mark_infused + trim)
-    mock_history.mark_infused.assert_awaited_once_with("test")
+    # Pero el flujo completa (mark_infused por-scope + trim).
+    # messages_in_history no tiene channel/chat_id → scope (None, None).
+    mock_history.mark_infused.assert_awaited_once_with("test", channel=None, chat_id=None)
     mock_history.trim.assert_awaited_once()
     assert "0 recuerdo" in result

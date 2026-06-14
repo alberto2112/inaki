@@ -11,6 +11,7 @@ _*/
 data/
 models/
 openspec/
+graphify-out/
 
 # Python
 __pycache__/

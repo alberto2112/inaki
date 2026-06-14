@@ -72,6 +72,7 @@ All user data lives in **`~/.inaki/`** (never inside the repo). On first run, th
 ├── config/
 │   ├── global.yaml              # Global defaults (LLM, memory, embedding…)
 │   ├── global.secrets.yaml      # API keys — gitignored, never commit this
+│   ├── tool_config.yaml         # Tool credentials (daemon-owned)
 │   └── agents/
 │       ├── general.yaml         # Agent-specific overrides
 │       └── general.secrets.yaml # Agent secrets (Telegram token, etc.)
@@ -93,6 +94,8 @@ Config is resolved via a **4-layer YAML merge** (each layer overrides only what 
 ```
 global.yaml  →  global.secrets.yaml  →  agents/{id}.yaml  →  agents/{id}.secrets.yaml
 ```
+
+`tool_config.yaml` is **not part of this merge** — it is daemon-owned (written at runtime when tools store credentials) and read directly by the `YamlToolConfigStore`. Sensitive fields are stored with Fernet encryption (`enc:` prefix) using `~/.inaki/secret.key`.
 
 See [`config/global.example.yaml`](config/global.example.yaml) for the full annotated reference — every parameter is documented there.
 
@@ -151,7 +154,6 @@ inaki consolidate                # Run memory consolidation for all agents
 inaki consolidate --agent dev    # Consolidate a single agent
 inaki inspect "query"            # Inspect RAG pipeline for a message (no LLM call)
 inaki setup                      # Interactive TUI for editing config (offline)
-inaki setup secret-key           # Fernet key wizard (for encrypted secrets)
 inaki scheduler list             # List scheduled tasks
 inaki knowledge list             # List configured knowledge sources
 ```
@@ -177,10 +179,11 @@ Each agent can expose multiple inbound channels simultaneously. Channels are con
 # agents/general.yaml
 channels:
   telegram:
-    allowed_user_ids: ["123456789"]
-    allowed_chat_ids: []         # Group IDs (negative numbers). Empty = private only.
+    allowed_user_ids: ["123456789"]   # Allowed private chat user IDs. Empty = everyone.
+    allowed_chat_ids: []              # Allowed group chat IDs (negative numbers).
+                                      # Empty list = bot does NOT respond in groups.
     reactions: true
-    voice_enabled: true          # Whisper transcription for voice messages
+    voice_enabled: true               # Whisper transcription for voice messages
     # token → agents/general.secrets.yaml
 ```
 
@@ -218,6 +221,24 @@ ext/
 ```
 
 Included extensions: `exchange_calendar`, `nominatim`, `notes_todo_list`, `replicate_music`, `shell_exec`.
+
+### Tool Config Protocol
+
+Tools that need user-configured credentials (API keys, passwords, etc.) can opt into the Tool Config Protocol by declaring a `config_namespace` class attribute. The container automatically injects a `config_store: IToolConfigStore` so the tool can persist and retrieve its settings conversationally:
+
+```python
+class MyTool(ITool):
+    config_namespace = "my_tool"   # namespace in tool_config.yaml
+
+    def __init__(self, config_store: IToolConfigStore):
+        self._store = config_store
+
+    async def execute(self, ...):
+        cfg = self._store.get(self.config_namespace)
+        # cfg["api_key"] etc.
+```
+
+The agent can then configure credentials at runtime ("set my_tool api_key to …"), which are encrypted at rest in `~/.inaki/config/tool_config.yaml` and survive daemon restarts. No separate YAML file or `CryptoService` needed.
 
 See [`ext/USER.md`](ext/USER.md) and [`docs/tools_y_skills.md`](docs/tools_y_skills.md) for conventions.
 

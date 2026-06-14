@@ -284,6 +284,7 @@ inaki/                                  ← repository root
 ├── config/
 │   ├── global.yaml
 │   ├── global.secrets.yaml            # gitignored — never commit
+│   ├── tool_config.yaml               # daemon-owned; tool credentials (enc: inside); not in 4-layer merge
 │   └── agents/
 │       ├── {id}.yaml
 │       └── {id}.secrets.yaml          # gitignored

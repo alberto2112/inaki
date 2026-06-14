@@ -43,11 +43,13 @@ class MemoryEntry(BaseModel):
     relevance: float      # 0.0–1.0, estimated by the LLM extractor
     tags: list[str]       # Semantic tags ["tech", "preferences"]
     created_at: datetime  # UTC — comes from the original message timestamp, not from when consolidation ran
-    agent_id: str | None  # None = global memory shared across all agents
+    agent_id: str | None = None   # Scoped per agent
+    channel: str | None = None    # Scope: channel of origin (e.g. "telegram", "cli")
+    chat_id: str | None = None    # Scope: chat_id of origin; NULL = pre-migration global
+    deleted: int = 0              # Soft-delete: 0 = active, 1 = deleted (reversible)
 ```
 
-> Memory is **global and shared**: `agent_id = None` for all memory entries.
-> Conversation history is private per agent.
+> Memory is **scoped** by `(agent_id, channel, chat_id)`. Entries with `channel=NULL, chat_id=NULL` are pre-migration globals and are still searchable. `search()`, `get_recent()` and `search_with_scores()` always filter `deleted=0`.
 > `created_at` reflects when the fact occurred in conversation — the LLM extractor includes it in the JSON as a `timestamp` field.
 
 **History SQLite schema** (`data/history.db`):
@@ -55,15 +57,18 @@ class MemoryEntry(BaseModel):
 CREATE TABLE history (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     agent_id   TEXT    NOT NULL,
-    role       TEXT    NOT NULL,       -- "user" | "assistant"
+    channel    TEXT    NOT NULL DEFAULT '',  -- channel type ("telegram", "cli", ...)
+    chat_id    TEXT    NOT NULL DEFAULT '',  -- channel-specific conversation id
+    role       TEXT    NOT NULL,             -- "user" | "assistant"
     content    TEXT    NOT NULL,
-    created_at TEXT    NOT NULL,       -- ISO8601 UTC
-    archived   INTEGER NOT NULL DEFAULT 0
+    created_at TEXT    NOT NULL,             -- ISO8601 UTC
+    archived   INTEGER NOT NULL DEFAULT 0,  -- LEGACY: always 0, kept for compat
+    infused    INTEGER NOT NULL DEFAULT 0   -- 0=pending consolidation, 1=already processed
 );
-CREATE INDEX idx_history_agent ON history(agent_id, archived);
+CREATE INDEX idx_history_scope ON history(agent_id, channel, chat_id, archived);
 ```
 
-`archive()` performs a soft-delete (`archived=1`). `clear()` performs a hard-delete. Separate database from `data/inaki.db` to avoid interfering with the `sqlite-vec` extension.
+History is **scoped by `(agent_id, channel, chat_id)`** — Telegram groups, private chats and CLI are completely isolated. `clear()` performs a hard-delete for the scope. `trim()` (post-consolidation) deletes all but the last N messages. `archived` is legacy and always 0; `infused` gates re-extraction in consolidation. Separate database from `data/inaki.db` to avoid interfering with the `sqlite-vec` extension.
 
 ---
 
@@ -75,8 +80,15 @@ CREATE TABLE memories (
     relevance  REAL NOT NULL,
     tags       TEXT NOT NULL,     -- Serialized JSON array
     created_at TEXT NOT NULL,     -- ISO 8601
-    agent_id   TEXT               -- NULL = global
+    agent_id   TEXT,              -- Scoped per agent
+    channel    TEXT,              -- Scope: channel of origin; NULL = pre-migration global
+    chat_id    TEXT,              -- Scope: chat_id of origin; NULL = pre-migration global
+    deleted    INTEGER NOT NULL DEFAULT 0  -- Soft-delete: 0=active, 1=deleted
 );
+
+CREATE INDEX idx_memories_scope
+    ON memories(agent_id, channel, chat_id, created_at DESC)
+    WHERE deleted = 0;  -- partial index over active entries only
 
 CREATE VIRTUAL TABLE memory_embeddings USING vec0(
     id        TEXT PRIMARY KEY,

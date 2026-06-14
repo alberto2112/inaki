@@ -40,13 +40,13 @@ The LLM invokes `operation=configure` and the credentials are persisted in
 
 ### Configuration block
 
-Inside `~/.inaki/config/global.secrets.yaml`:
+Inside `~/.inaki/config/tool_config.yaml` (daemon-owned, NOT `global.secrets.yaml`):
 
 ```yaml
 tool_config:
   exchange:
     username: dominio\alberto
-    password: "enc:gAAAAABh..."   # encrypted with Fernet
+    password: "enc:gAAAAABh..."   # encrypted with Fernet (key: ~/.inaki/secret.key)
     mail: alberto@empresa.com
     ews_url: https://mail.empresa.com/EWS/Exchange.asmx
     timezone: Europe/Madrid
@@ -249,14 +249,18 @@ The tool supports an alias map to resolve names to emails without the LLM needin
 
 ### Via config store (recommended)
 
-Edit `~/.config/inaki/exchange_config.yaml` directly:
+Tell the agent in conversation: "add alias juancho for juan@empresa.com" — the LLM calls `operation=configure` and the alias is merged into `tool_config.exchange.calendars` in `~/.inaki/config/tool_config.yaml`. No manual YAML editing needed.
+
+Or edit `~/.inaki/config/tool_config.yaml` directly under `tool_config.exchange.calendars`:
 
 ```yaml
-calendars:
-  - aliases: [juan, juancho]
-    email: juan@empresa.com
-  - aliases: [maria, mary]
-    email: maria@empresa.com
+tool_config:
+  exchange:
+    calendars:
+      - aliases: [juan, juancho]
+        email: juan@empresa.com
+      - aliases: [maria, mary]
+        email: maria@empresa.com
 ```
 
 ### Via environment variable (fallback)
@@ -280,28 +284,28 @@ Format per entry: `alias1|alias2|...:email@domain.com`, separated by commas.
 
 | Element | Where it lives | Encrypted |
 |---------|---------------|-----------|
-| `INAKI_SECRET_KEY` | `.env` | No (it's the master key) |
-| Exchange `password` | `~/.config/inaki/exchange_config.yaml` | Yes (Fernet AES-128-CBC) |
-| Other credentials | `~/.config/inaki/exchange_config.yaml` | No (readable plain text) |
+| Fernet key | `~/.inaki/secret.key` (0600) | No (it is the master key) |
+| Exchange `password` | `~/.inaki/config/tool_config.yaml` under `tool_config.exchange` | Yes (`enc:` prefix, Fernet AES-128-CBC) |
+| Other Exchange fields (`username`, `mail`, `ews_url`, etc.) | `~/.inaki/config/tool_config.yaml` | No (plain text) |
 
 The `enc:` prefix in the `password` field value indicates it is encrypted.
 If you manually edit the file and remove that prefix, the system will assume the value is plain text and will re-encrypt it on the next save.
+
+**If `secret.key` is lost**, all `enc:` values become unreadable. The tool will start with an empty config and prompt you to reconfigure — no crash, just `CONFIGURATION REQUIRED`.
 
 ---
 
 ## Engine Startup Flow
 
 ```
-ExchangeCalendarEngine.__init__()
-  ├── CryptoService()
-  │     └── Reads INAKI_SECRET_KEY from .env
-  │           └── If missing → generates, writes to .env, logs WARNING
-  ├── ExchangeConfigStore(crypto)
-  │     └── path: ~/.config/inaki/exchange_config.yaml
-  └── _build_config()
-        ├── config_store.load()  → decrypts password
-        └── fallback to env vars for missing fields
+get_shared_engine(config_store)       ← singleton keyed by config_store identity
+  └── ExchangeCalendarEngine(config_store)
+        ├── self._store = config_store  (IToolConfigStore injected by container)
+        └── _build_config()
+              ├── config_store.get("exchange")  → decrypts enc: fields via secret.key
+              └── fallback to env vars for missing fields
 ```
 
-The exchangelib `Account` objects are cached by email in the engine instance.
-When `operation=configure` is called, the cache is automatically invalidated to force reconnection with the new credentials.
+The `ExchangeCalendarEngine` is a **shared singleton** (one instance per container, keyed by `config_store` identity). Both `exchange_calendar_tool` and `exchange_mail_tool` call `get_shared_engine(config_store)` and receive the same instance — `configure` on either tool propagates to both.
+
+The exchangelib `Account` objects are cached by email in the engine instance. When `operation=configure` is called, the cache is automatically invalidated to force reconnection with the new credentials.

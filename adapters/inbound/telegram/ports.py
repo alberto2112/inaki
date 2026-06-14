@@ -18,6 +18,7 @@ from core.ports.outbound.telegram_file_repo_port import IFileRecordRepo
 from core.ports.outbound.transcription_port import ITranscriptionProvider
 from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
 from core.use_cases.process_photo import ProcessPhotoUseCase
+from core.use_cases.reconcile_memory import ReconcileMemoryUseCase
 from core.use_cases.run_agent import RunAgentUseCase
 from core.use_cases.schedule_task import ScheduleTaskUseCase
 
@@ -35,6 +36,7 @@ class TelegramBotPorts:
     run_agent: RunAgentUseCase
     scope_registry: IScopeRegistry
     consolidate_memory: ConsolidateMemoryUseCase | None = None
+    reconcile_memory: ReconcileMemoryUseCase | None = None
     schedule_task: ScheduleTaskUseCase | None = None
     process_photo: ProcessPhotoUseCase | None = None
     transcription: ITranscriptionProvider | None = None

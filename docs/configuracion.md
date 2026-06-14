@@ -1191,6 +1191,10 @@ pre-existing rows were part of a stable state).
 `/clear` (slash command) still does a full wipe — it is the manual mechanism
 to discard the thread. Separate from consolidation.
 
+The Telegram bot also exposes `/reconcile` to trigger `ReconcileMemoryUseCase`
+on demand (same auth rules as `/consolidate`). Only available when
+`memory.reconcile_enabled: true` for the agent.
+
 ### Dedicated LLM for consolidation — `memory.llm`
 
 By default, the `ConsolidateMemoryUseCase` uses the same `ILLMProvider` as the

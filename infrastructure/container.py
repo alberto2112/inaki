@@ -192,6 +192,7 @@ def build_telegram_bot_ports(container: AgentContainer) -> TelegramBotPorts:
         run_agent=container.run_agent,
         scope_registry=container.scope_registry,
         consolidate_memory=container.consolidate_memory,
+        reconcile_memory=container.reconcile_memory,
         schedule_task=container.schedule_task,
         process_photo=container.process_photo,
         transcription=container.transcription,

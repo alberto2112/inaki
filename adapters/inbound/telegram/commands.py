@@ -86,6 +86,7 @@ class TelegramCommandsMixin:
             return
         await message.reply_text(
             "/consolidate — Extraer recuerdos del historial\n"
+            "/reconcile — Reconsiderar y consolidar recuerdos relacionados\n"
             "/clear — Limpiar historial de ESTE chat (privado o grupo)\n"
             "/clear_all — Limpiar TODO el historial del agente (todos los chats)\n"
             "/scheduler list — Listar tareas programadas\n"
@@ -110,6 +111,24 @@ class TelegramCommandsMixin:
             await message.reply_text("La consolidación de memoria no está disponible.")
             return
         await message.reply_text("Consolidando memoria...")
+        try:
+            result = await uc.execute()
+            await message.reply_text(result)
+        except Exception as exc:
+            await message.reply_text(f"Error: {exc}")
+
+    async def _cmd_reconcile(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user = update.effective_user
+        message = update.message
+        if user is None or message is None:
+            return
+        if not self._is_allowed(user.id):
+            return
+        uc = self._ports.reconcile_memory
+        if uc is None:
+            await message.reply_text("La reconciliación de memoria no está disponible.")
+            return
+        await message.reply_text("Reconciliando memoria...")
         try:
             result = await uc.execute()
             await message.reply_text(result)
@@ -416,6 +435,7 @@ class TelegramCommandsMixin:
             BotCommand("clear", "Limpiar historial de este chat"),
             BotCommand("clear_all", "Limpiar todo el historial del agente"),
             BotCommand("consolidate", "Extraer recuerdos del historial"),
+            BotCommand("reconcile", "Reconsiderar recuerdos relacionados"),
             BotCommand("scheduler", "Gestionar tareas programadas (list/show/enable/disable)"),
             BotCommand("chatid", "Obtener el ID del chat actual (útil para configurar grupos)"),
             BotCommand("ratelimit", "Ver/ajustar el rate limiter del broadcast en runtime"),

@@ -196,6 +196,52 @@ async def test_consolidation_raises_on_invalid_json(
     mock_history.trim.assert_not_called()
 
 
+async def test_consolidation_extracts_json_with_preamble(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
+    """El LLM agrega texto antes/después del array JSON — fallback debe rescatarlo."""
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        'Aquí están los recuerdos relevantes:\n'
+        '[{"content": "prefiere café sin azúcar", "relevance": 0.9, "tags": ["preferencia"]}]\n'
+        'Eso es todo lo que encontré.'
+    )
+    await use_case.execute()
+    mock_memory.store.assert_called_once()
+
+
+async def test_consolidation_empty_array_with_trailing_reasoning(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
+    """Caso real: modelo con razonamiento devuelve [] y dumpea reasoning después.
+
+    El reasoning contiene brackets (links, listas), que rompían el fallback
+    ingenuo basado en rfind(']'). No debe lanzar ConsolidationError ni guardar nada.
+    """
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        "[]\n\n## Reasoning\n\nThis is a humorous exchange referencing a "
+        "list [1, 2, 3] and a markdown [link](http://x.com). Nothing to save."
+    )
+    await use_case.execute()
+    mock_memory.store.assert_not_called()
+    # [] válido → la consolidación completa y trunca normalmente.
+    mock_history.trim.assert_called_once()
+
+
+async def test_consolidation_extracts_array_with_brackets_in_string_value(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
+    """Un bracket DENTRO de un string value del JSON no debe cortar la extracción."""
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        'Here you go:\n'
+        '[{"content": "dijo: revisa la lista [a, b]", "relevance": 0.8, "tags": ["nota"]}]\n'
+        'Trailing reasoning [with brackets].'
+    )
+    await use_case.execute()
+    mock_memory.store.assert_called_once()
+    stored = mock_memory.store.call_args[0][0]
+    assert stored.content == "dijo: revisa la lista [a, b]"
+
+
 # SC-15
 async def test_consolidation_formats_message_with_timestamp(
     use_case, mock_llm, mock_memory, mock_history

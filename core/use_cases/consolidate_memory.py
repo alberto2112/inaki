@@ -406,6 +406,44 @@ class ConsolidateMemoryUseCase:
                 exc,
             )
 
+    @staticmethod
+    def _extract_json_array(raw: str) -> str | None:
+        """Localiza el primer array JSON top-level dentro de ``raw``.
+
+        Necesario porque los modelos con razonamiento leakean texto ANTES o
+        DESPUÉS del array (preámbulos, secciones ``## Reasoning``, etc.). Un
+        ``rfind(']')`` ingenuo se rompe en cuanto ese texto contiene un ``]``
+        (markdown links ``[x](url)``, listas, código), por eso escaneamos desde
+        el primer ``[`` contando profundidad de brackets e **ignorando** los que
+        caen dentro de string literals (respeta comillas y escapes). Devuelve el
+        substring del array balanceado, o ``None`` si no hay uno.
+        """
+        start = raw.find("[")
+        if start == -1:
+            return None
+        depth = 0
+        in_string = False
+        escaped = False
+        for i in range(start, len(raw)):
+            ch = raw[i]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    return raw[start : i + 1]
+        return None
+
     def _parse_facts(self, raw: str) -> list[dict]:
         """Extrae y valida el JSON de recuerdos del LLM."""
         raw = raw.strip()
@@ -414,13 +452,24 @@ class ConsolidateMemoryUseCase:
         if raw.startswith("```"):
             lines = raw.splitlines()
             raw = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
+            raw = raw.strip()
 
         try:
             data = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ConsolidationError(
-                f"El LLM no devolvió JSON válido. Respuesta: {raw[:200]}"
-            ) from exc
+        except json.JSONDecodeError:
+            # Fallback: el modelo agregó texto antes/después del array JSON.
+            # Extraemos el primer array balanceado y parseamos SOLO eso.
+            candidate = self._extract_json_array(raw)
+            if candidate is None:
+                raise ConsolidationError(
+                    f"El LLM no devolvió JSON válido. Respuesta: {raw[:300]}"
+                )
+            try:
+                data = json.loads(candidate)
+            except json.JSONDecodeError as exc2:
+                raise ConsolidationError(
+                    f"El LLM no devolvió JSON válido. Respuesta: {raw[:300]}"
+                ) from exc2
 
         if not isinstance(data, list):
             raise ConsolidationError(f"Se esperaba una lista JSON, recibido: {type(data).__name__}")

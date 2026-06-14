@@ -46,6 +46,16 @@ logger = logging.getLogger(__name__)
 GROUP_RESPONSE_DELAY_MIN_SEC = 7.0
 GROUP_RESPONSE_DELAY_MAX_SEC = 21.0
 
+# Aviso que el bot manda al volver de un periodo offline, a cada chat privado que
+# le escribió mientras estaba caído. Solo emojis: universal, sin idioma de base.
+BACK_ONLINE_NOTICE = "👋🤖"
+
+# Throttle entre avisos de arranque. Telegram tolera ~30 msg/s globales (1/s al
+# MISMO chat), pero mandamos espaciado 1s para no arriesgar un 429 si hay muchos
+# chats. Module-level para override en tests. Va ENTRE envíos: con un solo chat
+# no se espera.
+BACK_ONLINE_NOTICE_DELAY_SEC = 1.0
+
 
 class TelegramBot(
     TelegramCommandsMixin,
@@ -167,6 +177,10 @@ class TelegramBot(
             raise ValueError(f"Agente '{settings.id}': channels.telegram.token no configurado")
 
         self._app = Application.builder().token(self._token).concurrent_updates(True).build()
+        # Hook de arranque: avisa 'online' a los chats privados que escribieron
+        # mientras estábamos caídos (ver ``_announce_back_online``). Se asigna acá
+        # en vez de en el builder para no alterar la cadena que mockean los tests.
+        self._app.post_init = self._announce_back_online
         self._app.add_handler(CommandHandler("start", self._cmd_start))
         self._app.add_handler(CommandHandler("consolidate", self._cmd_consolidate))
         self._app.add_handler(CommandHandler("reconcile", self._cmd_reconcile))
@@ -549,10 +563,77 @@ class TelegramBot(
     ) -> None:
         await self._app.bot.send_media_group(chat_id=chat_id, media=media)
 
+    async def _announce_back_online(self, app: Application) -> None:
+        """Al arrancar, avisa a cada chat privado que escribió mientras estábamos caídos.
+
+        Mientras el daemon está offline, Telegram acumula los updates no
+        confirmados. NO los procesamos: reproducir N turnos de LLM al despertar
+        dispararía hasta 256 turnos concurrentes (``concurrent_updates``), sin
+        rate-limit global del provider — una ráfaga capaz de degradar el
+        servicio en cada reinicio. En vez de eso solo mandamos un aviso liviano
+        (cero LLM) y dejamos que el usuario reenvíe lo que importe.
+
+        Drenamos la cola, confirmamos el offset para que el updater NO la
+        re-entregue (con ``drop_pending_updates=False`` el backlog se descartaría
+        solo si lo confirmamos acá), juntamos los chats privados autorizados que
+        tenían algo pendiente y les mandamos ``BACK_ONLINE_NOTICE`` — uno por
+        chat, deduplicado. Los grupos quedan fuera a propósito: anunciarse ahí
+        sería ruido para todos los miembros.
+
+        Corre en ``post_init``: la app ya está inicializada pero el updater aún
+        no arrancó, así que ``get_updates`` no compite con el long-polling.
+        """
+        try:
+            pending = await app.bot.get_updates(timeout=0, limit=100)
+        except Exception:  # pragma: no cover - Telegram/red caído al arrancar
+            logger.warning("No se pudo drenar el backlog de Telegram al arrancar", exc_info=True)
+            return
+
+        if not pending:
+            return
+
+        # Confirmar TODOS los pendientes para que el polling no los re-entregue.
+        # Si llegó un update nuevo entre ambas llamadas, queda sin confirmar y el
+        # updater lo procesará normalmente — no se pierde.
+        await app.bot.get_updates(offset=pending[-1].update_id + 1, timeout=0)
+
+        # Solo chats PRIVADOS autorizados. ``_is_authorized`` ya distingue grupo
+        # vs privado y aplica ``allowed_user_ids``; acá además exigimos privado.
+        chats_a_avisar: set[int] = set()
+        for upd in pending:
+            chat = upd.effective_chat
+            if chat is None or chat.type in _TIPOS_GRUPO:
+                continue
+            if not self._is_authorized(upd):
+                continue
+            chats_a_avisar.add(chat.id)
+
+        if not chats_a_avisar:
+            return
+
+        # Orden determinístico + envío uno a uno, espaciado para respetar el
+        # rate limit de Telegram. El sleep va ENTRE envíos (no antes del primero
+        # ni después del último): un solo chat no agrega latencia al arranque.
+        chats = sorted(chats_a_avisar)
+        logger.info(
+            "Backlog de Telegram: %d updates pendientes, aviso 'online' a %d chat(s) privado(s)",
+            len(pending),
+            len(chats),
+        )
+        for i, chat_id in enumerate(chats):
+            if i > 0:
+                await asyncio.sleep(BACK_ONLINE_NOTICE_DELAY_SEC)
+            try:
+                await app.bot.send_message(chat_id=chat_id, text=BACK_ONLINE_NOTICE)
+            except Exception:  # pragma: no cover - un chat bloqueado/borrado no aborta el resto
+                logger.warning("No se pudo avisar 'online' al chat_id=%s", chat_id, exc_info=True)
+
     def run_polling(self) -> None:
         """Inicia el bot en modo polling (bloqueante)."""
         logger.info(
             "Telegram bot iniciado para agente '%s'",
             self._settings.id,
         )
-        self._app.run_polling(drop_pending_updates=True)
+        # ``drop_pending_updates=False``: ``_announce_back_online`` (post_init) ya
+        # drenó y confirmó la cola, así que no queda backlog para reproducir.
+        self._app.run_polling(drop_pending_updates=False)

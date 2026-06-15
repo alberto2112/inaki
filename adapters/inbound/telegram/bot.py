@@ -177,10 +177,6 @@ class TelegramBot(
             raise ValueError(f"Agente '{settings.id}': channels.telegram.token no configurado")
 
         self._app = Application.builder().token(self._token).concurrent_updates(True).build()
-        # Hook de arranque: avisa 'online' a los chats privados que escribieron
-        # mientras estábamos caídos (ver ``_announce_back_online``). Se asigna acá
-        # en vez de en el builder para no alterar la cadena que mockean los tests.
-        self._app.post_init = self._announce_back_online
         self._app.add_handler(CommandHandler("start", self._cmd_start))
         self._app.add_handler(CommandHandler("consolidate", self._cmd_consolidate))
         self._app.add_handler(CommandHandler("reconcile", self._cmd_reconcile))
@@ -580,8 +576,12 @@ class TelegramBot(
         chat, deduplicado. Los grupos quedan fuera a propósito: anunciarse ahí
         sería ruido para todos los miembros.
 
-        Corre en ``post_init``: la app ya está inicializada pero el updater aún
-        no arrancó, así que ``get_updates`` no compite con el long-polling.
+        Lo invoca el daemon (``_run_telegram_bot``) entre ``Application.start()`` y
+        ``updater.start_polling``: la app ya está inicializada pero el updater aún
+        no arrancó, así que ``get_updates`` no compite con el long-polling. NO se
+        usa el hook ``post_init`` de PTB: el daemon maneja el lifecycle a mano con
+        ``async with app`` e ``initialize()`` NO dispara ``post_init`` (solo lo
+        hacen ``run_polling``/``run_webhook``, que el daemon no usa).
         """
         try:
             pending = await app.bot.get_updates(timeout=0, limit=100)
@@ -627,13 +627,3 @@ class TelegramBot(
                 await app.bot.send_message(chat_id=chat_id, text=BACK_ONLINE_NOTICE)
             except Exception:  # pragma: no cover - un chat bloqueado/borrado no aborta el resto
                 logger.warning("No se pudo avisar 'online' al chat_id=%s", chat_id, exc_info=True)
-
-    def run_polling(self) -> None:
-        """Inicia el bot en modo polling (bloqueante)."""
-        logger.info(
-            "Telegram bot iniciado para agente '%s'",
-            self._settings.id,
-        )
-        # ``drop_pending_updates=False``: ``_announce_back_online`` (post_init) ya
-        # drenó y confirmó la cola, así que no queda backlog para reproducir.
-        self._app.run_polling(drop_pending_updates=False)

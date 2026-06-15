@@ -113,7 +113,13 @@ async def _run_telegram_bot(agent_cfg, container, app_container=None) -> None:
 
         updater = bot._app.updater
         assert updater is not None, "PTB Application sin updater — config inesperada"
-        await updater.start_polling(drop_pending_updates=True)
+        # Avisar 'online' a los chats privados que escribieron mientras el daemon
+        # estuvo caído. Se invoca ACÁ (no vía hook ``post_init`` de PTB) porque el
+        # lifecycle es manual con ``async with app``, e ``initialize()`` NO dispara
+        # ``post_init``. Drena y confirma el backlog a mano, por eso el polling
+        # arranca con ``drop_pending_updates=False``: ya no queda nada que descartar.
+        await bot._announce_back_online(bot._app)
+        await updater.start_polling(drop_pending_updates=False)
         logger.info("Telegram bot '%s' en polling", agent_cfg.id)
         try:
             await asyncio.get_running_loop().create_future()  # bloquear hasta cancelación

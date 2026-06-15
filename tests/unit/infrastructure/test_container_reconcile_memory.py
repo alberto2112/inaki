@@ -392,9 +392,12 @@ def test_wire_memory_reconcilers_llama_set_reconciler() -> None:
     # Ejecutar el wiring
     app._wire_memory_reconcilers()
 
-    # set_reconciler debe haberse llamado con el run_agent_one_shot del sub-agente
+    # set_reconciler debe haberse llamado con el run_agent_one_shot del sub-agente.
+    # El sub-agente de test declara system_prompt="Test prompt" → se pasa como
+    # override (sobreescribe el _RECONCILER_PROMPT default).
     mock_uc.set_reconciler.assert_called_once_with(
         sub_container.run_agent_one_shot,
+        system_prompt_override="Test prompt",
         max_iterations=global_cfg.delegation.max_iterations_per_sub,
         timeout_seconds=global_cfg.delegation.timeout_seconds,
     )

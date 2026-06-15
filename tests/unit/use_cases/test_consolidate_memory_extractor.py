@@ -97,7 +97,7 @@ async def test_set_extractor_replaces_llm_path(
 async def test_set_extractor_passes_history_as_task(
     use_case, mock_llm, mock_memory, mock_history, messages_in_history
 ):
-    """El historial formateado se pasa como `task` al one-shot, system_prompt=None."""
+    """El historial formateado se pasa como `task`; el system_prompt es el default."""
     fake_one_shot = AsyncMock()
     fake_one_shot.execute.return_value = "[]"
 
@@ -108,8 +108,26 @@ async def test_set_extractor_passes_history_as_task(
     # task debe contener los mensajes del historial formateados
     assert "me gusta el café" in call_kwargs["task"]
     assert "Anotado." in call_kwargs["task"]
-    # system_prompt=None → el sub-agente usa su propio system_prompt
-    assert call_kwargs["system_prompt"] is None
+    # Sin override → hereda las _EXTRACTOR_INSTRUCTIONS default (no None).
+    # El historial NO va en el system_prompt (viaja como task).
+    assert "long-term memory extractor" in call_kwargs["system_prompt"]
+    assert "me gusta el café" not in call_kwargs["system_prompt"]
+
+
+async def test_set_extractor_con_override_usa_prompt_del_subagente(
+    use_case, mock_memory, mock_history, messages_in_history
+):
+    """Si el sub-agente declara system_prompt propio, sobreescribe el default."""
+    fake_one_shot = AsyncMock()
+    fake_one_shot.execute.return_value = "[]"
+
+    use_case.set_extractor(fake_one_shot, system_prompt_override="PROMPT CUSTOM DEL SUBAGENTE")
+    await use_case.execute()
+
+    call_kwargs = fake_one_shot.execute.await_args.kwargs
+    assert call_kwargs["system_prompt"] == "PROMPT CUSTOM DEL SUBAGENTE"
+    # El historial sigue viajando como task, no en el system_prompt
+    assert "me gusta el café" in call_kwargs["task"]
 
 
 async def test_set_extractor_uses_configured_timeout_and_iterations(

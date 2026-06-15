@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 from core.domain.entities.memory import MemoryEntry
 from core.domain.value_objects.agent_settings import MemorySettings, ReconciliationSettings
-from core.use_cases.reconcile_memory import ReconcileMemoryUseCase
+from core.use_cases.reconcile_memory import _RECONCILER_PROMPT, ReconcileMemoryUseCase
 
 
 # ---------------------------------------------------------------------------
@@ -446,9 +446,32 @@ async def test_set_reconciler_usa_one_shot_en_vez_de_llm(mock_llm, mock_memory, 
 
     # Verifica parámetros del one-shot
     call_kwargs = mock_one_shot.execute.call_args.kwargs
-    assert call_kwargs.get("system_prompt") is None  # usa el del sub-agente
+    # Sin override → el sub-agente hereda el _RECONCILER_PROMPT default
+    assert call_kwargs.get("system_prompt") == _RECONCILER_PROMPT
     assert call_kwargs.get("max_iterations") == 3
     assert call_kwargs.get("timeout_seconds") == 60
+
+
+async def test_set_reconciler_con_override_usa_prompt_del_subagente(
+    mock_llm, mock_memory, mock_embedder
+):
+    """Si el sub-agente declara system_prompt propio, sobreescribe el default."""
+    seed = _entry("s1", "algo")
+    vecino = _entry("v1", "similar")
+    mock_memory.load_unreconciled.return_value = [seed]
+    mock_memory.search_with_scores.return_value = [(seed, 0.99), (vecino, 0.90)]
+
+    mock_one_shot = AsyncMock()
+    mock_one_shot.execute.return_value = "[]"
+
+    uc = _make_uc(mock_llm, mock_memory, mock_embedder)
+    uc.set_reconciler(mock_one_shot, system_prompt_override="PROMPT CUSTOM DEL SUBAGENTE")
+
+    await uc.execute()
+
+    call_kwargs = mock_one_shot.execute.call_args.kwargs
+    assert call_kwargs.get("system_prompt") == "PROMPT CUSTOM DEL SUBAGENTE"
+    assert call_kwargs.get("system_prompt") != _RECONCILER_PROMPT
 
 
 # ---------------------------------------------------------------------------

@@ -58,6 +58,41 @@ un canal, parás: la capacidad va a un use case + tool, y el canal solo dispara 
 El CLI offline (`inaki/`) puede construir el use case directo para bootstrap sin daemon
 — eso es legítimo (es un composition root), no una pasarela en un canal.
 
+### Tiers de recursos — harness-global vs per-agente (LEER antes de agregar un recurso con estado)
+
+Un arnés = **1 daemon = N agentes** (`AgentContainer`). Los recursos con estado se
+parten en DOS tiers — y NUNCA en un tercer patrón ad-hoc. Mezclar tiers fue el origen
+del caos histórico (algunos recursos aislables per-agente, otros forzados globales, sin
+regla escrita).
+
+- **Harness-global (singleton, compartido por TODOS los agentes del proceso):**
+  `knowledge`, `scheduler`, `faces`/`photos`. Config SOLO en `GlobalConfig` (NUNCA en
+  `AgentConfig`); se construyen UNA vez en `AppContainer`, no por agente. Son los
+  singletons pesados (modelo InsightFace en RAM, índice RAG, loop de cron): duplicarlos
+  in-process reventaría recursos en la Pi. **No hay aislamiento per-agente para estos —
+  es por diseño, no una limitación a resolver.** ¿El usuario final necesita aislar uno?
+  → corre **otra instancia del arnés como proceso aparte**, con su propio home de datos.
+  El proceso es la frontera de aislamiento shared-nothing. (El knob único `--home` /
+  `INAKI_HOME` que re-ancla config+data+`secret.key`+`tool_config`+`users`+puertos en un
+  solo root está DISEÑADO pero aún NO implementado: hoy `--config` muda solo la config;
+  los datos siguen anclados a la constante de módulo `_INAKI_HOME = Path.home()/'.inaki'`
+  en `config_schema.py` más varios `Path.home()/'.inaki'` sueltos.)
+
+- **Per-agente (compartir vs aislar es CONFIGURABLE):** `memory`, `history`, `channels`,
+  `llm`, `embedding`. Config en `AgentConfig`; se construyen por agente en
+  `AgentContainer`. Para memory/history el aislamiento ya está resuelto por dos ejes
+  complementarios (granularidades distintas, NO redundantes): **mismo `db_filename` →
+  aislados por columna `agent_id`** (toda query filtra por `agent_id`;
+  `sqlite_history_store.py` arranca el WHERE con `agent_id = ?`; memoria usa índice de
+  scope `(agent_id, channel, chat_id)`) → **cero bleed entre agentes que comparten
+  fichero**; **`db_filename` distinto → aislamiento físico de fichero.** NO agregar una
+  abstracción formal de "pools" encima: para 2 recursos es over-engineering.
+
+**Regla al agregar un recurso con estado nuevo:** decidí su tier ANTES de escribir
+código. Singleton pesado compartido → `GlobalConfig` + `AppContainer`. Per-conversación
+o per-agente → `AgentConfig` + `AgentContainer`, aislable por `agent_id`/fichero. NUNCA
+un `knowledge` o `scheduler` per-agente: rompe el tier y multiplica recursos.
+
 ### Key Wiring Rules
 
 - **`infrastructure/container.py`** — `AgentContainer` (per-agent DI) and `AppContainer` (root, all agents). Registering a new tool, provider, or repo happens here and ONLY here.

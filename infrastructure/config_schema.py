@@ -809,7 +809,11 @@ class AgentConfig(BaseModel):
     id: str
     name: str
     description: str
-    system_prompt: str
+    system_prompt: str = ""
+    """Prompt de sistema del agente. Opcional: si se omite, los sub-agentes de
+    memoria (extractor/reconciliador) heredan el prompt hardcodeado por defecto
+    del use case correspondiente. Un agente regular sin prompt corre con base
+    vacía (responde sin instrucciones de sistema)."""
     llm: LLMConfig
     embedding: EmbeddingConfig
     memories: MemoriesConfig

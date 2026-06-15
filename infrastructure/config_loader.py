@@ -511,7 +511,7 @@ def load_agent_config(
             id=merged["id"],
             name=merged["name"],
             description=merged["description"],
-            system_prompt=merged["system_prompt"],
+            system_prompt=merged.get("system_prompt", ""),
             llm=LLMConfig(**merged.get("llm", {})),
             embedding=EmbeddingConfig(**merged.get("embedding", {})),
             memories=MemoriesConfig(**merged.get("memories", {})),

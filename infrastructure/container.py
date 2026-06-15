@@ -1606,8 +1606,13 @@ class AppContainer:
                     extractor_id,
                 )
                 continue
+            # El sub-agente sobreescribe las _EXTRACTOR_INSTRUCTIONS default solo
+            # si declara un system_prompt propio (no vacío). Omitirlo en el YAML →
+            # hereda el default canónico del use case (sin duplicar el prompt).
+            sub_prompt = extractor_container.agent_config.system_prompt
             container.consolidate_memory.set_extractor(
                 extractor_container.run_agent_one_shot,
+                system_prompt_override=sub_prompt if sub_prompt.strip() else None,
                 max_iterations=delegation_cfg.max_iterations_per_sub,
                 timeout_seconds=delegation_cfg.timeout_seconds,
             )
@@ -1653,8 +1658,13 @@ class AppContainer:
                     reconciler_id,
                 )
                 continue
+            # El sub-agente sobreescribe el _RECONCILER_PROMPT default solo si
+            # declara un system_prompt propio (no vacío). Omitirlo en el YAML →
+            # hereda el default canónico del use case (sin duplicar el prompt).
+            sub_prompt = reconciler_container.agent_config.system_prompt
             container.reconcile_memory.set_reconciler(
                 reconciler_container.run_agent_one_shot,
+                system_prompt_override=sub_prompt if sub_prompt.strip() else None,
                 max_iterations=delegation_cfg.max_iterations_per_sub,
                 timeout_seconds=delegation_cfg.timeout_seconds,
             )

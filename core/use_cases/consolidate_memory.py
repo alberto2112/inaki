@@ -56,7 +56,12 @@ from core.domain.value_objects.agent_settings import MemorySettings
 
 logger = logging.getLogger(__name__)
 
-_EXTRACTOR_PROMPT_TEMPLATE = """\
+# Instrucciones del extractor (default canónico). Se usa tal cual como
+# system_prompt del sub-agente cuando éste no declara uno propio, y también en
+# modo directo (LLM sin sub-agente) concatenando la conversación al final.
+# NO lleva placeholders: el historial se concatena aparte (modo directo) o
+# viaja como `task` (modo sub-agente). Por eso las llaves del JSON van simples.
+_EXTRACTOR_INSTRUCTIONS = """\
 ## Instructions
 
 You are a long-term memory extractor for a personal AI assistant.
@@ -87,20 +92,16 @@ When in doubt, do NOT save. It is better to miss a minor detail than to pollute 
 
 Return ONLY valid JSON with the following schema, no additional text:
 [
-  {{
+  {
     "content": "contextually rich description of the fact, preference, or event",
     "relevance": 0.0-1.0,
     "tags": ["tag1", "tag2"],
     "timestamp": "2026-04-09T15:30:00Z"
-  }}
+  }
 ]
 
 The "timestamp" field is optional. If included, use the timestamp of the most relevant message (ISO8601 UTC).
 If there is NOTHING worth remembering long-term, return an empty array: []
-
-## Conversation:
-
-{history}
 """
 
 
@@ -139,16 +140,28 @@ class ConsolidateMemoryUseCase:
         self._extractor_one_shot: RunAgentOneShotUseCase | None = None
         self._extractor_max_iterations: int = 5
         self._extractor_timeout_seconds: int = 180
+        # System prompt override del sub-agente. None = el sub-agente no declaró
+        # uno propio → se usa _EXTRACTOR_INSTRUCTIONS (default canónico). El
+        # container lo resuelve desde el YAML del sub-agente al wirear.
+        self._extractor_system_prompt: str | None = None
 
     def set_extractor(
         self,
         one_shot: RunAgentOneShotUseCase,
         *,
+        system_prompt_override: str | None = None,
         max_iterations: int = 5,
         timeout_seconds: int = 180,
     ) -> None:
-        """Configura un sub-agente extractor. Reemplaza el prompt hardcodeado."""
+        """Configura un sub-agente extractor.
+
+        ``system_prompt_override``: si el sub-agente declara un ``system_prompt``
+        propio en su YAML, se pasa acá y SOBREESCRIBE las ``_EXTRACTOR_INSTRUCTIONS``
+        hardcodeadas. Si es None (campo omitido en el YAML), el sub-agente corre
+        con las instrucciones por defecto — única fuente de verdad, sin duplicación.
+        """
         self._extractor_one_shot = one_shot
+        self._extractor_system_prompt = system_prompt_override
         self._extractor_max_iterations = max_iterations
         self._extractor_timeout_seconds = timeout_seconds
 
@@ -264,21 +277,23 @@ class ConsolidateMemoryUseCase:
 
         history_text = "\n".join(_fmt(m) for m in scope_messages)
 
-        # Extracción: dos caminos.
-        #  a) Sub-agente extractor configurado → delegar via one-shot. El
-        #     sub-agente tiene su propio system_prompt (con instrucciones de
-        #     extracción) y recibe el historial como user task.
-        #  b) Default → prompt hardcodeado + LLM directo (comportamiento legacy).
+        # Extracción: dos caminos. En AMBOS, _EXTRACTOR_INSTRUCTIONS es el default;
+        # el sub-agente puede sobreescribirlo declarando su propio system_prompt.
+        #  a) Sub-agente extractor configurado → delegar via one-shot. El historial
+        #     viaja como `task`; el system_prompt son solo las instrucciones
+        #     (override del sub-agente, o el default si no declaró uno).
+        #  b) Default → instrucciones + conversación embebida + LLM directo (legacy).
         try:
             if self._extractor_one_shot is not None:
+                effective_prompt = self._extractor_system_prompt or _EXTRACTOR_INSTRUCTIONS
                 raw_json = await self._extractor_one_shot.execute(
                     task=history_text,
-                    system_prompt=None,  # usar el system_prompt del sub-agente
+                    system_prompt=effective_prompt,
                     max_iterations=self._extractor_max_iterations,
                     timeout_seconds=self._extractor_timeout_seconds,
                 )
             else:
-                prompt = _EXTRACTOR_PROMPT_TEMPLATE.format(history=history_text)
+                prompt = f"{_EXTRACTOR_INSTRUCTIONS}\n## Conversation:\n\n{history_text}\n"
                 response = await self._llm.complete(
                     messages=[],
                     system_prompt=prompt,

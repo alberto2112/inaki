@@ -156,16 +156,28 @@ class ReconcileMemoryUseCase:
         self._reconciler_one_shot: RunAgentOneShotUseCase | None = None
         self._reconciler_max_iterations: int = 5
         self._reconciler_timeout_seconds: int = 180
+        # System prompt override del sub-agente. None = el sub-agente no declaró
+        # uno propio → se usa _RECONCILER_PROMPT (default canónico). El container
+        # lo resuelve desde el YAML del sub-agente al wirear.
+        self._reconciler_system_prompt: str | None = None
 
     def set_reconciler(
         self,
         one_shot: RunAgentOneShotUseCase,
         *,
+        system_prompt_override: str | None = None,
         max_iterations: int = 5,
         timeout_seconds: int = 180,
     ) -> None:
-        """Configura un sub-agente reconciliador. Reemplaza el prompt hardcodeado."""
+        """Configura un sub-agente reconciliador.
+
+        ``system_prompt_override``: si el sub-agente declara un ``system_prompt``
+        propio en su YAML, se pasa acá y SOBREESCRIBE el ``_RECONCILER_PROMPT``
+        hardcodeado. Si es None (campo omitido en el YAML), el sub-agente corre
+        con el prompt por defecto — única fuente de verdad, sin duplicación.
+        """
         self._reconciler_one_shot = one_shot
+        self._reconciler_system_prompt = system_prompt_override
         self._reconciler_max_iterations = max_iterations
         self._reconciler_timeout_seconds = timeout_seconds
 
@@ -277,11 +289,14 @@ class ReconcileMemoryUseCase:
         now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         task_text = f"Current date/time (UTC): {now_ts}\n\nReconcile the following memory cluster:\n\n{cluster_text}"
 
-        # Dos caminos: sub-agente one-shot o LLM directo con prompt hardcodeado
+        # Dos caminos: sub-agente one-shot o LLM directo con prompt hardcodeado.
+        # En AMBOS, _RECONCILER_PROMPT es el default; el sub-agente puede
+        # sobreescribirlo declarando su propio system_prompt (override no-vacío).
         if self._reconciler_one_shot is not None:
+            effective_prompt = self._reconciler_system_prompt or _RECONCILER_PROMPT
             raw_json = await self._reconciler_one_shot.execute(
                 task=task_text,
-                system_prompt=None,  # usar el system_prompt del sub-agente
+                system_prompt=effective_prompt,
                 max_iterations=self._reconciler_max_iterations,
                 timeout_seconds=self._reconciler_timeout_seconds,
             )

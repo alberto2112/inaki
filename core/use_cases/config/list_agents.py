@@ -14,6 +14,13 @@ class ListAgentsUseCase:
     def __init__(self, repo: "IConfigRepository") -> None:
         self._repo = repo
 
-    def execute(self) -> list[str]:
-        """Devuelve lista de ids. Lista vacía si no hay agentes configurados."""
+    def execute(self, sub_agents: bool = False) -> list[str]:
+        """Devuelve lista de ids. Lista vacía si no hay agentes configurados.
+
+        Args:
+            sub_agents: Si es ``True`` lista los sub-agentes
+                (``agents/sub-agents/``) en vez de los agentes regulares.
+        """
+        if sub_agents:
+            return self._repo.list_sub_agents()
         return self._repo.list_agents()

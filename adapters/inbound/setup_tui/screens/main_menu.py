@@ -65,6 +65,7 @@ class _MenuRow(Static):
 _MENU_ITEMS = [
     ("GLOBAL CONFIG", "global"),
     ("AGENTS", "agents"),
+    ("SUBAGENTS", "subagents"),
     ("PROVIDERS", "providers"),
     ("SECRETS", "secrets"),
 ]
@@ -139,6 +140,10 @@ class MainMenuPage(Screen):
             from adapters.inbound.setup_tui.screens.agents_page import AgentsPage
 
             self.app.push_screen(AgentsPage(self._container))
+        elif destino == "subagents":
+            from adapters.inbound.setup_tui.screens.agents_page import AgentsPage
+
+            self.app.push_screen(AgentsPage(self._container, is_sub_agent=True))
         elif destino == "providers":
             from adapters.inbound.setup_tui.screens.providers_page import ProvidersPage
 

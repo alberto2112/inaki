@@ -15,6 +15,7 @@ from adapters.inbound.setup_tui.modals._dialog import dialog_css
 from adapters.inbound.setup_tui.screens._base import BasePage
 from adapters.inbound.setup_tui.widgets.config_row import ConfigRow
 from adapters.inbound.setup_tui.widgets.section_header import SectionHeader
+from core.ports.config_repository import LayerName
 
 if TYPE_CHECKING:
     from adapters.inbound.setup_tui.di import SetupContainer
@@ -58,9 +59,13 @@ class _CreateAgentModal(ModalScreen[dict[str, str] | None]):
         Binding("ctrl+s", "commit", show=False),
     ]
 
+    def __init__(self, titulo: str = "nuevo agente") -> None:
+        super().__init__()
+        self._titulo = titulo
+
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
-            yield Label("nuevo agente", classes="titulo")
+            yield Label(self._titulo, classes="titulo")
             yield Label("id  [dim](slug, sin espacios)[/dim]", classes="campo-label")
             yield Input(placeholder="ej: dev, planner, ops", id="input_id")
             yield Label("nombre", classes="campo-label")
@@ -231,6 +236,9 @@ class AgentsPage(BasePage):
 
     Cada agente se muestra como una fila. Enter navega al detalle del agente.
     ``n`` crea uno nuevo, ``c`` clona el seleccionado, ``delete`` lo elimina.
+
+    Con ``is_sub_agent=True`` la misma página opera sobre los sub-agentes
+    (``agents/sub-agents/``): mismas operaciones, distinta capa y etiquetas.
     """
 
     BINDINGS = BasePage.BINDINGS + [
@@ -239,28 +247,56 @@ class AgentsPage(BasePage):
         Binding("delete", "delete_agent", description="eliminar", show=True, priority=True),
     ]
 
-    def __init__(self, container: "SetupContainer | None", **kwargs: Any) -> None:
+    def __init__(
+        self,
+        container: "SetupContainer | None",
+        is_sub_agent: bool = False,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self._container = container
+        self._is_sub_agent = is_sub_agent
+
+    # --- Resolución de capa y etiquetas según el modo (agente / sub-agente) ---
+
+    @property
+    def _main_layer(self) -> LayerName:
+        return LayerName.SUB_AGENT if self._is_sub_agent else LayerName.AGENT
+
+    @property
+    def _secrets_layer(self) -> LayerName:
+        return LayerName.SUB_AGENT_SECRETS if self._is_sub_agent else LayerName.AGENT_SECRETS
+
+    @property
+    def _kind_label(self) -> str:
+        return "subagente" if self._is_sub_agent else "agente"
+
+    @property
+    def _section_title(self) -> str:
+        return "SUBAGENTS" if self._is_sub_agent else "AGENTS"
+
+    @property
+    def _empty_label(self) -> str:
+        return "(sin subagentes)" if self._is_sub_agent else "(sin agentes)"
 
     def breadcrumb(self) -> str:
-        return "inaki / config / agents"
+        return "inaki / config / sub-agents" if self._is_sub_agent else "inaki / config / agents"
 
     def compose_body(self) -> ComposeResult:
         agentes: list[str] = []
         if self._container is not None:
             try:
-                agentes = self._container.list_agents.execute()
+                agentes = self._container.list_agents.execute(sub_agents=self._is_sub_agent)
             except Exception:
                 pass
 
-        yield SectionHeader("AGENTS")
+        yield SectionHeader(self._section_title)
 
         if not agentes:
             # Fila placeholder para que el cursor tenga algo donde pararse
             yield ConfigRow(
                 Field(
-                    label="(sin agentes)",
+                    label=self._empty_label,
                     value="→ presioná n para crear uno",
                     kind="scalar",
                 )
@@ -284,16 +320,18 @@ class AgentsPage(BasePage):
         agent_id = field.label
 
         # Si es la fila placeholder, no hacer nada útil
-        if agent_id == "(sin agentes)":
+        if agent_id == self._empty_label:
             return
 
         from adapters.inbound.setup_tui.screens.agent_detail_page import AgentDetailPage
 
-        self.app.push_screen(AgentDetailPage(self._container, agent_id))
+        self.app.push_screen(
+            AgentDetailPage(self._container, agent_id, is_sub_agent=self._is_sub_agent)
+        )
 
     def action_create_agent(self) -> None:
         """Abre el modal de creación y crea el agente si el usuario confirma."""
-        self.app.push_screen(_CreateAgentModal(), self._after_create)
+        self.app.push_screen(_CreateAgentModal(f"nuevo {self._kind_label}"), self._after_create)
 
     def _after_create(self, datos: dict[str, str] | None) -> None:
         if datos is None or self._container is None:
@@ -305,10 +343,11 @@ class AgentsPage(BasePage):
                 nombre=datos["name"],
                 descripcion=datos["description"],
                 system_prompt=datos["system_prompt"],
+                layer=self._main_layer,
             )
             self.app.notify(
-                f"agente '{datos['id']}' creado",
-                title="agents",
+                f"{self._kind_label} '{datos['id']}' creado",
+                title=self._section_title.lower(),
                 timeout=2,
             )
         except Exception as exc:
@@ -324,7 +363,7 @@ class AgentsPage(BasePage):
             return
 
         agent_id = self._current_field().label
-        if agent_id == "(sin agentes)":
+        if agent_id == self._empty_label:
             return
 
         self.app.push_screen(
@@ -336,19 +375,17 @@ class AgentsPage(BasePage):
             return
 
         try:
-            from core.ports.config_repository import LayerName
-
             # Leer la capa del agente origen
-            datos = self._container.repo.read_layer(LayerName.AGENT, agent_id=origen_id)
+            datos = self._container.repo.read_layer(self._main_layer, agent_id=origen_id)
             # Actualizar el id en los datos clonados
             if isinstance(datos, dict):
                 datos = dict(datos)
                 datos["id"] = nuevo_id
             # Escribir la nueva capa
-            self._container.repo.write_layer(LayerName.AGENT, datos, agent_id=nuevo_id)
+            self._container.repo.write_layer(self._main_layer, datos, agent_id=nuevo_id)
             self.app.notify(
-                f"agente '{origen_id}' clonado como '{nuevo_id}'",
-                title="agents",
+                f"{self._kind_label} '{origen_id}' clonado como '{nuevo_id}'",
+                title=self._section_title.lower(),
                 timeout=2,
             )
         except Exception as exc:
@@ -363,17 +400,13 @@ class AgentsPage(BasePage):
             return
 
         agent_id = self._current_field().label
-        if agent_id == "(sin agentes)":
+        if agent_id == self._empty_label:
             return
 
         if self._container is None:
             return
 
-        from core.ports.config_repository import LayerName
-
-        tiene_secrets = self._container.repo.layer_exists(
-            LayerName.AGENT_SECRETS, agent_id=agent_id
-        )
+        tiene_secrets = self._container.repo.layer_exists(self._secrets_layer, agent_id=agent_id)
 
         self.app.push_screen(
             _ConfirmDeleteAgentModal(agent_id, tiene_secrets),
@@ -385,12 +418,14 @@ class AgentsPage(BasePage):
             return
 
         try:
-            self._container.delete_agent.execute(agent_id)
+            self._container.delete_agent.execute(agent_id, layer=self._main_layer)
             if resultado == "con_secrets":
-                self._container.delete_agent.execute_secrets(agent_id)
+                self._container.delete_agent.execute_secrets(
+                    agent_id, secrets_layer=self._secrets_layer
+                )
             self.app.notify(
-                f"agente '{agent_id}' eliminado",
-                title="agents",
+                f"{self._kind_label} '{agent_id}' eliminado",
+                title=self._section_title.lower(),
                 timeout=2,
             )
         except Exception as exc:
@@ -403,4 +438,4 @@ class AgentsPage(BasePage):
         """Vuelve al stack anterior y re-pushea esta página para refrescar la lista."""
         # Reemplazar la pantalla actual con una instancia nueva
         self.app.pop_screen()
-        self.app.push_screen(AgentsPage(self._container))
+        self.app.push_screen(AgentsPage(self._container, is_sub_agent=self._is_sub_agent))

@@ -48,6 +48,20 @@ def test_capa_global_lanza_error(repo: MagicMock) -> None:
         uc.execute("dev", {}, layer=LayerName.GLOBAL)
 
 
+def test_escribe_en_capa_sub_agent(repo: MagicMock) -> None:
+    uc = UpdateAgentLayerUseCase(repo)
+    uc.execute("researcher", {}, layer=LayerName.SUB_AGENT)
+
+    assert repo.write_layer.call_args[0][0] == LayerName.SUB_AGENT
+
+
+def test_escribe_en_capa_sub_agent_secrets(repo: MagicMock) -> None:
+    uc = UpdateAgentLayerUseCase(repo)
+    uc.execute("researcher", {}, layer=LayerName.SUB_AGENT_SECRETS)
+
+    assert repo.write_layer.call_args[0][0] == LayerName.SUB_AGENT_SECRETS
+
+
 def test_pasa_agent_id_al_repo(repo: MagicMock) -> None:
     uc = UpdateAgentLayerUseCase(repo)
     uc.execute("mi-agente", {"name": "Nuevo"})

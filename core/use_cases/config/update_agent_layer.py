@@ -71,12 +71,18 @@ class UpdateAgentLayerUseCase:
             cambios: Dict con los campos a actualizar.
                      Los valores pueden ser ``CampoTriestado`` para campos
                      bajo ``memory.llm.*`` que usan tri-estado.
-            layer: Solo ``AGENT`` o ``AGENT_SECRETS`` son válidos.
+            layer: Solo capas de agente son válidas: ``AGENT``, ``AGENT_SECRETS``,
+                ``SUB_AGENT`` o ``SUB_AGENT_SECRETS``.
 
         Raises:
             ValueError: Si se pasa una capa global.
         """
-        if layer not in (LayerName.AGENT, LayerName.AGENT_SECRETS):
+        if layer not in (
+            LayerName.AGENT,
+            LayerName.AGENT_SECRETS,
+            LayerName.SUB_AGENT,
+            LayerName.SUB_AGENT_SECRETS,
+        ):
             raise ValueError(
                 f"UpdateAgentLayerUseCase solo acepta capas de agente, recibió: {layer!r}"
             )

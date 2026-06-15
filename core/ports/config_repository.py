@@ -13,12 +13,19 @@ from typing import Protocol, runtime_checkable
 
 
 class LayerName(str, Enum):
-    """Identifica cada una de las 4 capas de configuración."""
+    """Identifica cada una de las capas de configuración.
+
+    Las capas ``SUB_AGENT*`` apuntan a ``agents/sub-agents/{id}.yaml`` —
+    mismo formato que un agente regular pero en el subdirectorio que el
+    runtime reserva para agentes de solo-delegación (sin canales).
+    """
 
     GLOBAL = "global"
     GLOBAL_SECRETS = "global.secrets"
     AGENT = "agent"
     AGENT_SECRETS = "agent.secrets"
+    SUB_AGENT = "sub_agent"
+    SUB_AGENT_SECRETS = "sub_agent.secrets"
 
 
 @runtime_checkable
@@ -38,7 +45,7 @@ class IConfigRepository(Protocol):
 
         Args:
             layer: Capa a leer.
-            agent_id: Requerido para ``LayerName.AGENT`` y ``LayerName.AGENT_SECRETS``.
+            agent_id: Requerido para capas de agente (``AGENT``, ``AGENT_SECRETS``, ``SUB_AGENT``, ``SUB_AGENT_SECRETS``).
         """
         ...
 
@@ -52,17 +59,30 @@ class IConfigRepository(Protocol):
         Args:
             layer: Capa de destino.
             data: Contenido completo a escribir (CommentedMap o dict plano).
-            agent_id: Requerido para ``LayerName.AGENT`` y ``LayerName.AGENT_SECRETS``.
+            agent_id: Requerido para capas de agente (``AGENT``, ``AGENT_SECRETS``, ``SUB_AGENT``, ``SUB_AGENT_SECRETS``).
         """
         ...
 
     def list_agents(self) -> list[str]:
         """
-        Enumera los ids de agentes disponibles en ``agents_dir``.
+        Enumera los ids de agentes regulares disponibles en ``agents_dir``.
 
         Retorna una lista ordenada de ids (stems de ``{id}.yaml``),
         excluyendo ``*.secrets.yaml`` y ``*.example.yaml``.
         Lista vacía si no existe ningún agente.
+
+        NO incluye los sub-agentes (``agents/sub-agents/``) — usar
+        ``list_sub_agents`` para esos.
+        """
+        ...
+
+    def list_sub_agents(self) -> list[str]:
+        """
+        Enumera los ids de sub-agentes en ``agents_dir/sub-agents/``.
+
+        Mismo contrato que ``list_agents`` (ids ordenados, excluye secrets y
+        example) pero sobre el subdirectorio de sub-agentes. Lista vacía si el
+        subdirectorio no existe.
         """
         ...
 
@@ -85,7 +105,7 @@ class IConfigRepository(Protocol):
 
         Args:
             layer: Capa a eliminar.
-            agent_id: Requerido para ``LayerName.AGENT`` y ``LayerName.AGENT_SECRETS``.
+            agent_id: Requerido para capas de agente (``AGENT``, ``AGENT_SECRETS``, ``SUB_AGENT``, ``SUB_AGENT_SECRETS``).
         """
         ...
 

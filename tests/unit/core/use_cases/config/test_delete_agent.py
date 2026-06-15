@@ -64,3 +64,41 @@ def test_execute_secrets_no_op_si_no_existe(repo: MagicMock) -> None:
     uc.execute_secrets("dev")
 
     repo.delete_layer.assert_not_called()
+
+
+def test_elimina_subagente_en_capa_sub_agent(repo: MagicMock) -> None:
+    """Con layer=SUB_AGENT elimina la capa de sub-agente."""
+    uc = DeleteAgentUseCase(repo)
+    uc.execute("researcher", layer=LayerName.SUB_AGENT)
+
+    repo.delete_layer.assert_called_once_with(LayerName.SUB_AGENT, agent_id="researcher")
+
+
+def test_execute_secrets_subagente(repo: MagicMock) -> None:
+    """execute_secrets con SUB_AGENT_SECRETS elimina la capa de secrets del sub-agente."""
+    repo.layer_exists.side_effect = lambda layer, agent_id=None: (
+        layer == LayerName.SUB_AGENT_SECRETS
+    )
+
+    uc = DeleteAgentUseCase(repo)
+    uc.execute_secrets("researcher", secrets_layer=LayerName.SUB_AGENT_SECRETS)
+
+    repo.delete_layer.assert_called_once_with(LayerName.SUB_AGENT_SECRETS, agent_id="researcher")
+
+
+def test_execute_layer_invalida_lanza_error(repo: MagicMock) -> None:
+    """Una capa que no sea AGENT/SUB_AGENT en execute lanza ValueError."""
+    uc = DeleteAgentUseCase(repo)
+    with pytest.raises(ValueError, match="AGENT o SUB_AGENT"):
+        uc.execute("x", layer=LayerName.GLOBAL)
+
+    repo.delete_layer.assert_not_called()
+
+
+def test_execute_secrets_layer_invalida_lanza_error(repo: MagicMock) -> None:
+    """Una capa que no sea de secrets de agente en execute_secrets lanza ValueError."""
+    uc = DeleteAgentUseCase(repo)
+    with pytest.raises(ValueError, match="AGENT_SECRETS o "):
+        uc.execute_secrets("x", secrets_layer=LayerName.AGENT)
+
+    repo.delete_layer.assert_not_called()

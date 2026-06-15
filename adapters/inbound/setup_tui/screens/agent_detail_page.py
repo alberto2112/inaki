@@ -12,6 +12,7 @@ from adapters.inbound.setup_tui.domain.field import Field
 from adapters.inbound.setup_tui.screens._base import BasePage
 from adapters.inbound.setup_tui.widgets.config_row import ConfigRow
 from adapters.inbound.setup_tui.widgets.section_header import SectionHeader
+from core.ports.config_repository import LayerName
 
 if TYPE_CHECKING:
     from adapters.inbound.setup_tui.di import SetupContainer
@@ -57,28 +58,40 @@ _ROOT_SECTION_FIELDS = {"id", "name", "description", "system_prompt"}
 class AgentDetailPage(BasePage):
     """Página de edición del config de un agente específico.
 
-    Carga la capa AGENT del agente (``agents/{id}.yaml``), la introspecciona
-    vía el schema mapper y permite editar campo por campo mediante modales.
+    Carga la capa principal del agente (``agents/{id}.yaml`` o, para
+    sub-agentes, ``agents/sub-agents/{id}.yaml``), la introspecciona vía el
+    schema mapper y permite editar campo por campo mediante modales.
 
     Las ediciones se persisten inmediatamente en la capa correcta:
-    - Campos ``secret`` → ``LayerName.AGENT_SECRETS``
-    - Resto → ``LayerName.AGENT``
+    - Campos ``secret`` → capa de secrets (``AGENT_SECRETS`` / ``SUB_AGENT_SECRETS``)
+    - Resto → capa principal (``AGENT`` / ``SUB_AGENT``)
     """
 
     def __init__(
         self,
         container: "SetupContainer | None",
         agent_id: str,
+        is_sub_agent: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._container = container
         self._agent_id = agent_id
+        self._is_sub_agent = is_sub_agent
         # Mapeo field → (section_name, field_name) para el guardado
         self._field_section: dict[int, tuple[str, str]] = {}
 
+    @property
+    def _main_layer(self) -> LayerName:
+        return LayerName.SUB_AGENT if self._is_sub_agent else LayerName.AGENT
+
+    @property
+    def _secrets_layer(self) -> LayerName:
+        return LayerName.SUB_AGENT_SECRETS if self._is_sub_agent else LayerName.AGENT_SECRETS
+
     def breadcrumb(self) -> str:
-        return f"inaki / config / agents / {self._agent_id}"
+        base = "sub-agents" if self._is_sub_agent else "agents"
+        return f"inaki / config / {base} / {self._agent_id}"
 
     def compose_body(self) -> ComposeResult:
         from textual.widgets import Label
@@ -91,9 +104,7 @@ class AgentDetailPage(BasePage):
         current: dict[str, Any] = {}
         error_msg: str | None = None
         try:
-            from core.ports.config_repository import LayerName
-
-            current = self._container.repo.read_layer(LayerName.AGENT, agent_id=self._agent_id)
+            current = self._container.repo.read_layer(self._main_layer, agent_id=self._agent_id)
         except Exception as exc:
             error_msg = f"{type(exc).__name__}: {exc}"
 
@@ -124,12 +135,10 @@ class AgentDetailPage(BasePage):
         if self._container is None:
             return
 
-        from core.ports.config_repository import LayerName
-
         section_name, field_name = self._field_section.get(id(field), ("", field.label))
 
-        # Determinar la capa: secrets para campos secret, sino AGENT
-        layer = LayerName.AGENT_SECRETS if field.kind == "secret" else LayerName.AGENT
+        # Determinar la capa: secrets para campos secret, sino la capa principal
+        layer = self._secrets_layer if field.kind == "secret" else self._main_layer
 
         # build_cambios respeta:
         #   - root fields (id/name/description/system_prompt) → flat {field: value}
@@ -172,7 +181,6 @@ class AgentDetailPage(BasePage):
         if self._container is None:
             return
 
-        from core.ports.config_repository import LayerName
         from core.use_cases.config.update_agent_layer import CampoTriestado, TristadoValor
 
         if result.mode == "inherit":
@@ -189,7 +197,7 @@ class AgentDetailPage(BasePage):
             self._container.update_agent_layer.execute(
                 agent_id=self._agent_id,
                 cambios=cambios,
-                layer=LayerName.AGENT,
+                layer=self._main_layer,
             )
             self.app.notify(
                 f"guardado: memories.llm.{field.label}",

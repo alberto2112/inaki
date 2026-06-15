@@ -25,30 +25,49 @@ class DeleteAgentUseCase:
     def __init__(self, repo: "IConfigRepository") -> None:
         self._repo = repo
 
-    def execute(self, agent_id: str) -> None:
+    def execute(self, agent_id: str, layer: LayerName = LayerName.AGENT) -> None:
         """
-        Elimina ``agents/{agent_id}.yaml``.
+        Elimina el YAML principal del agente (``agents/{id}.yaml``).
 
-        No toca ``agents/{agent_id}.secrets.yaml``.
+        No toca el archivo de secrets.
 
         Args:
             agent_id: Id del agente a eliminar.
+            layer: Capa principal a eliminar. ``AGENT`` (default) para un agente
+                regular; ``SUB_AGENT`` para un sub-agente.
 
         Raises:
+            ValueError: Si ``layer`` no es ``AGENT`` ni ``SUB_AGENT``.
             AgentNotFoundError: Si el archivo del agente no existe.
         """
-        if not self._repo.layer_exists(LayerName.AGENT, agent_id=agent_id):
+        if layer not in (LayerName.AGENT, LayerName.SUB_AGENT):
+            raise ValueError(
+                f"DeleteAgentUseCase solo acepta AGENT o SUB_AGENT, recibió: {layer!r}"
+            )
+        if not self._repo.layer_exists(layer, agent_id=agent_id):
             raise AgentNotFoundError(f"Agente '{agent_id}' no encontrado.")
-        self._repo.delete_layer(LayerName.AGENT, agent_id=agent_id)
+        self._repo.delete_layer(layer, agent_id=agent_id)
 
-    def execute_secrets(self, agent_id: str) -> None:
+    def execute_secrets(
+        self, agent_id: str, secrets_layer: LayerName = LayerName.AGENT_SECRETS
+    ) -> None:
         """
-        Elimina ``agents/{agent_id}.secrets.yaml`` si existe.
+        Elimina el archivo de secrets del agente si existe.
 
         Es no-op si el archivo no existe (idempotente).
 
         Args:
             agent_id: Id del agente cuyo archivo de secrets se elimina.
+            secrets_layer: Capa de secrets a eliminar. ``AGENT_SECRETS`` (default)
+                para un agente regular; ``SUB_AGENT_SECRETS`` para un sub-agente.
+
+        Raises:
+            ValueError: Si ``secrets_layer`` no es una capa de secrets de agente.
         """
-        if self._repo.layer_exists(LayerName.AGENT_SECRETS, agent_id=agent_id):
-            self._repo.delete_layer(LayerName.AGENT_SECRETS, agent_id=agent_id)
+        if secrets_layer not in (LayerName.AGENT_SECRETS, LayerName.SUB_AGENT_SECRETS):
+            raise ValueError(
+                "DeleteAgentUseCase.execute_secrets solo acepta AGENT_SECRETS o "
+                f"SUB_AGENT_SECRETS, recibió: {secrets_layer!r}"
+            )
+        if self._repo.layer_exists(secrets_layer, agent_id=agent_id):
+            self._repo.delete_layer(secrets_layer, agent_id=agent_id)

@@ -80,3 +80,23 @@ def test_layer_exists_verifica_capa_agent(repo: MagicMock) -> None:
 
     layer_chequeada = repo.layer_exists.call_args[0][0]
     assert layer_chequeada == LayerName.AGENT
+
+
+def test_crea_subagente_en_capa_sub_agent(repo: MagicMock) -> None:
+    """Con layer=SUB_AGENT escribe y chequea existencia en la capa de sub-agente."""
+    uc = CreateAgentUseCase(repo)
+    uc.execute("researcher", nombre="Researcher", layer=LayerName.SUB_AGENT)
+
+    assert repo.layer_exists.call_args[0][0] == LayerName.SUB_AGENT
+    layer, datos, *_ = repo.write_layer.call_args[0]
+    assert layer == LayerName.SUB_AGENT
+    assert datos["id"] == "researcher"
+
+
+def test_layer_invalida_lanza_error(repo: MagicMock) -> None:
+    """Una capa que no sea AGENT/SUB_AGENT lanza ValueError sin escribir."""
+    uc = CreateAgentUseCase(repo)
+    with pytest.raises(ValueError, match="AGENT o SUB_AGENT"):
+        uc.execute("x", nombre="X", layer=LayerName.GLOBAL)
+
+    repo.write_layer.assert_not_called()

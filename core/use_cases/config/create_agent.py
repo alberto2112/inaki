@@ -46,6 +46,7 @@ class CreateAgentUseCase:
         descripcion: str = "",
         system_prompt: str = "",
         template_extra: dict[str, Any] | None = None,
+        layer: LayerName = LayerName.AGENT,
     ) -> None:
         """
         Crea el agente si el id es único.
@@ -56,11 +57,19 @@ class CreateAgentUseCase:
             descripcion: Descripción breve (opcional).
             system_prompt: System prompt inicial (opcional).
             template_extra: Campos adicionales a mezclar en el YAML generado.
+            layer: Capa de destino. ``AGENT`` (default) crea un agente regular;
+                ``SUB_AGENT`` crea un sub-agente en ``agents/sub-agents/``.
 
         Raises:
-            AgentYaExisteError: Si ``agents/{agent_id}.yaml`` ya existe.
+            ValueError: Si ``layer`` no es ``AGENT`` ni ``SUB_AGENT``.
+            AgentYaExisteError: Si el archivo del agente ya existe.
         """
-        if self._repo.layer_exists(LayerName.AGENT, agent_id=agent_id):
+        if layer not in (LayerName.AGENT, LayerName.SUB_AGENT):
+            raise ValueError(
+                f"CreateAgentUseCase solo acepta AGENT o SUB_AGENT, recibió: {layer!r}"
+            )
+
+        if self._repo.layer_exists(layer, agent_id=agent_id):
             raise AgentYaExisteError(agent_id)
 
         datos: dict[str, Any] = {
@@ -73,4 +82,4 @@ class CreateAgentUseCase:
         if template_extra:
             datos.update(template_extra)
 
-        self._repo.write_layer(LayerName.AGENT, datos, agent_id=agent_id)
+        self._repo.write_layer(layer, datos, agent_id=agent_id)

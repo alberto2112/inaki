@@ -51,15 +51,29 @@ _HEADER_AGENT_SECRETS = """\
 # NUNCA commitees este archivo.
 """
 
+_HEADER_SUB_AGENT = """\
+# Generado por inaki setup
+# Config de sub-agente — solo para delegación, sin canales.
+# Este archivo fue creado con `inaki setup`.
+"""
+
+_HEADER_SUB_AGENT_SECRETS = """\
+# Generado por inaki setup — SECRETO
+# Secrets del sub-agente — contiene tokens y claves específicas de este sub-agente.
+# NUNCA commitees este archivo.
+"""
+
 _HEADERS: dict[LayerName, str] = {
     LayerName.GLOBAL: _HEADER_GLOBAL,
     LayerName.GLOBAL_SECRETS: _HEADER_GLOBAL_SECRETS,
     LayerName.AGENT: _HEADER_AGENT,
     LayerName.AGENT_SECRETS: _HEADER_AGENT_SECRETS,
+    LayerName.SUB_AGENT: _HEADER_SUB_AGENT,
+    LayerName.SUB_AGENT_SECRETS: _HEADER_SUB_AGENT_SECRETS,
 }
 
 _SECRETS_LAYERS: frozenset[LayerName] = frozenset(
-    {LayerName.GLOBAL_SECRETS, LayerName.AGENT_SECRETS}
+    {LayerName.GLOBAL_SECRETS, LayerName.AGENT_SECRETS, LayerName.SUB_AGENT_SECRETS}
 )
 
 
@@ -90,6 +104,9 @@ class YamlRepository:
             # agentes bajo config_dir/agents/, layout unificado.
             self._config_dir = config_dir
             self._agents_dir = config_dir / "agents"
+        # Sub-agentes viven en un subdirectorio reservado por el runtime
+        # (mismo layout que el config_loader: ``agents/sub-agents/``).
+        self._sub_agents_dir = self._agents_dir / "sub-agents"
         self._yaml = YAML(typ="rt")
         self._yaml.preserve_quotes = True
         self._yaml.width = 4096  # Evita el line-wrapping inesperado
@@ -111,6 +128,12 @@ class YamlRepository:
             case LayerName.AGENT_SECRETS:
                 self._require_agent_id(agent_id)
                 return self._agents_dir / f"{agent_id}.secrets.yaml"
+            case LayerName.SUB_AGENT:
+                self._require_agent_id(agent_id)
+                return self._sub_agents_dir / f"{agent_id}.yaml"
+            case LayerName.SUB_AGENT_SECRETS:
+                self._require_agent_id(agent_id)
+                return self._sub_agents_dir / f"{agent_id}.secrets.yaml"
 
     @staticmethod
     def _require_agent_id(agent_id: str | None) -> None:
@@ -198,20 +221,36 @@ class YamlRepository:
 
     def list_agents(self) -> list[str]:
         """
-        Enumera los ids de agentes disponibles en el directorio de agentes.
+        Enumera los ids de agentes regulares en el directorio de agentes.
 
         Retorna una lista ordenada de ids (stems de ``{id}.yaml``),
         excluyendo ``*.secrets.yaml`` y ``*.example.yaml``.
         Lista vacía si el directorio no existe o no tiene agentes.
+
+        NO incluye los sub-agentes (``agents/sub-agents/``) — el glob es plano,
+        no recursivo, y ``sub-agents`` es un directorio (no matchea ``*.yaml``).
         """
-        if not self._agents_dir.exists():
+        return self._list_agent_ids(self._agents_dir)
+
+    def list_sub_agents(self) -> list[str]:
+        """
+        Enumera los ids de sub-agentes en ``agents/sub-agents/``.
+
+        Mismo contrato que ``list_agents`` pero sobre el subdirectorio de
+        sub-agentes. Lista vacía si el subdirectorio no existe.
+        """
+        return self._list_agent_ids(self._sub_agents_dir)
+
+    @staticmethod
+    def _list_agent_ids(directory: Path) -> list[str]:
+        """Glob plano de ``{id}.yaml`` en ``directory``, excluyendo secrets/example."""
+        if not directory.exists():
             return []
-        agentes = sorted(
+        return sorted(
             p.stem
-            for p in self._agents_dir.glob("*.yaml")
+            for p in directory.glob("*.yaml")
             if ".secrets" not in p.name and ".example" not in p.name
         )
-        return agentes
 
     def layer_exists(self, layer: LayerName, agent_id: str | None = None) -> bool:
         """

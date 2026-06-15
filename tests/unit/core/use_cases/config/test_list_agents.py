@@ -32,3 +32,24 @@ def test_lista_vacia(repo: MagicMock) -> None:
 
     uc = ListAgentsUseCase(repo)
     assert uc.execute() == []
+
+
+def test_lista_subagentes(repo: MagicMock) -> None:
+    """Con sub_agents=True usa list_sub_agents (no list_agents)."""
+    repo.list_sub_agents.return_value = ["researcher", "summarizer"]
+
+    uc = ListAgentsUseCase(repo)
+    resultado = uc.execute(sub_agents=True)
+
+    assert resultado == ["researcher", "summarizer"]
+    repo.list_sub_agents.assert_called_once()
+    repo.list_agents.assert_not_called()
+
+
+def test_default_no_toca_subagentes(repo: MagicMock) -> None:
+    """Sin sub_agents usa list_agents y no llama a list_sub_agents."""
+    repo.list_agents.return_value = ["dev"]
+
+    uc = ListAgentsUseCase(repo)
+    assert uc.execute() == ["dev"]
+    repo.list_sub_agents.assert_not_called()

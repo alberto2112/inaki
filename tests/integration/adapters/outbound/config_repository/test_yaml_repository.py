@@ -166,6 +166,67 @@ def test_agent_id_vacio_levanta_error(repo: YamlRepository) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Tests: sub-agentes
+# ---------------------------------------------------------------------------
+
+
+def test_list_sub_agents_vacio_si_no_hay_directorio(repo: YamlRepository) -> None:
+    """list_sub_agents devuelve [] si agents/sub-agents/ no existe."""
+    assert repo.list_sub_agents() == []
+
+
+def test_write_y_list_sub_agents(repo: YamlRepository) -> None:
+    """Escribe dos sub-agentes y los enumera correctamente."""
+    repo.write_layer(LayerName.SUB_AGENT, {"id": "researcher"}, agent_id="researcher")
+    repo.write_layer(LayerName.SUB_AGENT, {"id": "summarizer"}, agent_id="summarizer")
+    assert repo.list_sub_agents() == ["researcher", "summarizer"]
+
+
+def test_sub_agent_path_en_subdirectorio(repo: YamlRepository) -> None:
+    """La capa SUB_AGENT resuelve bajo agents/sub-agents/, no en agents/."""
+    path = repo._layer_path(LayerName.SUB_AGENT, "researcher")
+    assert path == repo._agents_dir / "sub-agents" / "researcher.yaml"
+    secrets = repo._layer_path(LayerName.SUB_AGENT_SECRETS, "researcher")
+    assert secrets == repo._agents_dir / "sub-agents" / "researcher.secrets.yaml"
+
+
+def test_list_sub_agents_excluye_secrets_y_example(repo: YamlRepository) -> None:
+    """list_sub_agents no incluye *.secrets.yaml ni *.example.yaml."""
+    sub_dir = repo._agents_dir / "sub-agents"
+    sub_dir.mkdir(parents=True, exist_ok=True)
+    (sub_dir / "researcher.yaml").write_text("id: researcher", encoding="utf-8")
+    (sub_dir / "researcher.secrets.yaml").write_text("token: abc", encoding="utf-8")
+    (sub_dir / "template.example.yaml").write_text("id: template", encoding="utf-8")
+    assert repo.list_sub_agents() == ["researcher"]
+
+
+def test_agentes_y_subagentes_no_se_mezclan(repo: YamlRepository) -> None:
+    """list_agents no ve sub-agentes y list_sub_agents no ve agentes regulares."""
+    repo.write_layer(LayerName.AGENT, {"id": "dev"}, agent_id="dev")
+    repo.write_layer(LayerName.SUB_AGENT, {"id": "researcher"}, agent_id="researcher")
+
+    assert repo.list_agents() == ["dev"]
+    assert repo.list_sub_agents() == ["researcher"]
+
+
+def test_write_sub_agent_secrets_permisos_600(repo: YamlRepository) -> None:
+    """Los archivos de secrets de sub-agente se crean con permisos 600."""
+    repo.write_layer(LayerName.SUB_AGENT_SECRETS, {"token": "abc"}, agent_id="researcher")
+    path = repo._layer_path(LayerName.SUB_AGENT_SECRETS, "researcher")
+    modo = oct(stat.S_IMODE(os.stat(path).st_mode))
+    assert modo == "0o600", f"Permisos esperados 0o600, obtenidos: {modo}"
+
+
+def test_delete_sub_agent_layer(repo: YamlRepository) -> None:
+    """Elimina una capa de sub-agente por id."""
+    repo.write_layer(LayerName.SUB_AGENT, {"id": "researcher"}, agent_id="researcher")
+    assert repo.layer_exists(LayerName.SUB_AGENT, "researcher")
+    repo.delete_layer(LayerName.SUB_AGENT, "researcher")
+    assert not repo.layer_exists(LayerName.SUB_AGENT, "researcher")
+    assert "researcher" not in repo.list_sub_agents()
+
+
+# ---------------------------------------------------------------------------
 # Tests: delete_layer
 # ---------------------------------------------------------------------------
 

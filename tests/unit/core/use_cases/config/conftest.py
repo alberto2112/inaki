@@ -16,6 +16,7 @@ def _make_repo() -> MagicMock:
     repo.read_layer.return_value = {}
     repo.layer_exists.return_value = False
     repo.list_agents.return_value = []
+    repo.list_sub_agents.return_value = []
     repo.render_yaml.return_value = ""
     return repo
 

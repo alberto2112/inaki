@@ -25,7 +25,7 @@ from infrastructure.config import (
     ChatHistoryConfig,
     EmbeddingConfig,
     LLMConfig,
-    MemoryConfig,
+    MemoriesConfig,
     ProviderConfig,
     TranscriptionConfig,
 )
@@ -53,7 +53,7 @@ def _mk_cfg(
         system_prompt="prompt",
         llm=LLMConfig(provider="openrouter", model="m"),
         embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
-        memory=MemoryConfig(db_filename=":memory:"),
+        memories=MemoriesConfig(db_filename=":memory:"),
         chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/hist.db"),
         transcription=transcription,
         channels=channels or {},

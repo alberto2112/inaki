@@ -182,7 +182,7 @@ class ReconcileDispatchAdapter:
         if uc is None:
             raise ValueError(
                 f"reconcile_memory: no hay ReconcileMemoryUseCase para el agente '{agent_id}'. "
-                "Verificá que memory.reconcile_enabled=True en su config."
+                "Verificá que memories.reconciliation.enabled=True en su config."
             )
         return await uc.execute()
 

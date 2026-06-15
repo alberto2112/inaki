@@ -1,12 +1,12 @@
 """Helper para construir el dict ``cambios`` respetando la jerarquía de
 sub-secciones generada por el schema mapper.
 
-El schema mapper emite secciones planas (``"MEMORY"``) y anidadas
-(``"MEMORY.LLM"``). Al guardar, el dict de cambios debe reflejar esa
+El schema mapper emite secciones planas (``"MEMORIES"``) y anidadas
+(``"MEMORIES.LLM"``). Al guardar, el dict de cambios debe reflejar esa
 jerarquía para que el YAML escriba en la clave correcta:
 
-  - ``MEMORY`` + ``provider`` → ``{memory: {provider: value}}``
-  - ``MEMORY.LLM`` + ``provider`` → ``{memory: {llm: {provider: value}}}``
+  - ``MEMORIES`` + ``digest_size`` → ``{memories: {digest_size: value}}``
+  - ``MEMORIES.LLM`` + ``provider`` → ``{memories: {llm: {provider: value}}}``
   - ``"AGENTCONFIG"`` + ``id`` (root field) → ``{id: value}``
 """
 
@@ -26,7 +26,7 @@ def build_cambios(
 
     Args:
         section_name: Nombre de la sección que emitió el schema mapper.
-            Puede ser plana (``"MEMORY"``) o jerárquica (``"MEMORY.LLM"``).
+            Puede ser plana (``"MEMORIES"``) o jerárquica (``"MEMORIES.LLM"``).
         field_name: Nombre del campo dentro de la sección.
         value: Valor a persistir.
         section_to_yaml: Mapa ``SECCION_RAÍZ_UPPER → clave_yaml`` específico

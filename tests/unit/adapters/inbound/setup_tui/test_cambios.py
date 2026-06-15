@@ -7,8 +7,8 @@ from adapters.inbound.setup_tui._cambios import build_cambios
 
 _MAPPING = {
     "APP": "app",
-    "MEMORY": "memory",
-    "MEMORY.LLM": "memory",
+    "MEMORIES": "memories",
+    "MEMORIES.LLM": "memories",
     "SCHEDULER": "scheduler",
     "SCHEDULER.CHANNEL_FALLBACK": "scheduler",
 }
@@ -21,22 +21,22 @@ class TestBuildCambiosSeccionPlana:
         result = build_cambios("APP", "name", "Inaki", section_to_yaml=_MAPPING)
         assert result == {"app": {"name": "Inaki"}}
 
-    def test_memory_default_top_k(self) -> None:
-        result = build_cambios("MEMORY", "default_top_k", 7, section_to_yaml=_MAPPING)
-        assert result == {"memory": {"default_top_k": 7}}
+    def test_memories_digest_size(self) -> None:
+        result = build_cambios("MEMORIES", "digest_size", 7, section_to_yaml=_MAPPING)
+        assert result == {"memories": {"digest_size": 7}}
 
 
 class TestBuildCambiosSeccionAnidada:
     """Sección con punto (PADRE.HIJO) → dos niveles de anidación."""
 
     def test_memory_llm_provider(self) -> None:
-        result = build_cambios("MEMORY.LLM", "provider", "groq", section_to_yaml=_MAPPING)
-        assert result == {"memory": {"llm": {"provider": "groq"}}}
+        result = build_cambios("MEMORIES.LLM", "provider", "groq", section_to_yaml=_MAPPING)
+        assert result == {"memories": {"llm": {"provider": "groq"}}}
 
     def test_memory_llm_value_none(self) -> None:
         """Override null se persiste correctamente como None anidado."""
-        result = build_cambios("MEMORY.LLM", "max_tokens", None, section_to_yaml=_MAPPING)
-        assert result == {"memory": {"llm": {"max_tokens": None}}}
+        result = build_cambios("MEMORIES.LLM", "max_tokens", None, section_to_yaml=_MAPPING)
+        assert result == {"memories": {"llm": {"max_tokens": None}}}
 
     def test_scheduler_channel_fallback(self) -> None:
         result = build_cambios(

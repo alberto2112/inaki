@@ -29,7 +29,7 @@ from infrastructure.config import (
     EmbeddingConfig,
     GlobalConfig,
     LLMConfig,
-    MemoryConfig,
+    MemoriesConfig,
     ProviderConfig,
 )
 from infrastructure.container import AgentContainer
@@ -60,7 +60,7 @@ def _make_agent_config(
         system_prompt="Test prompt",
         llm=LLMConfig(provider="openrouter", model="test-model"),
         embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
-        memory=MemoryConfig(db_filename=":memory:"),
+        memories=MemoriesConfig(db_filename=":memory:"),
         chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history.db"),
         delegation=AgentDelegationConfig(
             enabled=delegation_enabled,
@@ -86,7 +86,7 @@ def _make_global_config(
         app=AppConfig(ext_dirs=[]),
         llm=LLMConfig(provider="openrouter", model="test-model"),
         embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
-        memory=MemoryConfig(db_filename=":memory:"),
+        memories=MemoriesConfig(db_filename=":memory:"),
         chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history.db"),
         skills=SkillsConfig(),
         tools=ToolsConfig(),

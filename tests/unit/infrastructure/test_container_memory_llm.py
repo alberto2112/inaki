@@ -1,8 +1,8 @@
-"""Tests del wiring del LLM de consolidación en `AgentContainer`.
+"""Tests del wiring del LLM de memoria en `AgentContainer`.
 
-Cubre el helper estático `AgentContainer._resolve_memory_llm`, que decide si
-la consolidación reutiliza el LLM del agente o instancia uno dedicado según
-`cfg.memory.llm`. Los tests son aislados: no corren `__init__` completo
+Cubre el helper estático `AgentContainer._resolve_memories_llm`, que decide si
+los jobs de memoria reutilizan el LLM del agente o instancian uno dedicado según
+`cfg.memories.llm`. Los tests son aislados: no corren `__init__` completo
 (requiere IO real). Mismo patrón que `test_container_transcription.py`.
 """
 
@@ -18,8 +18,8 @@ from infrastructure.config import (
     ChatHistoryConfig,
     EmbeddingConfig,
     LLMConfig,
-    MemoryConfig,
-    MemoryLLMOverride,
+    MemoriesConfig,
+    MemoryLLMConfig,
     ProviderConfig,
 )
 from infrastructure.container import AgentContainer
@@ -28,7 +28,7 @@ from infrastructure.factories.llm_factory import LLMProviderFactory
 
 def _mk_cfg(
     *,
-    memory_llm: MemoryLLMOverride | None = None,
+    memory_llm: MemoryLLMConfig | None = None,
     base_model: str = "openai/gpt-oss-120b",
     base_provider: str = "groq",
     providers: dict[str, ProviderConfig] | None = None,
@@ -48,22 +48,22 @@ def _mk_cfg(
             reasoning_effort="high",
         ),
         embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
-        memory=MemoryConfig(db_filename=":memory:", llm=memory_llm),
+        memories=MemoriesConfig(db_filename=":memory:", llm=memory_llm),
         chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/hist.db"),
         providers=providers,
     )
 
 
-def test_resolve_memory_llm_sin_override_reusa_instancia_base() -> None:
+def test_resolve_memories_llm_sin_override_reusa_instancia_base() -> None:
     cfg = _mk_cfg(memory_llm=None)
     base_llm = MagicMock()
 
-    resultado = AgentContainer._resolve_memory_llm(cfg, base_llm)
+    resultado = AgentContainer._resolve_memories_llm(cfg, base_llm)
 
     assert resultado is base_llm
 
 
-def test_resolve_memory_llm_override_que_coincide_con_base_reusa() -> None:
+def test_resolve_memories_llm_override_que_coincide_con_base_reusa() -> None:
     """
     Si el override existe pero resuelve a una config (sin creds) idéntica al
     base, se reusa la instancia base.
@@ -73,7 +73,7 @@ def test_resolve_memory_llm_override_que_coincide_con_base_reusa() -> None:
     max_tokens, reasoning_effort).
     """
     cfg = _mk_cfg(
-        memory_llm=MemoryLLMOverride(
+        memory_llm=MemoryLLMConfig(
             provider="groq",
             model="openai/gpt-oss-120b",
             temperature=0.7,
@@ -83,16 +83,16 @@ def test_resolve_memory_llm_override_que_coincide_con_base_reusa() -> None:
     )
     base_llm = MagicMock()
 
-    resultado = AgentContainer._resolve_memory_llm(cfg, base_llm)
+    resultado = AgentContainer._resolve_memories_llm(cfg, base_llm)
 
     assert resultado is base_llm
 
 
-def test_resolve_memory_llm_override_distinto_instancia_provider_nuevo(
+def test_resolve_memories_llm_override_distinto_instancia_provider_nuevo(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cfg = _mk_cfg(
-        memory_llm=MemoryLLMOverride(
+        memory_llm=MemoryLLMConfig(
             model="llama-3.3-70b-versatile",
             reasoning_effort=None,
             max_tokens=8192,
@@ -113,7 +113,7 @@ def test_resolve_memory_llm_override_distinto_instancia_provider_nuevo(
         classmethod(fake_create_from_resolved),
     )
 
-    resultado = AgentContainer._resolve_memory_llm(cfg, base_llm)
+    resultado = AgentContainer._resolve_memories_llm(cfg, base_llm)
 
     assert resultado is instancia_dedicada
     assert resultado is not base_llm
@@ -128,7 +128,7 @@ def test_resolve_memory_llm_override_distinto_instancia_provider_nuevo(
     assert efectiva.api_key == "KEY_BASE"  # desde providers["groq"]
 
 
-def test_resolve_memory_llm_propaga_config_error_de_validacion() -> None:
+def test_resolve_memories_llm_propaga_config_error_de_validacion() -> None:
     """
     Si el override cambia a un provider que requiere creds y no hay entry en
     el registry, la factory (``create_from_resolved``) levanta ``ConfigError``
@@ -137,9 +137,9 @@ def test_resolve_memory_llm_propaga_config_error_de_validacion() -> None:
     from core.domain.errors import ConfigError
 
     cfg = _mk_cfg(
-        memory_llm=MemoryLLMOverride(provider="openai", model="gpt-4o-mini"),
+        memory_llm=MemoryLLMConfig(provider="openai", model="gpt-4o-mini"),
     )
     base_llm = MagicMock()
 
     with pytest.raises(ConfigError):
-        AgentContainer._resolve_memory_llm(cfg, base_llm)
+        AgentContainer._resolve_memories_llm(cfg, base_llm)

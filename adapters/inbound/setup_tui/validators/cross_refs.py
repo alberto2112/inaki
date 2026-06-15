@@ -136,15 +136,15 @@ def validate_global_config(
                 available=available_providers,
             )
 
-    # 5. memory.llm.provider (override opcional)
-    memory = cfg.memory  # type: ignore[attr-defined]
-    if memory is not None:
-        memory_llm = memory.llm
-        if memory_llm is not None and memory_llm.provider is not None:
-            mem_llm_provider: str = memory_llm.provider
+    # 5. memories.llm.provider (override compartido opcional)
+    memories = cfg.memories  # type: ignore[attr-defined]
+    if memories is not None:
+        memories_llm = memories.llm
+        if memories_llm is not None and memories_llm.provider is not None:
+            mem_llm_provider: str = memories_llm.provider
             if mem_llm_provider not in _PROVIDERS_LOCALES:
                 _validate_provider_campo(
-                    campo="memory.llm.provider",
+                    campo="memories.llm.provider",
                     valor=mem_llm_provider,
                     available=available_providers,
                 )

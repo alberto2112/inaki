@@ -72,5 +72,5 @@ class TestUnflatten:
 
     def test_valor_int(self):
         """Tipos no-str también se preservan."""
-        resultado = _unflatten("memory.keep_last_messages", 42)
-        assert resultado == {"memory": {"keep_last_messages": 42}}
+        resultado = _unflatten("memories.consolidation.keep_last_messages", 42)
+        assert resultado == {"memories": {"consolidation": {"keep_last_messages": 42}}}

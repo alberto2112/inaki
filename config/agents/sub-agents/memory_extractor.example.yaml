@@ -71,8 +71,9 @@ system_prompt: |
     "familia", "preferencia", "evento").
   - If there is NOTHING worth remembering long-term, return exactly: []
 
-memory:
-  enabled: false
+memories:
+  consolidation:
+    enabled: false
 
 llm:
   provider: "openai"

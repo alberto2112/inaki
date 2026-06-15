@@ -163,7 +163,7 @@ class ConsolidateMemoryUseCase:
         # la consolidación solo incluya mensajes de esos canales (p. ej. solo
         # "telegram" y no mensajes de CLI o daemon que no aportan recuerdos relevantes).
         # tuple inmutable del VO → list para el contrato del port de history.
-        cfg_channels = self._memory_cfg.channels_infused
+        cfg_channels = self._memory_cfg.consolidation.channels_infused
         channels_infused = list(cfg_channels) if cfg_channels else None
         messages = await self._history.load_uninfused(self._agent_id, channels=channels_infused)
         if not messages:
@@ -205,9 +205,7 @@ class ConsolidateMemoryUseCase:
             # tras procesarlo exitosamente. Si mark_infused falla, abortamos
             # con ConsolidationError — el trim no corre.
             try:
-                await self._history.mark_infused(
-                    self._agent_id, channel=channel, chat_id=chat_id
-                )
+                await self._history.mark_infused(self._agent_id, channel=channel, chat_id=chat_id)
             except Exception as exc:
                 raise ConsolidationError(
                     f"Error marcando mensajes como infused "
@@ -225,7 +223,7 @@ class ConsolidateMemoryUseCase:
                 await asyncio.sleep(self._delay_seconds)
 
         # 4. Truncar historial (solo si llegamos hasta aquí sin errores).
-        keep_last = self._memory_cfg.resolved_keep_last_messages()
+        keep_last = self._memory_cfg.consolidation.resolved_keep_last_messages()
         try:
             await self._history.trim(self._agent_id, keep_last=keep_last)
         except Exception as exc:
@@ -317,7 +315,7 @@ class ConsolidateMemoryUseCase:
             )
 
         # Filtro por relevance mínimo (ahorra tokens de embedding).
-        threshold = self._memory_cfg.min_relevance_score
+        threshold = self._memory_cfg.consolidation.min_relevance_score
         filtered: list[dict] = []
         dropped = 0
         for fact in facts:
@@ -435,9 +433,7 @@ class ConsolidateMemoryUseCase:
             # Extraemos el primer array balanceado y parseamos SOLO eso.
             candidate = extract_json_array(raw)
             if candidate is None:
-                raise ConsolidationError(
-                    f"El LLM no devolvió JSON válido. Respuesta: {raw[:300]}"
-                )
+                raise ConsolidationError(f"El LLM no devolvió JSON válido. Respuesta: {raw[:300]}")
             try:
                 data = json.loads(candidate)
             except json.JSONDecodeError as exc2:

@@ -176,3 +176,52 @@ class TestAfterEditNullEscape:
         page = self._make_page_with_field(field)
         page._after_edit(None)
         assert field.value == "openai"
+
+
+# ---------------------------------------------------------------------------
+# _after_bool_edit — persiste bool NATIVO (no string)
+# ---------------------------------------------------------------------------
+
+
+class TestAfterBoolEdit:
+    """_after_bool_edit guarda el booleano nativo elegido en el toggle."""
+
+    def _make_page_with_field(self, field: Field) -> BasePage:
+        page = BasePage.__new__(BasePage)
+        page._cursor_index = 0
+        page._fields = [field]
+        row_mock = MagicMock()
+        row_mock._field = field
+        row_mock.refresh_value = MagicMock()
+        page._rows = [row_mock]
+        page._container = None  # type: ignore[attr-defined]
+        return page
+
+    def test_true_persiste_bool_nativo(self):
+        """El valor guardado es ``True`` (bool), no el string 'true'."""
+        field = _make_field(label="enabled", kind="bool")
+        page = self._make_page_with_field(field)
+        page._after_bool_edit(True)
+        assert field.value is True
+        assert isinstance(field.value, bool)
+
+    def test_false_persiste_bool_nativo(self):
+        field = _make_field(label="enabled", kind="bool")
+        page = self._make_page_with_field(field)
+        page._after_bool_edit(False)
+        assert field.value is False
+        assert isinstance(field.value, bool)
+
+    def test_none_result_no_cambia_valor(self):
+        """result is None → cancelación, el valor previo se mantiene."""
+        field = _make_field(label="enabled", kind="bool")
+        field.value = True
+        page = self._make_page_with_field(field)
+        page._after_bool_edit(None)
+        assert field.value is True
+
+    def test_refresca_la_fila(self):
+        field = _make_field(label="enabled", kind="bool")
+        page = self._make_page_with_field(field)
+        page._after_bool_edit(True)
+        page._rows[0].refresh_value.assert_called_once()

@@ -57,8 +57,9 @@ system_prompt: |
   - Use `keep` when no action is needed. This is ALWAYS valid.
   - If there is nothing to reconcile, return exactly: []
 
-memory:
-  enabled: false
+memories:
+  consolidation:
+    enabled: false
 
 llm:
   provider: "openai"

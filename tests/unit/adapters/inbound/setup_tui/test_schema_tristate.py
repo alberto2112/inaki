@@ -1,7 +1,7 @@
 """Tests para sections_for_model con tristate_paths y nomenclatura de secciones.
 
 Verifica que:
-  - Los campos de MEMORY.LLM se marcan como is_tristate según tristate_paths.
+  - Los campos de MEMORIES.LLM se marcan como is_tristate según tristate_paths.
   - El tristate_state se infiere correctamente a partir de current_values.
   - El formato de nombre de sección anidado es "PADRE.HIJO".
 """
@@ -19,13 +19,13 @@ class TestSectionsForModelTristateAgentConfig:
         return next((fields for sname, fields in sections if sname == name), None)
 
     def test_memory_llm_fields_marcados_como_tristate(self):
-        """Los 4 campos de MEMORY.LLM se marcan is_tristate=True."""
+        """Los 4 campos de MEMORIES.LLM se marcan is_tristate=True."""
         from infrastructure.config import AgentConfig
 
         sections = sections_for_model(AgentConfig, {}, tristate_paths=_TRISTATE_PATHS)
-        memory_llm_fields = self._get_section(sections, "MEMORY.LLM")
+        memory_llm_fields = self._get_section(sections, "MEMORIES.LLM")
 
-        assert memory_llm_fields is not None, "Sección MEMORY.LLM no encontrada"
+        assert memory_llm_fields is not None, "Sección MEMORIES.LLM no encontrada"
         tristate_labels = {f.label for f in memory_llm_fields if f.is_tristate}
         assert "provider" in tristate_labels
         assert "model" in tristate_labels
@@ -46,9 +46,9 @@ class TestSectionsForModelTristateAgentConfig:
         """Campo no presente en current_values → tristate_state = 'inherit'."""
         from infrastructure.config import AgentConfig
 
-        # current_values sin nada en memory.llm
+        # current_values sin nada en memories.llm
         sections = sections_for_model(AgentConfig, {}, tristate_paths=_TRISTATE_PATHS)
-        memory_llm_fields = self._get_section(sections, "MEMORY.LLM")
+        memory_llm_fields = self._get_section(sections, "MEMORIES.LLM")
 
         provider_field = next(f for f in memory_llm_fields if f.label == "provider")
         assert provider_field.tristate_state == "inherit"
@@ -57,9 +57,9 @@ class TestSectionsForModelTristateAgentConfig:
         """Campo presente con valor → tristate_state = 'override_value'."""
         from infrastructure.config import AgentConfig
 
-        current = {"memory": {"llm": {"provider": "openai"}}}
+        current = {"memories": {"llm": {"provider": "openai"}}}
         sections = sections_for_model(AgentConfig, current, tristate_paths=_TRISTATE_PATHS)
-        memory_llm_fields = self._get_section(sections, "MEMORY.LLM")
+        memory_llm_fields = self._get_section(sections, "MEMORIES.LLM")
 
         provider_field = next(f for f in memory_llm_fields if f.label == "provider")
         assert provider_field.tristate_state == "override_value"
@@ -69,9 +69,9 @@ class TestSectionsForModelTristateAgentConfig:
         """Campo presente con None → tristate_state = 'override_null'."""
         from infrastructure.config import AgentConfig
 
-        current = {"memory": {"llm": {"temperature": None}}}
+        current = {"memories": {"llm": {"temperature": None}}}
         sections = sections_for_model(AgentConfig, current, tristate_paths=_TRISTATE_PATHS)
-        memory_llm_fields = self._get_section(sections, "MEMORY.LLM")
+        memory_llm_fields = self._get_section(sections, "MEMORIES.LLM")
 
         temp_field = next(f for f in memory_llm_fields if f.label == "temperature")
         assert temp_field.tristate_state == "override_null"
@@ -82,14 +82,14 @@ class TestSectionsForModelTristateAgentConfig:
 
         sections = sections_for_model(AgentConfig, {}, tristate_paths=_TRISTATE_PATHS)
         nombres = [name for name, _ in sections]
-        assert "MEMORY.LLM" in nombres
+        assert "MEMORIES.LLM" in nombres
 
     def test_reasoning_effort_en_tristate_paths(self):
         """reasoning_effort está en _TRISTATE_PATHS y se marca correctamente."""
         from infrastructure.config import AgentConfig
 
         sections = sections_for_model(AgentConfig, {}, tristate_paths=_TRISTATE_PATHS)
-        memory_llm_fields = self._get_section(sections, "MEMORY.LLM")
+        memory_llm_fields = self._get_section(sections, "MEMORIES.LLM")
 
         if memory_llm_fields is not None:
             # reasoning_effort puede no estar en todos los schemas de LLMOverride
@@ -111,15 +111,15 @@ class TestSectionNamingFormat:
         assert "SCHEDULER.CHANNEL_FALLBACK" in nombres
 
     def test_global_config_memory_llm(self):
-        """GlobalConfig emite 'MEMORY.LLM' como sección anidada."""
+        """GlobalConfig emite 'MEMORIES.LLM' como sección anidada."""
         from infrastructure.config import GlobalConfig
 
         sections = sections_for_model(GlobalConfig, {}, section_prefix="APP")
         nombres = [name for name, _ in sections]
-        assert "MEMORY.LLM" in nombres
+        assert "MEMORIES.LLM" in nombres
 
     def test_no_emite_nombres_de_clase(self):
-        """El schema mapper NO emite nombres de clase (ej. MEMORYCONFIG).
+        """El schema mapper NO emite nombres de clase (ej. MEMORIESCONFIG).
 
         Los nombres de clase eran el bug de la V1. Este test asegura la regresión.
         """
@@ -129,6 +129,6 @@ class TestSectionNamingFormat:
         nombres = [name for name, _ in sections]
 
         # Nombres de clase que NO deben aparecer nunca
-        nombres_clase_prohibidos = {"MEMORYCONFIG", "SCHEDULERCONFIG", "CHANNELFALLBACKCONFIG"}
+        nombres_clase_prohibidos = {"MEMORIESCONFIG", "SCHEDULERCONFIG", "CHANNELFALLBACKCONFIG"}
         encontrados = nombres_clase_prohibidos & set(nombres)
         assert not encontrados, f"Nombres de clase inesperados en secciones: {encontrados}"

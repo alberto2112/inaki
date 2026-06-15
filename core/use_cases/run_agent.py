@@ -228,7 +228,7 @@ class RunAgentUseCase:
         Lee el digest markdown del scope ``(channel, chat_id)``. Retorna ``''``
         si no existe o falla la lectura. ``None`` o cadena vacía en cualquier
         componente del scope se sanitizan a ``"default"`` (ver
-        ``MemoryConfig.resolved_digest_path``).
+        ``MemorySettings.resolved_digest_path``).
         """
         path = self._settings.memory.resolved_digest_path(channel, chat_id)
         try:

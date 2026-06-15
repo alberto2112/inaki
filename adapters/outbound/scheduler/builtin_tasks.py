@@ -22,8 +22,8 @@ def build_consolidate_memory_task(schedule: str) -> ScheduledTask:
     """
     Construye la definición de la tarea builtin `consolidate_memory`.
 
-    El cron viene de `global_config.memory.schedule`. Se instancia en cada
-    arranque y pasa por el reconciliador de `AppContainer` que decide si
+    El cron viene de `global_config.memories.consolidation.schedule`. Se instancia
+    en cada arranque y pasa por el reconciliador de `AppContainer` que decide si
     hay que sembrar, actualizar o resetear la fila existente.
     """
     return ScheduledTask(
@@ -45,10 +45,10 @@ def build_reconcile_memory_task(schedule: str, agent_id: str, task_id: int) -> S
 
     A diferencia de ``consolidate_memory`` (que es global y usa un único task_id),
     la reconciliación es per-agent: hay una tarea builtin por agente que tenga
-    ``memory.reconcile_enabled=True``. El ``task_id`` debe ser único por agente
-    y se calcula en el container (base + índice ordinal del agente).
+    ``memories.reconciliation.enabled=True``. El ``task_id`` debe ser único por
+    agente y se calcula en el container (base + índice ordinal del agente).
 
-    El cron viene de ``memory.reconcile_schedule`` del agente.
+    El cron viene de ``memories.reconciliation.schedule`` del agente.
     """
     return ScheduledTask(
         id=task_id,

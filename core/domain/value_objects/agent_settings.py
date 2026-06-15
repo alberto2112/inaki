@@ -44,8 +44,38 @@ def sanitize_digest_scope(value: str | None) -> str:
     return sanitized or "default"
 
 
+class ConsolidationSettings(BaseModel, frozen=True):
+    """Parámetros que ``ConsolidateMemoryUseCase`` consume del job de consolidación."""
+
+    min_relevance_score: float = 0.5
+    keep_last_messages: int = 0
+    channels_infused: tuple[str, ...] | None = None
+
+    def resolved_keep_last_messages(self) -> int:
+        """
+        Devuelve cuántos mensajes preservar por agente tras la consolidación.
+        0 (default) es un sentinel que significa 'usar el fallback del sistema'.
+        Cualquier valor > 0 se respeta tal cual.
+        """
+        if self.keep_last_messages <= 0:
+            return KEEP_LAST_MESSAGES_FALLBACK
+        return self.keep_last_messages
+
+
+class ReconciliationSettings(BaseModel, frozen=True):
+    """Parámetros que ``ReconcileMemoryUseCase`` consume del job de reconciliación."""
+
+    similarity_threshold: float = 0.80
+    top_k: int = 10
+
+
 class MemorySettings(BaseModel, frozen=True):
-    """Parámetros de memoria que consumen ``ConsolidateMemoryUseCase`` y ``RunAgentUseCase``.
+    """Parámetros de memoria que consumen ``ConsolidateMemoryUseCase``,
+    ``ReconcileMemoryUseCase`` y ``RunAgentUseCase``.
+
+    Estructura espejo del YAML ``memories``: campos de digest COMPARTIDOS en la
+    raíz, y dos sub-VOs hermanos (``consolidation`` / ``reconciliation``) con los
+    parámetros propios de cada job.
 
     ``digest_template`` llega ya resuelto a ruta absoluta por el container
     (la expansión de ``~/.inaki/`` es responsabilidad del loader de config).
@@ -54,13 +84,8 @@ class MemorySettings(BaseModel, frozen=True):
 
     digest_template: str = "mem/digest_{channel}_{chat_id}.md"
     digest_size: int = 14
-    min_relevance_score: float = 0.5
-    keep_last_messages: int = 0
-    channels_infused: tuple[str, ...] | None = None
-    reconcile_enabled: bool = False
-    reconcile_schedule: str = "0 4 * * 1"
-    reconcile_similarity_threshold: float = 0.80
-    reconcile_top_k: int = 10
+    consolidation: ConsolidationSettings = ConsolidationSettings()
+    reconciliation: ReconciliationSettings = ReconciliationSettings()
 
     def resolved_digest_path(self, channel: str | None, chat_id: str | None) -> Path:
         """
@@ -75,16 +100,6 @@ class MemorySettings(BaseModel, frozen=True):
         cid = sanitize_digest_scope(chat_id)
         formatted = self.digest_template.format(channel=ch, chat_id=cid)
         return Path(formatted)
-
-    def resolved_keep_last_messages(self) -> int:
-        """
-        Devuelve cuántos mensajes preservar por agente tras la consolidación.
-        0 (default) es un sentinel que significa 'usar el fallback del sistema'.
-        Cualquier valor > 0 se respeta tal cual.
-        """
-        if self.keep_last_messages <= 0:
-            return KEEP_LAST_MESSAGES_FALLBACK
-        return self.keep_last_messages
 
 
 class RunAgentSettings(BaseModel, frozen=True):

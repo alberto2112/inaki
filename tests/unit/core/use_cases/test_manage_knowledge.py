@@ -102,9 +102,7 @@ class TestResolucion:
         assert idx.reindexed == 1
 
     async def test_varias_fuentes_exige_id(self) -> None:
-        uc = ManageKnowledgeUseCase(
-            sources=[_FakeIndexableSource("a"), _FakeIndexableSource("b")]
-        )
+        uc = ManageKnowledgeUseCase(sources=[_FakeIndexableSource("a"), _FakeIndexableSource("b")])
         with pytest.raises(KnowledgeError, match="especificá cuál"):
             await uc.reindex()
 

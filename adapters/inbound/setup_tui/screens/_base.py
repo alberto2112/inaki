@@ -128,12 +128,15 @@ class BasePage(Screen):
             self.app.push_screen(EditTristateModal(field), self._after_tristate_edit)
             return
 
+        from adapters.inbound.setup_tui.modals.bool import EditBoolModal
         from adapters.inbound.setup_tui.modals.enum import EditEnumModal
         from adapters.inbound.setup_tui.modals.long import EditLongModal
         from adapters.inbound.setup_tui.modals.scalar import EditScalarModal
         from adapters.inbound.setup_tui.modals.secret import EditSecretModal
 
-        if field.kind == "scalar":
+        if field.kind == "bool":
+            self.app.push_screen(EditBoolModal(field), self._after_bool_edit)
+        elif field.kind == "scalar":
             self.app.push_screen(EditScalarModal(field), self._after_edit)
         elif field.kind == "enum":
             self.app.push_screen(EditEnumModal(field), self._after_edit)
@@ -162,6 +165,23 @@ class BasePage(Screen):
         field = self._current_field()
         # Convención UX: "<null>" tipeado significa guardar como None explícito
         field.value = None if result.strip() == "<null>" else result
+        self._current_row().refresh_value()
+        self._on_field_saved(field)
+        self._notify_daemon_restart_needed()
+
+    def _after_bool_edit(self, result: bool | None) -> None:
+        """Callback del modal de toggle booleano.
+
+        - ``result is None`` → el usuario canceló. No se hace nada.
+        - ``True``/``False`` → se persiste el ``bool`` **nativo** (no un string),
+          reusando ``_on_field_saved`` de la página. Así el YAML queda
+          ``campo: true`` en vez de ``campo: "true"``.
+        """
+        if result is None:
+            return
+
+        field = self._current_field()
+        field.value = result
         self._current_row().refresh_value()
         self._on_field_saved(field)
         self._notify_daemon_restart_needed()

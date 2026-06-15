@@ -71,7 +71,7 @@ def test_render_default_global_yaml_is_parseable() -> None:
         "app",
         "llm",
         "embedding",
-        "memory",
+        "memories",
         "chat_history",
         "skills",
         "tools",

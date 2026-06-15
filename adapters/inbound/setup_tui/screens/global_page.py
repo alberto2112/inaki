@@ -18,14 +18,15 @@ if TYPE_CHECKING:
 
 # Mapeo de section_name → clave top-level del YAML global.
 # Las claves son los nombres exactos que emite ``sections_for_model``.
-# Las sub-secciones anidadas (ej. MEMORY.LLM) se mapean a la misma clave
+# Las sub-secciones anidadas (ej. MEMORIES.LLM) se mapean a la misma clave
 # top-level que su padre porque el repo las escribe como dicts anidados.
+# build_cambios solo consulta el primer segmento, así que la entrada MEMORIES
+# cubre LLM/CONSOLIDATION/RECONCILIATION.
 _SECTION_TO_YAML_KEY: dict[str, str] = {
     "APP": "app",
     "LLM": "llm",
     "EMBEDDING": "embedding",
-    "MEMORY": "memory",
-    "MEMORY.LLM": "memory",
+    "MEMORIES": "memories",
     "CHAT_HISTORY": "chat_history",
     "SKILLS": "skills",
     "TOOLS": "tools",
@@ -91,9 +92,7 @@ class GlobalPage(BasePage):
             return
 
         # Generar secciones con el schema mapper (clase inyectada vía el container)
-        sections = sections_for_model(
-            self._container.global_schema, current, section_prefix="APP"
-        )
+        sections = sections_for_model(self._container.global_schema, current, section_prefix="APP")
 
         for section_name, fields in sections:
             yield SectionHeader(section_name)
@@ -115,7 +114,7 @@ class GlobalPage(BasePage):
         # Determinar la capa: secrets si el kind es "secret", sino GLOBAL
         layer = LayerName.GLOBAL_SECRETS if field.kind == "secret" else LayerName.GLOBAL
 
-        # build_cambios respeta secciones anidadas: MEMORY.LLM → {memory: {llm: ...}}
+        # build_cambios respeta secciones anidadas: MEMORIES.LLM → {memories: {llm: ...}}
         cambios = build_cambios(
             section_name=section_name,
             field_name=field_name,

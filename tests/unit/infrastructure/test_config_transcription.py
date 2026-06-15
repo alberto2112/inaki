@@ -61,7 +61,7 @@ def test_global_config_transcription_es_opcional_y_default_none() -> None:
         app=__import__("infrastructure.config", fromlist=["AppConfig"]).AppConfig(),
         llm=LLMConfig(),
         embedding=EmbeddingConfig(),
-        memory=__import__("infrastructure.config", fromlist=["MemoryConfig"]).MemoryConfig(),
+        memories=__import__("infrastructure.config", fromlist=["MemoriesConfig"]).MemoriesConfig(),
         chat_history=__import__(
             "infrastructure.config", fromlist=["ChatHistoryConfig"]
         ).ChatHistoryConfig(),
@@ -90,7 +90,7 @@ def test_load_global_config_parsea_bloque_transcription(tmp_path: Path) -> None:
         "app: {name: Test}\n"
         "llm: {provider: groq, model: m}\n"
         "embedding: {provider: e5_onnx, model_dirname: /tmp/m}\n"
-        "memory: {db_filename: ':memory:'}\n"
+        "memories: {db_filename: ':memory:'}\n"
         "chat_history: {db_filename: /tmp/h.db}\n"
         "transcription: {provider: groq, model: whisper-large-v3}\n"
         "providers:\n"
@@ -118,7 +118,7 @@ def test_load_agent_config_mergea_transcription_y_providers_4_layers(tmp_path: P
         "app: {name: Test}\n"
         "llm: {provider: groq, model: m}\n"
         "embedding: {provider: e5_onnx, model_dirname: /tmp/m}\n"
-        "memory: {db_filename: ':memory:'}\n"
+        "memories: {db_filename: ':memory:'}\n"
         "chat_history: {db_filename: /tmp/h.db}\n"
         "transcription: {provider: groq, model: whisper-large-v3-turbo}\n",
         encoding="utf-8",
@@ -159,7 +159,7 @@ def test_agent_config_sin_transcription_queda_en_none(tmp_path: Path) -> None:
         "app: {name: Test}\n"
         "llm: {provider: groq, model: m}\n"
         "embedding: {provider: e5_onnx, model_dirname: /tmp/m}\n"
-        "memory: {db_filename: ':memory:'}\n"
+        "memories: {db_filename: ':memory:'}\n"
         "chat_history: {db_filename: /tmp/h.db}\n",
         encoding="utf-8",
     )

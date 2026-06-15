@@ -121,7 +121,9 @@ async def test_scheduler_run_200_success(admin_app, mock_app_container) -> None:
     mock_app_container.scheduler_service.run_task_now.assert_awaited_once_with(100)
 
 
-async def test_scheduler_run_200_trigger_failed_success_false(admin_app, mock_app_container) -> None:
+async def test_scheduler_run_200_trigger_failed_success_false(
+    admin_app, mock_app_container
+) -> None:
     """El trigger ejecutó pero falló → 200 con success=False (NO es 404)."""
     mock_app_container.scheduler_service.run_task_now = AsyncMock(
         return_value=ManualRunResult(task_id=100, success=False, output=None, error="boom")

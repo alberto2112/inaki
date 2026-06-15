@@ -45,7 +45,7 @@ def _make_global_config(
         llm=SimpleNamespace(provider=llm_provider),
         embedding=SimpleNamespace(provider=emb_provider),
         transcription=transcription,
-        memory=SimpleNamespace(llm=memory_llm),
+        memories=SimpleNamespace(llm=memory_llm),
     )
 
 
@@ -154,7 +154,7 @@ def test_validate_global_config_ok_con_transcription() -> None:
 
 
 def test_validate_global_config_ok_con_memory_llm_override() -> None:
-    """Override de LLM en memory con provider válido pasa sin error."""
+    """Override de LLM en memories con provider válido pasa sin error."""
     cfg = _make_global_config(
         default_agent="general",
         llm_provider="openrouter",
@@ -254,7 +254,7 @@ def test_validate_global_config_transcription_provider_invalido() -> None:
 
 
 def test_validate_global_config_memory_llm_provider_invalido() -> None:
-    """Falla si memory.llm.provider override apunta a provider inexistente."""
+    """Falla si memories.llm.provider override apunta a provider inexistente."""
     cfg = _make_global_config(
         default_agent="general",
         llm_provider="openrouter",
@@ -267,7 +267,7 @@ def test_validate_global_config_memory_llm_provider_invalido() -> None:
             available_agents=["general"],
             available_providers=["openrouter", "groq"],
         )
-    assert exc_info.value.campo == "memory.llm.provider"
+    assert exc_info.value.campo == "memories.llm.provider"
     assert exc_info.value.valor == "proveedor_fantasma"
 
 
@@ -292,7 +292,7 @@ def test_validate_global_config_primer_error_gana() -> None:
 
 
 def test_validate_global_config_memory_llm_none_no_valida() -> None:
-    """Si memory.llm es None (sin override), no se valida el provider."""
+    """Si memories.llm es None (sin override), no se valida el provider."""
     cfg = _make_global_config(
         default_agent="general",
         llm_provider="openrouter",

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
 from core.domain.entities.memory import MemoryEntry
-from core.domain.value_objects.agent_settings import MemorySettings
+from core.domain.value_objects.agent_settings import MemorySettings, ReconciliationSettings
 from core.use_cases.reconcile_memory import ReconcileMemoryUseCase
 
 
@@ -40,9 +40,7 @@ def _entry(
 
 def _make_uc(mock_llm, mock_memory, mock_embedder) -> ReconcileMemoryUseCase:
     cfg = MemorySettings(
-        reconcile_enabled=True,
-        reconcile_similarity_threshold=0.80,
-        reconcile_top_k=10,
+        reconciliation=ReconciliationSettings(similarity_threshold=0.80, top_k=10),
     )
     return ReconcileMemoryUseCase(
         llm=mock_llm,
@@ -110,9 +108,7 @@ async def test_seed_sin_vecinos_sobre_umbral_marca_reconciliado(
 # ---------------------------------------------------------------------------
 
 
-async def test_merge_crea_nuevo_entry_con_reconciled_true(
-    mock_llm, mock_memory, mock_embedder
-):
+async def test_merge_crea_nuevo_entry_con_reconciled_true(mock_llm, mock_memory, mock_embedder):
     seed = _entry("seed-1", "estoy enfermo con gripe")
     vecino = _entry("vecino-1", "ya me recuperé de la gripe")
     mock_memory.load_unreconciled.return_value = [seed]
@@ -271,9 +267,7 @@ async def test_keep_no_modifica_entries_pero_marca_reconciliados(
 # ---------------------------------------------------------------------------
 
 
-async def test_vecino_de_otro_scope_no_entra_al_cluster(
-    mock_llm, mock_memory, mock_embedder
-):
+async def test_vecino_de_otro_scope_no_entra_al_cluster(mock_llm, mock_memory, mock_embedder):
     seed = _entry("seed-1", "algo", channel="telegram", chat_id="100")
     vecino_mismo = _entry("vec-ok", "similar", channel="telegram", chat_id="100")
     vecino_otro_canal = _entry("vec-canal", "similar", channel="cli", chat_id="100")
@@ -315,9 +309,7 @@ async def test_vecino_de_otro_scope_no_entra_al_cluster(
 # ---------------------------------------------------------------------------
 
 
-async def test_vecino_bajo_umbral_no_entra_al_cluster(
-    mock_llm, mock_memory, mock_embedder
-):
+async def test_vecino_bajo_umbral_no_entra_al_cluster(mock_llm, mock_memory, mock_embedder):
     seed = _entry("seed-1", "algo")
     vecino_bajo = _entry("vec-bajo", "similar", relevance=0.5)
     mock_memory.load_unreconciled.return_value = [seed]
@@ -337,9 +329,7 @@ async def test_vecino_bajo_umbral_no_entra_al_cluster(
 # ---------------------------------------------------------------------------
 
 
-async def test_nuevo_entry_de_merge_tiene_reconciled_true(
-    mock_llm, mock_memory, mock_embedder
-):
+async def test_nuevo_entry_de_merge_tiene_reconciled_true(mock_llm, mock_memory, mock_embedder):
     """Garantía explícita del anti-loop: el nuevo recuerdo no re-entra como seed."""
     seed = _entry("s1", "contenido A")
     vecino = _entry("v1", "contenido B")
@@ -371,9 +361,7 @@ async def test_nuevo_entry_de_merge_tiene_reconciled_true(
 # ---------------------------------------------------------------------------
 
 
-async def test_llm_devuelve_json_con_preamble_se_parsea(
-    mock_llm, mock_memory, mock_embedder
-):
+async def test_llm_devuelve_json_con_preamble_se_parsea(mock_llm, mock_memory, mock_embedder):
     seed = _entry("s1", "algo")
     vecino = _entry("v1", "similar")
     mock_memory.load_unreconciled.return_value = [seed]
@@ -382,9 +370,9 @@ async def test_llm_devuelve_json_con_preamble_se_parsea(
 
     # El LLM agrega texto alrededor del JSON
     raw = (
-        'Aquí está mi análisis del cluster:\n'
+        "Aquí está mi análisis del cluster:\n"
         '[{"action": "supersede", "target_ids": ["v1"]}]\n'
-        'No hay nada más que decir.'
+        "No hay nada más que decir."
     )
     from core.domain.value_objects.llm_response import LLMResponse
 
@@ -402,9 +390,7 @@ async def test_llm_devuelve_json_con_preamble_se_parsea(
 # ---------------------------------------------------------------------------
 
 
-async def test_llm_devuelve_basura_saltea_cluster_y_sigue(
-    mock_llm, mock_memory, mock_embedder
-):
+async def test_llm_devuelve_basura_saltea_cluster_y_sigue(mock_llm, mock_memory, mock_embedder):
     seed1 = _entry("s1", "algo")
     vecino1 = _entry("v1", "similar")
     seed2 = _entry("s2", "otro tema", channel="telegram", chat_id="200")
@@ -440,9 +426,7 @@ async def test_llm_devuelve_basura_saltea_cluster_y_sigue(
 # ---------------------------------------------------------------------------
 
 
-async def test_set_reconciler_usa_one_shot_en_vez_de_llm(
-    mock_llm, mock_memory, mock_embedder
-):
+async def test_set_reconciler_usa_one_shot_en_vez_de_llm(mock_llm, mock_memory, mock_embedder):
     seed = _entry("s1", "algo")
     vecino = _entry("v1", "similar")
     mock_memory.load_unreconciled.return_value = [seed]

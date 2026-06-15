@@ -1,4 +1,4 @@
-"""Tests de resolución de paths de runtime y campos de MemoryConfig."""
+"""Tests de resolución de paths de runtime y campos de MemoriesConfig."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from infrastructure.config import (
     ChatHistoryConfig,
     EmbeddingConfig,
     LLMConfig,
-    MemoryConfig,
-    MemoryLLMOverride,
+    MemoriesConfig,
+    MemoryLLMConfig,
     ProviderConfig,
     SchedulerConfig,
 )
@@ -22,12 +22,12 @@ INAKI_HOME = f"{HOME}/.inaki"
 
 
 def test_default_digest_size() -> None:
-    cfg = MemoryConfig()
+    cfg = MemoriesConfig()
     assert cfg.digest_size == 14
 
 
 def test_explicit_digest_size() -> None:
-    cfg = MemoryConfig(digest_size=20)
+    cfg = MemoriesConfig(digest_size=20)
     assert cfg.digest_size == 20
 
 
@@ -37,12 +37,12 @@ def test_explicit_digest_size() -> None:
 
 
 def test_default_memory_db_filename_resolves_to_inaki_home() -> None:
-    cfg = MemoryConfig()
+    cfg = MemoriesConfig()
     assert cfg.db_filename == f"{INAKI_HOME}/data/inaki.db"
 
 
 def test_default_digest_filename_resolves_to_inaki_home() -> None:
-    cfg = MemoryConfig()
+    cfg = MemoriesConfig()
     # El default es un template con placeholders {channel}/{chat_id} para
     # aislar el digest por scope (channel, chat_id). La resolución de
     # ``RuntimePath`` solo expande ``~`` y ancla el path bajo ~/.inaki/;
@@ -76,17 +76,17 @@ def test_default_embedding_cache_filename_resolves_to_inaki_home() -> None:
 
 
 def test_relative_path_anchored_under_inaki_home() -> None:
-    cfg = MemoryConfig(db_filename="custom/inaki.db")
+    cfg = MemoriesConfig(db_filename="custom/inaki.db")
     assert cfg.db_filename == f"{INAKI_HOME}/custom/inaki.db"
 
 
 def test_relative_bare_filename_anchored_under_inaki_home() -> None:
-    cfg = MemoryConfig(db_filename="inaki.db")
+    cfg = MemoriesConfig(db_filename="inaki.db")
     assert cfg.db_filename == f"{INAKI_HOME}/inaki.db"
 
 
 def test_relative_digest_filename_anchored_under_inaki_home() -> None:
-    cfg = MemoryConfig(digest_filename="digest.md")
+    cfg = MemoriesConfig(digest_filename="digest.md")
     assert cfg.digest_filename == f"{INAKI_HOME}/digest.md"
 
 
@@ -96,7 +96,7 @@ def test_relative_digest_filename_anchored_under_inaki_home() -> None:
 
 
 def test_absolute_path_used_as_is() -> None:
-    cfg = MemoryConfig(db_filename="/srv/inaki/foo.db")
+    cfg = MemoriesConfig(db_filename="/srv/inaki/foo.db")
     assert cfg.db_filename == "/srv/inaki/foo.db"
 
 
@@ -122,7 +122,7 @@ def test_absolute_model_dirname_used_as_is() -> None:
 
 
 def test_sqlite_memory_special_passes_through() -> None:
-    cfg = MemoryConfig(db_filename=":memory:")
+    cfg = MemoriesConfig(db_filename=":memory:")
     assert cfg.db_filename == ":memory:"
 
 
@@ -155,12 +155,12 @@ def test_app_ext_dirs_expand_tilde_per_element() -> None:
 
 
 def test_keep_last_messages_default_is_zero_sentinel() -> None:
-    cfg = MemoryConfig()
-    assert cfg.keep_last_messages == 0
+    cfg = MemoriesConfig()
+    assert cfg.consolidation.keep_last_messages == 0
 
 
 # ---------------------------------------------------------------------------
-# MemoryLLMOverride — resolución de LLMConfig efectiva para consolidación
+# MemoryLLMConfig — resolución de LLMConfig efectiva para consolidación
 # ---------------------------------------------------------------------------
 
 
@@ -180,7 +180,7 @@ def _providers_with_groq() -> dict[str, ProviderConfig]:
 
 def test_resolved_llm_config_sin_override_devuelve_base() -> None:
     base = _base_llm()
-    cfg = MemoryConfig()
+    cfg = MemoriesConfig()
 
     resultado = LLMProviderFactory.resolve(cfg.merged_llm_config(base), _providers_with_groq())
 
@@ -196,7 +196,7 @@ def test_resolved_llm_config_sin_override_devuelve_base() -> None:
 def test_merged_llm_config_sin_override_devuelve_base() -> None:
     """El merge puro (sin creds) devuelve el base intacto cuando no hay override."""
     base = _base_llm()
-    cfg = MemoryConfig()
+    cfg = MemoriesConfig()
 
     assert cfg.merged_llm_config(base) == base
 
@@ -208,12 +208,12 @@ def test_resolved_llm_config_merge_parcial_resuelve_caso_del_bug() -> None:
     no-reasoning y más max_tokens, la consolidación puede devolver JSON.
     """
     base = _base_llm()
-    override = MemoryLLMOverride(
+    override = MemoryLLMConfig(
         model="llama-3.3-70b-versatile",
         reasoning_effort=None,
         max_tokens=8192,
     )
-    cfg = MemoryConfig(llm=override)
+    cfg = MemoriesConfig(llm=override)
 
     resultado = LLMProviderFactory.resolve(cfg.merged_llm_config(base), _providers_with_groq())
 
@@ -234,18 +234,18 @@ def test_resolved_llm_config_distingue_null_explicito_vs_clave_ausente() -> None
     providers = _providers_with_groq()
 
     # Caso 1: null explícito → model_fields_set contiene 'reasoning_effort'.
-    override_null = MemoryLLMOverride.model_validate({"reasoning_effort": None})
+    override_null = MemoryLLMConfig.model_validate({"reasoning_effort": None})
     assert "reasoning_effort" in override_null.model_fields_set
     resultado_null = LLMProviderFactory.resolve(
-        MemoryConfig(llm=override_null).merged_llm_config(base), providers
+        MemoriesConfig(llm=override_null).merged_llm_config(base), providers
     )
     assert resultado_null.reasoning_effort is None
 
     # Caso 2: clave ausente → model_fields_set NO contiene 'reasoning_effort'.
-    override_ausente = MemoryLLMOverride.model_validate({"model": "X"})
+    override_ausente = MemoryLLMConfig.model_validate({"model": "X"})
     assert "reasoning_effort" not in override_ausente.model_fields_set
     resultado_ausente = LLMProviderFactory.resolve(
-        MemoryConfig(llm=override_ausente).merged_llm_config(base), providers
+        MemoriesConfig(llm=override_ausente).merged_llm_config(base), providers
     )
     assert resultado_ausente.reasoning_effort == "high"  # heredado
 
@@ -260,8 +260,8 @@ def test_resolved_llm_config_provider_distinto_sin_entry_en_registry_devuelve_ap
     y la factory es quien levanta ``ConfigError`` al instanciar el adapter.
     """
     base = _base_llm()
-    override = MemoryLLMOverride(provider="openai", model="gpt-4o-mini")
-    cfg = MemoryConfig(llm=override)
+    override = MemoryLLMConfig(provider="openai", model="gpt-4o-mini")
+    cfg = MemoriesConfig(llm=override)
 
     resultado = LLMProviderFactory.resolve(cfg.merged_llm_config(base), _providers_with_groq())
 
@@ -276,8 +276,8 @@ def test_resolved_llm_config_mismo_provider_hereda_creds_del_registry() -> None:
     bajo la misma key del base.
     """
     base = _base_llm()
-    override = MemoryLLMOverride(model="otro-modelo")
-    cfg = MemoryConfig(llm=override)
+    override = MemoryLLMConfig(model="otro-modelo")
+    cfg = MemoriesConfig(llm=override)
 
     resultado = LLMProviderFactory.resolve(cfg.merged_llm_config(base), _providers_with_groq())
 
@@ -288,8 +288,8 @@ def test_resolved_llm_config_mismo_provider_hereda_creds_del_registry() -> None:
 def test_resolved_llm_config_provider_distinto_con_entry_en_registry_es_ok() -> None:
     """Cuando el override cambia provider y el registry tiene la entry, se resuelve bien."""
     base = _base_llm()
-    override = MemoryLLMOverride(provider="openai", model="gpt-4o-mini")
-    cfg = MemoryConfig(llm=override)
+    override = MemoryLLMConfig(provider="openai", model="gpt-4o-mini")
+    cfg = MemoriesConfig(llm=override)
     providers = {
         "groq": ProviderConfig(api_key="KEY_BASE"),
         "openai": ProviderConfig(api_key="KEY_OVERRIDE"),
@@ -370,7 +370,7 @@ def _make_global_config(**delegation_kwargs) -> GlobalConfig:
         app=AppConfig(),
         llm=LLMConfig(),
         embedding=EmbeddingConfig(),
-        memory=MemoryConfig(),
+        memories=MemoriesConfig(),
         chat_history=ChatHistoryConfig(),
         delegation=DelegationConfig(**delegation_kwargs)
         if delegation_kwargs
@@ -415,7 +415,7 @@ def _make_agent_config(**delegation_kwargs) -> AgentConfig:
         system_prompt="you are a test agent",
         llm=LLMConfig(),
         embedding=EmbeddingConfig(),
-        memory=MemoryConfig(),
+        memories=MemoriesConfig(),
         chat_history=ChatHistoryConfig(),
         delegation=AgentDelegationConfig(**delegation_kwargs)
         if delegation_kwargs

@@ -55,14 +55,14 @@ def test_global_config_has_admin_field() -> None:
         ChatHistoryConfig,
         EmbeddingConfig,
         LLMConfig,
-        MemoryConfig,
+        MemoriesConfig,
     )
 
     cfg = GlobalConfig(
         app=AppConfig(),
         llm=LLMConfig(),
         embedding=EmbeddingConfig(),
-        memory=MemoryConfig(),
+        memories=MemoriesConfig(),
         chat_history=ChatHistoryConfig(),
     )
     assert hasattr(cfg, "admin")
@@ -75,14 +75,14 @@ def test_global_config_admin_uses_defaults_when_absent() -> None:
         ChatHistoryConfig,
         EmbeddingConfig,
         LLMConfig,
-        MemoryConfig,
+        MemoriesConfig,
     )
 
     cfg = GlobalConfig(
         app=AppConfig(),
         llm=LLMConfig(),
         embedding=EmbeddingConfig(),
-        memory=MemoryConfig(),
+        memories=MemoriesConfig(),
         chat_history=ChatHistoryConfig(),
     )
     assert cfg.admin.port == 6497

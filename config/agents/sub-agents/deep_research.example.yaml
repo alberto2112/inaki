@@ -193,8 +193,9 @@ system_prompt: |
   *ResearchAgent is an internal component of the Inaki agentic assistant. It has no user-facing interface.*
 
 
-memory:
-  enabled: false
+memories:
+  consolidation:
+    enabled: false
 
 llm:
   provider: openai

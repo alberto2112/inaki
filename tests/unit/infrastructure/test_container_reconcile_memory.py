@@ -1,15 +1,15 @@
 """Tests del wiring de ReconcileMemoryUseCase en container.py.
 
 Cubre:
-1. build_memory_settings propaga los 4 campos reconcile_* desde MemoryConfig.
-2. AgentContainer construye ReconcileMemoryUseCase cuando memory.enabled=True y
-   memory.reconcile_enabled=True.
-3. AgentContainer NO construye ReconcileMemoryUseCase cuando reconcile_enabled=False.
-4. AgentContainer NO construye ReconcileMemoryUseCase cuando memory.enabled=False.
+1. build_memory_settings propaga los campos de reconciliación desde MemoriesConfig.
+2. AgentContainer construye ReconcileMemoryUseCase cuando reconciliation.enabled=True.
+3. AgentContainer NO construye ReconcileMemoryUseCase cuando reconciliation.enabled=False.
+4. La reconciliación es INDEPENDIENTE de la consolidación: se construye con
+   reconciliation.enabled=True aunque consolidation.enabled=False.
 5. build_reconcile_memory_task genera el nombre correcto, TriggerType, schedule y task_id.
 6. ReconcileDispatchAdapter llama al use case correcto por agent_id.
 7. ReconcileDispatchAdapter lanza ValueError cuando el agent_id no existe.
-8. _wire_memory_reconcilers llama a set_reconciler cuando reconcile_llm.agent_id apunta
+8. _wire_memory_reconcilers llama a set_reconciler cuando reconciliation.agent_id apunta
    a un sub-agente válido (happy path).
 """
 
@@ -34,12 +34,13 @@ from infrastructure.config import (
     AgentConfig,
     AgentDelegationConfig,
     ChatHistoryConfig,
+    ConsolidationConfig,
     DelegationConfig,
     EmbeddingConfig,
     GlobalConfig,
     LLMConfig,
-    MemoryConfig,
-    MemoryLLMOverride,
+    MemoriesConfig,
+    ReconciliationConfig,
     ProviderConfig,
 )
 from infrastructure.container import AgentContainer, build_memory_settings
@@ -64,22 +65,30 @@ def _make_memory_config(
     reconcile_schedule: str = "0 4 * * 1",
     reconcile_similarity_threshold: float = 0.80,
     reconcile_top_k: int = 10,
-    reconcile_llm: MemoryLLMOverride | None = None,
-) -> MemoryConfig:
-    return MemoryConfig(
+    reconcile_agent_id: str | None = None,
+) -> MemoriesConfig:
+    """Construye un MemoriesConfig mapeando los params legacy a las sub-secciones.
+
+    ``enabled`` controla la consolidación; los ``reconcile_*`` controlan la
+    reconciliación (sección independiente). El sub-agente reconciliador se declara
+    en ``reconciliation.agent_id`` (antes vivía en ``reconcile_llm.agent_id``).
+    """
+    return MemoriesConfig(
         db_filename=":memory:",
-        enabled=enabled,
-        reconcile_enabled=reconcile_enabled,
-        reconcile_schedule=reconcile_schedule,
-        reconcile_similarity_threshold=reconcile_similarity_threshold,
-        reconcile_top_k=reconcile_top_k,
-        reconcile_llm=reconcile_llm,
+        consolidation=ConsolidationConfig(enabled=enabled),
+        reconciliation=ReconciliationConfig(
+            enabled=reconcile_enabled,
+            schedule=reconcile_schedule,
+            similarity_threshold=reconcile_similarity_threshold,
+            top_k=reconcile_top_k,
+            agent_id=reconcile_agent_id,
+        ),
     )
 
 
 def _make_agent_config(
     agent_id: str = "test-agent",
-    memory_cfg: MemoryConfig | None = None,
+    memory_cfg: MemoriesConfig | None = None,
 ) -> AgentConfig:
     return AgentConfig(
         id=agent_id,
@@ -88,7 +97,7 @@ def _make_agent_config(
         system_prompt="Test prompt",
         llm=LLMConfig(provider="openrouter", model="test-model"),
         embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
-        memory=memory_cfg or _make_memory_config(),
+        memories=memory_cfg or _make_memory_config(),
         chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history.db"),
         delegation=AgentDelegationConfig(enabled=False),
         providers={"openrouter": ProviderConfig(api_key="test-key")},
@@ -108,7 +117,7 @@ def _make_global_config() -> GlobalConfig:
         app=AppConfig(ext_dirs=[]),
         llm=LLMConfig(provider="openrouter", model="test-model"),
         embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
-        memory=MemoryConfig(db_filename=":memory:"),
+        memories=MemoriesConfig(db_filename=":memory:"),
         chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history.db"),
         skills=SkillsConfig(),
         tools=ToolsConfig(),
@@ -149,12 +158,16 @@ def _build_minimal_container(
 
 
 # ---------------------------------------------------------------------------
-# 1. build_memory_settings propaga los 4 campos reconcile_*
+# 1. build_memory_settings propaga los campos de reconciliación
 # ---------------------------------------------------------------------------
 
 
 def test_build_memory_settings_propaga_campos_reconcile() -> None:
-    """Los 4 campos reconcile_* del MemoryConfig deben aparecer en MemorySettings."""
+    """Los campos de reconciliación del MemoriesConfig deben aparecer en MemorySettings.
+
+    El VO ``MemorySettings.reconciliation`` solo lleva ``similarity_threshold`` y
+    ``top_k``; ``enabled``/``schedule``/``agent_id`` son del wiring (no del VO).
+    """
     mem_cfg = _make_memory_config(
         reconcile_enabled=True,
         reconcile_schedule="0 2 * * 0",
@@ -165,22 +178,18 @@ def test_build_memory_settings_propaga_campos_reconcile() -> None:
     settings = build_memory_settings(mem_cfg)
 
     assert isinstance(settings, MemorySettings)
-    assert settings.reconcile_enabled is True
-    assert settings.reconcile_schedule == "0 2 * * 0"
-    assert settings.reconcile_similarity_threshold == 0.75
-    assert settings.reconcile_top_k == 15
+    assert settings.reconciliation.similarity_threshold == 0.75
+    assert settings.reconciliation.top_k == 15
 
 
 def test_build_memory_settings_defaults_reconcile() -> None:
-    """Con MemoryConfig defaults, MemorySettings usa los valores por defecto de reconcile."""
-    mem_cfg = MemoryConfig(db_filename=":memory:")
+    """Con MemoriesConfig defaults, MemorySettings usa los valores por defecto de reconcile."""
+    mem_cfg = MemoriesConfig(db_filename=":memory:")
 
     settings = build_memory_settings(mem_cfg)
 
-    assert settings.reconcile_enabled is False
-    assert settings.reconcile_schedule == "0 4 * * 1"
-    assert settings.reconcile_similarity_threshold == 0.80
-    assert settings.reconcile_top_k == 10
+    assert settings.reconciliation.similarity_threshold == 0.80
+    assert settings.reconciliation.top_k == 10
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +198,7 @@ def test_build_memory_settings_defaults_reconcile() -> None:
 
 
 def test_agent_container_construye_reconcile_use_case_cuando_habilitado() -> None:
-    """Con memory.enabled=True y reconcile_enabled=True debe existir reconcile_memory."""
+    """Con reconciliation.enabled=True debe existir reconcile_memory."""
     mem_cfg = _make_memory_config(enabled=True, reconcile_enabled=True)
     agent_cfg = _make_agent_config(memory_cfg=mem_cfg)
     global_cfg = _make_global_config()
@@ -212,20 +221,20 @@ def test_agent_container_construye_reconcile_use_case_cuando_habilitado() -> Non
 
 
 # ---------------------------------------------------------------------------
-# 3. AgentContainer NO construye ReconcileMemoryUseCase cuando reconcile_enabled=False
+# 3. AgentContainer NO construye ReconcileMemoryUseCase cuando reconciliation.enabled=False
 # ---------------------------------------------------------------------------
 
 
 def test_agent_container_no_construye_reconcile_cuando_disabled() -> None:
-    """Con reconcile_enabled=False, reconcile_memory debe ser None."""
+    """Con reconciliation.enabled=False, reconcile_memory debe ser None."""
     mem_cfg = _make_memory_config(enabled=True, reconcile_enabled=False)
     agent_cfg = _make_agent_config(memory_cfg=mem_cfg)
     global_cfg = _make_global_config()
     container = _build_minimal_container(agent_cfg, global_cfg)
 
-    # Replica la condición del __init__ de AgentContainer
+    # Replica la condición del __init__ de AgentContainer (gating por reconciliation)
     reconcile_memory = None
-    if agent_cfg.memory.enabled and agent_cfg.memory.reconcile_enabled:
+    if agent_cfg.memories.reconciliation.enabled:
         reconcile_memory = MagicMock(spec=ReconcileMemoryUseCase)
     container.reconcile_memory = reconcile_memory
 
@@ -233,24 +242,33 @@ def test_agent_container_no_construye_reconcile_cuando_disabled() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 4. AgentContainer NO construye ReconcileMemoryUseCase cuando memory.enabled=False
+# 4. La reconciliación es INDEPENDIENTE de la consolidación
 # ---------------------------------------------------------------------------
 
 
-def test_agent_container_no_construye_reconcile_cuando_memory_disabled() -> None:
-    """Con memory.enabled=False, reconcile_memory debe ser None aunque reconcile_enabled=True."""
+def test_agent_container_construye_reconcile_aunque_consolidacion_disabled() -> None:
+    """Con consolidation.enabled=False pero reconciliation.enabled=True, reconcile_memory
+    SE construye igual.
+
+    Cambio semántico: la reconciliación dejó de depender de la consolidación. Antes
+    el gating exigía ``memory.enabled AND reconcile_enabled``; ahora alcanza con
+    ``reconciliation.enabled=True`` — se puede reconciliar recuerdos preexistentes
+    aunque la consolidación esté apagada.
+    """
     mem_cfg = _make_memory_config(enabled=False, reconcile_enabled=True)
     agent_cfg = _make_agent_config(memory_cfg=mem_cfg)
     global_cfg = _make_global_config()
     container = _build_minimal_container(agent_cfg, global_cfg)
 
-    # Replica la condición del __init__
+    # Replica la condición del __init__ (gating por reconciliation, NO por consolidation)
     reconcile_memory = None
-    if agent_cfg.memory.enabled and agent_cfg.memory.reconcile_enabled:
+    if agent_cfg.memories.reconciliation.enabled:
         reconcile_memory = MagicMock(spec=ReconcileMemoryUseCase)
     container.reconcile_memory = reconcile_memory
 
-    assert container.reconcile_memory is None
+    assert container.reconcile_memory is not None
+    # Sanity: la consolidación efectivamente quedó apagada en este escenario.
+    assert agent_cfg.memories.consolidation.enabled is False
 
 
 # ---------------------------------------------------------------------------
@@ -333,17 +351,17 @@ async def test_reconcile_dispatch_adapter_lanza_por_agent_id_inexistente() -> No
 
 
 def test_wire_memory_reconcilers_llama_set_reconciler() -> None:
-    """_wire_memory_reconcilers debe llamar set_reconciler cuando reconcile_llm.agent_id
+    """_wire_memory_reconcilers debe llamar set_reconciler cuando reconciliation.agent_id
     apunta a un sub-agente válido."""
     # Construimos la mínima infraestructura para invocar _wire_memory_reconcilers
     # sin levantar el AppContainer completo.
     from infrastructure.container import AppContainer
 
-    # Agente principal con reconcile habilitado y reconcile_llm.agent_id
+    # Agente principal con reconcile habilitado y reconciliation.agent_id
     mem_cfg = _make_memory_config(
         enabled=True,
         reconcile_enabled=True,
-        reconcile_llm=MemoryLLMOverride(agent_id="memory_reconciler"),
+        reconcile_agent_id="memory_reconciler",
     )
     agent_cfg = _make_agent_config(agent_id="agente_principal", memory_cfg=mem_cfg)
     global_cfg = _make_global_config()

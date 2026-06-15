@@ -82,7 +82,7 @@ class ProviderConfig(BaseModel):
 
     Cada entrada representa UN vendor (groq, openai, openrouter, ollama, etc.)
     con sus credenciales y endpoint. Las features (`llm`, `embedding`,
-    `transcription`, `memory.llm`) referencian entradas por nombre vía su
+    `transcription`, `memories.llm`) referencian entradas por nombre vía su
     campo ``provider: <key>``, eliminando duplicación de ``api_key``/``base_url``.
 
     Campos:
@@ -179,9 +179,10 @@ class TranscriptionConfig(BaseModel):
 # transcription). Las factories de infrastructure los componen desde acá.
 
 
-class MemoryLLMOverride(BaseModel):
+class MemoryLLMConfig(BaseModel):
     """
-    Override parcial de ``LLMConfig`` para el LLM de consolidación de memoria.
+    Override parcial de ``LLMConfig`` para el LLM base COMPARTIDO por los dos
+    jobs de memoria (consolidación y reconciliación) en modo directo.
 
     Todos los campos son opcionales. Solo los campos EXPLÍCITAMENTE presentes
     en el YAML pisan al ``llm.*`` del agente; los ausentes se heredan.
@@ -190,21 +191,17 @@ class MemoryLLMOverride(BaseModel):
       - Clave ausente en YAML → no está en ``model_fields_set`` → hereda del base.
       - Clave presente con valor ``null`` → está en ``model_fields_set`` con valor
         ``None`` → pisa al base con ``None`` (útil para, p. ej., apagar
-        ``reasoning_effort`` en consolidación sin tocar el LLM del agente).
+        ``reasoning_effort`` en los jobs de memoria sin tocar el LLM del agente).
 
     Las credenciales NO viven acá — si el override cambia ``provider``, las creds
     se resuelven automáticamente desde el registry ``providers`` del nivel
-    superior. Ver ``AgentContainer._resolve_memory_llm`` (container.py).
+    superior. Ver ``AgentContainer._resolve_memories_llm`` (container.py).
 
-    ``agent_id`` (delegación a sub-agente):
-      Cuando se especifica, la consolidación NO usa el LLM directo — delega
-      al sub-agente referenciado vía ``RunAgentOneShotUseCase``. El
-      ``system_prompt`` del sub-agente se usa como prompt extractor (debe
-      devolver JSON con la lista de recuerdos). Los demás campos
-      (``provider``, ``model``, etc.) se ignoran cuando ``agent_id`` está
-      seteado. Si el agent_id no resuelve a un sub-agente válido, el
-      AppContainer loggea un ERROR y la consolidación cae de vuelta al
-      prompt hardcodeado + LLM resuelto.
+    NOTA: ``agent_id`` ya NO vive acá. La delegación a sub-agente es POR JOB y
+    se declara en ``consolidation.agent_id`` / ``reconciliation.agent_id`` —
+    cada job tiene su propio sub-agente especializado (extractor vs reconciler),
+    con prompts distintos. El sub-agente, vía el merge de 4 capas, sobreescribe
+    esta config LLM base de forma individual en su propio fichero.
     """
 
     provider: str | None = None
@@ -213,82 +210,121 @@ class MemoryLLMOverride(BaseModel):
     max_tokens: int | None = None
     reasoning_effort: str | None = None
     timeout_seconds: int | None = None
-    agent_id: str | None = None
 
 
-class MemoryConfig(BaseModel):
-    model_config = ConfigDict(validate_default=True)  # RuntimePath en los defaults
+class ConsolidationConfig(BaseModel):
+    """Configuración del job de consolidación (extracción → digest → trim)."""
 
-    db_filename: RuntimePath = "data/inaki.db"  # relativo a ~/.inaki/
-    default_top_k: int = 5
-    digest_size: int = 14
-    # Template del digest markdown — admite los placeholders ``{channel}`` y
-    # ``{chat_id}``, que se sustituyen sanitizados en ``resolved_digest_path``.
-    # El digest se aísla por (channel, chat_id) para que conversaciones distintas
-    # del mismo agente no mezclen recuerdos.
-    digest_filename: RuntimePath = "mem/digest_{channel}_{chat_id}.md"  # relativo a ~/.inaki/
-    min_relevance_score: float = 0.5
-    schedule: str = "0 3 * * *"
-    delay_seconds: int = 2
-    keep_last_messages: int = 0
     enabled: bool = True
+    """Habilita la consolidación para ESTE agente. Flag PER-AGENT (agents/{id}.yaml)."""
+
+    schedule: str = "0 3 * * *"
+    """Cron de la consolidación global nocturna (una tarea que itera todos los agentes)."""
+
+    delay_seconds: int = 2
+    """
+    Pausa (segundos) entre llamadas al LLM extractor. Aplica TANTO entre agentes
+    como entre scopes ``(channel, chat_id)`` del mismo agente. Evita rate-limits.
+    """
+
+    keep_last_messages: int = 0
+    """Mensajes a preservar por agente tras consolidar. 0 = fallback del sistema (84)."""
+
+    min_relevance_score: float = 0.5
+    """Umbral mínimo (0.0-1.0) para persistir un recuerdo extraído por el LLM."""
+
     channels_infused: list[str] | None = None
     """
-    Canales cuyo historial se incluye en la consolidación de memoria.
+    Canales cuyo historial se incluye en la consolidación.
 
     ``None`` o lista vacía → se procesan mensajes de todos los canales.
     Si se especifica, solo se consolidan mensajes donde ``channel`` está en la lista.
     Ejemplo: ``["telegram"]`` — no consolida mensajes de CLI ni daemon.
     """
-    llm: MemoryLLMOverride | None = None
+
+    agent_id: str | None = None
     """
-    Override opcional del LLM usado SOLO para la consolidación de memoria.
-    Si es ``None``, consolidación reusa el LLM del agente.
+    Sub-agente EXTRACTOR opcional (debe existir en ``agents/sub-agents/``).
+
+    Cuando se especifica, la extracción delega a ese sub-agente vía
+    ``RunAgentOneShotUseCase`` en lugar del prompt hardcodeado. El
+    ``system_prompt`` del sub-agente se usa como prompt extractor (debe devolver
+    JSON con la lista de recuerdos) y el sub-agente usa su propia config LLM.
+    Si el ``agent_id`` no resuelve a un sub-agente válido, el arranque loggea un
+    ERROR y la consolidación cae de vuelta al prompt extractor por defecto.
     """
 
-    reconcile_enabled: bool = False
-    """
-    Habilita el job periódico de reconciliación de memoria («reflection»).
 
-    Cuando es ``True``, el daemon registra una tarea builtin ``reconcile_memory``
-    por cada agente que tenga ``memory.enabled=True`` y ``reconcile_enabled=True``.
-    La tarea dispara ``ReconcileMemoryUseCase.execute()`` según el cron
-    ``reconcile_schedule``.
+class ReconciliationConfig(BaseModel):
+    """Configuración del job de reconciliación de memoria («reflection»)."""
 
-    Default ``False`` — la feature está opt-in por ser una operación más
-    costosa que la consolidación ordinaria (una llamada LLM por cluster).
+    enabled: bool = False
     """
+    Habilita el job de reconciliación para ESTE agente. Flag PER-AGENT.
 
-    reconcile_schedule: str = "0 4 * * 1"
-    """
-    Expresión cron para el job de reconciliación. Evaluada en la tz del usuario.
-    Default: lunes a las 04:00 (``"0 4 * * 1"``).
+    Opt-in (default ``False``) por ser una operación más costosa que la
+    consolidación ordinaria (una llamada LLM por cluster de recuerdos similares).
+    Es INDEPENDIENTE de ``consolidation.enabled`` — se puede correr reconciliación
+    sobre recuerdos preexistentes aunque la consolidación esté apagada.
     """
 
-    reconcile_similarity_threshold: float = 0.80
+    schedule: str = "0 4 * * 1"
+    """Cron de la tarea builtin por agente. Evaluado en tz del usuario. Default: lunes 04:00."""
+
+    similarity_threshold: float = 0.80
     """
-    Umbral de similitud coseno (0.0-1.0) para considerar dos recuerdos como
-    parte del mismo cluster que debe reconciliarse.
+    Umbral de similitud coseno (0.0-1.0) para agrupar dos recuerdos en un cluster.
     Default ``0.80`` (conservador — solo recuerdos muy similares se agrupan).
     """
 
-    reconcile_top_k: int = 10
+    top_k: int = 10
     """
-    Número de vecinos por similitud a considerar al armar un cluster de
-    reconciliación. Un valor generoso compensa que ``search_with_scores``
-    no filtra por scope nativamente (limitación V1).
-    Default ``10``.
+    Vecinos máximos por seed al armar un cluster. Un valor generoso compensa que
+    ``search_with_scores`` no filtra por scope nativamente (limitación V1).
     """
 
-    reconcile_llm: MemoryLLMOverride | None = None
+    agent_id: str | None = None
     """
-    Override opcional del LLM usado SOLO para la reconciliación de memoria.
-    Si es ``None``, la reconciliación usa el LLM del agente directamente
-    con el prompt hardcodeado. Si ``reconcile_llm.agent_id`` está seteado,
-    delega al sub-agente ``memory_reconciler`` via ``RunAgentOneShotUseCase``.
-    Los demás campos de override (provider, model, etc.) se ignoran cuando
-    ``agent_id`` está seteado — el sub-agente usa su propia config LLM.
+    Sub-agente RECONCILIADOR opcional (debe existir en ``agents/sub-agents/``).
+
+    Cuando se especifica, la reconciliación delega a ese sub-agente vía one-shot
+    en lugar del prompt hardcodeado; el sub-agente usa su propia config LLM. Si no
+    resuelve a un sub-agente válido, el arranque loggea ERROR y cae al prompt por
+    defecto + LLM compartido (graceful).
     """
+
+
+class MemoriesConfig(BaseModel):
+    """
+    Configuración del subsistema de memoria a largo plazo.
+
+    Estructura:
+      - Campos de nivel raíz: store + digest COMPARTIDOS por ambos jobs.
+      - ``llm``: LLM base COMPARTIDO (provider/model/...) para los dos jobs en modo
+        directo. Sin ``agent_id`` — la delegación a sub-agente es por job.
+      - ``consolidation`` / ``reconciliation``: secciones hermanas, cada una con su
+        ``enabled``, ``schedule``, parámetros propios y ``agent_id`` de sub-agente.
+    """
+
+    model_config = ConfigDict(validate_default=True)  # RuntimePath en los defaults
+
+    db_filename: RuntimePath = "data/inaki.db"  # relativo a ~/.inaki/
+    # Template del digest markdown — admite los placeholders ``{channel}`` y
+    # ``{chat_id}``, sustituidos sanitizados en ``resolved_digest_path``. El digest
+    # se aísla por (channel, chat_id): consolidación lo regenera, run_agent lo lee.
+    digest_filename: RuntimePath = "mem/digest_{channel}_{chat_id}.md"  # relativo a ~/.inaki/
+    digest_size: int = 14
+    """Nº de recuerdos más recientes volcados al digest markdown. Orden: created_at DESC."""
+
+    llm: MemoryLLMConfig | None = None
+    """
+    LLM base COMPARTIDO por consolidación y reconciliación (modo directo).
+    ``None`` → ambos jobs reusan el LLM del agente. La delegación a sub-agente
+    (por job) se declara en ``consolidation.agent_id`` / ``reconciliation.agent_id``.
+    """
+
+    consolidation: ConsolidationConfig = ConsolidationConfig()
+    reconciliation: ReconciliationConfig = ReconciliationConfig()
 
     # La resolución del digest path y de keep_last_messages (lógica de dominio
     # que solo core consume) vive en core/domain/value_objects/agent_settings.py
@@ -296,15 +332,16 @@ class MemoryConfig(BaseModel):
 
     def merged_llm_config(self, base: LLMConfig) -> LLMConfig:
         """
-        Devuelve la ``LLMConfig`` efectiva (sin creds) tras aplicar el override.
+        Devuelve la ``LLMConfig`` efectiva (sin creds) tras aplicar el override
+        compartido ``memories.llm``.
 
         Merge field-by-field: los campos que el usuario seteó EXPLÍCITAMENTE
-        en ``memory.llm.*`` (incluso ``null``) pisan al ``base``; el resto hereda.
+        en ``memories.llm.*`` (incluso ``null``) pisan al ``base``; el resto hereda.
         Si no hay override, devuelve el ``base`` tal cual.
 
         Las credenciales se resuelven aparte contra el registry ``providers``
         — la composición del ``ResolvedLLMConfig`` (DTO de adapters) vive en
-        ``AgentContainer._resolve_memory_llm``.
+        ``AgentContainer._resolve_memories_llm``.
         """
         if self.llm is None:
             return base
@@ -775,7 +812,7 @@ class AgentConfig(BaseModel):
     system_prompt: str
     llm: LLMConfig
     embedding: EmbeddingConfig
-    memory: MemoryConfig
+    memories: MemoriesConfig
     chat_history: ChatHistoryConfig
     skills: SkillsConfig = SkillsConfig()
     tools: ToolsConfig = ToolsConfig()
@@ -855,7 +892,7 @@ class GlobalConfig(BaseModel):
     app: AppConfig
     llm: LLMConfig
     embedding: EmbeddingConfig
-    memory: MemoryConfig
+    memories: MemoriesConfig
     chat_history: ChatHistoryConfig
     channels: ChannelsGlobalConfig = ChannelsGlobalConfig()
     """Flags de presentación transversales a todos los canales. Solo global."""

@@ -3,7 +3,7 @@
 Cubre el comportamiento gemelo de _cmd_consolidate para ReconcileMemoryUseCase:
   - Ejecuta el use case y muestra el resultado.
   - Usuario no autorizado → no hace nada.
-  - Use case None (memory.reconcile_enabled=false) → mensaje de no disponible.
+  - Use case None (memories.reconciliation.enabled=false) → mensaje de no disponible.
   - Excepción en el use case → muestra "Error: ...".
 """
 

@@ -18,16 +18,17 @@ if TYPE_CHECKING:
 
 # Mapeo de section_name → clave top-level del YAML de agente.
 # Las claves son los nombres exactos que emite ``sections_for_model``.
-# Las secciones anidadas (ej. MEMORY.LLM) se mapean a la misma clave
+# Las secciones anidadas (ej. MEMORIES.LLM) se mapean a la misma clave
 # top-level que su padre porque el repo las escribe como dicts anidados.
+# build_cambios solo consulta el primer segmento (parts[0]), así que con la
+# entrada del padre MEMORIES alcanza para LLM/CONSOLIDATION/RECONCILIATION.
 _SECTION_TO_YAML_KEY: dict[str, str] = {
     # Sección raíz del AgentConfig (campos simples: id, name, description, system_prompt)
     "AGENTCONFIG": "agent",
     # Sub-secciones generadas por sections_for_model (nombre = field name UPPER)
     "LLM": "llm",
     "EMBEDDING": "embedding",
-    "MEMORY": "memory",
-    "MEMORY.LLM": "memory",
+    "MEMORIES": "memories",
     "CHAT_HISTORY": "chat_history",
     "SKILLS": "skills",
     "TOOLS": "tools",
@@ -37,15 +38,15 @@ _SECTION_TO_YAML_KEY: dict[str, str] = {
     "TRANSCRIPTION": "transcription",
 }
 
-# Rutas triestadas: campos de memory.llm que el agente puede heredar del global.
-# El prefijo MEMORY.LLM coincide con el nombre de sección generado por el schema mapper.
+# Rutas triestadas: campos de memories.llm que el agente puede heredar del global.
+# El prefijo MEMORIES.LLM coincide con el nombre de sección generado por el schema mapper.
 _TRISTATE_PATHS: frozenset[str] = frozenset(
     {
-        "MEMORY.LLM.provider",
-        "MEMORY.LLM.model",
-        "MEMORY.LLM.temperature",
-        "MEMORY.LLM.max_tokens",
-        "MEMORY.LLM.reasoning_effort",
+        "MEMORIES.LLM.provider",
+        "MEMORIES.LLM.model",
+        "MEMORIES.LLM.temperature",
+        "MEMORIES.LLM.max_tokens",
+        "MEMORIES.LLM.reasoning_effort",
     }
 )
 
@@ -106,7 +107,7 @@ class AgentDetailPage(BasePage):
             return
 
         # Generar secciones usando el schema de agente (clase inyectada vía el container).
-        # Los campos de memory.llm se marcan como triestados para que el usuario
+        # Los campos de memories.llm se marcan como triestados para que el usuario
         # pueda elegir entre heredar del global, valor propio o null explícito.
         sections = sections_for_model(
             self._container.agent_schema, current, tristate_paths=_TRISTATE_PATHS
@@ -132,7 +133,7 @@ class AgentDetailPage(BasePage):
 
         # build_cambios respeta:
         #   - root fields (id/name/description/system_prompt) → flat {field: value}
-        #   - secciones anidadas (MEMORY.LLM) → {memory: {llm: {field: value}}}
+        #   - secciones anidadas (MEMORIES.LLM) → {memories: {llm: {field: value}}}
         cambios: dict[str, Any] = build_cambios(
             section_name=section_name,
             field_name=field_name,
@@ -183,7 +184,7 @@ class AgentDetailPage(BasePage):
             valor_tipado = self._coerce_value(field, result.value or "")
             campo = CampoTriestado(TristadoValor.OVERRIDE_VALOR, valor=valor_tipado)
 
-        cambios: dict[str, Any] = {"memory": {"llm": {field.label: campo}}}
+        cambios: dict[str, Any] = {"memories": {"llm": {field.label: campo}}}
         try:
             self._container.update_agent_layer.execute(
                 agent_id=self._agent_id,
@@ -191,12 +192,12 @@ class AgentDetailPage(BasePage):
                 layer=LayerName.AGENT,
             )
             self.app.notify(
-                f"guardado: memory.llm.{field.label}",
+                f"guardado: memories.llm.{field.label}",
                 title="agente",
                 timeout=2,
             )
             # Post-save: avisar si el override rompió alguna referencia cruzada
-            # (por ejemplo memory.llm.provider apuntando a un provider inexistente).
+            # (por ejemplo memories.llm.provider apuntando a un provider inexistente).
             self._warn_on_invalid_refs()
         except Exception as exc:
             self.app.notify(

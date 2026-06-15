@@ -35,7 +35,7 @@ from infrastructure.config import (
     EmbeddingConfig,
     GlobalConfig,
     LLMConfig,
-    MemoryConfig,
+    MemoriesConfig,
     ProviderConfig,
 )
 from core.domain.value_objects.agent_settings import OneShotSettings
@@ -75,7 +75,7 @@ def _make_agent_config(
         system_prompt=f"You are {agent_id}.",
         llm=LLMConfig(provider="openrouter", model="test-model"),
         embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
-        memory=MemoryConfig(db_filename=":memory:"),
+        memories=MemoriesConfig(db_filename=":memory:"),
         chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/integ_history.db"),
         delegation=AgentDelegationConfig(
             enabled=delegation_enabled,
@@ -101,7 +101,7 @@ def _make_global_config(
         app=AppConfig(ext_dirs=[]),
         llm=LLMConfig(provider="openrouter", model="test-model"),
         embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
-        memory=MemoryConfig(db_filename=":memory:"),
+        memories=MemoriesConfig(db_filename=":memory:"),
         chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/integ_history.db"),
         skills=SkillsConfig(),
         tools=ToolsConfig(),

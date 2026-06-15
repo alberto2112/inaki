@@ -28,7 +28,7 @@ from infrastructure.config_schema import (
     KnowledgeConfig,
     KnowledgeSourceConfig,
     LLMConfig,
-    MemoryConfig,
+    MemoriesConfig,
     PhotosConfig,
     ProviderConfig,
     SceneConfig,
@@ -151,7 +151,7 @@ def _render_default_global_yaml() -> str:
         "app": AppConfig().model_dump(),
         "llm": LLMConfig().model_dump(),
         "embedding": EmbeddingConfig().model_dump(),
-        "memory": MemoryConfig().model_dump(),
+        "memories": MemoriesConfig().model_dump(),
         "chat_history": ChatHistoryConfig().model_dump(),
         "channels": ChannelsGlobalConfig().model_dump(),
         "skills": SkillsConfig().model_dump(),
@@ -350,13 +350,13 @@ def _check_legacy_shape(merged: dict) -> None:
         if isinstance(node, dict) and key in node:
             raise ConfigError(_LEGACY_ERROR_TEMPLATE.format(field=f"{section}.{key}"))
 
-    memory = merged.get("memory")
-    if isinstance(memory, dict):
-        memory_llm = memory.get("llm")
-        if isinstance(memory_llm, dict):
+    memories = merged.get("memories")
+    if isinstance(memories, dict):
+        memories_llm = memories.get("llm")
+        if isinstance(memories_llm, dict):
             for key in ("api_key", "base_url"):
-                if key in memory_llm:
-                    raise ConfigError(_LEGACY_ERROR_TEMPLATE.format(field=f"memory.llm.{key}"))
+                if key in memories_llm:
+                    raise ConfigError(_LEGACY_ERROR_TEMPLATE.format(field=f"memories.llm.{key}"))
 
 
 def _parse_providers(merged: dict) -> dict[str, ProviderConfig]:
@@ -393,7 +393,7 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
     app = AppConfig(**merged.get("app", {}))
     llm = LLMConfig(**merged.get("llm", {}))
     embedding = EmbeddingConfig(**merged.get("embedding", {}))
-    memory = MemoryConfig(**merged.get("memory", {}))
+    memories = MemoriesConfig(**merged.get("memories", {}))
     chat_history = ChatHistoryConfig(**merged.get("chat_history", {}))
 
     skills = SkillsConfig(**merged.get("skills", {}))
@@ -436,7 +436,7 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
         app=app,
         llm=llm,
         embedding=embedding,
-        memory=memory,
+        memories=memories,
         chat_history=chat_history,
         skills=skills,
         tools=tools,
@@ -514,7 +514,7 @@ def load_agent_config(
             system_prompt=merged["system_prompt"],
             llm=LLMConfig(**merged.get("llm", {})),
             embedding=EmbeddingConfig(**merged.get("embedding", {})),
-            memory=MemoryConfig(**merged.get("memory", {})),
+            memories=MemoriesConfig(**merged.get("memories", {})),
             chat_history=ChatHistoryConfig(**merged.get("chat_history", {})),
             skills=SkillsConfig(**merged.get("skills", {})),
             tools=ToolsConfig(**merged.get("tools", {})),
@@ -569,20 +569,33 @@ class AgentRegistry:
                     continue
                 agent_id = yaml_file.stem
 
-                # Detectar si memory.enabled está explícitamente seteado en el YAML
-                # del sub-agente. Si no, se fuerza a false (sub-agentes son one-shot
-                # por defecto y no deben persistir nada en memoria).
+                # Detectar si los flags `enabled` de los jobs de memoria están
+                # explícitos en el YAML del sub-agente. Si no, se fuerzan a false
+                # (sub-agentes son one-shot por defecto y no deben correr ni
+                # consolidación ni reconciliación, que persisten/mutan memoria).
                 raw = _load_yaml_safe(yaml_file)
-                memory_block = raw.get("memory")
-                memory_enabled_explicit = (
-                    isinstance(memory_block, dict) and "enabled" in memory_block
-                )
+                memories_block = raw.get("memories")
+                if not isinstance(memories_block, dict):
+                    memories_block = {}
+                cons_block = memories_block.get("consolidation")
+                rec_block = memories_block.get("reconciliation")
+                consolidation_explicit = isinstance(cons_block, dict) and "enabled" in cons_block
+                reconciliation_explicit = isinstance(rec_block, dict) and "enabled" in rec_block
 
                 cfg = load_agent_config(agent_id, sub_agents_dir, global_raw)
                 if cfg is not None:
-                    if not memory_enabled_explicit and cfg.memory.enabled:
+                    mem_updates: dict = {}
+                    if not consolidation_explicit and cfg.memories.consolidation.enabled:
+                        mem_updates["consolidation"] = cfg.memories.consolidation.model_copy(
+                            update={"enabled": False}
+                        )
+                    if not reconciliation_explicit and cfg.memories.reconciliation.enabled:
+                        mem_updates["reconciliation"] = cfg.memories.reconciliation.model_copy(
+                            update={"enabled": False}
+                        )
+                    if mem_updates:
                         cfg = cfg.model_copy(
-                            update={"memory": cfg.memory.model_copy(update={"enabled": False})}
+                            update={"memories": cfg.memories.model_copy(update=mem_updates)}
                         )
                     self._agents[agent_id] = cfg
                     self._sub_agent_ids.add(agent_id)

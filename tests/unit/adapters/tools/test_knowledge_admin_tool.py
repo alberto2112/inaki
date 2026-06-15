@@ -87,9 +87,7 @@ class TestRuteo:
         tool = KnowledgeAdminTool(manage_knowledge=uc)
         res = await tool.execute(operation="delete", file_path="a.md", remove_file=True)
         assert res.success
-        uc.delete_document.assert_awaited_once_with(
-            "a.md", source_id=None, remove_physical=True
-        )
+        uc.delete_document.assert_awaited_once_with("a.md", source_id=None, remove_physical=True)
 
     async def test_delete_sin_file_path_falla(self) -> None:
         tool = KnowledgeAdminTool(manage_knowledge=_make_uc())

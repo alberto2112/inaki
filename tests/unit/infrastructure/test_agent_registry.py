@@ -14,7 +14,7 @@ from infrastructure.config import AgentRegistry
 _GLOBAL_RAW: dict = {
     "llm": {"provider": "openrouter", "model": "anthropic/claude-3-5-haiku"},
     "embedding": {"provider": "e5_onnx", "model_dirname": "models/e5-small"},
-    "memory": {"db_filename": "data/inaki.db"},
+    "memories": {"db_filename": "data/inaki.db"},
     "history": {"db_filename": "data/history.db"},
 }
 
@@ -163,7 +163,7 @@ def test_registry_empty_sub_agents_dir_is_fine(tmp_path: Path) -> None:
 
 
 def _write_sub_agent_with_memory(sub_dir: Path, agent_id: str, memory_block: str | None) -> None:
-    """Escribe un sub-agente con bloque memory: opcional."""
+    """Escribe un sub-agente con bloque memories: opcional."""
     sub_dir.mkdir(parents=True, exist_ok=True)
     body = (
         f"id: {agent_id}\n"
@@ -177,63 +177,80 @@ def _write_sub_agent_with_memory(sub_dir: Path, agent_id: str, memory_block: str
 
 
 def test_sub_agent_memory_default_false_when_not_specified(tmp_path: Path) -> None:
-    """Sub-agente sin bloque memory: → memory.enabled debe ser false (default override)."""
+    """Sub-agente sin bloque memories: → consolidation.enabled debe ser false (default override)."""
     agents_dir = tmp_path / "agents"
     sub_dir = agents_dir / "sub-agents"
-    global_raw = {**_GLOBAL_RAW, "memory": {"db_filename": "data/inaki.db", "enabled": True}}
+    global_raw = {
+        **_GLOBAL_RAW,
+        "memories": {"db_filename": "data/inaki.db", "consolidation": {"enabled": True}},
+    }
 
     _write_sub_agent_with_memory(sub_dir, "worker", memory_block=None)
 
     registry = AgentRegistry(agents_dir, global_raw)
 
     worker = registry.get("worker")
-    assert worker.memory.enabled is False, (
-        "memory.enabled debe forzarse a false cuando el sub-agente no lo especifica"
+    assert worker.memories.consolidation.enabled is False, (
+        "consolidation.enabled debe forzarse a false cuando el sub-agente no lo especifica"
     )
 
 
 def test_sub_agent_memory_enabled_explicit_true_is_respected(tmp_path: Path) -> None:
-    """Sub-agente con memory.enabled: true explícito → se respeta, no se pisa."""
+    """Sub-agente con consolidation.enabled: true explícito → se respeta, no se pisa."""
     agents_dir = tmp_path / "agents"
     sub_dir = agents_dir / "sub-agents"
-    global_raw = {**_GLOBAL_RAW, "memory": {"db_filename": "data/inaki.db", "enabled": False}}
+    global_raw = {
+        **_GLOBAL_RAW,
+        "memories": {"db_filename": "data/inaki.db", "consolidation": {"enabled": False}},
+    }
 
     _write_sub_agent_with_memory(
-        sub_dir, "stateful_worker", memory_block="memory:\n  enabled: true\n"
+        sub_dir,
+        "stateful_worker",
+        memory_block="memories:\n  consolidation:\n    enabled: true\n",
     )
 
     registry = AgentRegistry(agents_dir, global_raw)
 
     worker = registry.get("stateful_worker")
-    assert worker.memory.enabled is True, (
-        "memory.enabled: true explícito en el sub-agente debe respetarse"
+    assert worker.memories.consolidation.enabled is True, (
+        "consolidation.enabled: true explícito en el sub-agente debe respetarse"
     )
 
 
 def test_sub_agent_memory_enabled_explicit_false_is_respected(tmp_path: Path) -> None:
-    """Sub-agente con memory.enabled: false explícito → se respeta (no es no-op)."""
+    """Sub-agente con consolidation.enabled: false explícito → se respeta (no es no-op)."""
     agents_dir = tmp_path / "agents"
     sub_dir = agents_dir / "sub-agents"
-    global_raw = {**_GLOBAL_RAW, "memory": {"db_filename": "data/inaki.db", "enabled": True}}
+    global_raw = {
+        **_GLOBAL_RAW,
+        "memories": {"db_filename": "data/inaki.db", "consolidation": {"enabled": True}},
+    }
 
-    _write_sub_agent_with_memory(sub_dir, "worker", memory_block="memory:\n  enabled: false\n")
+    _write_sub_agent_with_memory(
+        sub_dir, "worker", memory_block="memories:\n  consolidation:\n    enabled: false\n"
+    )
 
     registry = AgentRegistry(agents_dir, global_raw)
 
-    assert registry.get("worker").memory.enabled is False
+    assert registry.get("worker").memories.consolidation.enabled is False
 
 
 def test_regular_agent_memory_default_inherited_from_global(tmp_path: Path) -> None:
-    """Agente regular SIN memory.enabled hereda del global (no se fuerza a false)."""
+    """Agente regular SIN consolidation.enabled hereda del global (no se fuerza a false)."""
     agents_dir = tmp_path / "agents"
-    global_raw = {**_GLOBAL_RAW, "memory": {"db_filename": "data/inaki.db", "enabled": True}}
+    global_raw = {
+        **_GLOBAL_RAW,
+        "memories": {"db_filename": "data/inaki.db", "consolidation": {"enabled": True}},
+    }
 
-    _write_agent(agents_dir, "principal")  # sin bloque memory
+    _write_agent(agents_dir, "principal")  # sin bloque memories
 
     registry = AgentRegistry(agents_dir, global_raw)
 
-    assert registry.get("principal").memory.enabled is True, (
-        "agentes regulares heredan memory.enabled del global — solo sub-agentes son default-false"
+    assert registry.get("principal").memories.consolidation.enabled is True, (
+        "agentes regulares heredan consolidation.enabled del global — "
+        "solo sub-agentes son default-false"
     )
 
 

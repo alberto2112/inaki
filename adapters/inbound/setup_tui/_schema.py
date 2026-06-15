@@ -100,6 +100,12 @@ def _infer_kind(name: str, annotation: Any) -> FieldKind:
 
     if _is_literal(unwrapped):
         return "enum"
+    # ``bool`` se detecta por tipo exacto (identidad), antes que las heurísticas
+    # por nombre: un campo booleano nunca debe caer en secret/long/scalar porque
+    # se edita con un toggle, no tipeando "true"/"false". ``is`` evita que un
+    # ``int`` matchee (bool es subclase de int, pero la anotación es distinta).
+    if unwrapped is bool:
+        return "bool"
     if _is_secret(name):
         return "secret"
     if _is_long(name):
@@ -212,8 +218,8 @@ def sections_for_model(
     con el nombre en MAYÚSCULAS y los campos editables del sub-modelo.
 
     Cuando un sub-modelo tiene a su vez sub-campos ``BaseModel``, se recursa un
-    nivel más para exponerlos (por ejemplo, ``MemoryConfig.llm`` → sección
-    ``MEMORYLLMOVERRIDE``).
+    nivel más para exponerlos (por ejemplo, ``MemoriesConfig.llm`` → sección
+    ``MEMORIES.LLM``).
 
     Los campos simples del modelo raíz van en una sección con el nombre del
     modelo (o ``section_prefix`` si se provee).
@@ -225,7 +231,7 @@ def sections_for_model(
             del modelo en MAYÚSCULAS.
         tristate_paths: Conjunto de rutas ``"seccion.campo"`` (ambos en minúsculas)
             cuyos ``Field`` se marcan con ``is_tristate=True``.
-            Ej: ``frozenset({"memoryllmoverride.provider", "memoryllmoverride.model"})``.
+            Ej: ``frozenset({"memories.llm.provider", "memories.llm.model"})``.
 
     Returns:
         Lista de ``(section_name, [Field, ...])`` lista para renderizar en la TUI.
@@ -265,7 +271,7 @@ def sections_for_model(
         if sub_fields:
             sections.append((section_name, sub_fields))
 
-        # Recursar un nivel más para sub-sub-modelos (ej: MemoryConfig.llm).
+        # Recursar un nivel más para sub-sub-modelos (ej: MemoriesConfig.llm).
         # Se usa la ruta "PADRE.HIJO" (ej: "MEMORY.LLM") como nombre de sección
         # para que sea legible y predecible sin depender del nombre de la clase.
         for sub_name, sub_field_info in unwrapped.model_fields.items():

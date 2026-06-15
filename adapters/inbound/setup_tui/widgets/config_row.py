@@ -6,7 +6,7 @@ from textual.app import ComposeResult
 from textual.reactive import reactive
 from textual.widgets import Label, Static
 
-from adapters.inbound.setup_tui.domain.field import Field
+from adapters.inbound.setup_tui.domain.field import Field, coerce_bool
 from adapters.inbound.setup_tui.widgets._masking import mask_secret
 
 _TRUNCATE_LIMIT = 42
@@ -99,6 +99,12 @@ class ConfigRow(Static):
             if estado == "override_null":
                 return "[yellow]<null>[/yellow]"
             # override_value cae al render normal del valor más abajo
+
+        # Campo booleano con valor seteado → toggle visual en minúscula (estilo
+        # YAML), coherente con cómo se persiste. El valor crudo puede ser bool
+        # nativo o string viejo, por eso se normaliza con coerce_bool.
+        if self._field.kind == "bool" and self._field.value not in (None, ""):
+            return "[green]true[/green]" if coerce_bool(self._field.value) else "[dim]false[/dim]"
 
         # Estado: el usuario seteó None explícitamente.
         # Color amarillo + texto `<null>` (simétrico con la convención del input).

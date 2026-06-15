@@ -163,8 +163,8 @@ class ReconcileMemoryUseCase:
         total_downweights = 0
         clusters_procesados = 0
 
-        threshold = self._memory_cfg.reconcile_similarity_threshold
-        top_k = self._memory_cfg.reconcile_top_k
+        threshold = self._memory_cfg.reconciliation.similarity_threshold
+        top_k = self._memory_cfg.reconciliation.top_k
 
         for seed in seeds:
             if seed.id in procesados:
@@ -172,9 +172,7 @@ class ReconcileMemoryUseCase:
 
             # Vecinos por similitud coseno — search_with_scores no filtra por
             # scope (limitación V1 documentada en el módulo). Filtramos manualmente.
-            vecinos_scored = await self._memory.search_with_scores(
-                seed.embedding, top_k=top_k
-            )
+            vecinos_scored = await self._memory.search_with_scores(seed.embedding, top_k=top_k)
             cluster = [
                 m
                 for m, score in vecinos_scored
@@ -238,9 +236,7 @@ class ReconcileMemoryUseCase:
             f"downweights: {total_downweights}."
         )
 
-    async def _reconcile_cluster(
-        self, seed: MemoryEntry, cluster: list[MemoryEntry]
-    ) -> list[dict]:
+    async def _reconcile_cluster(self, seed: MemoryEntry, cluster: list[MemoryEntry]) -> list[dict]:
         """
         Envía seed + cluster al LLM y devuelve la lista de acciones parseadas.
 
@@ -252,10 +248,7 @@ class ReconcileMemoryUseCase:
         for m in todas:
             ts = (m.created_at or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
             entradas.append(
-                f"id: {m.id}\n"
-                f"created_at: {ts}\n"
-                f"relevance: {m.relevance:.2f}\n"
-                f"content: {m.content}"
+                f"id: {m.id}\ncreated_at: {ts}\nrelevance: {m.relevance:.2f}\ncontent: {m.content}"
             )
         cluster_text = "\n\n---\n\n".join(entradas)
         task_text = f"Reconcile the following memory cluster:\n\n{cluster_text}"

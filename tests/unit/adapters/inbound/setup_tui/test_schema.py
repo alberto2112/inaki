@@ -6,7 +6,7 @@ from infrastructure.config import (
     AppConfig,
     GlobalConfig,
     LLMConfig,
-    MemoryConfig,
+    MemoriesConfig,
     ProviderConfig,
 )
 from adapters.inbound.setup_tui._schema import sections_for_model
@@ -60,10 +60,10 @@ class TestSectionsForModelGlobalConfig:
         """Campos tipo BaseModel del modelo raíz generan secciones separadas."""
         secciones = sections_for_model(GlobalConfig, {}, section_prefix="APP")
         nombres = [s for s, _ in secciones]
-        # LLM, EMBEDDING, MEMORY, etc. deben aparecer como secciones
+        # LLM, EMBEDDING, MEMORIES, etc. deben aparecer como secciones
         assert "LLM" in nombres
         assert "EMBEDDING" in nombres
-        assert "MEMORY" in nombres
+        assert "MEMORIES" in nombres
 
     def test_valores_actuales_se_populan(self):
         """Si se pasan current_values, el field.value se usa en lugar del default."""
@@ -114,20 +114,32 @@ class TestSectionsForModelLLMConfig:
         assert delay_field.default == "2.0"
 
 
-class TestSectionsForModelMemoryConfig:
-    """Verifica que enabled y schedule se detectan correctamente."""
+class TestSectionsForModelMemoriesConfig:
+    """Verifica las secciones que produce ``MemoriesConfig``.
 
-    def test_enabled_es_scalar(self):
-        secciones = sections_for_model(MemoryConfig, {})
-        all_fields = [f for _, fields in secciones for f in fields]
-        enabled_field = next((f for f in all_fields if f.label == "enabled"), None)
+    Tras el refactor, la sección raíz MEMORIESCONFIG solo expone db_filename/
+    digest_filename/digest_size; ``enabled`` y ``schedule`` viven en la
+    sub-sección CONSOLIDATION.
+    """
+
+    def test_root_solo_tiene_campos_de_digest(self):
+        """La sección raíz solo trae los campos de store + digest."""
+        secciones = sections_for_model(MemoriesConfig, {})
+        root_fields = next(fields for name, fields in secciones if name == "MEMORIESCONFIG")
+        labels = {f.label for f in root_fields}
+        assert labels == {"db_filename", "digest_filename", "digest_size"}
+
+    def test_enabled_es_bool(self):
+        secciones = sections_for_model(MemoriesConfig, {})
+        cons_fields = next(fields for name, fields in secciones if name == "CONSOLIDATION")
+        enabled_field = next((f for f in cons_fields if f.label == "enabled"), None)
         assert enabled_field is not None
-        assert enabled_field.kind == "scalar"
+        assert enabled_field.kind == "bool"
 
     def test_schedule_es_scalar(self):
-        secciones = sections_for_model(MemoryConfig, {})
-        all_fields = [f for _, fields in secciones for f in fields]
-        schedule_field = next((f for f in all_fields if f.label == "schedule"), None)
+        secciones = sections_for_model(MemoriesConfig, {})
+        cons_fields = next(fields for name, fields in secciones if name == "CONSOLIDATION")
+        schedule_field = next((f for f in cons_fields if f.label == "schedule"), None)
         assert schedule_field is not None
         assert schedule_field.kind == "scalar"
 
@@ -208,10 +220,10 @@ class TestIsSecretMatch:
         assert _is_secret("password") is True
 
     def test_memory_llm_max_tokens_kind_es_scalar(self):
-        """Regresión end-to-end: en MemoryLLMOverride, max_tokens → scalar."""
-        from infrastructure.config import MemoryLLMOverride
+        """Regresión end-to-end: en MemoryLLMConfig, max_tokens → scalar."""
+        from infrastructure.config import MemoryLLMConfig
 
-        secciones = sections_for_model(MemoryLLMOverride, {})
+        secciones = sections_for_model(MemoryLLMConfig, {})
         all_fields = [f for _, fields in secciones for f in fields]
         max_tokens = next((f for f in all_fields if f.label == "max_tokens"), None)
         assert max_tokens is not None

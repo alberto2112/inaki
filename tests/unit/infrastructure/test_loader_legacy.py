@@ -51,24 +51,24 @@ def test_global_legacy_llm_embedding_transcription(tmp_path: Path, section: str,
 
 def test_global_legacy_memory_llm_api_key(tmp_path: Path) -> None:
     data = _valid_global()
-    data["memory"] = {"llm": {"provider": "openai", "api_key": "legacy"}}
+    data["memories"] = {"llm": {"provider": "openai", "api_key": "legacy"}}
     _write(tmp_path / "global.yaml", data)
 
     with pytest.raises(ConfigError) as exc_info:
         load_global_config(tmp_path)
 
-    assert "memory.llm.api_key" in str(exc_info.value)
+    assert "memories.llm.api_key" in str(exc_info.value)
 
 
 def test_global_legacy_memory_llm_base_url(tmp_path: Path) -> None:
     data = _valid_global()
-    data["memory"] = {"llm": {"provider": "openai", "base_url": "http://x"}}
+    data["memories"] = {"llm": {"provider": "openai", "base_url": "http://x"}}
     _write(tmp_path / "global.yaml", data)
 
     with pytest.raises(ConfigError) as exc_info:
         load_global_config(tmp_path)
 
-    assert "memory.llm.base_url" in str(exc_info.value)
+    assert "memories.llm.base_url" in str(exc_info.value)
 
 
 def test_global_shape_nuevo_carga_ok(tmp_path: Path) -> None:

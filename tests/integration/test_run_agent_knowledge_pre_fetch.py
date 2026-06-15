@@ -198,7 +198,7 @@ class TestPreFetchBypassOnShortInput:
             ChatHistoryConfig,
             EmbeddingConfig,
             LLMConfig,
-            MemoryConfig,
+            MemoriesConfig,
             SemanticRoutingConfig,
         )
 
@@ -210,7 +210,7 @@ class TestPreFetchBypassOnShortInput:
             system_prompt="Sistema",
             llm=LLMConfig(provider="openrouter", model="test-model"),
             embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
-            memory=MemoryConfig(db_filename=":memory:", default_top_k=3),
+            memories=MemoriesConfig(db_filename=":memory:"),
             chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history_bypass.db"),
             semantic_routing=SemanticRoutingConfig(min_words_threshold=5),
         )

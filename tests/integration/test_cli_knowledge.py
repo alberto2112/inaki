@@ -272,9 +272,7 @@ class TestKnowledgeIngest:
         """ingest de un path inexistente → typer valida exists=True (exit 2)."""
         global_cfg = _build_global_config_mock(docs_dir)
         with patch("inaki.knowledge_cli._load_global_config", return_value=global_cfg):
-            result = runner.invoke(
-                app, ["knowledge", "ingest", "test-docs", "/no/existe.txt"]
-            )
+            result = runner.invoke(app, ["knowledge", "ingest", "test-docs", "/no/existe.txt"])
         assert result.exit_code == 2
 
 

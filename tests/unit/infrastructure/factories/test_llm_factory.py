@@ -4,7 +4,7 @@ Tras el refactor a providers top-level:
 - ``create(llm_cfg, providers)`` resuelve creds desde el registry según
   ``llm_cfg.provider``.
 - ``create_from_resolved(resolved)`` instancia el adapter a partir de un
-  ``ResolvedLLMConfig`` ya compuesto (p. ej. por ``MemoryConfig.resolved_llm_config``).
+  ``ResolvedLLMConfig`` ya compuesto (p. ej. por ``MemoriesConfig.merged_llm_config``).
 
 La API vieja ``create_from_llm_config(cfg)`` fue removida — las creds ya no
 viven en ``LLMConfig``.

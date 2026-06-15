@@ -11,7 +11,7 @@ from core.domain.entities.message import Message, Role
 from core.domain.errors import ConsolidationError
 from core.domain.value_objects.llm_response import LLMResponse
 from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
-from core.domain.value_objects.agent_settings import MemorySettings
+from core.domain.value_objects.agent_settings import ConsolidationSettings, MemorySettings
 
 
 @pytest.fixture
@@ -19,8 +19,7 @@ def memory_config(tmp_path: Path) -> MemorySettings:
     return MemorySettings(
         digest_size=3,
         digest_template=str(tmp_path / "mem" / "digest.md"),
-        min_relevance_score=0.5,
-        keep_last_messages=20,
+        consolidation=ConsolidationSettings(min_relevance_score=0.5, keep_last_messages=20),
     )
 
 
@@ -202,9 +201,9 @@ async def test_consolidation_extracts_json_with_preamble(
 ):
     """El LLM agrega texto antes/después del array JSON — fallback debe rescatarlo."""
     mock_llm.complete.return_value = LLMResponse.of_text(
-        'Aquí están los recuerdos relevantes:\n'
+        "Aquí están los recuerdos relevantes:\n"
         '[{"content": "prefiere café sin azúcar", "relevance": 0.9, "tags": ["preferencia"]}]\n'
-        'Eso es todo lo que encontré.'
+        "Eso es todo lo que encontré."
     )
     await use_case.execute()
     mock_memory.store.assert_called_once()
@@ -233,9 +232,9 @@ async def test_consolidation_extracts_array_with_brackets_in_string_value(
 ):
     """Un bracket DENTRO de un string value del JSON no debe cortar la extracción."""
     mock_llm.complete.return_value = LLMResponse.of_text(
-        'Here you go:\n'
+        "Here you go:\n"
         '[{"content": "dijo: revisa la lista [a, b]", "relevance": 0.8, "tags": ["nota"]}]\n'
-        'Trailing reasoning [with brackets].'
+        "Trailing reasoning [with brackets]."
     )
     await use_case.execute()
     mock_memory.store.assert_called_once()
@@ -337,8 +336,10 @@ async def test_consolidation_uses_sentinel_fallback_when_keep_last_is_zero(
     cfg = MemorySettings(
         digest_size=3,
         digest_template=str(tmp_path / "mem" / "digest.md"),
-        min_relevance_score=0.5,
-        keep_last_messages=0,  # sentinel
+        consolidation=ConsolidationSettings(
+            min_relevance_score=0.5,
+            keep_last_messages=0,  # sentinel
+        ),
     )
     mock_memory.get_recent.return_value = []
     mock_history.load_uninfused.return_value = [
@@ -641,8 +642,7 @@ async def test_digest_written_per_scope_to_distinct_files(
     cfg = MemorySettings(
         digest_size=3,
         digest_template=str(tmp_path / "mem" / "digest_{channel}_{chat_id}.md"),
-        min_relevance_score=0.5,
-        keep_last_messages=20,
+        consolidation=ConsolidationSettings(min_relevance_score=0.5, keep_last_messages=20),
     )
     mock_history.load_uninfused.return_value = [
         Message(role=Role.USER, content="msg telegram", channel="telegram", chat_id="-1001"),
@@ -717,8 +717,6 @@ async def test_consolidation_aborts_when_one_scope_fails_marks_prev_scopes_no_tr
         await uc.execute()
 
     # El primer scope SÍ fue marcado — no se reprocesará en la próxima corrida.
-    mock_history.mark_infused.assert_called_once_with(
-        "test", channel="telegram", chat_id="1"
-    )
+    mock_history.mark_infused.assert_called_once_with("test", channel="telegram", chat_id="1")
     # El trim NO corre — el segundo scope falló y no fue procesado.
     mock_history.trim.assert_not_called()

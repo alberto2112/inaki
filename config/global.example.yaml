@@ -141,20 +141,18 @@ embedding:
 
 
 # -----------------------------------------------------------------------------
-# [memory] — Memoria a largo plazo (SQLite + sqlite-vec)
+# [memories] — Memoria a largo plazo (SQLite + sqlite-vec)
 # -----------------------------------------------------------------------------
-memory:
+# Estructura:
+#   - raíz: store + digest COMPARTIDOS por ambos jobs.
+#   - memories.llm: LLM base COMPARTIDO por consolidación y reconciliación.
+#   - memories.consolidation / memories.reconciliation: secciones hermanas, cada
+#     una con su `enabled` (PER-AGENT), `schedule`, parámetros y `agent_id`.
+memories:
   db_filename: "data/inaki.db"  # Fichero SQLite relativo a ~/.inaki/.
                               # Si se pone absoluto, se usa tal cual.
-                              # Contiene tablas: memories, memory_embeddings (vec0)
-                              # Memoria GLOBAL: compartida entre todos los agentes
-
-  default_top_k: 5            # Número de recuerdos recuperados por RAG en cada turno
-                              # Aumentar para más contexto (mayor coste de tokens)
-                              # Disminuir para respuestas más rápidas
-
-  digest_size: 14             # Nº de recuerdos más recientes volcados al digest markdown
-                              # tras cada /consolidate. Orden: created_at DESC.
+                              # Contiene tablas: memories, memory_embeddings (vec0).
+                              # Memoria GLOBAL: compartida entre todos los agentes.
 
   digest_filename: "mem/digest_{channel}_{chat_id}.md"
                               # Template del fichero markdown del digest, relativo a
@@ -168,104 +166,71 @@ memory:
                               #   ~/.inaki/mem/digest_telegram_-1001234567.md
                               #   ~/.inaki/mem/digest_cli_default.md
 
-  min_relevance_score: 0.5    # Umbral mínimo (0.0-1.0) para persistir un recuerdo
-                              # extraído por el LLM.
-
-  schedule: "0 3 * * *"       # Cron para la consolidación global nocturna
-                              # (una sola tarea que itera todos los agentes).
-
-  delay_seconds: 2            # Pausa (segundos) entre llamadas al LLM extractor.
-                              # Aplica TANTO entre agentes como entre scopes
-                              # (channel, chat_id) dentro del mismo agente. Evita
-                              # rate-limits del proveedor LLM remoto.
-
-  keep_last_messages: 0       # Mensajes a preservar por agente tras una
-                              # consolidación exitosa. 0 = usar fallback (84).
-
-  # channels_infused: null    # Lista de canales cuyos mensajes SÍ se consolidan
-                              # a memoria a largo plazo. null/omitido = todos.
-                              # Ejemplo típico para multi-agente en Telegram:
-                              #   channels_infused: ["telegram"]
-                              # Excluye explícitamente un canal poniendo solo los
-                              # que querés infundir. Filtra `load_uninfused` en el
-                              # cron de consolidación — NO afecta al hot-path RAG.
-
-  # enabled: true             # Flag PER-AGENT — va en agents/{id}.yaml, NO acá
+  digest_size: 14             # Nº de recuerdos más recientes volcados al digest markdown
+                              # tras cada consolidación. Orden: created_at DESC.
 
   # ---------------------------------------------------------------------------
-  # [memory.reconcile_*] — Job periódico de reconciliación de memoria (OPCIONAL)
+  # [memories.llm] — LLM base COMPARTIDO por ambos jobs (OPCIONAL)
   # ---------------------------------------------------------------------------
-  # La reconciliación («reflection») detecta recuerdos contradictorios o
-  # desactualizados y los fusiona, reemplaza o despondera usando un LLM.
-  # Es opt-in (reconcile_enabled: false por defecto) porque es más costosa que
-  # la consolidación ordinaria (una llamada LLM por cluster de recuerdos similares).
+  # Permite usar un LLM DISTINTO al del agente (llm.*) para los jobs de memoria
+  # (consolidación Y reconciliación, en modo directo). Cada campo que definas acá
+  # pisa al de `llm.*`; los campos ausentes se heredan. Si cambiás `provider`, las
+  # credenciales se resuelven desde el registry `providers.{nuevo_provider}`.
   #
-  # Activación mínima (un agente específico en agents/{id}.yaml):
-  #   memory:
-  #     reconcile_enabled: true
-  #
-  # Campos (todos OPCIONALES — los defaults son conservadores):
-
-  # reconcile_enabled: false       # Habilita el job de reconciliación para ESTE agente.
-                                   # Solo tiene efecto en agents/{id}.yaml.
-
-  # reconcile_schedule: "0 4 * * 1" # Cron de la tarea builtin. Default: lunes 04:00 (tz usuario).
-
-  # reconcile_similarity_threshold: 0.80 # Similitud coseno mínima (0.0-1.0) para
-                                   # agrupar dos recuerdos en un cluster.
-                                   # 0.80 = conservador (solo recuerdos muy parecidos).
-
-  # reconcile_top_k: 10            # Vecinos máximos a considerar por seed al armar un cluster.
-
-  # ---------------------------------------------------------------------------
-  # [memory.reconcile_llm] — Sub-agente reconciliador (OPCIONAL)
-  # ---------------------------------------------------------------------------
-  # Por defecto la reconciliación usa el LLM del agente + el prompt hardcodeado.
-  # Si se especifica reconcile_llm.agent_id, delega a ese sub-agente via one-shot.
-  # El sub-agente de referencia está en config/agents/sub-agents/memory_reconciler.example.yaml.
-  #
-  # Ejemplo:
-  #   memory:
-  #     reconcile_enabled: true
-  #     reconcile_llm:
-  #       agent_id: memory_reconciler   # debe existir en agents/sub-agents/
-  #
-  # Si agent_id no resuelve a un sub-agente válido, el arranque loggea ERROR y
-  # la reconciliación cae de vuelta al prompt hardcodeado + LLM del agente (graceful).
-
-  # ---------------------------------------------------------------------------
-  # [memory.llm] — LLM dedicado para la consolidación (OPCIONAL)
-  # ---------------------------------------------------------------------------
-  # Permite usar un LLM DISTINTO al del agente (llm.*) SOLO para consolidar la
-  # memoria. Cada campo que definas acá pisa al de `llm.*`; los campos ausentes
-  # se heredan. Si cambiás `provider`, las credenciales se resuelven desde el
-  # registry `providers.{nuevo_provider}` — no van acá.
+  # NO lleva `agent_id`: la delegación a sub-agente es POR JOB (extractor vs
+  # reconciler tienen prompts distintos) y se declara en
+  # consolidation.agent_id / reconciliation.agent_id. El sub-agente, vía el merge
+  # de 4 capas, sobreescribe esta config LLM base de forma individual.
   #
   # Semántica:
   #   - clave AUSENTE → hereda el valor de `llm.*`.
   #   - clave con valor `null` → override EXPLÍCITO (fuerza None).
   #
-  # Validación: si el provider del override requiere creds y no hay entrada en
-  # `providers:` con `api_key`, el arranque falla con ConfigError.
+  # Ejemplo — chat con un reasoning model, jobs de memoria con uno no-reasoning:
+  #   memories:
+  #     llm:
+  #       provider: openai    # cambia vendor → creds resueltas desde providers.openai
+  #       model: gpt-4o-mini
+  #       reasoning_effort: null
+
+  # ---------------------------------------------------------------------------
+  # [memories.consolidation] — Extracción de recuerdos (digest → trim)
+  # ---------------------------------------------------------------------------
+  consolidation:
+    # enabled: true           # Flag PER-AGENT — va en agents/{id}.yaml, NO acá.
+    schedule: "0 3 * * *"     # Cron de la consolidación global nocturna
+                              # (una sola tarea que itera todos los agentes).
+    delay_seconds: 2          # Pausa (segundos) entre llamadas al LLM extractor.
+                              # Aplica entre agentes y entre scopes (channel, chat_id).
+    keep_last_messages: 0     # Mensajes a preservar por agente tras consolidar.
+                              # 0 = usar fallback del sistema (84).
+    min_relevance_score: 0.5  # Umbral mínimo (0.0-1.0) para persistir un recuerdo.
+    # channels_infused: null  # Canales cuyos mensajes SÍ se consolidan. null = todos.
+                              # Ej. multi-agente Telegram: ["telegram"].
+    # agent_id: memory_extractor  # Sub-agente extractor opcional (agents/sub-agents/).
+                              # Si se setea, la extracción delega a ese sub-agente.
+
+  # ---------------------------------------------------------------------------
+  # [memories.reconciliation] — Job de reflection (OPCIONAL, opt-in)
+  # ---------------------------------------------------------------------------
+  # Detecta recuerdos contradictorios o desactualizados y los fusiona, reemplaza
+  # o despondera usando un LLM. Opt-in (enabled: false) por ser más costoso que
+  # la consolidación (una llamada LLM por cluster). INDEPENDIENTE de consolidation:
+  # puede correr sobre recuerdos preexistentes aunque la consolidación esté off.
   #
-  # Ejemplo — chat con un reasoning model, consolidación con uno no-reasoning:
-  #
-  # providers:
-  #   groq:   { api_key: "gsk_..." }
-  #   openai: { api_key: "sk-..." }
-  #
-  # llm:                      # (base, para el chat)
-  #   provider: groq
-  #   model: openai/gpt-oss-120b
-  #   reasoning_effort: high
-  #   max_tokens: 2048
-  #
-  # memory:
-  #   llm:                    # (override, para consolidación)
-  #     provider: openai      # cambia vendor → creds resueltas desde providers.openai
-  #     model: gpt-4o-mini
-  #     reasoning_effort: null
-  #     max_tokens: 8192
+  # Activación mínima (en agents/{id}.yaml):
+  #   memories:
+  #     reconciliation:
+  #       enabled: true
+  reconciliation:
+    # enabled: false          # Flag PER-AGENT — va en agents/{id}.yaml.
+    schedule: "0 4 * * 1"     # Cron de la tarea builtin. Default: lunes 04:00 (tz usuario).
+    similarity_threshold: 0.80  # Similitud coseno mínima (0.0-1.0) para agrupar
+                              # dos recuerdos en un cluster. 0.80 = conservador.
+    top_k: 10                 # Vecinos máximos a considerar por seed al armar un cluster.
+    # agent_id: memory_reconciler  # Sub-agente reconciliador opcional (agents/sub-agents/).
+                              # Si no resuelve a un sub-agente válido, el arranque
+                              # loggea ERROR y cae al prompt hardcodeado (graceful).
 
 
 # -----------------------------------------------------------------------------

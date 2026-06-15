@@ -13,7 +13,7 @@ from infrastructure.config import (
     AgentConfig,
     LLMConfig,
     EmbeddingConfig,
-    MemoryConfig,
+    MemoriesConfig,
     ChatHistoryConfig,
     SkillsConfig,
     ToolsConfig,
@@ -141,7 +141,7 @@ def _make_use_case(
         system_prompt="Eres un asistente de test.",
         llm=LLMConfig(provider="openrouter", model="test-model"),
         embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
-        memory=overrides.get("memory", MemoryConfig(db_filename=":memory:", default_top_k=3)),
+        memories=overrides.get("memories", MemoriesConfig(db_filename=":memory:")),
         chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history.db"),
         skills=overrides.get("skills", SkillsConfig()),
         tools=overrides.get("tools", ToolsConfig()),
@@ -250,11 +250,9 @@ async def test_digest_present_injected_into_system_prompt(
     digest_file.write_text("# Test digest\n- [2026-04-09] Hello", encoding="utf-8")
 
     mock_skills.list_all.return_value = []
-    mem_cfg = MemoryConfig(
-        db_filename=":memory:", default_top_k=3, digest_filename=str(digest_file)
-    )
+    mem_cfg = MemoriesConfig(db_filename=":memory:", digest_filename=str(digest_file))
     uc = _make_use_case(
-        {"memory": mem_cfg},
+        {"memories": mem_cfg},
         mock_llm,
         mock_memory,
         mock_embedder,
@@ -277,11 +275,9 @@ async def test_digest_absent_no_exception(
     nonexistent = tmp_path / "does_not_exist.md"
 
     mock_skills.list_all.return_value = []
-    mem_cfg = MemoryConfig(
-        db_filename=":memory:", default_top_k=3, digest_filename=str(nonexistent)
-    )
+    mem_cfg = MemoriesConfig(db_filename=":memory:", digest_filename=str(nonexistent))
     uc = _make_use_case(
-        {"memory": mem_cfg},
+        {"memories": mem_cfg},
         mock_llm,
         mock_memory,
         mock_embedder,

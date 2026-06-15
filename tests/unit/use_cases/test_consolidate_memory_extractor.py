@@ -1,9 +1,9 @@
 """Tests para `ConsolidateMemoryUseCase.set_extractor()` — extracción via sub-agente.
 
-Cubre la rama nueva: cuando `memory.llm.agent_id` apunta a un sub-agente,
-`AppContainer` Phase 6 inyecta el `RunAgentOneShotUseCase` del sub-agente
-via `set_extractor()`, y `execute()` delega la extracción ahí en vez de
-usar el prompt hardcodeado + LLM directo.
+Cubre la rama nueva: cuando `memories.consolidation.agent_id` apunta a un
+sub-agente, `AppContainer` Phase 6 inyecta el `RunAgentOneShotUseCase` del
+sub-agente via `set_extractor()`, y `execute()` delega la extracción ahí en vez
+de usar el prompt hardcodeado + LLM directo.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from core.domain.entities.message import Message, Role
 from core.domain.errors import ConsolidationError
 from core.domain.value_objects.llm_response import LLMResponse
 from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
-from core.domain.value_objects.agent_settings import MemorySettings
+from core.domain.value_objects.agent_settings import ConsolidationSettings, MemorySettings
 
 
 @pytest.fixture
@@ -25,8 +25,7 @@ def memory_config(tmp_path: Path) -> MemorySettings:
     return MemorySettings(
         digest_size=3,
         digest_template=str(tmp_path / "mem" / "digest.md"),
-        min_relevance_score=0.5,
-        keep_last_messages=20,
+        consolidation=ConsolidationSettings(min_relevance_score=0.5, keep_last_messages=20),
     )
 
 

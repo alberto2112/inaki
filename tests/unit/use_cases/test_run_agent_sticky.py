@@ -15,7 +15,7 @@ from infrastructure.config import (
     ChatHistoryConfig,
     EmbeddingConfig,
     LLMConfig,
-    MemoryConfig,
+    MemoriesConfig,
     SkillsConfig,
     ToolsConfig,
 )
@@ -37,7 +37,7 @@ def _make_use_case(
         system_prompt="Eres un asistente de test.",
         llm=LLMConfig(provider="openrouter", model="test-model"),
         embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
-        memory=MemoryConfig(db_filename=":memory:", default_top_k=3),
+        memories=MemoriesConfig(db_filename=":memory:"),
         chat_history=ChatHistoryConfig(db_filename="/tmp/inaki_test/history.db"),
         skills=overrides.get("skills", SkillsConfig()),
         tools=overrides.get("tools", ToolsConfig()),

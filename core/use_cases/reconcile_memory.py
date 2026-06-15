@@ -60,12 +60,35 @@ You receive a cluster of related memories (with ids and timestamps) and must
 decide how to reconcile them: merge contradictions, supersede outdated facts,
 downweight uncertain ones, or keep them as-is.
 
+## Ephemeral vs Persistent facts
+
+Before deciding, classify each memory:
+
+**EPHEMERAL** (time-bounded, relevant only while the event is active):
+- Current or in-progress location ("user is at X", "heading to Y", "on the metro")
+- Active short-term health state ("has a cold", "is feverish", "started treatment X")
+- Ongoing activity ("watching the game", "cooking dinner", "traveling to Z today")
+- Scheduled near-term event ("meeting tomorrow", "doctor appointment next week")
+
+**PERSISTENT** (indefinitely relevant):
+- Identity, name, relationships ("user's son is called X")
+- Residence or regular home location ("lives in Valencia")
+- Stable preferences, beliefs, skills
+- Historical facts with lasting significance ("had surgery in 2024")
+
+**Rule**: If a memory is EPHEMERAL and its `created_at` is more than ~48 hours old,
+the event it describes has almost certainly already passed. Use `supersede` to remove it —
+there is no value in remembering where someone was on the metro last month.
+Do NOT use `keep` or `downweight` for stale ephemeral memories. Supersede them.
+
 ## Guidelines
 
 - BALANCED mode: merge obvious contradictions into a single updated memory that
   PRESERVES the timeline (e.g. "Had flu in March treated with X; recovered in
-  April, no longer on treatment"). When in DOUBT, prefer downweight over delete.
-- If there is no conflict or redundancy, return keep.
+  April, no longer on treatment"). When in DOUBT about persistent facts, prefer
+  downweight over delete.
+- Stale ephemeral facts: use `supersede` — no doubt needed, they are simply expired.
+- If there is no conflict, redundancy, or staleness, return keep.
 - NEVER invent facts not present in the original memories.
 - Reference memories by their exact `id` field in `target_ids`.
 
@@ -251,7 +274,8 @@ class ReconcileMemoryUseCase:
                 f"id: {m.id}\ncreated_at: {ts}\nrelevance: {m.relevance:.2f}\ncontent: {m.content}"
             )
         cluster_text = "\n\n---\n\n".join(entradas)
-        task_text = f"Reconcile the following memory cluster:\n\n{cluster_text}"
+        now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        task_text = f"Current date/time (UTC): {now_ts}\n\nReconcile the following memory cluster:\n\n{cluster_text}"
 
         # Dos caminos: sub-agente one-shot o LLM directo con prompt hardcodeado
         if self._reconciler_one_shot is not None:

@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import Callable
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -207,18 +207,36 @@ def _build_container(
     return container
 
 
+def _minimal_sub_delta(child: AgentContainer) -> dict:
+    """Delta crudo mínimo de un sub-agente (lo que daría ``registry.get_sub_agent_raw``).
+
+    Solo identidad + prompt → SIN bloque ``llm`` → el hijo efímero HEREDA el llm del
+    caller (default C). Para testear override, pasá un ``sub_delta`` con ``llm``.
+    """
+    cfg = child.agent_config
+    return {
+        "id": cfg.id,
+        "name": cfg.name,
+        "description": cfg.description,
+        "system_prompt": cfg.system_prompt,
+    }
+
+
 def _wire_both(
     parent: AgentContainer,
     child: AgentContainer,
+    *,
+    sub_delta: dict | None = None,
 ) -> Callable[[str], AgentContainer | None]:
-    """
-    Build the minimal two-container harness: create the get_agent_container
-    closure and call wire_delegation on both containers.
+    """Harness de dos containers para el flujo delegate bajo C.
 
-    El padre recibe al hijo como sub-agente disponible.
-    El hijo es llamado one-shot y no necesita delegation wiring.
+    El padre recibe al hijo como sub-agente disponible (discovery + allow-list) y un
+    ``get_sub_agent_raw`` que devuelve el delta del hijo. La delegación construye una
+    instancia EFÍMERA contra el caller (``build_ephemeral_child``) — el container del
+    hijo solo se usa para la discovery section; su ``_llm`` NO se usa (el efímero hereda
+    el del padre). Pasá ``sub_delta`` para forzar override (ej. ``{"llm": {...}}``).
 
-    Returns the closure for use in assertions.
+    Returns the get_agent_container closure for use in assertions.
     """
     containers = {
         parent.agent_config.id: parent,
@@ -228,7 +246,16 @@ def _wire_both(
     def _get_agent_container(agent_id: str) -> AgentContainer | None:
         return containers.get(agent_id)
 
-    parent.wire_delegation(_get_agent_container, sub_agent_ids=[child.agent_config.id])
+    delta = sub_delta if sub_delta is not None else _minimal_sub_delta(child)
+
+    def _get_sub_agent_raw(agent_id: str) -> dict | None:
+        return delta if agent_id == child.agent_config.id else None
+
+    parent.wire_delegation(
+        _get_agent_container,
+        sub_agent_ids=[child.agent_config.id],
+        get_sub_agent_raw=_get_sub_agent_raw,
+    )
     child.wire_delegation(_get_agent_container)  # no-op: child no delega
 
     return _get_agent_container
@@ -271,6 +298,71 @@ def _valid_child_response(
     return f"I completed the task.\n\n{block}"
 
 
+def _scripted_parent_llm(
+    *,
+    target: str = "child",
+    task: str = "do something",
+    child: object = None,
+    final: str | LLMResponse = "Final answer.",
+) -> AsyncMock:
+    """LLM del parent que TAMBIÉN sirve los turnos del hijo (que hereda este mismo llm
+    bajo C). Discrimina por schemas: si ``delegate`` está en ``tools`` → turno del PARENT
+    (1ro = ``delegate(target, task)``, 2do = ``final``); si no → turno del HIJO, donde
+    ``child`` define el comportamiento:
+
+    - ``str`` / ``LLMResponse`` → respuesta del hijo (sin tool calls).
+    - ``BaseException`` → el turno del hijo lanza (child_exception).
+    - ``("sleep", seg)`` → duerme (para timeout).
+    - ``("loop", LLMResponse)`` → devuelve siempre ese tool_call (para max_iterations).
+    - ``None`` → el hijo nunca se alcanza (target_not_allowed / unknown_agent).
+    """
+    llm = AsyncMock()
+    state = {"delegated": False}
+    delegate_resp = _tool_call_response(target, task)
+    final_resp = final if isinstance(final, LLMResponse) else LLMResponse.of_text(final)
+    child_text: LLMResponse | None = None
+    if isinstance(child, LLMResponse):
+        child_text = child
+    elif isinstance(child, str):
+        child_text = LLMResponse.of_text(child)
+
+    async def _complete(messages, system_prompt, tools=None):
+        names = {t.get("function", {}).get("name") for t in (tools or [])}
+        if "delegate" in names:  # turno del PARENT
+            if not state["delegated"]:
+                state["delegated"] = True
+                return delegate_resp
+            return final_resp
+        # turno del HIJO (la tool delegate la filtra el OneShot — REQ-DG-9)
+        if isinstance(child, BaseException):
+            raise child
+        if isinstance(child, tuple) and child and child[0] == "sleep":
+            await asyncio.sleep(child[1])
+            return LLMResponse.of_text("never reached")
+        if isinstance(child, tuple) and child and child[0] == "loop":
+            return child[1]
+        return child_text
+
+    llm.complete.side_effect = _complete
+    return llm
+
+
+def _child_turn_calls(parent_llm: AsyncMock) -> list:
+    """Llamadas a ``parent_llm`` que fueron turnos del HIJO (sin ``delegate`` en schemas).
+
+    Bajo C el hijo efímero hereda el llm del parent, así que sus turnos aparecen en el
+    ``call_args_list`` del ``parent_llm`` — distinguibles porque el OneShot filtra
+    ``delegate`` de los schemas (REQ-DG-9).
+    """
+    out = []
+    for call in parent_llm.complete.call_args_list:
+        tools = call.kwargs.get("tools") or []
+        names = {t.get("function", {}).get("name") for t in tools}
+        if "delegate" not in names:
+            out.append(call)
+    return out
+
+
 # ===========================================================================
 # Task 7.1 — End-to-end happy path (REQ-DG-4)
 # ===========================================================================
@@ -298,20 +390,17 @@ async def test_happy_path_end_to_end(tmp_path):
     """
     global_cfg = _make_global_config(max_iterations_per_sub=10, timeout_seconds=60)
 
-    parent_llm = _make_scripted_llm(
-        [
-            _tool_call_response("child", "compute the sum of 2 and 2"),
-            "The specialist computed 2 + 2 = 4.",  # final answer — no tool calls
-        ]
-    )
-    child_llm = _make_scripted_llm(
-        [
-            _valid_child_response(
-                status="success",
-                summary="2 + 2 = 4",
-                details="Computed by basic arithmetic.",
-            ),
-        ]
+    # Bajo C el hijo efímero hereda el llm del parent → el MISMO parent_llm sirve el turno
+    # del hijo. _scripted_parent_llm intercala: delegate → child_response → final.
+    parent_llm = _scripted_parent_llm(
+        target="child",
+        task="compute the sum of 2 and 2",
+        child=_valid_child_response(
+            status="success",
+            summary="2 + 2 = 4",
+            details="Computed by basic arithmetic.",
+        ),
+        final="The specialist computed 2 + 2 = 4.",
     )
 
     parent_cfg = _make_agent_config(
@@ -320,66 +409,60 @@ async def test_happy_path_end_to_end(tmp_path):
         allowed_targets=["child"],
         description="Coordinator agent",
     )
-    # Child must have delegation.enabled=True so wire_delegation sets run_agent_one_shot.
-    # delegation.enabled=True does NOT mean the child can delegate further — it just
-    # ensures run_agent_one_shot is instantiated on the container (required by DelegateTool).
-    # REQ-DG-9 guarantees the child's LLM never sees the "delegate" schema.
     child_cfg = _make_agent_config(
         agent_id="child",
         delegation_enabled=True,
-        allowed_targets=[],  # no further delegation targets
+        allowed_targets=[],
         description="Arithmetic specialist",
     )
 
     parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
-    child_container = _build_container(child_cfg, global_cfg, child_llm)
+    # El llm del container del hijo NO se usa bajo C (el efímero hereda el del parent):
+    # un sentinela que lanza si se invoca prueba ese invariante.
+    child_container = _build_container(child_cfg, global_cfg, _make_scripted_llm([]))
 
     _wire_both(parent_container, child_container)
 
     # --- Execute the full chain ---
     result = await parent_container.run_agent.execute("What is 2 + 2?")
 
-    # Assertion 1: final text is the parent's second response
+    # Assertion 1: final text is the parent's final response
     assert result == "The specialist computed 2 + 2 = 4."
 
-    # Assertion 2: parent LLM called twice
-    assert parent_llm.complete.call_count == 2, (
-        f"Parent LLM must be called exactly 2 times. Called: {parent_llm.complete.call_count}"
+    # Assertion 2: parent_llm called 3 veces (delegate + turno del hijo heredado + final)
+    assert parent_llm.complete.call_count == 3, (
+        f"parent_llm must be called 3 times (delegate, child turn, final). "
+        f"Called: {parent_llm.complete.call_count}"
     )
 
-    # Assertion 3: child LLM called once
-    assert child_llm.complete.call_count == 1, (
-        f"Child LLM must be called exactly 1 time. Called: {child_llm.complete.call_count}"
-    )
+    # Assertion 3: hubo EXACTAMENTE un turno del hijo (sin 'delegate' en schemas)
+    child_calls = _child_turn_calls(parent_llm)
+    assert len(child_calls) == 1, f"Debe haber 1 turno del hijo. Hubo: {len(child_calls)}"
 
-    # Assertion 4: child LLM system_prompt contains _RESULT_FORMAT_FOOTER (6.2 wired)
-    child_system_prompt = child_llm.complete.call_args.args[1]
+    # Assertion 4: el turno del hijo lleva _RESULT_FORMAT_FOOTER (6.2 wired)
+    child_system_prompt = child_calls[0].args[1]
     assert _RESULT_FORMAT_FOOTER in child_system_prompt, (
-        "Child system prompt must contain _RESULT_FORMAT_FOOTER (task 6.2 wired end-to-end)"
+        "El system prompt del hijo debe contener _RESULT_FORMAT_FOOTER (task 6.2)"
     )
 
-    # Assertion 5: child LLM tool_schemas does NOT include "delegate" (REQ-DG-9)
-    child_tool_schemas = child_llm.complete.call_args.kwargs.get("tools") or []
-    child_schema_names = [s.get("function", {}).get("name") for s in child_tool_schemas]
+    # Assertion 5: los schemas del turno del hijo NO incluyen 'delegate' (REQ-DG-9)
+    child_schema_names = [
+        s.get("function", {}).get("name") for s in (child_calls[0].kwargs.get("tools") or [])
+    ]
     assert "delegate" not in child_schema_names, (
-        f"Child schemas must NOT include 'delegate' (REQ-DG-9). Got: {child_schema_names}"
+        f"Los schemas del hijo NO deben incluir 'delegate' (REQ-DG-9). Got: {child_schema_names}"
     )
 
-    # Assertion 6: parent system prompt contains child id (6.1 discovery section wired)
-    # The parent's first LLM call carries its system prompt in args[1]
+    # Assertion 6: el system prompt del parent contiene el id del hijo (discovery, 6.1)
     parent_first_system_prompt = parent_llm.complete.call_args_list[0].args[1]
     assert "child" in parent_first_system_prompt, (
-        "Parent system prompt must contain 'child' agent in the discovery section (task 6.1)"
+        "El system prompt del parent debe nombrar al sub-agente 'child' (discovery, task 6.1)"
     )
 
-    # Assertion 7: The tool_result passed back to the parent LLM (second call)
-    # must embed a DelegationResult with status="success".
-    # We verify by inspecting the messages list in the parent's 2nd LLM call:
-    # the last message before the final call is [Resultados de tools] containing JSON.
-    parent_second_call_messages = parent_llm.complete.call_args_list[1].args[0]  # type: ignore[attr-defined]
-    tool_result_msg = parent_second_call_messages[-1]
-    # El tool result se inyecta como JSON puro en el content del mensaje TOOL.
-    dr = DelegationResult.model_validate_json(tool_result_msg.content)
+    # Assertion 7: el DelegationResult inyectado al parent (última llamada) es success
+    dr = DelegationResult.model_validate_json(
+        parent_llm.complete.call_args_list[-1].args[0][-1].content
+    )
     assert dr.status == "success", f"DelegationResult must be status=success. Got: {dr.status}"
 
 
@@ -393,17 +476,16 @@ async def _run_delegation_and_extract_result(
     task: str = "do something",
 ) -> DelegationResult:
     """
-    Run the parent's execute() with a scripted delegate call, then
-    extract the DelegationResult from the second parent LLM call's messages.
-
-    The parent LLM is scripted to make ONE delegate call (first response)
-    and then return a final answer (second response).
+    Run the parent's execute() and extract the DelegationResult from the LAST parent
+    LLM call's messages (que es el turno final del parent: lleva el tool result como
+    último mensaje). Usamos la ÚLTIMA llamada — no un índice fijo — porque bajo C el
+    hijo efímero hereda el llm del parent e intercala turnos: el conteo de llamadas
+    depende de si el hijo se alcanzó (target_not_allowed/unknown_agent no lo alcanzan).
     """
     await parent_container.run_agent.execute(task)
-    # The second call to parent LLM carries the tool result
     parent_llm = parent_container._llm
-    second_call_messages = parent_llm.complete.call_args_list[1].args[0]  # type: ignore[attr-defined]
-    tool_result_msg = second_call_messages[-1]
+    last_call_messages = parent_llm.complete.call_args_list[-1].args[0]  # type: ignore[attr-defined]
+    tool_result_msg = last_call_messages[-1]
     return DelegationResult.model_validate_json(tool_result_msg.content)
 
 
@@ -492,20 +574,15 @@ async def test_failure_result_parse_error_no_json_block():
     )
     child_cfg = _make_agent_config(agent_id="child", delegation_enabled=True, allowed_targets=[])
 
-    parent_llm = _make_scripted_llm(
-        [
-            _tool_call_response("child", "do something"),
-            "Child could not complete the task.",
-        ]
-    )
-    child_llm = _make_scripted_llm(
-        [
-            "I did the thing but forgot to format the result.",  # no json block
-        ]
+    parent_llm = _scripted_parent_llm(
+        target="child",
+        task="do something",
+        child="I did the thing but forgot to format the result.",  # sin bloque json
+        final="Child could not complete the task.",
     )
 
     parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
-    child_container = _build_container(child_cfg, global_cfg, child_llm)
+    child_container = _build_container(child_cfg, global_cfg, _make_scripted_llm([]))
     _wire_both(parent_container, child_container)
 
     dr = await _run_delegation_and_extract_result(parent_container)
@@ -526,20 +603,15 @@ async def test_failure_result_parse_error_invalid_json_in_block():
     )
     child_cfg = _make_agent_config(agent_id="child", delegation_enabled=True, allowed_targets=[])
 
-    parent_llm = _make_scripted_llm(
-        [
-            _tool_call_response("child", "do something"),
-            "Child had a parse error.",
-        ]
-    )
-    child_llm = _make_scripted_llm(
-        [
-            "Some output\n```json\n{not: valid json!!}\n```",
-        ]
+    parent_llm = _scripted_parent_llm(
+        target="child",
+        task="do something",
+        child="Some output\n```json\n{not: valid json!!}\n```",
+        final="Child had a parse error.",
     )
 
     parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
-    child_container = _build_container(child_cfg, global_cfg, child_llm)
+    child_container = _build_container(child_cfg, global_cfg, _make_scripted_llm([]))
     _wire_both(parent_container, child_container)
 
     dr = await _run_delegation_and_extract_result(parent_container)
@@ -560,35 +632,25 @@ async def test_failure_timeout():
     )
     child_cfg = _make_agent_config(agent_id="child", delegation_enabled=True, allowed_targets=[])
 
-    parent_llm = _make_scripted_llm(
-        [
-            _tool_call_response("child", "slow task"),
-            "Task timed out.",
-        ]
+    parent_llm = _scripted_parent_llm(
+        target="child",
+        task="slow task",
+        child=("sleep", 10),  # el turno del hijo duerme >> timeout del delegate
+        final="Task timed out.",
     )
 
-    # Child LLM will sleep longer than the timeout
-    child_llm = AsyncMock()
-
-    async def _slow_complete(messages, system_prompt, tools=None):
-        await asyncio.sleep(10)  # much longer than 1s timeout
-        return LLMResponse.of_text(_valid_child_response())  # never reached
-
-    child_llm.complete.side_effect = _slow_complete
-
-    # Use a very short timeout for this test
     short_timeout_global = _make_global_config(
         max_iterations_per_sub=10,
         timeout_seconds=1,
     )
 
     parent_container = _build_container(parent_cfg, short_timeout_global, parent_llm)
-    child_container = _build_container(child_cfg, short_timeout_global, child_llm)
+    child_container = _build_container(child_cfg, short_timeout_global, _make_scripted_llm([]))
     _wire_both(parent_container, child_container)
 
-    # Override the delegate tool's timeout to something very small for test speed
+    # timeout chico para distinguir del sleep de 10s
     delegate_tool: DelegateTool = parent_container._tools._tools["delegate"]
-    delegate_tool._timeout_seconds = 1  # 1 second is fast enough to distinguish from 10s sleep
+    delegate_tool._timeout_seconds = 1
 
     dr = await _run_delegation_and_extract_result(parent_container)
 
@@ -611,41 +673,31 @@ async def test_failure_max_iterations_exceeded():
     )
     child_cfg = _make_agent_config(agent_id="child", delegation_enabled=True, allowed_targets=[])
 
-    parent_llm = _make_scripted_llm(
-        [
-            _tool_call_response("child", "infinite loop task"),
-            "Child exceeded max iterations.",
-        ]
-    )
-
-    # Child LLM ALWAYS returns a tool call for "dummy_tool" → never final text
+    # El hijo SIEMPRE devuelve un tool_call de "dummy_tool" → nunca texto final.
     child_tool_call = LLMResponse(
         text_blocks=[],
-        tool_calls=[
-            {
-                "function": {
-                    "name": "dummy_tool",
-                    "arguments": "{}",
-                }
-            }
-        ],
+        tool_calls=[{"function": {"name": "dummy_tool", "arguments": "{}"}}],
         raw="",
     )
-    child_llm = AsyncMock()
-    child_llm.complete.return_value = child_tool_call
+    parent_llm = _scripted_parent_llm(
+        target="child",
+        task="infinite loop task",
+        child=("loop", child_tool_call),
+        final="Child exceeded max iterations.",
+    )
 
-    # Build a dummy tool that succeeds so it keeps looping
-    dummy_tool = _make_dummy_tool("dummy_tool")
+    # dummy_tool ejecutable EN EL PARENT: bajo C el hijo efímero usa el toolkit del caller.
     from core.ports.outbound.tool_port import ToolResult
 
+    dummy_tool = _make_dummy_tool("dummy_tool")
     dummy_tool.execute = AsyncMock(
         return_value=ToolResult(tool_name="dummy_tool", output="ok", success=True)
     )
 
-    parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
-    child_container = _build_container(child_cfg, global_cfg, child_llm, extra_tools=[])
-    # Register the dummy tool on the child's tools registry directly
-    child_container._tools.register(dummy_tool)
+    parent_container = _build_container(
+        parent_cfg, global_cfg, parent_llm, extra_tools=[dummy_tool]
+    )
+    child_container = _build_container(child_cfg, global_cfg, _make_scripted_llm([]))
     _wire_both(parent_container, child_container)
 
     # Force max_iterations_per_sub=2 on the delegate tool
@@ -673,18 +725,15 @@ async def test_failure_child_exception():
     )
     child_cfg = _make_agent_config(agent_id="child", delegation_enabled=True, allowed_targets=[])
 
-    parent_llm = _make_scripted_llm(
-        [
-            _tool_call_response("child", "risky task"),
-            "Child failed unexpectedly.",
-        ]
+    parent_llm = _scripted_parent_llm(
+        target="child",
+        task="risky task",
+        child=RuntimeError("boom"),  # el turno del hijo lanza
+        final="Child failed unexpectedly.",
     )
 
-    child_llm = AsyncMock()
-    child_llm.complete.side_effect = RuntimeError("boom")
-
     parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
-    child_container = _build_container(child_cfg, global_cfg, child_llm)
+    child_container = _build_container(child_cfg, global_cfg, _make_scripted_llm([]))
     _wire_both(parent_container, child_container)
 
     dr = await _run_delegation_and_extract_result(parent_container)
@@ -721,33 +770,18 @@ async def test_failure_modes_canonical_reason_strings(scenario: str, expected_re
     child_cfg = _make_agent_config(agent_id="child", delegation_enabled=True, allowed_targets=[])
 
     if scenario == "target_not_allowed":
-        # Delegate to an agent not in allowed_targets
-        parent_llm = _make_scripted_llm(
-            [
-                _tool_call_response("other_agent", "task"),
-                "Done.",
-            ]
-        )
-        child_llm = _make_scripted_llm([])
+        # Delegate to an agent not in allowed_targets → el hijo NUNCA se alcanza.
+        parent_llm = _scripted_parent_llm(target="other_agent", task="task", child=None, final="Done.")
         parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
-        child_container = _build_container(child_cfg, global_cfg, child_llm)
+        child_container = _build_container(child_cfg, global_cfg, _make_scripted_llm([]))
         _wire_both(parent_container, child_container)
 
     elif scenario == "unknown_agent":
-        # "child" is in allowed_targets but won't be in containers dict
-        parent_llm = _make_scripted_llm(
-            [
-                _tool_call_response("child", "task"),
-                "Done.",
-            ]
-        )
-        child_llm = _make_scripted_llm([])
+        # "child" en allowed_targets pero SIN get_sub_agent_raw → build_child → None.
+        parent_llm = _scripted_parent_llm(target="child", task="task", child=None, final="Done.")
         parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
-        child_container = _build_container(child_cfg, global_cfg, child_llm)
-        # Wire with only parent — "child" es el sub-agente pero resuelve a None
         containers_dict = {"parent": parent_container}
         parent_container.wire_delegation(containers_dict.get, sub_agent_ids=["child"])
-        # child no está en containers_dict → closure retorna None → unknown_agent
 
     elif scenario in ("result_parse_error_no_block", "result_parse_error_invalid_json"):
         child_response = (
@@ -755,28 +789,19 @@ async def test_failure_modes_canonical_reason_strings(scenario: str, expected_re
             if "no_block" in scenario
             else "Some output\n```json\n{not valid}\n```"
         )
-        parent_llm = _make_scripted_llm(
-            [
-                _tool_call_response("child", "task"),
-                "Done.",
-            ]
+        parent_llm = _scripted_parent_llm(
+            target="child", task="task", child=child_response, final="Done."
         )
-        child_llm = _make_scripted_llm([child_response])
         parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
-        child_container = _build_container(child_cfg, global_cfg, child_llm)
+        child_container = _build_container(child_cfg, global_cfg, _make_scripted_llm([]))
         _wire_both(parent_container, child_container)
 
     elif scenario == "child_exception":
-        parent_llm = _make_scripted_llm(
-            [
-                _tool_call_response("child", "risky task"),
-                "Done.",
-            ]
+        parent_llm = _scripted_parent_llm(
+            target="child", task="risky task", child=RuntimeError("boom"), final="Done."
         )
-        child_llm = AsyncMock()
-        child_llm.complete.side_effect = RuntimeError("boom")
         parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
-        child_container = _build_container(child_cfg, global_cfg, child_llm)
+        child_container = _build_container(child_cfg, global_cfg, _make_scripted_llm([]))
         _wire_both(parent_container, child_container)
 
     else:
@@ -786,12 +811,10 @@ async def test_failure_modes_canonical_reason_strings(scenario: str, expected_re
     result_text = await parent_container.run_agent.execute("task")
     assert isinstance(result_text, str)
 
-    # Extract the DelegationResult from the tool result message.
-    # Renombrado a parent_llm_used para evitar la incompatibilidad con la
-    # binding previa (parent_llm: AsyncMock asignado en el scenario branch).
+    # Extraer el DelegationResult de la ÚLTIMA llamada del parent (lleva el tool result).
     parent_llm_used = parent_container._llm
-    second_call_messages = parent_llm_used.complete.call_args_list[1].args[0]  # type: ignore[attr-defined]
-    tool_result_msg = second_call_messages[-1]
+    last_call_messages = parent_llm_used.complete.call_args_list[-1].args[0]  # type: ignore[attr-defined]
+    tool_result_msg = last_call_messages[-1]
     dr = DelegationResult.model_validate_json(tool_result_msg.content)
 
     assert dr.status == "failed"
@@ -842,66 +865,54 @@ async def test_req_dg9_child_schemas_exclude_delegate_even_when_child_has_delega
         description="Sub-agent with delegation enabled",
     )
 
-    # Parent: delegates to child, then returns final answer
-    parent_llm = _make_scripted_llm(
-        [
-            _tool_call_response("child", "compute something"),
-            "The child computed the result.",
-        ]
-    )
-
-    # Child: returns a valid happy-path response on first call
-    child_llm = _make_scripted_llm(
-        [
-            _valid_child_response(status="success", summary="Computed successfully."),
-        ]
+    # Parent delega → turno del hijo (heredado) → final. Un solo parent_llm bajo C.
+    parent_llm = _scripted_parent_llm(
+        target="child",
+        task="compute something",
+        child=_valid_child_response(status="success", summary="Computed successfully."),
+        final="The child computed the result.",
     )
 
     parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
-    child_container = _build_container(child_cfg, global_cfg, child_llm)
+    child_container = _build_container(child_cfg, global_cfg, _make_scripted_llm([]))
     _wire_both(parent_container, child_container)
 
-    # Assertion 5 (nueva garantía): el hijo NO tiene 'delegate' en su registry
-    # porque wire_delegation es no-op para sub-agentes (no sub_agent_ids pasados).
+    # Assertion 5: el container del hijo NO tiene 'delegate' (wire_delegation no-op para subs).
     assert "delegate" not in child_container._tools._tools, (
         "REQ-DG-9: child must NOT have 'delegate' tool in its registry "
         "(sub-agents never get the delegate tool wired)"
     )
-
     # Precondición: el parent sí tiene 'delegate'
     assert "delegate" in parent_container._tools._tools, (
         "Precondition: parent must have 'delegate' tool in its registry"
     )
 
-    # Execute the full delegation chain
     result = await parent_container.run_agent.execute("Do something complex")
 
-    # Assertion 5b: child LLM fue llamado sin 'delegate' en los schemas
-    assert child_llm.complete.call_count == 1, (
-        f"Child LLM must be called exactly once. Called: {child_llm.complete.call_count}"
-    )
-    child_call_kwargs = child_llm.complete.call_args.kwargs
-    child_schemas = child_call_kwargs.get("tools") or []
-    child_schema_names = [s.get("function", {}).get("name") for s in child_schemas]
-
+    # Assertion 5b: el turno del hijo (heredado) corrió SIN 'delegate' en los schemas.
+    child_calls = _child_turn_calls(parent_llm)
+    assert len(child_calls) == 1, f"Debe haber 1 turno del hijo. Hubo: {len(child_calls)}"
+    child_schema_names = [
+        s.get("function", {}).get("name") for s in (child_calls[0].kwargs.get("tools") or [])
+    ]
     assert "delegate" not in child_schema_names, (
-        f"REQ-DG-9: Child schemas must NOT include 'delegate'. Got schemas: {child_schema_names}"
+        f"REQ-DG-9: los schemas del hijo NO deben incluir 'delegate'. Got: {child_schema_names}"
     )
     assert len(child_schema_names) >= 1, (
-        "Child must still have at least one non-delegate schema (dummy_tool)"
+        "El hijo debe tener al menos un schema no-delegate (dummy_tool del caller)"
     )
 
-    # Assertion 6: Parent's own LLM call DID receive "delegate" in schemas
-    parent_first_call_kwargs = parent_llm.complete.call_args_list[0].kwargs
-    parent_schemas = parent_first_call_kwargs.get("tools") or []
-    parent_schema_names = [s.get("function", {}).get("name") for s in parent_schemas]
-
+    # Assertion 6: la 1ra llamada del parent SÍ recibió 'delegate' en schemas.
+    parent_schema_names = [
+        s.get("function", {}).get("name")
+        for s in (parent_llm.complete.call_args_list[0].kwargs.get("tools") or [])
+    ]
     assert "delegate" in parent_schema_names, (
-        f"Parent schemas MUST include 'delegate' (it is a conversational agent). "
-        f"Got schemas: {parent_schema_names}"
+        f"Los schemas del parent DEBEN incluir 'delegate' (es agente conversacional). "
+        f"Got: {parent_schema_names}"
     )
 
-    # Sanity: the delegation chain succeeded
+    # Sanity: la cadena de delegación tuvo éxito
     assert result == "The child computed the result."
 
 
@@ -919,29 +930,27 @@ async def test_req_dg9_overlap_from_71_reconfirmed_in_73():
     )
     child_cfg = _make_agent_config(agent_id="child", delegation_enabled=True, allowed_targets=[])
 
-    parent_llm = _make_scripted_llm(
-        [
-            _tool_call_response("child", "a simple task"),
-            "Done.",
-        ]
-    )
-    child_llm = _make_scripted_llm(
-        [
-            _valid_child_response(status="success", summary="Simple task done."),
-        ]
+    parent_llm = _scripted_parent_llm(
+        target="child",
+        task="a simple task",
+        child=_valid_child_response(status="success", summary="Simple task done."),
+        final="Done.",
     )
 
     parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
-    child_container = _build_container(child_cfg, global_cfg, child_llm)
+    child_container = _build_container(child_cfg, global_cfg, _make_scripted_llm([]))
     _wire_both(parent_container, child_container)
 
     await parent_container.run_agent.execute("Do a simple task")
 
-    # Child LLM schemas must not include "delegate"
-    child_schemas = child_llm.complete.call_args.kwargs.get("tools") or []
-    child_schema_names = [s.get("function", {}).get("name") for s in child_schemas]
+    # El turno del hijo (heredado) corrió SIN 'delegate' en los schemas.
+    child_calls = _child_turn_calls(parent_llm)
+    assert len(child_calls) == 1, f"Debe haber 1 turno del hijo. Hubo: {len(child_calls)}"
+    child_schema_names = [
+        s.get("function", {}).get("name") for s in (child_calls[0].kwargs.get("tools") or [])
+    ]
     assert "delegate" not in child_schema_names, (
-        f"REQ-DG-9: Child schemas must not include 'delegate'. Got: {child_schema_names}"
+        f"REQ-DG-9: los schemas del hijo NO deben incluir 'delegate'. Got: {child_schema_names}"
     )
 
 
@@ -987,35 +996,23 @@ async def test_child_with_delegation_disabled_can_be_delegation_target(tmp_path)
         description="Worker with delegation disabled",
     )
 
-    parent_llm = _make_scripted_llm(
-        [
-            _tool_call_response("worker", "do the thing"),
-            "The worker completed the task.",  # final answer after delegation
-        ]
-    )
-    worker_llm = _make_scripted_llm(
-        [
-            _valid_child_response(status="success", summary="done"),
-        ]
+    parent_llm = _scripted_parent_llm(
+        target="worker",
+        task="do the thing",
+        child=_valid_child_response(status="success", summary="done"),
+        final="The worker completed the task.",
     )
 
     parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
-    worker_container = _build_container(worker_cfg, global_cfg, worker_llm)
+    # El llm del worker NO se usa bajo C (el efímero hereda el del parent): sentinela.
+    worker_container = _build_container(worker_cfg, global_cfg, _make_scripted_llm([]))
 
-    containers = {
-        "parent": parent_container,
-        "worker": worker_container,
-    }
+    # Bajo C el flag delegation del worker es IRRELEVANTE para ser target: el hijo efímero
+    # se construye desde el delta (get_sub_agent_raw), no desde el run_agent_one_shot
+    # pre-built del worker. _wire_both provee el get_sub_agent_raw del worker.
+    _wire_both(parent_container, worker_container)
 
-    def _get_agent_container(agent_id: str) -> AgentContainer | None:
-        return containers.get(agent_id)
-
-    # Wire both: parent recibe worker como sub-agente;
-    # worker es no-op (enabled=False), pero run_agent_one_shot ya está en el container.
-    parent_container.wire_delegation(_get_agent_container, sub_agent_ids=["worker"])
-    worker_container.wire_delegation(_get_agent_container)
-
-    # Assertion 3: worker has run_agent_one_shot (set unconditionally)
+    # Assertion 3: el worker igual tiene run_agent_one_shot (se construye en __init__)
     assert hasattr(worker_container, "run_agent_one_shot"), (
         "worker must have run_agent_one_shot even with delegation.enabled=False"
     )
@@ -1023,20 +1020,134 @@ async def test_child_with_delegation_disabled_can_be_delegation_target(tmp_path)
         "worker.run_agent_one_shot must be a RunAgentOneShotUseCase instance"
     )
 
-    # Assertion 4: worker does NOT have 'delegate' tool in registry (REQ-DG-1 preserved)
+    # Assertion 4: el worker NO tiene 'delegate' en su registry (REQ-DG-1 preserved)
     assert "delegate" not in worker_container._tools._tools, (
         "worker must NOT have the 'delegate' tool when delegation.enabled=False (REQ-DG-1)"
     )
 
-    # Assertion 1: parent.execute() must NOT raise AttributeError
+    # Assertion 1: parent.execute() no debe romper
     result = await parent_container.run_agent.execute("Delegate a task to worker")
     assert isinstance(result, str), "parent.execute() must return a string"
 
-    # Assertion 2: DelegationResult must have status="success"
-    second_call_messages = parent_llm.complete.call_args_list[1].args[0]  # type: ignore[attr-defined]
-    tool_result_msg = second_call_messages[-1]
-    dr = DelegationResult.model_validate_json(tool_result_msg.content)
+    # Assertion 2: DelegationResult success (última llamada del parent lleva el tool result)
+    dr = DelegationResult.model_validate_json(
+        parent_llm.complete.call_args_list[-1].args[0][-1].content
+    )
     assert dr.status == "success", (
         f"DelegationResult must be status=success when child has delegation.enabled=False. "
         f"Got: {dr.status!r}, reason: {dr.reason!r}"
     )
+
+
+# ===========================================================================
+# T9 — Herencia per-delegación (el comportamiento central de C)
+# ===========================================================================
+
+
+async def test_same_sub_def_inherits_each_callers_llm():
+    """
+    Núcleo de C: la MISMA definición de sub-agente, delegada por P y por Q, hereda el
+    LLM de CADA caller (no uno fijo). El hijo efímero corre sobre el ``_llm`` del parent;
+    el ``_llm`` del container pre-built del sub NUNCA se usa (sentinela que lanza).
+    """
+    global_cfg = _make_global_config()
+    sub_delta = {"id": "s", "name": "S", "description": "Sub compartido", "system_prompt": "Sos S."}
+    s_cfg = _make_agent_config(agent_id="s", delegation_enabled=True, allowed_targets=[])
+
+    # P delega S
+    p_llm = _scripted_parent_llm(
+        target="s", task="t", child=_valid_child_response(summary="from P"), final="P done"
+    )
+    p_cfg = _make_agent_config(agent_id="P", delegation_enabled=True, allowed_targets=["s"])
+    p = _build_container(p_cfg, global_cfg, p_llm)
+    s_for_p = _build_container(s_cfg, global_cfg, _make_scripted_llm([]))  # llm del sub: jamás usado
+    _wire_both(p, s_for_p, sub_delta=sub_delta)
+    await p.run_agent.execute("ask P")
+
+    # Q delega la MISMA def S
+    q_llm = _scripted_parent_llm(
+        target="s", task="t", child=_valid_child_response(summary="from Q"), final="Q done"
+    )
+    q_cfg = _make_agent_config(agent_id="Q", delegation_enabled=True, allowed_targets=["s"])
+    q = _build_container(q_cfg, global_cfg, q_llm)
+    s_for_q = _build_container(s_cfg, global_cfg, _make_scripted_llm([]))
+    _wire_both(q, s_for_q, sub_delta=sub_delta)
+    await q.run_agent.execute("ask Q")
+
+    # Cada caller sirvió el turno del hijo con SU propio llm (herencia per-caller).
+    assert len(_child_turn_calls(p_llm)) == 1, "el llm de P debe haber servido el turno del hijo"
+    assert len(_child_turn_calls(q_llm)) == 1, "el llm de Q debe haber servido el turno del hijo"
+
+
+async def test_sub_llm_override_builds_new_llm_via_factory():
+    """
+    Si el delta del sub OVERRIDEA ``llm`` (≠ al del caller), el hijo NO hereda la instancia
+    del parent: ``build_ephemeral_child`` construye una nueva vía ``LLMProviderFactory`` (con
+    los providers heredados del caller). El parent_llm solo sirve los turnos del PARENT.
+    """
+    global_cfg = _make_global_config()
+    sub_delta = {
+        "id": "s",
+        "name": "S",
+        "description": "Sub con llm propio",
+        "system_prompt": "Sos S.",
+        "llm": {"model": "sub-distinct-model"},  # override → difiere del parent → factory
+    }
+    s_cfg = _make_agent_config(agent_id="s", delegation_enabled=True, allowed_targets=[])
+
+    parent_llm = _make_scripted_llm([_tool_call_response("s", "t"), "P done"])  # solo turnos del parent
+    override_llm = _make_scripted_llm([_valid_child_response(summary="from sub's own llm")])
+
+    p_cfg = _make_agent_config(agent_id="P", delegation_enabled=True, allowed_targets=["s"])
+    p = _build_container(p_cfg, global_cfg, parent_llm)
+    s_container = _build_container(s_cfg, global_cfg, _make_scripted_llm([]))
+    _wire_both(p, s_container, sub_delta=sub_delta)
+
+    with patch(
+        "infrastructure.container.LLMProviderFactory.create", return_value=override_llm
+    ) as mock_create:
+        await p.run_agent.execute("ask P")
+
+    mock_create.assert_called_once()
+    llm_arg, providers_arg = mock_create.call_args[0]
+    assert llm_arg.model == "sub-distinct-model", "el factory recibe el llm overrideado"
+    assert "openrouter" in providers_arg, "el hijo hereda el registry providers del caller"
+    # El llm del override sirvió el turno del hijo; el parent_llm solo delegate + final.
+    assert override_llm.complete.call_count == 1
+    assert parent_llm.complete.call_count == 2
+
+
+async def test_sub_allow_list_restricts_child_schemas():
+    """
+    ``tools.allowed`` en el delta del sub recorta los schemas que ve el hijo a ese subset
+    del toolkit del CALLER (los recursos siguen siendo del caller). delegate se excluye igual.
+    """
+    global_cfg = _make_global_config()
+    sub_delta = {
+        "id": "s",
+        "name": "S",
+        "description": "Sub acotado",
+        "system_prompt": "Sos S.",
+        "tools": {"allowed": ["extra_a"]},  # solo extra_a, aunque el caller tenga más
+    }
+    s_cfg = _make_agent_config(agent_id="s", delegation_enabled=True, allowed_targets=[])
+
+    parent_llm = _scripted_parent_llm(
+        target="s", task="t", child=_valid_child_response(summary="ok"), final="done"
+    )
+    p_cfg = _make_agent_config(agent_id="P", delegation_enabled=True, allowed_targets=["s"])
+    extra_a = _make_dummy_tool("extra_a")
+    extra_b = _make_dummy_tool("extra_b")
+    p = _build_container(p_cfg, global_cfg, parent_llm, extra_tools=[extra_a, extra_b])
+    s_container = _build_container(s_cfg, global_cfg, _make_scripted_llm([]))
+    _wire_both(p, s_container, sub_delta=sub_delta)
+
+    await p.run_agent.execute("ask P")
+
+    child_calls = _child_turn_calls(parent_llm)
+    assert len(child_calls) == 1, f"Debe haber 1 turno del hijo. Hubo: {len(child_calls)}"
+    names = {
+        sch.get("function", {}).get("name") for sch in (child_calls[0].kwargs.get("tools") or [])
+    }
+    # El caller tiene dummy_tool + delegate + extra_a + extra_b; la allow-list recorta a extra_a.
+    assert names == {"extra_a"}, f"la allow-list debe recortar a extra_a. Got: {names}"

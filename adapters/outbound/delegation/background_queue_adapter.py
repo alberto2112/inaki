@@ -44,7 +44,7 @@ class BackgroundDelegationQueueAdapter:
         self,
         *,
         dispatcher: "ILLMDispatcher",
-        one_shot_resolver: Callable[[str], "RunAgentOneShotUseCase | None"],
+        one_shot_resolver: Callable[[str, str], "RunAgentOneShotUseCase | None"],
         max_iterations_per_sub: int,
         timeout_seconds: int,
         max_concurrent: int = 3,
@@ -140,7 +140,10 @@ class BackgroundDelegationQueueAdapter:
         async with self._semaphore:
             task.status = "running"
             try:
-                one_shot = self._one_shot_resolver(task.target_agent_id)
+                # Resolver = construir la instancia EFÍMERA del hijo contra el CALLER
+                # (hereda su config vía inherit). Por eso recibe ambos ids: el caller
+                # define la herencia, el target la definición del sub-agente.
+                one_shot = self._one_shot_resolver(task.caller_agent_id, task.target_agent_id)
                 if one_shot is None:
                     content = f"[{task.id}] failed: unknown_target_agent: '{task.target_agent_id}'"
                 else:

@@ -11,6 +11,9 @@ Contratos clave:
 - REQ-OS-3: `asyncio.wait_for` con timeout_seconds; ToolLoopMaxIterationsError
              propagados al caller — ninguno se captura aquí.
 - REQ-OS-4: Pasa `tool_registry.get_schemas()` completo al LLM — sin RAG.
+- REQ-OS-5: Si `settings.allowed_tools` no es None, restringe el schema a ese subset
+             (intersección con el registry recibido). Usado por el sub-agente efímero
+             del flujo delegate para acotar qué tools del caller ve el hijo.
 - REQ-DG-9: Filtra la tool "delegate" de los schemas antes de pasarlos al loop
              (prevención de recursión por construcción).
 """
@@ -53,6 +56,16 @@ class RunAgentOneShotUseCase:
         # Default False para no-op si nadie lo wirea (el one-shot suele correr sin sink).
         self._thinking_indicator = thinking_indicator
 
+    @property
+    def system_prompt(self) -> str:
+        """Prompt base del agente (sin footer ni sections extra).
+
+        ``DelegateTool`` lo lee para construir el ``effective_system_prompt`` cuando el
+        caller no pasa uno propio: el hijo efímero ya no es un container con
+        ``agent_config``, así que el prompt default se expone acá.
+        """
+        return self._cfg.system_prompt
+
     async def execute(
         self,
         task: str,
@@ -85,17 +98,29 @@ class RunAgentOneShotUseCase:
 
         # REQ-OS-4: toolkit completo sin RAG.
         # REQ-DG-9: excluir "delegate" para prevenir recursión por construcción.
+        # REQ-OS-5: si hay allow-list, recortar al subset declarado por el sub-agente
+        #           (intersección con el registry — un nombre inexistente se ignora).
         all_schemas = self._tools.get_schemas()
-        # ToolRegistry.get_schemas() returns {"type": "function", "function": {"name": ...}}.
-        # The name lives at s["function"]["name"], not at s["name"].
+        allowed = self._cfg.allowed_tools
+
+        # ToolRegistry.get_schemas() devuelve {"type": "function", "function": {"name": ...}}.
+        # El nombre vive en s["function"]["name"], no en s["name"].
+        def _tool_name(schema: dict) -> str:
+            return schema.get("function", {}).get("name", "")
+
         tool_schemas = [
-            s for s in all_schemas if s.get("function", {}).get("name") != _DELEGATE_TOOL_NAME
+            s
+            for s in all_schemas
+            if _tool_name(s) != _DELEGATE_TOOL_NAME and (allowed is None or _tool_name(s) in allowed)
         ]
 
         if len(tool_schemas) < len(all_schemas):
             logger.debug(
-                "RunAgentOneShotUseCase: tool '%s' excluida del schema del hijo (REQ-DG-9)",
-                _DELEGATE_TOOL_NAME,
+                "RunAgentOneShotUseCase: schema del hijo recortado a %d/%d tools "
+                "(delegate excluida; allow-list=%s)",
+                len(tool_schemas),
+                len(all_schemas),
+                "todas" if allowed is None else sorted(allowed),
             )
 
         # REQ-OS-1: historial limpio — solo el mensaje de la tarea actual.

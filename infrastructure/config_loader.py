@@ -63,6 +63,53 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+SUBAGENT_DEFAULTS: dict = {
+    "llm": {"inherit": True},
+    "memories": {
+        "consolidation": {"enabled": False},
+        "reconciliation": {"enabled": False},
+    },
+    "channels": {},
+}
+"""
+Defaults de rol para sub-agentes (one-shot, sin canales propios).
+
+- `llm.inherit: True` — único bloque heredado por default; se resuelve contra el padre
+  (registry build time: contra `global_raw`; flujo delegate: contra el caller, vía T4).
+- `memories.consolidation/reconciliation.enabled = False` — los sub-agentes no corren jobs
+  que persistan/muten memoria por su cuenta.
+- `channels = {}` — sin canales propios (solo invocables por delegación).
+
+Resto de bloques: SIN `inherit` — el YAML del sub-agente opta in por bloque con `inherit: true`.
+"""
+
+
+def resolve_inherit(child_raw: dict, parent_raw: dict) -> dict:
+    """
+    Resuelve el primitivo `inherit` por bloque top-level antes de validar con pydantic.
+
+    Por cada bloque de `child_raw` que sea un dict con `inherit: True`, el resultado
+    es `_deep_merge(parent_raw.get(block, {}), child_block_sin_inherit)` — el bloque
+    del padre como base, con los campos del hijo (si los hay) pisando encima. Bloques
+    sin `inherit` (o con `inherit: False`) quedan tal cual vinieron en `child_raw`.
+    La clave `inherit` siempre se strippea del resultado: no es dato de dominio, así
+    que nunca debe llegar a un modelo pydantic.
+    """
+    result: dict = {}
+    for key, value in child_raw.items():
+        if isinstance(value, dict) and value.get("inherit") is True:
+            child_block = {k: v for k, v in value.items() if k != "inherit"}
+            parent_block = parent_raw.get(key, {})
+            if not isinstance(parent_block, dict):
+                parent_block = {}
+            result[key] = _deep_merge(parent_block, child_block)
+        elif isinstance(value, dict) and "inherit" in value:
+            result[key] = {k: v for k, v in value.items() if k != "inherit"}
+        else:
+            result[key] = value
+    return result
+
+
 def _load_yaml_safe(path: Path) -> dict:
     """Carga un YAML. Retorna dict vacío si el archivo no existe."""
     if not path.exists():
@@ -466,14 +513,55 @@ def _filter_channel_adapters(raw: dict) -> dict:
     return {k: v for k, v in raw.items() if isinstance(v, dict)}
 
 
+def assemble_agent_config(merged: dict) -> AgentConfig:
+    """Ensambla un ``AgentConfig`` desde un dict YA mergeado y resuelto.
+
+    Asume que ``merged`` pasó por los merges de capas (``load_agent_config``) o por
+    el builder efímero del flujo delegate (``AgentContainer.build_ephemeral_child``)
+    y por la resolución de ``inherit``. Es el ÚNICO punto donde el mapeo
+    dict → ``AgentConfig`` vive: lo comparten ambos callers.
+
+    Lanza ``KeyError`` si falta un campo requerido (``id``/``name``/``description``)
+    o ``ValueError`` si un sub-modelo es inválido. El caller decide la política:
+    ``load_agent_config`` envuelve en try/except → ``None``; el builder efímero propaga.
+    """
+    providers = _parse_providers(merged)
+    transcription_raw = merged.get("transcription")
+    transcription = (
+        TranscriptionConfig(**transcription_raw) if transcription_raw is not None else None
+    )
+    return AgentConfig(
+        id=merged["id"],
+        name=merged["name"],
+        description=merged["description"],
+        system_prompt=merged.get("system_prompt", ""),
+        llm=LLMConfig(**merged.get("llm", {})),
+        embedding=EmbeddingConfig(**merged.get("embedding", {})),
+        memories=MemoriesConfig(**merged.get("memories", {})),
+        chat_history=ChatHistoryConfig(**merged.get("chat_history", {})),
+        skills=SkillsConfig(**merged.get("skills", {})),
+        tools=ToolsConfig(**merged.get("tools", {})),
+        semantic_routing=SemanticRoutingConfig(**merged.get("semantic_routing", {})),
+        workspace=WorkspaceConfig(**merged.get("workspace", {})),
+        delegation=AgentDelegationConfig(**merged.get("delegation", {})),
+        transcription=transcription,
+        channels=_filter_channel_adapters(merged.get("channels", {})),
+        providers=providers,
+    )
+
+
 def load_agent_config(
     agent_id: str,
     agents_dir: Path,
     global_raw: dict,
+    extra_base: dict | None = None,
 ) -> AgentConfig | None:
     """
     Carga y mergea la config de un agente:
-      global_raw → agents/{id}.yaml → agents/{id}.secrets.yaml
+      global_raw → extra_base → agents/{id}.yaml → agents/{id}.secrets.yaml
+
+    ``extra_base`` son los defaults de rol (ej. sub-agentes, ver ``SUBAGENT_DEFAULTS``):
+    pisan a ``global_raw`` pero el YAML explícito del agente sigue pisando por encima.
 
     Retorna None si el agente tiene config inválida (loggea WARNING).
     """
@@ -496,35 +584,16 @@ def load_agent_config(
             agent_secrets.name,
         )
 
+    if extra_base is not None:
+        global_raw = _deep_merge(global_raw, extra_base)
+
     # Merge: global como base, agente como override
     merged = _deep_merge(global_raw, agent_raw)
 
     _check_legacy_shape(merged)
 
     try:
-        providers = _parse_providers(merged)
-        transcription_raw = merged.get("transcription")
-        transcription = (
-            TranscriptionConfig(**transcription_raw) if transcription_raw is not None else None
-        )
-        return AgentConfig(
-            id=merged["id"],
-            name=merged["name"],
-            description=merged["description"],
-            system_prompt=merged.get("system_prompt", ""),
-            llm=LLMConfig(**merged.get("llm", {})),
-            embedding=EmbeddingConfig(**merged.get("embedding", {})),
-            memories=MemoriesConfig(**merged.get("memories", {})),
-            chat_history=ChatHistoryConfig(**merged.get("chat_history", {})),
-            skills=SkillsConfig(**merged.get("skills", {})),
-            tools=ToolsConfig(**merged.get("tools", {})),
-            semantic_routing=SemanticRoutingConfig(**merged.get("semantic_routing", {})),
-            workspace=WorkspaceConfig(**merged.get("workspace", {})),
-            delegation=AgentDelegationConfig(**merged.get("delegation", {})),
-            transcription=transcription,
-            channels=_filter_channel_adapters(merged.get("channels", {})),
-            providers=providers,
-        )
+        return assemble_agent_config(merged)
     except (KeyError, ValueError) as exc:
         logger.warning("Config inválida para agente '%s': %s", agent_id, exc)
         return None
@@ -548,6 +617,7 @@ class AgentRegistry:
     def __init__(self, agents_dir: Path, global_raw: dict) -> None:
         self._agents: dict[str, AgentConfig] = {}
         self._sub_agent_ids: set[str] = set()
+        self._sub_agent_raw: dict[str, dict] = {}
 
         if not agents_dir.exists():
             logger.warning("Directorio de agentes no encontrado: %s", agents_dir)
@@ -569,36 +639,17 @@ class AgentRegistry:
                     continue
                 agent_id = yaml_file.stem
 
-                # Detectar si los flags `enabled` de los jobs de memoria están
-                # explícitos en el YAML del sub-agente. Si no, se fuerzan a false
-                # (sub-agentes son one-shot por defecto y no deben correr ni
-                # consolidación ni reconciliación, que persisten/mutan memoria).
-                raw = _load_yaml_safe(yaml_file)
-                memories_block = raw.get("memories")
-                if not isinstance(memories_block, dict):
-                    memories_block = {}
-                cons_block = memories_block.get("consolidation")
-                rec_block = memories_block.get("reconciliation")
-                consolidation_explicit = isinstance(cons_block, dict) and "enabled" in cons_block
-                reconciliation_explicit = isinstance(rec_block, dict) and "enabled" in rec_block
-
-                cfg = load_agent_config(agent_id, sub_agents_dir, global_raw)
+                # Defaults de rol (SUBAGENT_DEFAULTS) inyectados como capa de prioridad
+                # más baja: el YAML del sub-agente (explícito) y global_raw siguen
+                # pisando por encima — ver `load_agent_config(extra_base=...)`.
+                extra_base = resolve_inherit(SUBAGENT_DEFAULTS, global_raw)
+                cfg = load_agent_config(agent_id, sub_agents_dir, global_raw, extra_base=extra_base)
                 if cfg is not None:
-                    mem_updates: dict = {}
-                    if not consolidation_explicit and cfg.memories.consolidation.enabled:
-                        mem_updates["consolidation"] = cfg.memories.consolidation.model_copy(
-                            update={"enabled": False}
-                        )
-                    if not reconciliation_explicit and cfg.memories.reconciliation.enabled:
-                        mem_updates["reconciliation"] = cfg.memories.reconciliation.model_copy(
-                            update={"enabled": False}
-                        )
-                    if mem_updates:
-                        cfg = cfg.model_copy(
-                            update={"memories": cfg.memories.model_copy(update=mem_updates)}
-                        )
                     self._agents[agent_id] = cfg
                     self._sub_agent_ids.add(agent_id)
+                    self._sub_agent_raw[agent_id] = self._load_sub_agent_raw_delta(
+                        agent_id, sub_agents_dir
+                    )
                     logger.debug("Sub-agente '%s' cargado: %s", agent_id, cfg.name)
 
         regular_count = len(self._agents) - len(self._sub_agent_ids)
@@ -632,6 +683,22 @@ class AgentRegistry:
 
     def list_sub_agents(self) -> list[AgentConfig]:
         return [cfg for id, cfg in self._agents.items() if id in self._sub_agent_ids]
+
+    def get_sub_agent_raw(self, agent_id: str) -> dict | None:
+        """
+        Delta crudo (YAML + secrets mergeados, SIN global_raw ni SUBAGENT_DEFAULTS) de un
+        sub-agente. Lo usa el builder efímero (`build_ephemeral_child`) para resolver
+        `inherit` contra el caller en tiempo de delegación — no contra `global_raw`.
+        """
+        return self._sub_agent_raw.get(agent_id)
+
+    @staticmethod
+    def _load_sub_agent_raw_delta(agent_id: str, sub_agents_dir: Path) -> dict:
+        raw = _load_yaml_safe(sub_agents_dir / f"{agent_id}.yaml")
+        secrets_path = sub_agents_dir / f"{agent_id}.secrets.yaml"
+        if secrets_path.exists():
+            raw = _deep_merge(raw, _load_yaml_safe(secrets_path))
+        return raw
 
     def agents_with_channel(self, channel_type: str) -> list[AgentConfig]:
         return [

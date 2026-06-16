@@ -48,7 +48,7 @@ async def test_end_to_end_async_delegation() -> None:
     target_one_shot = MagicMock()
     target_one_shot.execute = AsyncMock(return_value="Saldo $5.420")
 
-    def _resolve_one_shot(target_id: str):
+    def _resolve_one_shot(caller_id: str, target_id: str):
         return target_one_shot if target_id == "researcher" else None
 
     # Dispatcher real (lock-per-scope incluido)
@@ -130,7 +130,7 @@ async def test_end_to_end_dispatch_uses_lock_per_scope() -> None:
     dispatcher = LLMDispatcherAdapter({"inaki": caller})
     queue = BackgroundDelegationQueueAdapter(
         dispatcher=dispatcher,
-        one_shot_resolver=lambda _t: target_one_shot,
+        one_shot_resolver=lambda _c, _t: target_one_shot,
         max_iterations_per_sub=5,
         timeout_seconds=10,
         max_concurrent=3,

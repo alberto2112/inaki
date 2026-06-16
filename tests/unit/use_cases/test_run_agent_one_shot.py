@@ -6,6 +6,7 @@ Cobertura de requisitos:
 - REQ-OS-2: system_prompt del caller se usa verbatim (o default del agente si None)
 - REQ-OS-3: timeout (asyncio.TimeoutError) y max_iterations (ToolLoopMaxIterationsError) propagados
 - REQ-OS-4: get_schemas() completo, sin RAG
+- REQ-OS-5: allow-list (settings.allowed_tools) recorta el schema al subset declarado
 - REQ-DG-9: tool "delegate" excluida del schema antes de pasarla al loop
 """
 
@@ -457,6 +458,154 @@ async def test_req_dg9_no_delegate_in_registry_passes_all():
         sent_names = {s["function"]["name"] for s in schemas_sent}
 
         assert sent_names == {"read_file", "patch_file"}
+
+
+# ---------------------------------------------------------------------------
+# REQ-OS-5 — Allow-list de tools (flujo delegate)
+# ---------------------------------------------------------------------------
+
+
+async def test_req_os5_allowlist_restricts_to_subset():
+    """
+    REQ-OS-5: Con allowed_tools poblado, el hijo ve SOLO ese subset del registry
+    del caller. Las tools fuera de la lista no llegan al loop.
+    """
+    schema_a = {"type": "function", "function": {"name": "read_file", "description": "Leer"}}
+    schema_b = {"type": "function", "function": {"name": "write_file", "description": "Escribir"}}
+    schema_c = {"type": "function", "function": {"name": "web_search", "description": "Buscar"}}
+
+    tools = _make_tools(schemas=[schema_a, schema_b, schema_c])
+    cfg = OneShotSettings(
+        agent_id="child",
+        system_prompt="prompt",
+        allowed_tools=frozenset({"read_file", "web_search"}),
+    )
+    uc = _make_use_case(tools=tools, settings=cfg)
+
+    with patch(
+        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
+        mock_loop.return_value = "ok"
+
+        await uc.execute(task="tarea", system_prompt="prompt", max_iterations=5, timeout_seconds=30)
+
+        _, kwargs = mock_loop.call_args
+        sent_names = {s["function"]["name"] for s in kwargs["tool_schemas"]}
+
+        assert sent_names == {"read_file", "web_search"}, (
+            f"Solo el subset de la allow-list debe llegar al loop. Recibido: {sent_names}"
+        )
+
+
+async def test_req_os5_none_allowlist_passes_all():
+    """REQ-OS-5: allowed_tools=None (default) = sin restricción, todas las tools pasan."""
+    schema_a = {"type": "function", "function": {"name": "read_file", "description": "Leer"}}
+    schema_b = {"type": "function", "function": {"name": "write_file", "description": "Escribir"}}
+
+    tools = _make_tools(schemas=[schema_a, schema_b])
+    cfg = OneShotSettings(agent_id="child", system_prompt="prompt", allowed_tools=None)
+    uc = _make_use_case(tools=tools, settings=cfg)
+
+    with patch(
+        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
+        mock_loop.return_value = "ok"
+
+        await uc.execute(task="tarea", system_prompt="prompt", max_iterations=5, timeout_seconds=30)
+
+        _, kwargs = mock_loop.call_args
+        sent_names = {s["function"]["name"] for s in kwargs["tool_schemas"]}
+
+        assert sent_names == {"read_file", "write_file"}
+
+
+async def test_req_os5_nonexistent_name_ignored():
+    """
+    REQ-OS-5: Un nombre en la allow-list que no existe en el registry se ignora
+    (intersección) — nunca AMPLÍA sobre el registry del caller.
+    """
+    schema_a = {"type": "function", "function": {"name": "read_file", "description": "Leer"}}
+
+    tools = _make_tools(schemas=[schema_a])
+    cfg = OneShotSettings(
+        agent_id="child",
+        system_prompt="prompt",
+        allowed_tools=frozenset({"read_file", "tool_que_no_existe"}),
+    )
+    uc = _make_use_case(tools=tools, settings=cfg)
+
+    with patch(
+        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
+        mock_loop.return_value = "ok"
+
+        await uc.execute(task="tarea", system_prompt="prompt", max_iterations=5, timeout_seconds=30)
+
+        _, kwargs = mock_loop.call_args
+        sent_names = {s["function"]["name"] for s in kwargs["tool_schemas"]}
+
+        assert sent_names == {"read_file"}, (
+            f"Un nombre inexistente debe ignorarse. Recibido: {sent_names}"
+        )
+
+
+async def test_req_os5_delegate_excluded_even_if_in_allowlist():
+    """
+    REQ-OS-5 + REQ-DG-9: 'delegate' se excluye SIEMPRE, aunque esté en la allow-list.
+    La prevención de recursión no se puede burlar vía allow-list.
+    """
+    schema_delegate = {
+        "type": "function",
+        "function": {"name": "delegate", "description": "Delegar"},
+    }
+    schema_a = {"type": "function", "function": {"name": "read_file", "description": "Leer"}}
+
+    tools = _make_tools(schemas=[schema_a, schema_delegate])
+    cfg = OneShotSettings(
+        agent_id="child",
+        system_prompt="prompt",
+        allowed_tools=frozenset({"read_file", "delegate"}),
+    )
+    uc = _make_use_case(tools=tools, settings=cfg)
+
+    with patch(
+        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
+        mock_loop.return_value = "ok"
+
+        await uc.execute(task="tarea", system_prompt="prompt", max_iterations=5, timeout_seconds=30)
+
+        _, kwargs = mock_loop.call_args
+        sent_names = {s["function"]["name"] for s in kwargs["tool_schemas"]}
+
+        assert sent_names == {"read_file"}, (
+            f"'delegate' debe excluirse aunque esté en la allow-list. Recibido: {sent_names}"
+        )
+
+
+async def test_req_os5_empty_allowlist_yields_no_tools():
+    """
+    REQ-OS-5 (edge): allowed_tools=frozenset() (lista vacía explícita) = ninguna tool.
+    Distinto de None (todas). El sub que declara `tools.allowed: []` no expone ninguna.
+    """
+    schema_a = {"type": "function", "function": {"name": "read_file", "description": "Leer"}}
+    schema_b = {"type": "function", "function": {"name": "write_file", "description": "Escribir"}}
+
+    tools = _make_tools(schemas=[schema_a, schema_b])
+    cfg = OneShotSettings(agent_id="child", system_prompt="prompt", allowed_tools=frozenset())
+    uc = _make_use_case(tools=tools, settings=cfg)
+
+    with patch(
+        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
+        mock_loop.return_value = "ok"
+
+        await uc.execute(task="tarea", system_prompt="prompt", max_iterations=5, timeout_seconds=30)
+
+        _, kwargs = mock_loop.call_args
+        sent_names = {s["function"]["name"] for s in kwargs["tool_schemas"]}
+
+        assert sent_names == set(), f"Allow-list vacía = ninguna tool. Recibido: {sent_names}"
 
 
 # ---------------------------------------------------------------------------

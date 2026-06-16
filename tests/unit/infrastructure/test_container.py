@@ -13,7 +13,7 @@ Coverage:
 from __future__ import annotations
 
 from typing import Callable
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 from adapters.outbound.tools.delegate_tool import DelegateTool
@@ -358,53 +358,48 @@ def test_app_container_two_phase_init(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_wire_delegation_closure_late_binding(tmp_path) -> None:
+def test_wire_delegation_build_child_resolves_against_caller(tmp_path) -> None:
     """
-    The get_agent_container closure passed in Phase 2 MUST be bound over the
-    final (complete) agents dict, NOT a snapshot captured before Phase 1 finishes.
-
-    Simulates the scenario where:
-    - A dict is built incrementally (Phase 1)
-    - The closure is defined after the dict is complete (Phase 2)
-    - Verifying the closure can see all entries added BEFORE Phase 2
+    Flujo C: el closure ``build_child`` que ``wire_delegation`` inyecta en el DelegateTool
+    resuelve el sub-agente vía ``get_sub_agent_raw`` y construye la instancia EFÍMERA contra
+    ESTE caller (``build_ephemeral_child``). Un id desconocido → None. Reemplaza el viejo
+    test de late-binding del closure ``get_agent_container`` (el tool ya no lo almacena).
     """
     agent_a_cfg = _make_agent_config(
         agent_id="late-a",
         delegation_enabled=True,
         allowed_targets=[],
     )
-    agent_b_cfg = _make_agent_config(agent_id="late-b", delegation_enabled=False)
     global_cfg = _make_global_config()
-
     container_a = _build_minimal_container(agent_a_cfg, global_cfg, tmp_path)
-    container_b = _build_minimal_container(agent_b_cfg, global_cfg, tmp_path)
 
-    # Mimic the dict being filled INCREMENTALLY during Phase 1
-    agents: dict[str, AgentContainer] = {}
-    agents["late-a"] = container_a
-    agents["late-b"] = container_b
+    # Delta crudo del sub-agente "late-b" (lo que daría registry.get_sub_agent_raw).
+    sub_raw = {
+        "id": "late-b",
+        "name": "Late B",
+        "description": "Sub-agente B",
+        "system_prompt": "Sos B.",
+    }
 
-    # Phase 2: closure is created AFTER the dict is fully populated
-    def _get_agent_container(agent_id: str) -> AgentContainer | None:
-        return agents.get(agent_id)
+    def _get_sub_agent_raw(agent_id: str) -> dict | None:
+        return sub_raw if agent_id == "late-b" else None
 
-    # Wire only after both containers are in the dict
-    container_a.wire_delegation(_get_agent_container, sub_agent_ids=["late-b"])
+    container_a.wire_delegation(
+        lambda _: None,
+        sub_agent_ids=["late-b"],
+        get_sub_agent_raw=_get_sub_agent_raw,
+    )
 
-    # The delegate tool in container_a holds the closure we passed
     delegate_tool = container_a._tools._tools["delegate"]
     assert isinstance(delegate_tool, DelegateTool)
 
-    # Invoke the closure — it must see BOTH containers (late binding, not a snapshot)
-    assert delegate_tool._get_agent_container("late-b") is container_b, (
-        "Closure must resolve late-b from the final agents dict (late binding)"
-    )
-    assert delegate_tool._get_agent_container("late-a") is container_a, (
-        "Closure must resolve late-a from the final agents dict"
-    )
-    assert delegate_tool._get_agent_container("ghost") is None, (
-        "Closure must return None for unknown agent IDs"
-    )
+    # build_child construye una instancia efímera contra el caller para un sub conocido.
+    child = delegate_tool._build_child("late-b")
+    assert isinstance(child, RunAgentOneShotUseCase)
+    # Sin override de llm en el delta → hereda la instancia del caller (mismo objeto).
+    assert child._llm is container_a._llm, "el hijo efímero hereda el LLM del caller"
+    # Un id desconocido → None.
+    assert delegate_tool._build_child("ghost") is None, "id desconocido → None"
 
 
 # ===========================================================================
@@ -886,3 +881,112 @@ def test_wire_delegation_empty_allowed_targets_allows_all(tmp_path) -> None:
     assert set(delegate_tool._allowed_targets) == {"agent-a", "agent-b"}, (
         "With empty allowed_targets, all sub_agent_ids must be wired"
     )
+
+
+# ---------------------------------------------------------------------------
+# build_ephemeral_child (T4 + T5) — instancia efímera resuelta contra el caller
+# ---------------------------------------------------------------------------
+
+
+def _sub_definition_raw(**overrides) -> dict:
+    """Delta crudo de un sub-agente (lo que devuelve registry.get_sub_agent_raw)."""
+    base: dict = {
+        "id": "researcher",
+        "name": "Researcher",
+        "description": "Investiga temas puntuales",
+        "system_prompt": "Sos un investigador especializado.",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_ephemeral_child_inherits_llm_instance_when_not_overridden(tmp_path) -> None:
+    """
+    T5: el sub no overridea `llm` → SUBAGENT_DEFAULTS lo marca inherit → la config llm
+    efectiva del hijo == la del caller → se REUSA la instancia `self._llm` (no se
+    construye una nueva). El resultado es un RunAgentOneShotUseCase.
+    """
+    caller_cfg = _make_agent_config(agent_id="coordinator")
+    caller = _build_minimal_container(caller_cfg, _make_global_config(), tmp_path)
+
+    child = caller.build_ephemeral_child(_sub_definition_raw())
+
+    assert isinstance(child, RunAgentOneShotUseCase)
+    assert child._llm is caller._llm, (
+        "llm heredado sin override debe REUSAR la instancia del caller"
+    )
+
+
+def test_ephemeral_child_builds_new_llm_when_overridden(tmp_path) -> None:
+    """
+    T5: el sub overridea `llm.model` → la config llm efectiva difiere de la del caller →
+    se construye una instancia NUEVA vía factory. El factory recibe la llm efectiva (con
+    el override) y los providers HEREDADOS del caller (para resolver credenciales).
+    """
+    caller_cfg = _make_agent_config(agent_id="coordinator")
+    caller = _build_minimal_container(caller_cfg, _make_global_config(), tmp_path)
+
+    sentinel_llm = AsyncMock()
+    with patch(
+        "infrastructure.container.LLMProviderFactory.create", return_value=sentinel_llm
+    ) as mock_create:
+        child = caller.build_ephemeral_child(_sub_definition_raw(llm={"model": "child-model"}))
+
+    assert child._llm is sentinel_llm, "llm overrideado debe construir una instancia nueva"
+    mock_create.assert_called_once()
+    llm_arg, providers_arg = mock_create.call_args[0]
+    assert llm_arg.model == "child-model", "el factory recibe la llm efectiva con el override"
+    assert llm_arg.provider == "openrouter", "el resto del bloque llm se hereda del caller"
+    assert "openrouter" in providers_arg, "el hijo hereda el registry `providers` del caller"
+
+
+def test_ephemeral_child_reuses_caller_tools(tmp_path) -> None:
+    """T4: el hijo reusa el MISMO ToolRegistry del caller (recursos del padre)."""
+    caller_cfg = _make_agent_config(agent_id="coordinator")
+    caller = _build_minimal_container(caller_cfg, _make_global_config(), tmp_path)
+
+    child = caller.build_ephemeral_child(_sub_definition_raw())
+
+    assert child._tools is caller._tools, (
+        "el hijo debe operar con el toolkit del caller (mismo objeto)"
+    )
+
+
+def test_ephemeral_child_uses_sub_system_prompt(tmp_path) -> None:
+    """T4: el system_prompt del hijo es el de la DEFINICIÓN del sub (su identidad),
+    nunca el del caller."""
+    caller_cfg = _make_agent_config(agent_id="coordinator")
+    assert caller_cfg.system_prompt == "Test prompt"
+    caller = _build_minimal_container(caller_cfg, _make_global_config(), tmp_path)
+
+    child = caller.build_ephemeral_child(_sub_definition_raw(system_prompt="Sos un investigador."))
+
+    assert child._cfg.system_prompt == "Sos un investigador."
+    assert child._cfg.system_prompt != caller_cfg.system_prompt
+
+
+def test_ephemeral_child_allow_list_from_sub(tmp_path) -> None:
+    """T6 ↔ T4: `tools.allowed` del sub se propaga a OneShotSettings.allowed_tools como
+    frozenset; ausente = None (sin restricción)."""
+    caller_cfg = _make_agent_config(agent_id="coordinator")
+    caller = _build_minimal_container(caller_cfg, _make_global_config(), tmp_path)
+
+    child = caller.build_ephemeral_child(
+        _sub_definition_raw(tools={"allowed": ["read_file", "web_search"]})
+    )
+    assert child._cfg.allowed_tools == frozenset({"read_file", "web_search"})
+
+    child_no_allow = caller.build_ephemeral_child(_sub_definition_raw())
+    assert child_no_allow._cfg.allowed_tools is None
+
+
+def test_ephemeral_child_distinct_instances_per_call(tmp_path) -> None:
+    """T4: cada delegación arma una instancia nueva (one-shot descartable). Dos builds
+    de la misma definición → objetos distintos (P y Q no comparten instancia)."""
+    caller_cfg = _make_agent_config(agent_id="coordinator")
+    caller = _build_minimal_container(caller_cfg, _make_global_config(), tmp_path)
+
+    a = caller.build_ephemeral_child(_sub_definition_raw())
+    b = caller.build_ephemeral_child(_sub_definition_raw())
+
+    assert a is not b, "cada delegación construye una instancia efímera independiente"

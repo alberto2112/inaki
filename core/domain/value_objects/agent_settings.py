@@ -141,6 +141,11 @@ class OneShotSettings(BaseModel, frozen=True):
     system_prompt: str = ""
     circuit_breaker_threshold: int = 2
     request_delay_seconds: float = 2.0
+    allowed_tools: frozenset[str] | None = None
+    """Allow-list de nombres de tools. ``None`` = sin restricción (toolkit completo, menos
+    ``delegate``). Si trae nombres, el OneShot expone SOLO esas (intersección con el registry
+    recibido). La pobla el builder efímero del flujo delegate desde ``tools.allowed`` del
+    sub-agente; un nombre que no exista en el registry se ignora."""
 
 
 class PhotosSettings(BaseModel, frozen=True):

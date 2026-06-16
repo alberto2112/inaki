@@ -91,8 +91,12 @@ from infrastructure.config import (
     KnowledgeSourceConfig,
     MemoriesConfig,
     PhotosConfig,
+    SUBAGENT_DEFAULTS,
     TelegramChannelConfig,
+    _deep_merge,
+    assemble_agent_config,
     migrate_tool_config_to_own_file,
+    resolve_inherit,
 )
 from infrastructure.daemon_reloader import DaemonReloader
 from infrastructure.factories.embedding_factory import EmbeddingProviderFactory
@@ -707,6 +711,7 @@ class AgentContainer:
         get_agent_container: Callable[[str], "AgentContainer | None"],
         sub_agent_ids: list[str] | None = None,
         background_queue: "IBackgroundDelegationQueue | None" = None,
+        get_sub_agent_raw: Callable[[str], dict | None] | None = None,
     ) -> None:
         """
         Phase-2 wiring: registers the delegate tool when delegation is enabled.
@@ -745,15 +750,26 @@ class AgentContainer:
 
         from adapters.outbound.tools.delegate_tool import DelegateTool
 
+        # Builder de la instancia efímera del hijo contra ESTE caller (self): cada
+        # delegación construye un hijo que hereda la config del caller vía `inherit`
+        # (build_ephemeral_child), en vez de reusar el one-shot pre-built del sub (que
+        # corría contra global). `get_sub_agent_raw` provee el delta crudo del sub; None
+        # → no es un sub-agente conocido. Sin `get_sub_agent_raw` (tests parciales) el
+        # builder devuelve None — el tool se registra igual, solo no resuelve hijos.
+        def _build_child(target_id: str) -> RunAgentOneShotUseCase | None:
+            raw = get_sub_agent_raw(target_id) if get_sub_agent_raw is not None else None
+            if raw is None:
+                return None
+            return self.build_ephemeral_child(raw)
+
         # Build and register the delegate tool.
-        # (run_agent_one_shot is already set in __init__ — no construction here.)
         # REQ-DG-10 / REQ-BGD-*: background_queue puede ser None hasta que
         # `AppContainer._wire_all_delegation` lo inyecte. Mientras tanto el path sync sigue
         # funcionando; el path async (`wait=False`) reporta failed con razón
         # "background_delegation_unavailable" — fail-fast en lugar de silenciar.
         delegate_tool = DelegateTool(
             allowed_targets=targets,
-            get_agent_container=get_agent_container,
+            build_child=_build_child,
             max_iterations_per_sub=self._global_config.delegation.max_iterations_per_sub,
             timeout_seconds=self._global_config.delegation.timeout_seconds,
             caller_agent_id=self.agent_config.id,
@@ -789,6 +805,59 @@ class AgentContainer:
             "AgentContainer '%s': delegation wired (sub_agents=%s)",
             self.agent_config.id,
             targets,
+        )
+
+    def build_ephemeral_child(self, definition_raw: dict) -> RunAgentOneShotUseCase:
+        """Construye una instancia efímera one-shot de un sub-agente resuelta contra
+        ESTE container (el caller) — el corazón del flujo delegate con herencia.
+
+        El sub-agente NO es un container pre-construido: cada delegación arma una
+        instancia nueva cuya config se resuelve contra el caller vía ``inherit`` (misma
+        definición + caller P/Q distintos → instancias distintas heredando cada una de
+        su padre). Es one-shot y se descarta al terminar (no persiste estado).
+
+        Resolución de config:
+          ``merged = resolve_inherit(_deep_merge(SUBAGENT_DEFAULTS, definition_raw), parent_raw)``
+        con ``parent_raw`` = config EFECTIVA del caller. El hijo hereda el registry
+        ``providers`` del caller (corre con sus credenciales; un sub con providers propios
+        los pisa) para que un override de ``llm.provider`` resuelva.
+
+        Reuso de recursos (decisiones 2026-06-16, ver CLAUDE.md / memoria del plan C):
+          - tools/recursos: SIEMPRE ``self._tools`` (workspace/memory/knowledge del CALLER);
+            el sub recorta el subset visible con ``tools.allowed`` (REQ-OS-5). NO se
+            reconstruye el ``ToolRegistry`` ni se usa embedder (OneShot sin RAG, REQ-OS-4).
+          - LLM: si la config llm efectiva del hijo == la del caller (heredada sin override)
+            → reusar la instancia ``self._llm``; si difiere → instancia nueva vía factory.
+        """
+        parent_raw = self.agent_config.model_dump()
+        merged = resolve_inherit(_deep_merge(SUBAGENT_DEFAULTS, definition_raw), parent_raw)
+        # Credenciales: el hijo hereda el registry `providers` del caller como base; un
+        # sub que declare providers propios los pisa (deep-merge child sobre parent).
+        merged["providers"] = _deep_merge(
+            parent_raw.get("providers") or {}, merged.get("providers") or {}
+        )
+        child_cfg = assemble_agent_config(merged)
+
+        # T5 — reuso de la instancia LLM del caller cuando la config llm efectiva coincide
+        # (heredada sin override). Mismo criterio que `_resolve_memories_llm`. SIN embedder.
+        if child_cfg.llm == self.agent_config.llm:
+            child_llm = self._llm
+        else:
+            child_llm = LLMProviderFactory.create(child_cfg.llm, child_cfg.providers)
+
+        allowed = child_cfg.tools.allowed
+        settings = OneShotSettings(
+            agent_id=child_cfg.id,
+            system_prompt=child_cfg.system_prompt,
+            circuit_breaker_threshold=child_cfg.tools.circuit_breaker_threshold,
+            request_delay_seconds=child_cfg.llm.request_delay_seconds,
+            allowed_tools=frozenset(allowed) if allowed is not None else None,
+        )
+        return RunAgentOneShotUseCase(
+            llm=child_llm,
+            tools=self._tools,
+            settings=settings,
+            thinking_indicator=self._global_config.channels.thinking_indicator,
         )
 
     def wire_scheduler(
@@ -1357,9 +1426,17 @@ class AppContainer:
         # queue — comparten el dict de locks-por-scope (REQ-BGD-6).
         self._llm_dispatcher = LLMDispatcherAdapter(self.agents)
 
-        def _resolve_one_shot(target_id: str):
-            target = self.agents.get(target_id)
-            return target.run_agent_one_shot if target is not None else None
+        def _resolve_one_shot(
+            caller_id: str, target_id: str
+        ) -> RunAgentOneShotUseCase | None:
+            # Construye la instancia EFÍMERA del hijo contra el CALLER (hereda su config
+            # vía inherit). Reemplaza el lookup del one-shot pre-built del sub (que corría
+            # contra global). El path async ya carga `caller_agent_id` en cada BackgroundTask.
+            caller = self.agents.get(caller_id)
+            raw = self.registry.get_sub_agent_raw(target_id)
+            if caller is None or raw is None:
+                return None
+            return caller.build_ephemeral_child(raw)
 
         self.background_queue = BackgroundDelegationQueueAdapter(
             dispatcher=self._llm_dispatcher,
@@ -1387,6 +1464,7 @@ class AppContainer:
                     _get_agent_container,
                     sub_agent_ids,
                     background_queue=self.background_queue,
+                    get_sub_agent_raw=self.registry.get_sub_agent_raw,
                 )
             except Exception as exc:
                 logger.error("Error en wire_delegation para agente '%s': %s", agent_id, exc)

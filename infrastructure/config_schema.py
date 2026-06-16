@@ -431,6 +431,15 @@ class ToolsConfig(BaseModel):
     tool_call_max_iterations: int = 5
     circuit_breaker_threshold: int = 2
     sticky_ttl: int = 3  # Turnos que una tool seleccionada sobrevive; 0 = disabled
+    allowed: list[str] | None = None
+    """Allow-list de nombres de tools. ``None`` (default) = sin restricción.
+
+    Solo tiene efecto en el flujo ``delegate`` (sub-agente efímero one-shot): el sub
+    declara este campo en su YAML para **restringir** qué tools del CALLER puede usar el
+    hijo. El builder efímero lo pasa a ``OneShotSettings.allowed_tools`` y
+    ``RunAgentOneShotUseCase`` filtra el schema por estos nombres. El filtro corre sobre
+    el registry del caller, así que un nombre inexistente se ignora — nunca AMPLÍA sobre el
+    padre. En el turno normal (``RunAgentUseCase`` con semantic routing) el campo es inerte."""
 
 
 class SemanticRoutingConfig(BaseModel):

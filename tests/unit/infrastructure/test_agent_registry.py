@@ -124,6 +124,32 @@ def test_sub_agents_loaded_from_sub_agents_subdir(tmp_path: Path) -> None:
     assert registry.is_sub_agent("worker")
 
 
+def test_get_sub_agent_raw_returns_delta_without_global(tmp_path: Path) -> None:
+    """get_sub_agent_raw devuelve el delta crudo del sub-agente, sin global_raw mezclado."""
+    agents_dir = tmp_path / "agents"
+    sub_dir = agents_dir / "sub-agents"
+    _write_agent(sub_dir, "worker", name="Worker")
+
+    registry = AgentRegistry(agents_dir, _GLOBAL_RAW)
+
+    raw = registry.get_sub_agent_raw("worker")
+    assert raw is not None
+    assert raw["id"] == "worker"
+    assert raw["name"] == "Worker"
+    assert "llm" not in raw
+    assert "memories" not in raw
+
+
+def test_get_sub_agent_raw_unknown_id_returns_none(tmp_path: Path) -> None:
+    agents_dir = tmp_path / "agents"
+    _write_agent(agents_dir, "principal")
+
+    registry = AgentRegistry(agents_dir, _GLOBAL_RAW)
+
+    assert registry.get_sub_agent_raw("nope") is None
+    assert registry.get_sub_agent_raw("principal") is None  # no es sub-agente
+
+
 def test_sub_agents_excluded_from_agents_with_channel(tmp_path: Path) -> None:
     """Sub-agentes con channels declarados no aparecen en agents_with_channel."""
     agents_dir = tmp_path / "agents"

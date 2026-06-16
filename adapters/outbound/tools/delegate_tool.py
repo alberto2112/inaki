@@ -44,23 +44,6 @@ logger = logging.getLogger(__name__)
 # `infrastructure.container.AgentContainer`. El `AgentContainer` real las
 # satisface por duck-typing; la dirección hexagonal queda intacta
 # (adapters NO importa infrastructure).
-class _HasSystemPrompt(Protocol):
-    system_prompt: str
-
-
-class DelegationTarget(Protocol):
-    """Container destino: ejecutar one-shot + leer el system_prompt del sub-agente.
-
-    ``agent_config`` es read-only (``@property``): el concreto ``AgentConfig`` es
-    un subtipo de ``_HasSystemPrompt`` y un miembro mutable sería invariante.
-    """
-
-    run_agent_one_shot: RunAgentOneShotUseCase
-
-    @property
-    def agent_config(self) -> _HasSystemPrompt: ...
-
-
 class DelegationCaller(Protocol):
     """Container llamador: el contexto del turno en curso para resolver el scope."""
 
@@ -156,7 +139,7 @@ class DelegateTool(ITool):
         self,
         *,
         allowed_targets: list[str],
-        get_agent_container: Callable[[str], "DelegationTarget | None"],
+        build_child: Callable[[str], "RunAgentOneShotUseCase | None"],
         max_iterations_per_sub: int,
         timeout_seconds: int,
         caller_agent_id: str,
@@ -168,16 +151,18 @@ class DelegateTool(ITool):
             allowed_targets: Lista de agent_ids permitidos como destino. Si está vacía,
                              todos los agentes registrados son válidos. Proviene de
                              agent_config.delegation.allowed_targets del agente padre.
-            get_agent_container: Callable que recibe un agent_id y retorna su
-                                 AgentContainer, o None si no existe en el registry.
-                                 Provisto por AppContainer.get_agent (task 5.1).
+            build_child: Callable que recibe el agent_id de un sub-agente y construye una
+                         instancia EFÍMERA one-shot resuelta contra el caller (hereda su
+                         config vía `inherit`), o None si el id no es un sub-agente conocido.
+                         Lo arma `AgentContainer.wire_delegation` con `self.build_ephemeral_child`
+                         + el delta crudo del registry — una instancia nueva por delegación.
             max_iterations_per_sub: Límite de iteraciones para el loop del agente hijo.
                                     Proviene de global_config.delegation.max_iterations_per_sub.
             timeout_seconds: Límite de tiempo en segundos para la ejecución del hijo.
                              Proviene de global_config.delegation.timeout_seconds.
         """
         self._allowed_targets = allowed_targets
-        self._get_agent_container = get_agent_container
+        self._build_child = build_child
         self._max_iterations_per_sub = max_iterations_per_sub
         self._timeout_seconds = timeout_seconds
         # REQ-DG-10 / REQ-BGD-*: contexto del caller para el path async
@@ -265,11 +250,32 @@ class DelegateTool(ITool):
             return self._build_tool_result(result)
 
         # -----------------------------------------------------------------------
-        # 2. Registry lookup — REQ-DG-3
+        # 2. Construir la instancia efímera del hijo contra el caller — REQ-DG-3
+        #    build_child resuelve el sub-agente y lo construye heredando del caller
+        #    (build_ephemeral_child). None → el id no es un sub-agente conocido. La
+        #    construcción puede fallar si el delta del sub es inválido (config rota):
+        #    se captura para preservar el never-raises (REQ-DG-8).
         # -----------------------------------------------------------------------
-        container = self._get_agent_container(agent_id)
-        if container is None:
-            logger.warning("DelegateTool: agente '%s' no encontrado en el registry", agent_id)
+        try:
+            child_one_shot = self._build_child(agent_id)
+        except Exception as build_exc:  # noqa: BLE001
+            exc_type = type(build_exc).__name__
+            logger.warning(
+                "DelegateTool: no se pudo construir el hijo efímero '%s': %s: %s",
+                agent_id,
+                exc_type,
+                build_exc,
+            )
+            result = DelegationResult(
+                status="failed",
+                summary=f"Could not build ephemeral child '{agent_id}': {exc_type}.",
+                details=str(build_exc),
+                reason=f"child_build_error:{exc_type}",
+            )
+            return self._build_tool_result(result)
+
+        if child_one_shot is None:
+            logger.warning("DelegateTool: agente '%s' no es un sub-agente conocido", agent_id)
             result = DelegationResult(
                 status="failed",
                 summary=f"Agent '{agent_id}' is not registered in the application registry.",
@@ -278,14 +284,7 @@ class DelegateTool(ITool):
             return self._build_tool_result(result)
 
         # -----------------------------------------------------------------------
-        # 3. Retrieve child's one-shot use case
-        #    NOTE para task 5.1: el atributo en AgentContainer se llama
-        #    `run_agent_one_shot` (naming consistente con `run_agent`).
-        # -----------------------------------------------------------------------
-        child_one_shot = container.run_agent_one_shot
-
-        # -----------------------------------------------------------------------
-        # 4. Build effective system prompt — task 6.2
+        # 3. Build effective system prompt — task 6.2
         #
         #    _RESULT_FORMAT_FOOTER ALWAYS appended so the child knows to emit a
         #    trailing ```json``` block. Without it, parse_delegation_result returns
@@ -293,27 +292,15 @@ class DelegateTool(ITool):
         #
         #    Strategy:
         #    - caller passed system_prompt → use it as base
-        #    - caller passed None → fall back to child's default system_prompt
-        #      (container.agent_config.system_prompt, already resolved above)
-        #
-        #    Never-raises: any AttributeError on agent_config is caught here and
-        #    falls back to footer-only to preserve the DelegateTool never-raises
-        #    guarantee (REQ-DG-8).
+        #    - caller passed None → fall back to the child's default system_prompt
+        #      (child_one_shot.system_prompt — el prompt del sub-agente ya resuelto).
+        #      Es una property que devuelve str, no puede romper el never-raises.
         # -----------------------------------------------------------------------
-        try:
-            if system_prompt is not None:
-                base_prompt = system_prompt
-            else:
-                base_prompt = container.agent_config.system_prompt
-            effective_system_prompt = base_prompt + "\n\n" + _RESULT_FORMAT_FOOTER
-        except Exception as _prompt_exc:  # noqa: BLE001
-            logger.warning(
-                "DelegateTool: no se pudo construir el effective_system_prompt para '%s': %s — "
-                "usando footer solo",
-                agent_id,
-                _prompt_exc,
-            )
-            effective_system_prompt = _RESULT_FORMAT_FOOTER
+        if system_prompt is not None:
+            base_prompt = system_prompt
+        else:
+            base_prompt = child_one_shot.system_prompt
+        effective_system_prompt = base_prompt + "\n\n" + _RESULT_FORMAT_FOOTER
 
         # -----------------------------------------------------------------------
         # 5–8. Call child + catch all failure modes (REQ-DG-6 / REQ-DG-8)

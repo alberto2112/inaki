@@ -106,6 +106,7 @@ un `knowledge` o `scheduler` per-agente: rompe el tier y multiplica recursos.
 - **DTOs de adapters outbound** — Mismo patrón hacia el otro lado: los `Resolved*Config` (`ResolvedLLMConfig`, `ResolvedEmbeddingConfig`, `ResolvedTranscriptionConfig`) viven en el `base.py` de su familia de adapters, y los Settings VOs `HistoryStoreSettings` / `ChannelFallbackSettings` junto a su adapter. Las factories/container de infrastructure los componen desde el schema YAML (`LLMProviderFactory.resolve`, mapeos en `container.py`). NUNCA moverlos de vuelta a `infrastructure/config.py` — `adapters/` no importa `infrastructure/`.
 - **Provider discovery** — LLM and embedding providers are auto-discovered by scanning modules for a `PROVIDER_NAME` module-level constant. No manual registration needed.
 - **Two-phase agent init** — `AppContainer` first builds all `AgentContainer` instances, then wires delegation (the `delegate` tool) in a second pass so all containers exist before cross-references.
+- **Delegación — subagente efímero con herencia contra el caller** — El pool de DEFINICIONES de sub-agentes es compartido, pero cada delegación NO usa el `run_agent_one_shot` pre-built del sub: construye una **instancia efímera one-shot resuelta contra el CALLER** vía `AgentContainer.build_ephemeral_child(definition_raw)` (`container.py`). Resolución: `resolve_inherit(_deep_merge(SUBAGENT_DEFAULTS, definition_raw), parent_raw)` con `parent_raw` = config EFECTIVA del caller. El primitivo `inherit` (directiva de merge por bloque, resuelta en dicts crudos ANTES de pydantic y strippeada — NUNCA un campo de modelo) hace que el hijo herede del padre: `llm` por default (vía `SUBAGENT_DEFAULTS`), el resto opt-in. **Tools/recursos = SIEMPRE del caller** (`caller._tools`: workspace/memory/knowledge del padre); el sub recorta el subset visible con `tools.allowed` (filtro REQ-OS-5 en `RunAgentOneShotUseCase`, junto a la exclusión de `delegate` REQ-DG-9). El LLM se REUSA (misma instancia del caller) si la config llm efectiva coincide; si el sub la overridea → `LLMProviderFactory` con los `providers` heredados del caller. SIN embedder (el one-shot expone el toolkit completo sin RAG, REQ-OS-4). Misma def + caller P/Q distintos → instancias independientes heredando cada una de su padre. Ambos paths resuelven el efímero contra el caller: sync (`wire_delegation` arma el closure `build_child` con `get_sub_agent_raw` + `build_ephemeral_child`) y async (`BackgroundDelegationQueueAdapter`, `one_shot_resolver(caller_id, target_id)`). Scope: SOLO `delegate` — el carril de memoria (extractor/reconciliador) hereda por su cuenta vía `merged_llm_config`.
 
 ## Configuration
 
@@ -150,6 +151,30 @@ Secrets are YAML-only (no env vars). `*.secrets.yaml` files are gitignored.
 - **`message_face_metadata` side-table** — En `history.db`. Key por `history.id`. `ON DELETE CASCADE` limpia metadata cuando se borra el historial.
 
 ## Migration Notes
+
+### `subagent-inheritance`
+
+El flujo `delegate` dejó de ejecutar el `run_agent_one_shot` pre-built del
+sub-agente (que corría con la config resuelta contra `global`). Ahora cada
+delegación construye una **instancia efímera resuelta contra el CALLER**
+(`AgentContainer.build_ephemeral_child`): el hijo hereda el `llm` del padre por
+default (primitivo `inherit` + `SUBAGENT_DEFAULTS`), opera con las tools/recursos
+del padre (`caller._tools`), y puede acotar el subset visible con el campo nuevo
+`tools.allowed`. La misma definición de sub delegada por P y por Q hereda LLMs
+distintos (per-caller, no per-definición).
+
+**Sin migración de DB ni cambios de config obligatorios.** Es 100% in-memory y
+backward-compat para configs existentes: un sub sin `tools.allowed` ve todo el
+toolkit del caller; sin override de `llm` hereda la instancia del padre. El campo
+`tools.allowed` (lista de nombres; `None`/ausente = sin restricción) SOLO tiene
+efecto en el flujo `delegate` (one-shot sin RAG) — en el turno normal es inerte.
+
+**Behavior shift observable**: un sub-agente que antes corría con el `llm` /
+`workspace` declarados en SU YAML (resueltos contra `global`) ahora hereda los del
+caller. Si un sub necesita un `llm` propio, debe declararlo en su delta (override)
+→ se construye vía `LLMProviderFactory` con los `providers` (credenciales)
+heredados del caller. El `run_agent_one_shot` pre-built de cada container sigue
+existiendo pero ya NO se usa en el path `delegate`.
 
 ### `tool-config-own-file`
 

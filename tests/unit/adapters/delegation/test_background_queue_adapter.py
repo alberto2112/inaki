@@ -41,7 +41,7 @@ def _build_adapter(
     dispatcher = dispatcher or MagicMock()
     dispatcher.dispatch = AsyncMock(return_value="")
 
-    def resolver(target_id: str):
+    def resolver(caller_id: str, target_id: str):
         return one_shot_for.get(target_id)
 
     adapter = BackgroundDelegationQueueAdapter(

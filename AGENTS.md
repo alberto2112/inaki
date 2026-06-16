@@ -48,7 +48,9 @@ Config lives in `~/.inaki/` by default (NOT in the repo tree). First run bootstr
 3. `~/.inaki/agents/{id}.yaml`
 4. `~/.inaki/agents/{id}.secrets.yaml`
 
-Override with `--config DIR` to use a custom directory.
+Relocate the whole instance with `--home DIR` (or `INAKI_HOME` env): re-anchors config,
+data, `secret.key`, `tool_config`, `users` and knowledge under `DIR/`. Default `~/.inaki`.
+See `docs/configuracion.md` → "Instance home".
 
 **Critical**: `*.secrets.yaml` files are in `.gitignore`. Never commit them. Agent registry skips files with `.example` in the name.
 

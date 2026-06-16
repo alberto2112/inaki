@@ -603,6 +603,14 @@ The `delegate` tool allows one agent to invoke another. Two modes:
 
 `LLMDispatcherAdapter` is built **once** in `AppContainer` and shared between the queue adapter and `SchedulerService`. This serializes turns on the same `(agent_id, channel, chat_id)` via lock-per-scope.
 
+**Per-delegation inheritance (ephemeral child).** A delegation does NOT run the sub-agent's pre-built `run_agent_one_shot` (which is resolved against `global`). Instead it builds an **ephemeral one-shot instance resolved against the CALLER** via `AgentContainer.build_ephemeral_child(definition_raw)`: `resolve_inherit(_deep_merge(SUBAGENT_DEFAULTS, definition_raw), parent_raw)`, where `parent_raw` is the caller's *effective* config. The `inherit` primitive — a per-block merge directive resolved in raw dicts **before** pydantic and then stripped (never a model field) — makes the child inherit from the parent: the `llm` block by default (via `SUBAGENT_DEFAULTS`), the rest opt-in.
+
+- **Tools and resources are ALWAYS the caller's** (`caller._tools`: the parent's workspace, memory and knowledge). The sub narrows the *visible* subset with its own `tools.allowed` field (a filter in `RunAgentOneShotUseCase.execute`, REQ-OS-5, alongside the `delegate` exclusion REQ-DG-9). The caller never overrides the sub's tools — the sub's definition is the sole authority on its tool access.
+- **LLM instance reuse**: if the child's effective `llm` matches the caller's, the caller's instance is reused; if the sub overrides it, a new one is built via `LLMProviderFactory` with the `providers` (credentials) inherited from the caller. No embedder is wired (the one-shot exposes the full toolkit without RAG — REQ-OS-4).
+- The **same sub definition** delegated by P and by Q inherits **different LLMs** (per-caller, not per-definition). Both the sync (`wire_delegation` → `build_child`) and async (`BackgroundDelegationQueueAdapter`, `one_shot_resolver(caller_id, target_id)`) paths resolve the ephemeral child against the caller.
+
+Scope: this inheritance applies ONLY to the `delegate` flow. The memory rail (extractor / reconciler sub-agents) inherits the parent LLM on its own via `merged_llm_config`. The shared pool of sub-agent *definitions* is unchanged — what changes is that each delegation builds a fresh instance resolved against whoever delegates.
+
 ### In-flight message injection
 
 When a new message arrives on a scope that already has an `execute()` in progress:

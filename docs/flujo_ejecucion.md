@@ -50,8 +50,9 @@ inaki (cli.py → app)
 │   │                                    settings=build_memory_settings(cfg.memory))
 │   │
 │   ├── Second pass — wire_delegation:
-│   │   └── Registers `delegate` tool in each container with refs to the others
-│   │       (containers must exist before cross-references)
+│   │   └── Registers `delegate` tool with a `build_child` closure (get_sub_agent_raw +
+│   │       build_ephemeral_child → ephemeral one-shot resolved against the CALLER).
+│   │       Containers must exist before cross-references.
 │   │
 │   ├── Build enabled_agents = {id: container.consolidate_memory
 │   │                           for each container where agent_config.memory.enabled}
@@ -213,6 +214,12 @@ config→VO mapping lives only in the `build_*_settings` builders of `container.
 
 **Note:** the `delegate` tool is NOT registered in `__init__` — it is wired in the second pass
 of `AppContainer` via `wire_delegation()`, because it needs ALL containers to already exist.
+On each delegation it builds an **ephemeral one-shot child resolved against the caller**
+(`build_ephemeral_child`: inherits the caller's `llm` by default via the `inherit` primitive,
+operates with the caller's tools/resources, and narrows the visible subset with the sub's own
+`tools.allowed`). The sub's pre-built `run_agent_one_shot` is no longer used in the `delegate`
+path; the async path resolves the same way via `one_shot_resolver(caller_id, target_id)`.
+See `inaki_spec.md` → Delegation.
 
 ---
 

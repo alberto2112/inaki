@@ -268,6 +268,14 @@ tools:
                                   # to include a tool. 0.0 = no filter.
   tool_call_max_iterations: 5     # Max tool-loop iterations per turn
   circuit_breaker_threshold: 2    # Consecutive failures before cutting the loop
+  # allowed: [read_file]          # Opt-in (default: absent/null = no restriction). ONLY
+                                  # affects the `delegate` flow (ephemeral one-shot sub-agent):
+                                  # list of tool names the sub may use. It RESTRICTS the subset
+                                  # of the toolkit INHERITED from the caller — absent = the sub
+                                  # inherits the FULL caller toolkit; a list = exactly that
+                                  # subset. Declared by the SUB's own definition; the caller
+                                  # NEVER overrides it. Inert in a normal turn (semantic routing).
+                                  # See inaki_spec.md → Delegation.
 
 skills:
   semantic_routing_min_skills: 10  # Minimum loaded skills to activate routing

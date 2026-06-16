@@ -275,8 +275,8 @@ class _HasChannels(Protocol):
     channels: dict[str, dict[str, Any]]
 
 
-def ensure_user_channel_dirs(home: Path, agent_configs: Iterable[_HasChannels]) -> None:
-    """Crea ``~/.inaki/users/{channel}/`` por cada canal configurado en cualquier agente.
+def ensure_user_channel_dirs(inaki_home: Path, agent_configs: Iterable[_HasChannels]) -> None:
+    """Crea ``<inaki_home>/users/{channel}/`` por cada canal configurado en cualquier agente.
 
     Soporta la convención de archivos per-user (ver ``RunAgentUseCase._read_user_context``).
     El operador no tiene que hacer ``mkdir`` manual: la primera vez que un agente
@@ -289,7 +289,7 @@ def ensure_user_channel_dirs(home: Path, agent_configs: Iterable[_HasChannels]) 
     tiene humanos detrás (ej. broadcast interno) igual se crea el dir; aceptable
     porque el costo es nulo y evita lógica de "qué canal merece subdir".
     """
-    base = home / ".inaki" / "users"
+    base = inaki_home / "users"
     canales: set[str] = set()
     for cfg in agent_configs:
         canales.update(cfg.channels.keys())

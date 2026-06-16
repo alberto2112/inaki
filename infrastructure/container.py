@@ -98,6 +98,7 @@ from infrastructure.daemon_reloader import DaemonReloader
 from infrastructure.factories.embedding_factory import EmbeddingProviderFactory
 from infrastructure.factories.llm_factory import LLMProviderFactory
 from infrastructure.factories.transcription_factory import TranscriptionProviderFactory
+from infrastructure.home import get_inaki_home
 from infrastructure.scheduler_reconciler import SchedulerReconciler
 
 logger = logging.getLogger(__name__)
@@ -142,6 +143,7 @@ def build_run_agent_settings(cfg: AgentConfig) -> RunAgentSettings:
         description=cfg.description,
         system_prompt=cfg.system_prompt,
         workspace_root=str(Path(cfg.workspace.path).expanduser().resolve()),
+        users_dir=str(get_inaki_home() / "users"),
         merge_chats=cfg.chat_history.merge_chats,
         min_words_threshold=cfg.semantic_routing.min_words_threshold,
         skills_min_skills=cfg.skills.semantic_routing_min_skills,
@@ -228,8 +230,8 @@ class AgentContainer:
         # construye AppContainer con el config_dir real). El fallback local es
         # solo para tests directos / arranques sueltos.
         self._tool_config_store: IToolConfigStore = tool_config_store or YamlToolConfigStore(
-            store_path=Path.home() / ".inaki" / "config" / "tool_config.yaml",
-            key_path=Path.home() / ".inaki" / "secret.key",
+            store_path=get_inaki_home() / "config" / "tool_config.yaml",
+            key_path=get_inaki_home() / "secret.key",
         )
 
         # Stash global_config so wire_delegation can access delegation limits (task 5.1)
@@ -530,6 +532,7 @@ class AgentContainer:
             description=fuente_cfg.description,
             path=fuente_cfg.path,
             embedder=self._embedder,
+            db_dir=self._global_config.knowledge.db_dirname,
             glob=getattr(fuente_cfg, "glob", "**/*.md"),
             chunk_size=getattr(fuente_cfg, "chunk_size", 500),
             chunk_overlap=getattr(fuente_cfg, "chunk_overlap", 80),
@@ -1310,7 +1313,7 @@ class AppContainer:
         # así la config sobrevive al reinicio. La vista en memoria se actualiza al
         # instante para todos los agentes. Migración idempotente justo antes para
         # cubrir el path de ``--config-dir`` override (que saltea ensure_user_config).
-        resolved_config_dir = config_dir or Path.home() / ".inaki" / "config"
+        resolved_config_dir = config_dir or get_inaki_home() / "config"
         migrate_tool_config_to_own_file(resolved_config_dir)
         self.tool_config_store: IToolConfigStore = YamlToolConfigStore(
             store_path=resolved_config_dir / "tool_config.yaml",
@@ -1440,6 +1443,7 @@ class AppContainer:
                 overrides=dict(scheduler_cfg.channel_fallback.overrides),
             ),
             sink_factory=sink_factory.from_target,
+            hardcoded_fallback=f"file://{scheduler_cfg.fallback_log_filename}",
         )
         # Reusamos la instancia ya construida en _build_background_delegation_queue para que la cola de
         # background-delegation y el scheduler compartan el dict de locks-por-scope

@@ -11,6 +11,7 @@ modal con instrucciones básicas. El flag se persiste en
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -26,18 +27,26 @@ from adapters.inbound.setup_tui.modals._dialog import dialog_css
 # Flag de bienvenida
 # ---------------------------------------------------------------------------
 
-_WELCOME_FLAG: Path = Path.home() / ".inaki" / "setup_welcome_seen"
+def _welcome_flag_path() -> Path:
+    """Ruta del flag de bienvenida: ``<home>/setup_welcome_seen``.
+
+    Adapter inbound (no importa infra): resuelve el home leyendo ``INAKI_HOME`` env —
+    que el composition root propaga desde ``--home`` — con fallback a ``~/.inaki``."""
+    home = os.environ.get("INAKI_HOME")
+    base = Path(home).expanduser() if home else Path.home() / ".inaki"
+    return base / "setup_welcome_seen"
 
 
 def _welcome_ya_vista() -> bool:
     """Retorna True si el modal de bienvenida ya fue mostrado alguna vez."""
-    return _WELCOME_FLAG.exists()
+    return _welcome_flag_path().exists()
 
 
 def _marcar_welcome_vista() -> None:
     """Persiste el flag para no volver a mostrar el modal de bienvenida."""
-    _WELCOME_FLAG.parent.mkdir(parents=True, exist_ok=True)
-    _WELCOME_FLAG.touch(exist_ok=True)
+    flag = _welcome_flag_path()
+    flag.parent.mkdir(parents=True, exist_ok=True)
+    flag.touch(exist_ok=True)
 
 
 # ---------------------------------------------------------------------------

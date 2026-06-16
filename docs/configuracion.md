@@ -156,6 +156,34 @@ The CLI always works.
 
 ---
 
+## Instance home — `--home` / `INAKI_HOME`
+
+By default everything lives under **`~/.inaki/`**. A single knob relocates the *entire*
+instance — config, data (DBs), `secret.key`, `tool_config.yaml`, `users/` and the
+knowledge index — to a different root:
+
+```bash
+inaki --home /srv/inaki-deptB daemon      # flag
+INAKI_HOME=/srv/inaki-deptB inaki daemon  # env var (systemd: Environment=INAKI_HOME=...)
+```
+
+Resolution order (`infrastructure/home.py`): `--home` flag → `INAKI_HOME` env → default
+`~/.inaki`. With `--home /foo`, paths re-anchor to `/foo/config`, `/foo/data/*.db`,
+`/foo/knowledge/`, `/foo/users/`, `/foo/secret.key`, `/foo/config/tool_config.yaml`.
+
+**This is the isolation boundary for harness-global resources.** `knowledge`, `scheduler`
+and `faces`/`photos` are single per-process singletons (see "Tiers de recursos" in
+`CLAUDE.md`) — to isolate one, run a **second harness process with its own `--home`**.
+
+**Ports are NOT derived from the home.** A second instance must set its own `admin.port`
+and `broadcast.port` (if used) in its YAML to avoid colliding with the first.
+
+Backward-compat: the default `~/.inaki` is unchanged, so existing single-instance
+deployments need no migration. The old `--config DIR` flag was replaced by `--home`
+(clean break, no alias).
+
+---
+
 ## `config/global.yaml` — all fields
 
 ```yaml

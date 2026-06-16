@@ -26,16 +26,14 @@ from core.domain.errors import KnowledgeError
 knowledge_app = typer.Typer(help="Manage document knowledge sources.")
 
 
-def _load_global_config(config_dir: Path | None = None):
-    """Carga la configuración global. Retorna GlobalConfig."""
+def _load_global_config():
+    """Carga la configuración global del home de instancia. Retorna GlobalConfig."""
     from infrastructure.config import ensure_user_config, load_global_config
+    from infrastructure.home import get_inaki_home
 
-    if config_dir is None:
-        config_dir = Path.home() / ".inaki" / "config"
-        agents_dir = Path.home() / ".inaki" / "agents"
-        ensure_user_config(config_dir, agents_dir)
-    else:
-        agents_dir = config_dir / "agents"
+    config_dir = get_inaki_home() / "config"
+    agents_dir = get_inaki_home() / "agents"
+    ensure_user_config(config_dir, agents_dir)
 
     try:
         global_cfg, _ = load_global_config(config_dir)
@@ -91,6 +89,7 @@ def _build_document_source(fuente_cfg, global_cfg):
         description=fuente_cfg.description,
         path=fuente_cfg.path,
         embedder=embedder,
+        db_dir=global_cfg.knowledge.db_dirname,
         glob=fuente_cfg.glob,
         chunk_size=fuente_cfg.chunk_size,
         chunk_overlap=fuente_cfg.chunk_overlap,
@@ -104,9 +103,8 @@ def knowledge_index(
     source_id: str = typer.Argument(..., help="ID of the knowledge source to index."),
 ) -> None:
     """Index (or re-index) a document knowledge source."""
-    config_dir: Path | None = ctx.obj.get("config_dir") if ctx.obj else None
 
-    global_cfg = _load_global_config(config_dir)
+    global_cfg = _load_global_config()
     fuente_cfg = _get_source_config(global_cfg, source_id)
     source = _build_document_source(fuente_cfg, global_cfg)
 
@@ -137,9 +135,8 @@ def knowledge_ingest(
     ),
 ) -> None:
     """Ingest a single file into a document source and index it (inbox model)."""
-    config_dir: Path | None = ctx.obj.get("config_dir") if ctx.obj else None
 
-    global_cfg = _load_global_config(config_dir)
+    global_cfg = _load_global_config()
     fuente_cfg = _get_source_config(global_cfg, source_id)
     source = _build_document_source(fuente_cfg, global_cfg)
 
@@ -164,9 +161,8 @@ def knowledge_list(
     ctx: typer.Context,
 ) -> None:
     """List all configured knowledge sources."""
-    config_dir: Path | None = ctx.obj.get("config_dir") if ctx.obj else None
 
-    global_cfg = _load_global_config(config_dir)
+    global_cfg = _load_global_config()
     fuentes = global_cfg.knowledge.sources
 
     if not fuentes:
@@ -187,9 +183,8 @@ def knowledge_stats(
     source_id: str = typer.Argument(..., help="ID of the knowledge source."),
 ) -> None:
     """Show index statistics for a knowledge source."""
-    config_dir: Path | None = ctx.obj.get("config_dir") if ctx.obj else None
 
-    global_cfg = _load_global_config(config_dir)
+    global_cfg = _load_global_config()
     fuente_cfg = _get_source_config(global_cfg, source_id)
     source = _build_document_source(fuente_cfg, global_cfg)
 
@@ -222,9 +217,8 @@ def knowledge_docs(
     source_id: str = typer.Argument(..., help="ID of the knowledge source."),
 ) -> None:
     """List the files indexed in a knowledge source."""
-    config_dir: Path | None = ctx.obj.get("config_dir") if ctx.obj else None
 
-    global_cfg = _load_global_config(config_dir)
+    global_cfg = _load_global_config()
     fuente_cfg = _get_source_config(global_cfg, source_id)
     source = _build_document_source(fuente_cfg, global_cfg)
 
@@ -256,9 +250,8 @@ def knowledge_delete(
     ),
 ) -> None:
     """Delete a file's chunks from a knowledge source index."""
-    config_dir: Path | None = ctx.obj.get("config_dir") if ctx.obj else None
 
-    global_cfg = _load_global_config(config_dir)
+    global_cfg = _load_global_config()
     fuente_cfg = _get_source_config(global_cfg, source_id)
     source = _build_document_source(fuente_cfg, global_cfg)
 

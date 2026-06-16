@@ -72,11 +72,17 @@ regla escrita).
   in-process reventaría recursos en la Pi. **No hay aislamiento per-agente para estos —
   es por diseño, no una limitación a resolver.** ¿El usuario final necesita aislar uno?
   → corre **otra instancia del arnés como proceso aparte**, con su propio home de datos.
-  El proceso es la frontera de aislamiento shared-nothing. (El knob único `--home` /
-  `INAKI_HOME` que re-ancla config+data+`secret.key`+`tool_config`+`users`+puertos en un
-  solo root está DISEÑADO pero aún NO implementado: hoy `--config` muda solo la config;
-  los datos siguen anclados a la constante de módulo `_INAKI_HOME = Path.home()/'.inaki'`
-  en `config_schema.py` más varios `Path.home()/'.inaki'` sueltos.)
+  El proceso es la frontera de aislamiento shared-nothing. El knob único **`--home` /
+  `INAKI_HOME`** re-ancla config+data+`secret.key`+`tool_config`+`users`+knowledge en un
+  solo root: `infrastructure/home.py::get_inaki_home()` lo resuelve (override de
+  `set_inaki_home` ← flag `--home` → env `INAKI_HOME` → default `~/.inaki`); el validador
+  `RuntimePath` y el composition root anclan contra él. **Core/adapters NO importan
+  `infrastructure/home`** (ratchet): core recibe `users_dir` por `RunAgentSettings`, los
+  adapters reciben paths resueltos (campos `RuntimePath`) o leen `INAKI_HOME` env directo
+  (setup TUI, `config_repository`) — el callback de `cli.py` propaga `--home` al env. Los
+  configs con `RuntimePath` usados como default de `GlobalConfig` (`scheduler`, `knowledge`)
+  usan `Field(default_factory=...)` para resolver en runtime, no al importar. **Puertos NO
+  se derivan del home**: una 2ª instancia declara `admin.port`/`broadcast.port` en su YAML.
 
 - **Per-agente (compartir vs aislar es CONFIGURABLE):** `memory`, `history`, `channels`,
   `llm`, `embedding`. Config en `AgentConfig`; se construyen por agente en

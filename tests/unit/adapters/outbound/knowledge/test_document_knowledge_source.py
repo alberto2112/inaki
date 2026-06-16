@@ -50,6 +50,7 @@ class TestDocumentKnowledgeSourceIndex:
             description="Test source",
             path=str(docs_dir),
             embedder=embedder,
+            db_dir=str(db_dir),
             glob="**/*.md",
             chunk_size=20,
             chunk_overlap=5,
@@ -83,6 +84,7 @@ class TestDocumentKnowledgeSourceIndex:
             description="Incremental test",
             path=str(docs_dir),
             embedder=embedder,
+            db_dir=str(db_dir),
             glob="**/*.md",
             chunk_size=10,
             chunk_overlap=2,
@@ -122,6 +124,7 @@ class TestDocumentKnowledgeSourceIndex:
             description="Mtime test",
             path=str(docs_dir),
             embedder=embedder,
+            db_dir=str(db_dir),
             glob="**/*.md",
             chunk_size=10,
             chunk_overlap=2,
@@ -156,6 +159,7 @@ class TestDocumentKnowledgeSourceIndex:
             description="No dir",
             path=str(tmp_path / "inexistente"),
             embedder=embedder,
+            db_dir=str(db_dir),
             glob="**/*.md",
         )
         source._db_path = str(db_dir / "no-dir.db")
@@ -179,6 +183,7 @@ class TestDocumentKnowledgeSourceSearch:
             description="Empty",
             path=str(tmp_path / "docs"),
             embedder=embedder,
+            db_dir=str(db_dir),
         )
         source._db_path = str(db_dir / "empty-src.db")
 
@@ -203,6 +208,7 @@ class TestDocumentKnowledgeSourceSearch:
             description="Round trip",
             path=str(docs_dir),
             embedder=embedder,
+            db_dir=str(db_dir),
             glob="**/*.md",
             chunk_size=10,
             chunk_overlap=2,
@@ -239,6 +245,7 @@ class TestDocumentKnowledgeSourceSearch:
             description="Filter test",
             path=str(docs_dir),
             embedder=embedder_index,
+            db_dir=str(db_dir),
             glob="**/*.md",
             chunk_size=10,
             chunk_overlap=2,
@@ -268,6 +275,7 @@ class TestDocumentKnowledgeSourceSearch:
             description="Stats test",
             path=str(docs_dir),
             embedder=embedder,
+            db_dir=str(db_dir),
             glob="**/*.md",
             chunk_size=10,
             chunk_overlap=2,
@@ -297,6 +305,7 @@ def _make_source(tmp_path: Path, embedder, *, glob: str = "**/*.md") -> Document
         description="Inbox test",
         path=str(docs_dir),
         embedder=embedder,
+        db_dir=str(db_dir),
         glob=glob,
         chunk_size=10,
         chunk_overlap=2,

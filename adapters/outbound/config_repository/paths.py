@@ -7,11 +7,12 @@ Layout canónico (matchea el runtime ``infrastructure/config.py``):
   ~/.inaki/agents/{id}.yaml            ← sibling de config/, no subcarpeta
   ~/.inaki/agents/{id}.secrets.yaml
 
-Layout legacy unificado (cuando se setea ``INAKI_CONFIG_DIR=DIR``):
-  DIR/global.yaml
-  DIR/global.secrets.yaml
-  DIR/agents/{id}.yaml
-  DIR/agents/{id}.secrets.yaml
+Con home relocalizado (``INAKI_HOME=HOME``, propagado por el composition root desde
+``--home``):
+  HOME/config/global.yaml
+  HOME/config/global.secrets.yaml
+  HOME/agents/{id}.yaml
+  HOME/agents/{id}.secrets.yaml
 
 La TUI MATCHEA al runtime — no impone convención propia. Cualquier desviación
 acá rompe a usuarios con installs existentes.
@@ -25,36 +26,33 @@ from pathlib import Path
 
 def get_config_dir() -> Path:
     """
-    Devuelve el directorio raíz de configuración (``~/.inaki/config/``).
+    Devuelve el directorio raíz de configuración (``<home>/config/``).
 
-    Si la variable de entorno ``INAKI_CONFIG_DIR`` está definida, se usa ese
-    valor como override (útil en tests y desarrollo).
+    El home se resuelve por ``INAKI_HOME`` env (que el composition root propaga desde
+    ``--home``) → default ``~/.inaki``. Coincide con ``get_inaki_home()/"config"`` del runtime.
     """
-    env_override = os.environ.get("INAKI_CONFIG_DIR")
-    if env_override:
-        return Path(env_override).expanduser().resolve()
+    home = os.environ.get("INAKI_HOME")
+    if home:
+        return Path(home).expanduser().resolve() / "config"
     return Path.home() / ".inaki" / "config"
 
 
 def get_agents_dir() -> Path:
     """
-    Devuelve el directorio de configs de agentes.
+    Devuelve el directorio de configs de agentes (``<home>/agents/``).
 
-    Default (sin env override): ``~/.inaki/agents/`` — sibling de
-    ``~/.inaki/config/``, sin ``config/`` intermedio. Coincide exactamente
-    con la convención que usa ``infrastructure/config.py`` en runtime.
-
-    Con ``INAKI_CONFIG_DIR=DIR`` (modo legacy unificado): ``<DIR>/agents/``,
-    también consistente con el override del runtime.
+    Sibling de ``<home>/config/``, sin ``config/`` intermedio. El home se resuelve por
+    ``INAKI_HOME`` env (propagado desde ``--home``) → default ``~/.inaki``. Coincide con
+    ``get_inaki_home()/"agents"`` del runtime.
     """
-    env_override = os.environ.get("INAKI_CONFIG_DIR")
-    if env_override:
-        return Path(env_override).expanduser().resolve() / "agents"
+    home = os.environ.get("INAKI_HOME")
+    if home:
+        return Path(home).expanduser().resolve() / "agents"
     return Path.home() / ".inaki" / "agents"
 
 
 def global_yaml_path() -> Path:
-    """Ruta a ``~/.inaki/config/global.yaml`` (o ``$INAKI_CONFIG_DIR/global.yaml``)."""
+    """Ruta a ``~/.inaki/config/global.yaml`` (o ``$INAKI_HOME/config/global.yaml``)."""
     return get_config_dir() / "global.yaml"
 
 
@@ -65,7 +63,7 @@ def global_secrets_path() -> Path:
 
 def agent_yaml_path(agent_id: str) -> Path:
     """
-    Ruta a ``~/.inaki/agents/{agent_id}.yaml`` (default) o ``$INAKI_CONFIG_DIR/agents/...`` (legacy).
+    Ruta a ``~/.inaki/agents/{agent_id}.yaml`` (default) o ``$INAKI_HOME/agents/...``.
 
     Args:
         agent_id: Identificador del agente (sin extensión).

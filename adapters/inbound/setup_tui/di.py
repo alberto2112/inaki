@@ -65,7 +65,7 @@ def build_setup_container(
 
     Args:
         config_dir: Directorio raíz de config. ``None`` → usa el default
-                    (``~/.inaki/config/`` o ``INAKI_CONFIG_DIR`` env var).
+                    (``~/.inaki/config/`` o ``$INAKI_HOME/config/`` por env var).
         global_schema: clase Pydantic ``GlobalConfig`` — la inyecta el
                        composition root (el setup_tui no importa infrastructure).
         agent_schema: clase Pydantic ``AgentConfig`` — ídem.

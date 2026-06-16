@@ -5,7 +5,6 @@ import os
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import httpx
@@ -20,9 +19,10 @@ if TYPE_CHECKING:
     from core.domain.entities.task import ShellExecPayload, WebhookPayload
 
 
-# Último recurso de la cascada de routing. Bajo ~/.inaki/ (no /tmp): el
-# contenido puede ser privado y /tmp es world-readable.
-_HARDCODED_FALLBACK = f"file://{Path.home() / '.inaki' / 'data' / 'scheduler-fallback.log'}"
+# El fallback de último recurso (file://...) lo INYECTA el composition root ya resuelto
+# contra el home de instancia (``SchedulerConfig.fallback_log_filename``) por privacidad
+# — bajo ``<home>/data/`` (no /tmp world-readable). El default del adapter (/tmp) es solo
+# para construcción directa / tests; producción siempre lo sobreescribe.
 
 
 @dataclass(frozen=True)
@@ -59,7 +59,7 @@ class ChannelRouter:
         native_sinks: dict[str, IOutboundSink],
         fallback_config: ChannelFallbackSettings,
         sink_factory: Callable[[str], IOutboundSink],
-        hardcoded_fallback: str = _HARDCODED_FALLBACK,
+        hardcoded_fallback: str = "file:///tmp/inaki-schedule-output.log",
     ) -> None:
         self._native = native_sinks
         self._config = fallback_config

@@ -200,10 +200,10 @@ class RunAgentUseCase:
         Sin ``ChannelContext`` (ej: scheduler triggers que no pasan por un adapter
         inbound) o ningún archivo presente → ``""``. Mismo criterio que el digest.
         """
-        if ctx is None:
+        if ctx is None or not self._settings.users_dir:
             return ""
 
-        base = Path("~/.inaki/users").expanduser() / ctx.channel_type
+        base = Path(self._settings.users_dir) / ctx.channel_type
 
         instructions = ""
         try:

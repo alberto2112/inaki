@@ -13,6 +13,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 
+from infrastructure.home import get_inaki_home
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,22 +36,18 @@ ExpandedPath = Annotated[str, BeforeValidator(_expand_user_str)]
 ExpandedPathList = Annotated[list[str], BeforeValidator(_expand_user_list)]
 
 
-# Raíz hardcoded para datos de runtime del usuario (DBs, models, digest markdown).
-# Convive con `~/.inaki/config/` y `~/.inaki/agents/` (bootstrap del sistema).
-_INAKI_HOME = Path.home() / ".inaki"
-
 # Valores SQLite especiales que NO deben interpretarse como paths.
 _SQLITE_SPECIAL = {":memory:"}
 
 
 def _resolve_runtime_path(v: Any) -> Any:
     """
-    Resuelve un path de runtime contra `~/.inaki/`.
+    Resuelve un path de runtime contra el home de instancia (`get_inaki_home()`).
 
     - Valores no-str pasan sin tocar (ya vienen normalizados).
     - Valores especiales de SQLite (`:memory:`) pasan tal cual.
     - Paths absolutos (incluyendo `~/...` tras expansión) se usan tal cual.
-    - Paths relativos se anclan bajo `_INAKI_HOME`.
+    - Paths relativos se anclan bajo el home de instancia (`get_inaki_home()`).
     """
     if not isinstance(v, str):
         return v
@@ -58,7 +56,7 @@ def _resolve_runtime_path(v: Any) -> Any:
     p = Path(v).expanduser()
     if p.is_absolute():
         return str(p)
-    return str(_INAKI_HOME / p)
+    return str(get_inaki_home() / p)
 
 
 RuntimePath = Annotated[str, BeforeValidator(_resolve_runtime_path)]
@@ -408,6 +406,10 @@ class SchedulerConfig(BaseModel):
 
     enabled: bool = True
     db_filename: RuntimePath = "data/scheduler.db"  # relativo a ~/.inaki/
+    fallback_log_filename: RuntimePath = "data/scheduler-fallback.log"
+    """Fallback de último recurso del router de dispatch (cascada). Relativo al home de
+    instancia; se reancla con ``--home`` / ``INAKI_HOME``. El composition root lo envuelve
+    en ``file://`` y lo inyecta al ``ChannelRouter`` (por privacidad, bajo ``<home>/data/``)."""
     max_retries: int = 3
     retry_backoff_seconds: float = 10.0  # espera lineal entre reintentos (1x, 2x, 3x...)
     max_tasks_per_agent: int = 20  # tareas activas (pending/running) por agente
@@ -715,6 +717,10 @@ class KnowledgeConfig(BaseModel):
     enabled: bool = True
     """Si False, el pre-fetch se saltea completamente en cada turno."""
 
+    db_dirname: RuntimePath = "knowledge"
+    """Directorio (relativo al home de instancia) de las DBs de índice por fuente:
+    ``<home>/knowledge/{source_id}.db``. Se reancla con ``--home`` / ``INAKI_HOME``."""
+
     include_memory: bool = True
     """Si True, la memoria SQLite del agente se registra como fuente automáticamente."""
 
@@ -903,13 +909,18 @@ class GlobalConfig(BaseModel):
     skills: SkillsConfig = SkillsConfig()
     tools: ToolsConfig = ToolsConfig()
     semantic_routing: SemanticRoutingConfig = SemanticRoutingConfig()
-    scheduler: SchedulerConfig = SchedulerConfig()
+    scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
+    # default_factory (no `= SchedulerConfig()`): los campos RuntimePath se resuelven
+    # contra `get_inaki_home()` en CADA instanciación de GlobalConfig (runtime, ya con el
+    # home seteado), no al importar el módulo. Sin esto, `--home` no relocaliza la db si
+    # el bloque `scheduler` falta del YAML. Vale para todo config con RuntimePath usado
+    # como default de GlobalConfig/AgentConfig.
     workspace: WorkspaceConfig = WorkspaceConfig()
     delegation: DelegationConfig = DelegationConfig()
     admin: AdminConfig = AdminConfig()
     user: UserConfig = UserConfig()
     transcription: TranscriptionConfig | None = None
-    knowledge: KnowledgeConfig = KnowledgeConfig()
+    knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)  # default_factory: ver nota en `scheduler` (RuntimePath en T7)
     photos: PhotosConfig | None = None
     """Configuración del pipeline de fotos. None = feature desactivada (no se carga nada)."""
     providers: dict[str, ProviderConfig] = {}

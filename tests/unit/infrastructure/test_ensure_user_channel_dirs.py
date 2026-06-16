@@ -25,8 +25,8 @@ def test_crea_un_dir_por_canal(tmp_path: Path) -> None:
 
     ensure_user_channel_dirs(tmp_path, cfgs)
 
-    assert (tmp_path / ".inaki" / "users" / "telegram").is_dir()
-    assert (tmp_path / ".inaki" / "users" / "cli").is_dir()
+    assert (tmp_path / "users" / "telegram").is_dir()
+    assert (tmp_path / "users" / "cli").is_dir()
 
 
 def test_deduplica_canales_entre_agentes(tmp_path: Path) -> None:
@@ -38,7 +38,7 @@ def test_deduplica_canales_entre_agentes(tmp_path: Path) -> None:
 
     ensure_user_channel_dirs(tmp_path, cfgs)
 
-    assert sorted(p.name for p in (tmp_path / ".inaki" / "users").iterdir()) == [
+    assert sorted(p.name for p in (tmp_path / "users").iterdir()) == [
         "rest",
         "telegram",
     ]
@@ -50,7 +50,7 @@ def test_es_idempotente(tmp_path: Path) -> None:
     ensure_user_channel_dirs(tmp_path, cfgs)
 
     # Operador coloca un archivo per-user
-    user_file = tmp_path / ".inaki" / "users" / "telegram" / "alberto.md"
+    user_file = tmp_path / "users" / "telegram" / "alberto.md"
     user_file.write_text("contexto previo", encoding="utf-8")
 
     ensure_user_channel_dirs(tmp_path, cfgs)
@@ -63,7 +63,7 @@ def test_sin_canales_no_crea_subdirs(tmp_path: Path) -> None:
     cfgs = [_agent_cfg("dev", {})]
     ensure_user_channel_dirs(tmp_path, cfgs)
 
-    users_root = tmp_path / ".inaki" / "users"
+    users_root = tmp_path / "users"
     # Root no se crea sin canales — esto es ok: no hay nada que descubrir.
     assert not users_root.exists() or list(users_root.iterdir()) == []
 
@@ -71,7 +71,7 @@ def test_sin_canales_no_crea_subdirs(tmp_path: Path) -> None:
 def test_iterable_vacio(tmp_path: Path) -> None:
     """Lista de agentes vacía → no-op, sin errores."""
     ensure_user_channel_dirs(tmp_path, [])
-    assert not (tmp_path / ".inaki" / "users").exists()
+    assert not (tmp_path / "users").exists()
 
 
 def test_no_falla_si_no_puede_crear(tmp_path: Path, monkeypatch, caplog) -> None:
@@ -97,6 +97,6 @@ def test_no_falla_si_no_puede_crear(tmp_path: Path, monkeypatch, caplog) -> None
         ensure_user_channel_dirs(tmp_path, cfgs)
 
     # cli/ se creó pese al fallo de telegram/
-    assert (tmp_path / ".inaki" / "users" / "cli").is_dir()
-    assert not (tmp_path / ".inaki" / "users" / "telegram").exists()
+    assert (tmp_path / "users" / "cli").is_dir()
+    assert not (tmp_path / "users" / "telegram").exists()
     assert any("No se pudo crear" in rec.message for rec in caplog.records)

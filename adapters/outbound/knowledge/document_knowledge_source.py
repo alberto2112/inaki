@@ -32,8 +32,6 @@ from core.ports.outbound.knowledge_port import IIndexableKnowledgeSource
 
 logger = logging.getLogger(__name__)
 
-_INAKI_HOME = Path.home() / ".inaki"
-
 _CREATE_CHUNKS = """
 CREATE TABLE IF NOT EXISTS chunks (
     id          TEXT PRIMARY KEY,
@@ -82,6 +80,7 @@ class DocumentKnowledgeSource(IIndexableKnowledgeSource):
         description: str,
         path: str,
         embedder: IEmbeddingProvider,
+        db_dir: str,
         glob: str = "**/*.md",
         chunk_size: int = 500,
         chunk_overlap: int = 80,
@@ -96,10 +95,11 @@ class DocumentKnowledgeSource(IIndexableKnowledgeSource):
         self._chunk_overlap = chunk_overlap
         self._dimension = dimension
 
-        # DB de índice: ~/.inaki/knowledge/{id}.db
-        db_dir = _INAKI_HOME / "knowledge"
-        db_dir.mkdir(parents=True, exist_ok=True)
-        self._db_path = str(db_dir / f"{source_id}.db")
+        # DB de índice: <db_dir>/{id}.db — db_dir lo inyecta el composition root ya
+        # resuelto contra el home de instancia (RuntimePath KnowledgeConfig.db_dirname).
+        db_dir_path = Path(db_dir)
+        db_dir_path.mkdir(parents=True, exist_ok=True)
+        self._db_path = str(db_dir_path / f"{source_id}.db")
 
     @property
     def source_id(self) -> str:

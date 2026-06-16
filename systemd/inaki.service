@@ -29,6 +29,12 @@ TasksMax=64
 # Variables de entorno (alternativa a config/global.secrets.yaml)
 # EnvironmentFile=/home/pi/inaki/.env
 
+# Home de la instancia (default: ~/.inaki). Para correr una 2ª instancia AISLADA
+# (su propio home de config + data + secret.key + tool_config + users), copiá este
+# unit con otro nombre y descomentá la línea con su ruta propia. Acordate de cambiar
+# admin.port / broadcast.port en su YAML para que no colisionen con la instancia 1:
+# Environment=INAKI_HOME=/srv/inaki-deptB
+
 # Shutdown gracioso: SIGTERM, esperar 30s, luego SIGKILL
 KillMode=process
 KillSignal=SIGTERM

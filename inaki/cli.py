@@ -10,7 +10,7 @@ Modos de uso:
   inaki consolidate --agent dev            → consolida solo el agente indicado
   inaki daemon                             → servicio systemd (todos los canales de todos los agentes)
   inaki reload                             → reinicia el daemon (cierra canales, recarga config y vuelve a levantar)
-  inaki --config /etc/inaki/config daemon  → daemon con config custom
+  inaki --home /srv/inaki-deptB daemon     → instancia con home propio (config+data+puertos)
   inaki --remote http://raspi.local:6497   → conectarse a un daemon remoto (env: INAKI_REMOTE)
   inaki --remote URL --remote-key KEY chat → conectarse a daemon remoto con auth key explícita
   inaki setup                              → TUI interactiva de configuración (offline)
@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Optional
@@ -42,6 +43,7 @@ from inaki.knowledge_cli import knowledge_app
 from inaki.scheduler_cli import scheduler_app
 from inaki.setup_cli import setup_app
 from inaki import __version__
+from infrastructure.home import get_inaki_home, set_inaki_home
 
 app = typer.Typer(
     name="inaki",
@@ -63,11 +65,11 @@ app.add_typer(setup_app, name="setup", help="Configuración del sistema (TUI off
 
 
 def _get_config_dir() -> Path:
-    return Path.home() / ".inaki" / "config"
+    return get_inaki_home() / "config"
 
 
 def _get_agents_dir() -> Path:
-    return Path.home() / ".inaki" / "agents"
+    return get_inaki_home() / "agents"
 
 
 def _bootstrap(config_dir: Path, agents_dir: Path):
@@ -116,11 +118,11 @@ def _run_daemon(config_dir: Path, agents_dir: Path, global_config, registry) -> 
     # (ver docs/configuracion.md → "Per-user context files").
     from infrastructure.config import ensure_user_channel_dirs
 
-    ensure_user_channel_dirs(Path.home(), registry.list_all())
+    ensure_user_channel_dirs(get_inaki_home(), registry.list_all())
 
     def bootstrap_fn():
         gc, reg = _bootstrap(config_dir, agents_dir)
-        ensure_user_channel_dirs(Path.home(), reg.list_all())
+        ensure_user_channel_dirs(get_inaki_home(), reg.list_all())
         return AppContainer(gc, reg, config_dir=config_dir), reg
 
     asyncio.run(run_daemon(bootstrap_fn, initial=(initial_container, registry)))
@@ -133,17 +135,17 @@ def _run_cli(client, agent_id: str) -> None:
     run_cli(client, agent_id)
 
 
-def _resolve_dirs(config_dir_override: Optional[Path]):
-    """Resuelve config_dir y agents_dir, aplicando ensure_user_config si es necesario."""
-    if config_dir_override:
-        config_dir = config_dir_override
-        agents_dir = config_dir / "agents"
-    else:
-        from infrastructure.config import ensure_user_config
+def _resolve_dirs():
+    """Resuelve config_dir y agents_dir del home de instancia, bootstrapeando si hace falta.
 
-        config_dir = _get_config_dir()
-        agents_dir = _get_agents_dir()
-        ensure_user_config(config_dir, agents_dir)
+    El home se fija en el callback raíz (``--home`` / ``INAKI_HOME``) vía ``set_inaki_home``;
+    acá todo deriva de ``get_inaki_home()``. No hay override de config_dir suelto: el único
+    knob de relocalización es el home (ver "instance home" en docs/configuracion.md)."""
+    from infrastructure.config import ensure_user_config
+
+    config_dir = _get_config_dir()
+    agents_dir = _get_agents_dir()
+    ensure_user_config(config_dir, agents_dir)
     return config_dir, agents_dir
 
 
@@ -230,7 +232,6 @@ def _run_task(
 
 
 def _invoke_task(
-    config_dir_override: Optional[Path],
     remote_url: Optional[str],
     remote_key: Optional[str],
     agent: Optional[str],
@@ -250,7 +251,7 @@ def _invoke_task(
         )
         raise typer.Exit(code=2)
 
-    config_dir, _ = _resolve_dirs(config_dir_override)
+    config_dir, _ = _resolve_dirs()
     client, global_config = _build_daemon_client(config_dir, remote_url, remote_key)
     _require_daemon(client)
     agent_id = agent or global_config.app.default_agent
@@ -260,12 +261,11 @@ def _invoke_task(
 
 
 def _invoke_default_chat(
-    config_dir_override: Optional[Path],
     remote_url: Optional[str],
     remote_key: Optional[str],
 ) -> None:
     """Lanza el chat interactivo con el agente por defecto via daemon HTTP."""
-    config_dir, _ = _resolve_dirs(config_dir_override)
+    config_dir, _ = _resolve_dirs()
     client, global_config = _build_daemon_client(config_dir, remote_url, remote_key)
     _require_daemon(client)
     agent_id = global_config.app.default_agent
@@ -283,11 +283,13 @@ def _root(
         is_eager=True,
         help="Muestra la versión y sale.",
     ),
-    config: Optional[Path] = typer.Option(
+    home: Optional[Path] = typer.Option(
         None,
-        "--config",
+        "--home",
         metavar="DIR",
-        help="Directorio de configuración (default: ~/.inaki/config)",
+        envvar="INAKI_HOME",
+        help="Raíz del home de la instancia (default: ~/.inaki). Reancla config, data, "
+        "secret.key, tool_config y users. Una 2ª instancia aislada usa otro --home/INAKI_HOME.",
     ),
     remote: Optional[str] = typer.Option(
         None,
@@ -332,14 +334,18 @@ def _root(
 ) -> None:
     """Inaki — asistente personal agentico."""
     ctx.ensure_object(dict)
-    ctx.obj["config_dir"] = config
+    if home is not None:
+        set_inaki_home(home)
+        # Propagar a env: los adapters que NO pueden importar infra (setup TUI,
+        # config_repository) leen INAKI_HOME directo; también lo heredan procesos hijos.
+        os.environ["INAKI_HOME"] = str(home)
     ctx.obj["remote_url"] = remote
     ctx.obj["remote_key"] = remote_key
     if ctx.invoked_subcommand is None:
         if task:
-            _invoke_task(config, remote, remote_key, None, task, channel=channel, chat_id=chat_id)
+            _invoke_task(remote, remote_key, None, task, channel=channel, chat_id=chat_id)
         else:
-            _invoke_default_chat(config, remote, remote_key)
+            _invoke_default_chat(remote, remote_key)
 
 
 @app.command()
@@ -378,10 +384,9 @@ def chat(
     ),
 ) -> None:
     """Chat interactivo con un agente via daemon HTTP."""
-    config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
     remote_url: Optional[str] = ctx.obj.get("remote_url") if ctx.obj else None
     remote_key: Optional[str] = ctx.obj.get("remote_key") if ctx.obj else None
-    config_dir, _ = _resolve_dirs(config_dir_override)
+    config_dir, _ = _resolve_dirs()
 
     client, global_config = _build_daemon_client(config_dir, remote_url, remote_key)
     _require_daemon(client)
@@ -406,8 +411,7 @@ def daemon(
     ctx: typer.Context,
 ) -> None:
     """Arranca como servicio systemd (levanta todos los canales de todos los agentes)."""
-    config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
-    config_dir, agents_dir = _resolve_dirs(config_dir_override)
+    config_dir, agents_dir = _resolve_dirs()
     global_config, registry = _bootstrap(config_dir, agents_dir)
     _run_daemon(config_dir, agents_dir, global_config, registry)
 
@@ -428,10 +432,9 @@ def inspect(
     ),
 ) -> None:
     """Inspecciona el pipeline RAG para un mensaje sin llamar al LLM."""
-    config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
     remote_url: Optional[str] = ctx.obj.get("remote_url") if ctx.obj else None
     remote_key: Optional[str] = ctx.obj.get("remote_key") if ctx.obj else None
-    config_dir, _ = _resolve_dirs(config_dir_override)
+    config_dir, _ = _resolve_dirs()
 
     client, global_config = _build_daemon_client(config_dir, remote_url, remote_key)
     _require_daemon(client)
@@ -447,10 +450,9 @@ def reload(
     ctx: typer.Context,
 ) -> None:
     """Reinicia el daemon: cierra todos los channels, recarga config y vuelve a levantar."""
-    config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
     remote_url: Optional[str] = ctx.obj.get("remote_url") if ctx.obj else None
     remote_key: Optional[str] = ctx.obj.get("remote_key") if ctx.obj else None
-    config_dir, _ = _resolve_dirs(config_dir_override)
+    config_dir, _ = _resolve_dirs()
 
     client, _ = _build_daemon_client(config_dir, remote_url, remote_key)
     _require_daemon(client)
@@ -470,10 +472,9 @@ def consolidate(
     ),
 ) -> None:
     """Consolida la memoria y sale."""
-    config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
     remote_url: Optional[str] = ctx.obj.get("remote_url") if ctx.obj else None
     remote_key: Optional[str] = ctx.obj.get("remote_key") if ctx.obj else None
-    config_dir, _ = _resolve_dirs(config_dir_override)
+    config_dir, _ = _resolve_dirs()
 
     client, _ = _build_daemon_client(config_dir, remote_url, remote_key)
     _require_daemon(client)
@@ -580,10 +581,9 @@ def tool(
         raise typer.Exit(code=2)
 
     # --- Setup común --------------------------------------------------------
-    config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
     remote_url: Optional[str] = ctx.obj.get("remote_url") if ctx.obj else None
     remote_key: Optional[str] = ctx.obj.get("remote_key") if ctx.obj else None
-    config_dir, _ = _resolve_dirs(config_dir_override)
+    config_dir, _ = _resolve_dirs()
 
     client, global_config = _build_daemon_client(config_dir, remote_url, remote_key)
     _require_daemon(client)
@@ -775,10 +775,9 @@ def send(
         raise typer.Exit(code=2)
 
     # --- Setup común --------------------------------------------------------
-    config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
     remote_url: Optional[str] = ctx.obj.get("remote_url") if ctx.obj else None
     remote_key: Optional[str] = ctx.obj.get("remote_key") if ctx.obj else None
-    config_dir, _ = _resolve_dirs(config_dir_override)
+    config_dir, _ = _resolve_dirs()
 
     # --- Validar paths locales (solo si no es daemon remoto) -----------------
     es_remoto = bool(remote_url)

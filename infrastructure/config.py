@@ -12,7 +12,6 @@ from __future__ import annotations
 from infrastructure.config_schema import *  # noqa: F401,F403
 from infrastructure.config_loader import *  # noqa: F401,F403
 from infrastructure.config_schema import (  # noqa: F401
-    _INAKI_HOME,
     _LLM_TIMEOUT_FALLBACK,
     _SQLITE_SPECIAL,
     _expand_user_list,

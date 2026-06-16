@@ -24,10 +24,29 @@ from infrastructure.container import build_run_agent_settings
 
 
 @pytest.fixture
+def users_root(tmp_path):
+    """Fija el home de instancia a un tmp y crea ``users/`` vacío. Devuelve ``users/``.
+
+    Usa ``set_inaki_home`` (no ``HOME``): ``get_inaki_home()`` resuelve por override →
+    ``INAKI_HOME`` → default, nunca por ``HOME``. Resetea el override (process-global) al final."""
+    from infrastructure.home import set_inaki_home
+
+    home = tmp_path / ".inaki"
+    root = home / "users"
+    root.mkdir(parents=True)
+    set_inaki_home(home)
+    yield root
+    set_inaki_home(None)
+
+
+@pytest.fixture
 def use_case(
-    agent_config, mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools
+    users_root, agent_config, mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools
 ):
-    """RunAgentUseCase estándar — el ctx del turno se pasa como argumento."""
+    """RunAgentUseCase estándar — el ctx del turno se pasa como argumento.
+
+    Depende de ``users_root`` para que el home quede fijado ANTES de construir los
+    settings (``build_run_agent_settings`` resuelve ``users_dir`` vía ``get_inaki_home()``)."""
     return RunAgentUseCase(
         llm=mock_llm,
         memory=mock_memory,
@@ -37,15 +56,6 @@ def use_case(
         tools=mock_tools,
         settings=build_run_agent_settings(agent_config),
     )
-
-
-@pytest.fixture
-def users_root(tmp_path, monkeypatch):
-    """Redirige ``~`` a un tmp y crea ``users/`` vacío. Devuelve la ruta a ``users/``."""
-    monkeypatch.setenv("HOME", str(tmp_path))
-    root = tmp_path / ".inaki" / "users"
-    root.mkdir(parents=True)
-    return root
 
 
 def test_devuelve_vacio_si_ctx_es_none(use_case):

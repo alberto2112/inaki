@@ -100,8 +100,7 @@ def _bootstrap_uc(ctx: typer.Context) -> tuple["ISchedulerUseCase", "GlobalConfi
     """Bootstrap liviano — carga solo config + SQLiteSchedulerRepo + UseCase."""
     from inaki.cli import _resolve_dirs
 
-    config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
-    config_dir, _ = _resolve_dirs(config_dir_override)
+    config_dir, _ = _resolve_dirs()
 
     return _create_lightweight_uc(config_dir)
 
@@ -115,8 +114,7 @@ def _bootstrap_daemon_client(ctx: typer.Context) -> Any:
     """
     from inaki.cli import _build_daemon_client, _resolve_dirs
 
-    config_dir_override: Optional[Path] = ctx.obj.get("config_dir") if ctx.obj else None
-    config_dir, _ = _resolve_dirs(config_dir_override)
+    config_dir, _ = _resolve_dirs()
 
     client, _ = _build_daemon_client(config_dir)
     return client

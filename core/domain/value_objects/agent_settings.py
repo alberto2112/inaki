@@ -105,7 +105,8 @@ class MemorySettings(BaseModel, frozen=True):
 class RunAgentSettings(BaseModel, frozen=True):
     """Parámetros que ``RunAgentUseCase`` consume — y nada más.
 
-    ``workspace_root`` llega pre-resuelto a ruta absoluta por el container.
+    ``workspace_root`` y ``users_dir`` llegan pre-resueltos a ruta absoluta por el
+    container (``users_dir`` = ``<home>/users``, reanclado por ``--home``/``INAKI_HOME``).
     ``timestamp_channels`` generaliza el flag ``channels.telegram.add_llm_timestamp``:
     el use case antepone timestamps cuando el canal del turno está en el set.
     """
@@ -115,6 +116,7 @@ class RunAgentSettings(BaseModel, frozen=True):
     description: str = ""
     system_prompt: str = ""
     workspace_root: str = ""
+    users_dir: str = ""
     merge_chats: bool = False
     min_words_threshold: int = 0
     skills_min_skills: int = 10

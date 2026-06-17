@@ -47,6 +47,7 @@ from adapters.outbound.scheduler.builtin_tasks import (
 )
 from adapters.outbound.scheduler.dispatch_adapters import (
     ChannelFallbackSettings,
+    ChannelHistoryRecorderAdapter,
     ChannelRouter,
     ConsolidationDispatchAdapter,
     HttpCallerAdapter,
@@ -57,6 +58,7 @@ from adapters.outbound.scheduler.dispatch_adapters import (
 from core.ports.outbound.scheduler_dispatch_port import SchedulerDispatchPorts
 from adapters.outbound.sinks.sink_factory import SinkFactory
 from adapters.outbound.sinks.telegram_sink import TelegramSink
+from core.ports.outbound.outbound_sink_port import IOutboundSink
 from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRepo
 from adapters.outbound.embedding.sqlite_embedding_cache import SqliteEmbeddingCache
 from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
@@ -695,6 +697,16 @@ class AgentContainer:
     def transcription(self) -> ITranscriptionProvider | None:
         """Provider de transcripción para este agente (o None si voz deshabilitada)."""
         return self._transcription
+
+    @property
+    def history(self) -> SQLiteHistoryStore:
+        """Historial conversacional de este agente.
+
+        Accesor público para que el ``ChannelHistoryRecorderAdapter`` del
+        scheduler resuelva el historial por ``agent_id`` (mismo patrón que
+        ``run_agent``, que el ``LLMDispatcherAdapter`` consume duck-typed).
+        """
+        return self._history
 
     def get_channel_context(self) -> "ChannelContext | None":
         """Devuelve el ``ChannelContext`` del turno en curso, o ``None`` si no hay turno.
@@ -1514,8 +1526,12 @@ class AppContainer:
         )
         telegram_sink = TelegramSink(get_telegram_bot=self._get_telegram_bot)
         sink_factory = SinkFactory(get_telegram_bot=self._get_telegram_bot)
+        # Los sinks nativos son los canales conversacionales vivos: un channel_send
+        # que resuelve a uno de estos llegó a una conversación real y se persiste en
+        # historial; uno que cae al fallback (archivo) no.
+        native_sinks: dict[str, IOutboundSink] = {"telegram": telegram_sink}
         channel_router = ChannelRouter(
-            native_sinks={"telegram": telegram_sink},
+            native_sinks=native_sinks,
             fallback_config=ChannelFallbackSettings(
                 default=scheduler_cfg.channel_fallback.default,
                 overrides=dict(scheduler_cfg.channel_fallback.overrides),
@@ -1534,6 +1550,7 @@ class AppContainer:
             reconciler=ReconcileDispatchAdapter(self._enabled_reconcilers),
             http_caller=HttpCallerAdapter(),
             shell_executor=ShellExecAdapter(),
+            history_recorder=ChannelHistoryRecorderAdapter(self.agents, set(native_sinks)),
         )
         self.scheduler_service = SchedulerService(
             repo=self.scheduler_repo,

@@ -205,7 +205,7 @@ else:
 
 | Trigger | Action |
 |---------|--------|
-| `channel_send` | `channel_router.send_message(target, text)` → `DispatchResult(original_target, resolved_target)` — the router applies a fallback cascade (native → override → default → hardcoded `~/.inaki/data/scheduler-fallback.log`). See [configuracion.md — `channel_fallback`](configuracion.md#scheduler--channel_fallback-routing-de-canales). The `{original_target, resolved_target}` pair is persisted in `task_logs.metadata` (JSON) for traceability. |
+| `channel_send` | `channel_router.send_message(target, text)` → `DispatchResult(original_target, resolved_target)` — the router applies a fallback cascade (native → override → default → hardcoded `~/.inaki/data/scheduler-fallback.log`). See [configuracion.md — `channel_fallback`](configuracion.md#scheduler--channel_fallback-routing-de-canales). The `{original_target, resolved_target}` pair is persisted in `task_logs.metadata` (JSON) for traceability. **Si el `resolved_target` es un canal conversacional vivo** (su prefijo está entre los sinks nativos — hoy `telegram`) **y la tarea tiene `created_by`**, el texto enviado también se persiste como mensaje `Role.ASSISTANT` en el historial (`history.db`) del agente dueño, en el scope `(channel, chat_id)` parseado del `resolved_target`. Así el agente conserva en su conversación lo que envió (paridad con `agent_send`). Si el mensaje cayó al fallback de archivo, o `created_by` está vacío (origen CLI), o es una corrida manual (`run_task_now`/ephemeral) → **no** se persiste en historial. |
 | `agent_send` | `llm_dispatcher.dispatch(agent_id, prompt, tools)` → str result; if `output_channel` is defined, sends result to the channel |
 | `shell_exec` | `ShellExecAdapter` (port `IShellExecutor`): subprocess with command/working_dir/env_vars/timeout → stdout; RuntimeError if exit code != 0. On timeout the process is **killed** (no orphans). |
 | `consolidate_memory` | `consolidator.consolidate_all()` → str result |
@@ -343,12 +343,15 @@ If `log_enabled = true`, the run leaves a `TaskLog` tagged with
 `metadata = {"trigger": "manual"}`, so a manual fire is distinguishable from a
 scheduled one in the logs.
 
-**`agent_send` runs ephemeral.** A manually-run `agent_send` dispatches with
-`ephemeral=True`: the agent loads the conversation history for context but the
-turn is **not persisted** and the sticky state is left untouched — testing a task
-does not pollute the real conversation. The scheduled run (the normal loop) still
-persists as before; the flag applies **only** to the manual path. Other trigger
-types ignore it.
+**`agent_send` and `channel_send` run ephemeral on manual runs.** A manually-run
+`agent_send` dispatches with `ephemeral=True`: the agent loads the conversation
+history for context but the turn is **not persisted** and the sticky state is left
+untouched — testing a task does not pollute the real conversation. Likewise, a
+manually-run `channel_send` still sends the message but does **not** persist it to
+history (see the dispatch table for when a scheduled `channel_send` persists). The
+scheduled run (the normal loop) persists as before; the flag applies **only** to the
+manual path. The remaining trigger types (`shell_exec`, `consolidate_memory`,
+`reconcile_memory`, `webhook`) ignore it.
 
 > **Side effects still happen.** Ephemeral only suppresses history persistence.
 > A `channel_send` (or an `agent_send` with `output_channel`) **still sends a real

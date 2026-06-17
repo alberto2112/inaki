@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from core.domain.entities.message import Message, Role
 from core.domain.value_objects.dispatch_result import DispatchResult
 from core.ports.outbound.intermediate_sink_port import IIntermediateSink
 from core.ports.outbound.outbound_sink_port import IOutboundSink
@@ -153,6 +154,44 @@ class LLMDispatcherAdapter:
                 chat_id=chat_id,
                 ephemeral=ephemeral,
             )
+
+
+class ChannelHistoryRecorderAdapter:
+    """Persiste un ``channel_send`` como mensaje del asistente en el historial
+    del agente dueño de la tarea (``task.created_by``).
+
+    Sigue el patrón de ``LLMDispatcherAdapter``: recibe el dict de agentes
+    (duck-typed — ``adapters`` no importa ``infrastructure``) y resuelve el
+    historial por ``agent_id`` en runtime accediendo a ``agent.history``.
+
+    Persiste SOLO cuando el ``resolved_target`` apunta a un canal conversacional
+    vivo (su prefijo está en ``conversational_channels`` — los sinks nativos del
+    router). Si el mensaje cayó a un fallback no-conversacional (archivo) o el
+    agente no existe, es no-op: no hay conversación que registrar.
+    """
+
+    def __init__(self, agents: dict, conversational_channels: set[str]) -> None:
+        self._agents = agents
+        self._conversational = conversational_channels
+
+    async def record_channel_send(
+        self, agent_id: str, resolved_target: str, text: str
+    ) -> None:
+        channel, sep, chat_id = resolved_target.partition(":")
+        if not sep or channel not in self._conversational:
+            # No es canal conversacional (ej: file:///... del fallback) → el
+            # usuario nunca vio esto en una conversación: nada que persistir.
+            return
+        agent = self._agents.get(agent_id)
+        if agent is None:
+            # Agente desconocido (renombrado/eliminado tras crear la tarea).
+            return
+        await agent.history.append(
+            agent_id,
+            Message(role=Role.ASSISTANT, content=text),
+            channel=channel,
+            chat_id=chat_id,
+        )
 
 
 class ConsolidationDispatchAdapter:

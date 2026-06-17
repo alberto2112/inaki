@@ -37,6 +37,7 @@ def _make_dispatch() -> MagicMock:
     dispatch.consolidator.consolidate_all = AsyncMock(return_value="ok")
     dispatch.http_caller = AsyncMock()
     dispatch.http_caller.call = AsyncMock(return_value="webhook response")
+    dispatch.history_recorder = AsyncMock()
     return dispatch
 
 
@@ -415,6 +416,68 @@ async def test_dispatch_trigger_consolidate_devuelve_metadata_none(
 
     assert output == "ok"
     assert metadata is None
+
+
+# ---------------------------------------------------------------------------
+# Persistencia del channel_send en el historial del agente dueño
+# ---------------------------------------------------------------------------
+
+
+async def test_channel_send_persiste_en_historial_del_agente_dueno(
+    service: SchedulerService,
+) -> None:
+    """channel_send con created_by → delega al recorder con (agent_id,
+    resolved_target, text). El recorder decide si es canal conversacional."""
+    task = _make_channel_task().model_copy(update={"created_by": "main"})
+    service._dispatch.channel_sender.send_message = AsyncMock(  # type: ignore[method-assign]
+        return_value=DispatchResult(
+            original_target="telegram:42", resolved_target="telegram:42"
+        )
+    )
+    recorder = AsyncMock()
+    service._dispatch.history_recorder.record_channel_send = recorder  # type: ignore[method-assign]
+
+    await service._dispatch_trigger(task)
+
+    recorder.assert_awaited_once_with("main", "telegram:42", "hola")
+
+
+async def test_channel_send_sin_created_by_no_persiste(
+    service: SchedulerService,
+) -> None:
+    """channel_send de origen CLI (created_by vacío) → no hay agente dueño,
+    no se intenta persistir."""
+    task = _make_channel_task()  # created_by="" por default
+    service._dispatch.channel_sender.send_message = AsyncMock(  # type: ignore[method-assign]
+        return_value=DispatchResult(
+            original_target="telegram:42", resolved_target="telegram:42"
+        )
+    )
+    recorder = AsyncMock()
+    service._dispatch.history_recorder.record_channel_send = recorder  # type: ignore[method-assign]
+
+    await service._dispatch_trigger(task)
+
+    recorder.assert_not_awaited()
+
+
+async def test_channel_send_ephemeral_no_persiste(
+    service: SchedulerService,
+) -> None:
+    """Una corrida manual (ephemeral=True) NO debe ensuciar el historial real,
+    aunque la tarea tenga created_by."""
+    task = _make_channel_task().model_copy(update={"created_by": "main"})
+    service._dispatch.channel_sender.send_message = AsyncMock(  # type: ignore[method-assign]
+        return_value=DispatchResult(
+            original_target="telegram:42", resolved_target="telegram:42"
+        )
+    )
+    recorder = AsyncMock()
+    service._dispatch.history_recorder.record_channel_send = recorder  # type: ignore[method-assign]
+
+    await service._dispatch_trigger(task, ephemeral=True)
+
+    recorder.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

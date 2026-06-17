@@ -55,6 +55,26 @@ class IShellExecutor(Protocol):
     async def run(self, payload: ShellExecPayload) -> str: ...
 
 
+class IChannelHistoryRecorder(Protocol):
+    """Persiste el texto de un ``channel_send`` como mensaje del asistente en el
+    historial del agente dueño de la tarea.
+
+    Un ``channel_send`` es el asistente emitiendo un mensaje dentro de una
+    conversación — sin esto, el agente no tendría rastro en su historial de lo
+    que envió y perdería la continuidad si el usuario responde. Simetría con
+    ``agent_send``, que ya persiste su intercambio vía ``llm_dispatcher``.
+
+    El recorder es el ÚNICO que conoce qué canales son conversacionales y cómo
+    resolver el historial de cada agente — el ``SchedulerService`` solo delega.
+    Implementaciones que apunten a un fallback no-conversacional (ej: archivo)
+    o a un agente desconocido DEBEN ser no-op.
+    """
+
+    async def record_channel_send(
+        self, agent_id: str, resolved_target: str, text: str
+    ) -> None: ...
+
+
 @dataclass(frozen=True)
 class SchedulerDispatchPorts:
     """Bundle de ports que el ``SchedulerService`` recibe en el constructor."""
@@ -65,3 +85,4 @@ class SchedulerDispatchPorts:
     reconciler: IReconciler
     http_caller: IHttpCaller
     shell_executor: IShellExecutor
+    history_recorder: IChannelHistoryRecorder

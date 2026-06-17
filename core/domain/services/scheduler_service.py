@@ -347,15 +347,22 @@ class SchedulerService:
         hubo un envío por canal (directo o via ``output_channel``); ``None`` en caso
         contrario.
 
-        ``ephemeral`` solo aplica al trigger ``agent_send``: con ``True`` el turno
-        del agente NO se persiste en el historial (carga contexto pero no deja
-        rastro ni toca el estado sticky). Lo usa ``run_task_now`` para que un
-        disparo manual de prueba no ensucie la conversación real. Los demás
-        triggers lo ignoran.
+        ``ephemeral`` aplica a ``agent_send`` (el turno del agente NO se persiste
+        en el historial) y a ``channel_send`` (el mensaje enviado NO se registra
+        en el historial). Lo usa ``run_task_now`` para que un disparo manual de
+        prueba no ensucie la conversación real. Los demás triggers lo ignoran.
         """
         payload = task.trigger_payload
         if isinstance(payload, ChannelSendPayload):
             dr = await self._dispatch.channel_sender.send_message(payload.target, payload.text)
+            # Persistir el envío como mensaje del asistente en el historial del
+            # agente dueño (created_by), salvo en pruebas manuales (ephemeral) o
+            # tareas sin agente (created_by vacío: origen CLI). El recorder es
+            # no-op si el target resuelto no es un canal conversacional vivo.
+            if not ephemeral and task.created_by:
+                await self._dispatch.history_recorder.record_channel_send(
+                    task.created_by, dr.resolved_target, payload.text
+                )
             return None, {
                 "original_target": dr.original_target,
                 "resolved_target": dr.resolved_target,

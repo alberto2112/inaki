@@ -9,12 +9,14 @@ import pytest
 
 from adapters.outbound.scheduler.dispatch_adapters import (
     ChannelFallbackSettings,
+    ChannelHistoryRecorderAdapter,
     ChannelRouter,
     HttpCallerAdapter,
     LLMDispatcherAdapter,
 )
 from adapters.outbound.sinks.sink_factory import SinkFactory
 from adapters.outbound.sinks.telegram_sink import TelegramSink
+from core.domain.entities.message import Role
 from core.domain.entities.task import WebhookPayload
 
 
@@ -412,6 +414,72 @@ class TestLLMDispatcherAdapterLockPerScope:
             timeout=1.0,
         )
         assert result == "ok"
+
+
+# ---------------------------------------------------------------------------
+# ChannelHistoryRecorderAdapter — persistencia del channel_send en historial
+# ---------------------------------------------------------------------------
+
+
+def _make_agent_with_history() -> MagicMock:
+    agent = MagicMock()
+    agent.history.append = AsyncMock(return_value=1)
+    return agent
+
+
+class TestChannelHistoryRecorderAdapter:
+    async def test_canal_conversacional_persiste_assistant_message(self) -> None:
+        """resolved_target a un canal vivo (telegram) → append de un mensaje
+        Role.ASSISTANT en el scope (channel, chat_id) parseado del target."""
+        agent = _make_agent_with_history()
+        recorder = ChannelHistoryRecorderAdapter(
+            {"main": agent}, conversational_channels={"telegram"}
+        )
+
+        await recorder.record_channel_send("main", "telegram:42", "buenos días")
+
+        agent.history.append.assert_awaited_once()
+        args, kwargs = agent.history.append.call_args
+        assert args[0] == "main"
+        message = args[1]
+        assert message.role == Role.ASSISTANT
+        assert message.content == "buenos días"
+        assert kwargs == {"channel": "telegram", "chat_id": "42"}
+
+    async def test_fallback_a_archivo_no_persiste(self) -> None:
+        """Si el mensaje cayó al fallback (file://...) no es conversacional →
+        no se persiste: el usuario nunca lo vio en una conversación."""
+        agent = _make_agent_with_history()
+        recorder = ChannelHistoryRecorderAdapter(
+            {"main": agent}, conversational_channels={"telegram"}
+        )
+
+        await recorder.record_channel_send(
+            "main", "file:///home/user/.inaki/data/scheduler-fallback.log", "hola"
+        )
+
+        agent.history.append.assert_not_awaited()
+
+    async def test_agente_desconocido_es_no_op(self) -> None:
+        """Tarea cuyo created_by ya no existe (agente renombrado/eliminado) →
+        no-op sin excepción."""
+        recorder = ChannelHistoryRecorderAdapter(
+            {}, conversational_channels={"telegram"}
+        )
+
+        # No debe lanzar.
+        await recorder.record_channel_send("fantasma", "telegram:42", "hola")
+
+    async def test_target_sin_prefijo_es_no_op(self) -> None:
+        """resolved_target malformado (sin ':') → no-op defensivo."""
+        agent = _make_agent_with_history()
+        recorder = ChannelHistoryRecorderAdapter(
+            {"main": agent}, conversational_channels={"telegram"}
+        )
+
+        await recorder.record_channel_send("main", "telegram42", "hola")
+
+        agent.history.append.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

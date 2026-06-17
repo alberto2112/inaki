@@ -20,6 +20,7 @@ import pytest
 from core.ports.outbound.scheduler_dispatch_port import SchedulerDispatchPorts
 from adapters.outbound.scheduler.dispatch_adapters import (
     ChannelFallbackSettings,
+    ChannelHistoryRecorderAdapter,
     ShellExecAdapter,
     ChannelRouter,
     ConsolidationDispatchAdapter,
@@ -66,6 +67,7 @@ async def test_channel_send_cli_cae_en_hardcoded_file_y_persiste_metadata(
         reconciler=ReconcileDispatchAdapter({}),
         http_caller=HttpCallerAdapter(),
         shell_executor=ShellExecAdapter(),
+        history_recorder=ChannelHistoryRecorderAdapter({}, set()),
     )
     service = SchedulerService(repo=repo, dispatch=dispatch)
 

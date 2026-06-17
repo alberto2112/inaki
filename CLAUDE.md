@@ -152,6 +152,42 @@ Secrets are YAML-only (no env vars). `*.secrets.yaml` files are gitignored.
 
 ## Migration Notes
 
+### `channel-send-history-persist`
+
+El trigger `channel_send` ahora **persiste el texto enviado en el historial**
+(`history.db`) del agente dueño, no solo en `task_logs.metadata`. Antes era el
+único canal por el que el asistente "hablaba" sin dejar rastro en su propia
+conversación — asimetría con `agent_send`, que ya persistía su intercambio vía
+`llm_dispatcher`. Si el usuario respondía a un `channel_send`, el agente no
+tenía contexto de lo que había mandado.
+
+**Cuándo persiste**: solo si el `resolved_target` (tras la cascada del router)
+apunta a un **canal conversacional vivo** — su prefijo está entre los sinks
+nativos (`native_sinks`, hoy `{telegram}`) — **y** la tarea tiene `created_by`
+no vacío. Se persiste un `Message(role=ASSISTANT)` en el scope
+`(created_by, channel, chat_id)` parseado del `resolved_target` (donde el
+usuario REALMENTE vio el mensaje, no el target original). **Cuándo NO**: cayó al
+fallback de archivo (no es canal real), `created_by` vacío (origen CLI sin
+agente dueño), o corrida manual (`run_task_now`/`ephemeral=True`, para no
+ensuciar la conversación real al testear).
+
+**Componentes nuevos**:
+- `IChannelHistoryRecorder` (port en `scheduler_dispatch_port.py`) — campo nuevo
+  en `SchedulerDispatchPorts`. El `SchedulerService` solo delega; el recorder es
+  el único que conoce qué canales son conversacionales y cómo resolver el
+  historial por `agent_id`.
+- `ChannelHistoryRecorderAdapter` (`adapters/outbound/scheduler/dispatch_adapters.py`)
+  — sigue el patrón de `LLMDispatcherAdapter`: recibe el dict de agentes
+  duck-typed (`adapters` no importa `infrastructure`) y resuelve `agent.history`
+  por id. Recibe el set de canales conversacionales (= `set(native_sinks)`).
+- `AgentContainer.history` (property pública nueva) para que el recorder acceda
+  al `SQLiteHistoryStore` del agente, igual que `run_agent`.
+
+**Sin migración de DB ni cambios de config**. La columna `(channel, chat_id)` de
+`history.db` ya existía. El mensaje persistido fluye por memoria como cualquier
+otro `assistant` message (se consolidará en su scope). Backward-compat: tareas
+sin `created_by` (CLI) y canales no nativos se comportan igual que antes.
+
 ### `subagent-inheritance`
 
 El flujo `delegate` dejó de ejecutar el `run_agent_one_shot` pre-built del

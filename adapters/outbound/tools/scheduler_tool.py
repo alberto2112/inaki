@@ -212,7 +212,9 @@ class SchedulerTool(ITool):
                     "Shape depends on trigger_type: "
                     'channel_send → {"text": "mensaje"}: por default va a la conversación '
                     'actual. Para enviar a OTRO chat, incluí "target" como routing key '
-                    '"canal:id" (ej. "telegram:-1001582404077"). '
+                    '"canal:id" (ej. "telegram:-1001582404077"). Para que el envío quede '
+                    'en el historial de OTRO agente (publicar EN SU NOMBRE), incluí '
+                    '"agent_id" con su id (ej. "anacleto"). '
                     'agent_send → {"task": "lo que el agente debe hacer"} '
                     "(agent_id se resuelve a 'self' automáticamente; "
                     "incluilo explícito solo para delegar a otro agente). "

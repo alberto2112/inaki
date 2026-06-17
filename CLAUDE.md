@@ -163,13 +163,18 @@ tenía contexto de lo que había mandado.
 
 **Cuándo persiste**: solo si el `resolved_target` (tras la cascada del router)
 apunta a un **canal conversacional vivo** — su prefijo está entre los sinks
-nativos (`native_sinks`, hoy `{telegram}`) — **y** la tarea tiene `created_by`
-no vacío. Se persiste un `Message(role=ASSISTANT)` en el scope
-`(created_by, channel, chat_id)` parseado del `resolved_target` (donde el
-usuario REALMENTE vio el mensaje, no el target original). **Cuándo NO**: cayó al
-fallback de archivo (no es canal real), `created_by` vacío (origen CLI sin
-agente dueño), o corrida manual (`run_task_now`/`ephemeral=True`, para no
-ensuciar la conversación real al testear).
+nativos (`native_sinks`, hoy `{telegram}`) — **y** hay un agente dueño. El dueño
+se resuelve `payload.agent_id or task.created_by`: por default es quien agendó la
+tarea (`created_by`), pero un **`agent_id` explícito en el `ChannelSendPayload`
+permite publicar EN NOMBRE DE otro agente** (un cronista dedicado que manda como
+`anacleto` para que el agente conversacional conserve el contexto cuando le
+respondan). Se persiste un `Message(role=ASSISTANT)` en el scope
+`(dueño, channel, chat_id)` parseado del `resolved_target` (donde el usuario
+REALMENTE vio el mensaje, no el target original). **Cuándo NO**: cayó al fallback
+de archivo (no es canal real), no hay agente dueño (origen CLI sin `created_by` ni
+`agent_id`), o corrida manual (`run_task_now`/`ephemeral=True`, para no ensuciar la
+conversación real al testear). `created_by` sigue siendo siempre quien agendó
+(hard-injected) — el `agent_id` solo redirige el HISTORIAL, no el bookkeeping.
 
 **Componentes nuevos**:
 - `IChannelHistoryRecorder` (port en `scheduler_dispatch_port.py`) — campo nuevo
@@ -186,7 +191,12 @@ ensuciar la conversación real al testear).
 **Sin migración de DB ni cambios de config**. La columna `(channel, chat_id)` de
 `history.db` ya existía. El mensaje persistido fluye por memoria como cualquier
 otro `assistant` message (se consolidará en su scope). Backward-compat: tareas
-sin `created_by` (CLI) y canales no nativos se comportan igual que antes.
+sin `created_by` (CLI) y canales no nativos se comportan igual que antes. El campo
+`ChannelSendPayload.agent_id` es **opcional** (ausente → cae a `created_by`), así
+que configs y tareas existentes no cambian de comportamiento. Aviso de seguridad:
+con `agent_id` libre, cualquier agente puede escribir en el historial de otro —
+aceptable para uso doméstico; si se abre a terceros, validar que el `agent_id` sea
+un destino permitido.
 
 ### `subagent-inheritance`
 

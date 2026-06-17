@@ -50,6 +50,12 @@ class ChannelSendPayload(BaseModel):
     target: str
     text: str
     user_id: str | None = None
+    # Agente en cuyo historial se persiste el envío (rol assistant). None → cae a
+    # ``task.created_by`` (el que agendó es el dueño). Permite que un agente
+    # "cronista" publique EN NOMBRE DE otro: p. ej. un planificador semanal que
+    # manda como 'anacleto' para que el agente conversacional tenga el contexto
+    # cuando le respondan en el chat.
+    agent_id: str | None = None
 
 
 class AgentSendPayload(BaseModel):

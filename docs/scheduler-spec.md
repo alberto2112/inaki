@@ -205,7 +205,7 @@ else:
 
 | Trigger | Action |
 |---------|--------|
-| `channel_send` | `channel_router.send_message(target, text)` → `DispatchResult(original_target, resolved_target)` — the router applies a fallback cascade (native → override → default → hardcoded `~/.inaki/data/scheduler-fallback.log`). See [configuracion.md — `channel_fallback`](configuracion.md#scheduler--channel_fallback-routing-de-canales). The `{original_target, resolved_target}` pair is persisted in `task_logs.metadata` (JSON) for traceability. **Si el `resolved_target` es un canal conversacional vivo** (su prefijo está entre los sinks nativos — hoy `telegram`) **y la tarea tiene `created_by`**, el texto enviado también se persiste como mensaje `Role.ASSISTANT` en el historial (`history.db`) del agente dueño, en el scope `(channel, chat_id)` parseado del `resolved_target`. Así el agente conserva en su conversación lo que envió (paridad con `agent_send`). Si el mensaje cayó al fallback de archivo, o `created_by` está vacío (origen CLI), o es una corrida manual (`run_task_now`/ephemeral) → **no** se persiste en historial. |
+| `channel_send` | `channel_router.send_message(target, text)` → `DispatchResult(original_target, resolved_target)` — the router applies a fallback cascade (native → override → default → hardcoded `~/.inaki/data/scheduler-fallback.log`). See [configuracion.md — `channel_fallback`](configuracion.md#scheduler--channel_fallback-routing-de-canales). The `{original_target, resolved_target}` pair is persisted in `task_logs.metadata` (JSON) for traceability. **Si el `resolved_target` es un canal conversacional vivo** (su prefijo está entre los sinks nativos — hoy `telegram`) **y hay un agente dueño**, el texto enviado también se persiste como mensaje `Role.ASSISTANT` en el historial (`history.db`) de ese agente, en el scope `(channel, chat_id)` parseado del `resolved_target`. El dueño se resuelve `payload.agent_id or task.created_by` — por default quien agendó (`created_by`), o un agente explícito vía `agent_id` para publicar **en su nombre** (p. ej. un cronista que manda como `anacleto` para que el agente conversacional conserve el contexto). Así el agente conserva en su conversación lo que envió (paridad con `agent_send`). Si el mensaje cayó al fallback de archivo, o no hay agente dueño (origen CLI sin `agent_id`), o es una corrida manual (`run_task_now`/ephemeral) → **no** se persiste en historial. |
 | `agent_send` | `llm_dispatcher.dispatch(agent_id, prompt, tools)` → str result; if `output_channel` is defined, sends result to the channel |
 | `shell_exec` | `ShellExecAdapter` (port `IShellExecutor`): subprocess with command/working_dir/env_vars/timeout → stdout; RuntimeError if exit code != 0. On timeout the process is **killed** (no orphans). |
 | `consolidate_memory` | `consolidator.consolidate_all()` → str result |
@@ -445,16 +445,36 @@ Sends a text message to a channel.
 ```python
 class ChannelSendPayload(BaseModel):
     type: Literal["channel_send"] = "channel_send"
-    target: str    # format: "telegram:<user_id>" (prefix:destination)
-    text: str          # message text
+    target: str                  # format: "channel:destination", e.g. "telegram:-1001582404077"
+    text: str                    # message text
+    user_id: str | None = None   # optional: builds target as "{channel_type}:{user_id}" from the active context
+    agent_id: str | None = None  # optional: agent whose history owns the message; None → task.created_by
 ```
 
-**Example**:
+`agent_id` controla **en el historial de qué agente** se persiste el envío (ver
+la fila `channel_send` de la tabla de dispatch, §3.3). Si se omite, cae a
+`task.created_by` (el agente que agendó la tarea). Un `agent_id`
+explícito permite que un agente publique **en nombre de otro** — caso de uso: un
+agente "cronista" dedicado (sin canales) que pregenera y agenda mensajes para que
+caigan en el historial del agente conversacional, que así conserva el contexto al
+responder. No altera `created_by` (bookkeeping de quién agendó, hard-injected).
+
+**Example** (envío simple a la conversación actual):
 ```json
 {
   "type": "channel_send",
   "target": "telegram:123456789",
   "text": "Recordatorio: reunión en 30 minutos."
+}
+```
+
+**Example** (cronista publicando en nombre de `anacleto`):
+```json
+{
+  "type": "channel_send",
+  "target": "telegram:-1001582404077",
+  "text": "Esta mañana Federico tenía la camisa al revés...",
+  "agent_id": "anacleto"
 }
 ```
 

@@ -356,12 +356,16 @@ class SchedulerService:
         if isinstance(payload, ChannelSendPayload):
             dr = await self._dispatch.channel_sender.send_message(payload.target, payload.text)
             # Persistir el envío como mensaje del asistente en el historial del
-            # agente dueño (created_by), salvo en pruebas manuales (ephemeral) o
-            # tareas sin agente (created_by vacío: origen CLI). El recorder es
-            # no-op si el target resuelto no es un canal conversacional vivo.
-            if not ephemeral and task.created_by:
+            # agente DUEÑO de la conversación: ``payload.agent_id`` si quien agendó lo
+            # informó explícito (un cronista que publica EN NOMBRE DE otro agente), o
+            # ``task.created_by`` en su defecto (el que agendó es el dueño). Se omite en
+            # pruebas manuales (ephemeral) o cuando no hay dueño alguno (CLI sin
+            # agent_id). El recorder es no-op si el target resuelto no es un canal
+            # conversacional vivo.
+            owner = payload.agent_id or task.created_by
+            if not ephemeral and owner:
                 await self._dispatch.history_recorder.record_channel_send(
-                    task.created_by, dr.resolved_target, payload.text
+                    owner, dr.resolved_target, payload.text
                 )
             return None, {
                 "original_target": dr.original_target,

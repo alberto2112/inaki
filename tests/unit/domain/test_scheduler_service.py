@@ -442,6 +442,58 @@ async def test_channel_send_persiste_en_historial_del_agente_dueno(
     recorder.assert_awaited_once_with("main", "telegram:42", "hola")
 
 
+async def test_channel_send_agent_id_override_gana_a_created_by(
+    service: SchedulerService,
+) -> None:
+    """payload.agent_id explícito → el envío se persiste en el historial de ESE
+    agente, no del que agendó (created_by). Caso del cronista que publica EN
+    NOMBRE DE otro agente para que tenga el contexto al responder."""
+    task = _make_channel_task().model_copy(
+        update={
+            "created_by": "anacleto_cronista",
+            "trigger_payload": ChannelSendPayload(
+                target="telegram:42", text="hola", agent_id="anacleto"
+            ),
+        }
+    )
+    service._dispatch.channel_sender.send_message = AsyncMock(  # type: ignore[method-assign]
+        return_value=DispatchResult(
+            original_target="telegram:42", resolved_target="telegram:42"
+        )
+    )
+    recorder = AsyncMock()
+    service._dispatch.history_recorder.record_channel_send = recorder  # type: ignore[method-assign]
+
+    await service._dispatch_trigger(task)
+
+    recorder.assert_awaited_once_with("anacleto", "telegram:42", "hola")
+
+
+async def test_channel_send_agent_id_sin_created_by_persiste(
+    service: SchedulerService,
+) -> None:
+    """payload.agent_id presente aunque created_by esté vacío (origen CLI con
+    dueño explícito) → persiste igual bajo ese agent_id."""
+    task = _make_channel_task().model_copy(
+        update={
+            "trigger_payload": ChannelSendPayload(
+                target="telegram:42", text="hola", agent_id="anacleto"
+            ),
+        }
+    )  # created_by="" por default
+    service._dispatch.channel_sender.send_message = AsyncMock(  # type: ignore[method-assign]
+        return_value=DispatchResult(
+            original_target="telegram:42", resolved_target="telegram:42"
+        )
+    )
+    recorder = AsyncMock()
+    service._dispatch.history_recorder.record_channel_send = recorder  # type: ignore[method-assign]
+
+    await service._dispatch_trigger(task)
+
+    recorder.assert_awaited_once_with("anacleto", "telegram:42", "hola")
+
+
 async def test_channel_send_sin_created_by_no_persiste(
     service: SchedulerService,
 ) -> None:

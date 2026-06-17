@@ -158,7 +158,9 @@ class LLMDispatcherAdapter:
 
 class ChannelHistoryRecorderAdapter:
     """Persiste un ``channel_send`` como mensaje del asistente en el historial
-    del agente dueño de la tarea (``task.created_by``).
+    del agente dueño de la conversación (``payload.agent_id`` si se informó, o
+    ``task.created_by`` en su defecto — la resolución del dueño la hace el
+    ``SchedulerService``; acá llega ya resuelto en ``agent_id``).
 
     Sigue el patrón de ``LLMDispatcherAdapter``: recibe el dict de agentes
     (duck-typed — ``adapters`` no importa ``infrastructure``) y resuelve el

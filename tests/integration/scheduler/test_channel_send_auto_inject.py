@@ -1,9 +1,10 @@
-"""Tests de integración: inyección automática de canal en channel_send.
+"""Tests de integración: resolución de canal en channel_send.
 
 Verifica el flujo completo:
   1. SchedulerTool.execute(operation="create", trigger_type="channel_send", ...)
-  2. El target se inyecta automáticamente desde el ChannelContext
+  2. El target se inyecta automáticamente desde el ChannelContext (default)
   3. Cuando el LLM envía user_id explícito, el target se reconstruye con ese user_id
+  4. Cuando el LLM envía un target explícito "canal:id", se RESPETA (otro chat)
 """
 
 from __future__ import annotations
@@ -130,21 +131,22 @@ async def test_channel_send_sin_contexto_retorna_error(
     assert "No hay contexto de canal" in (resultado.error or "")
 
 
-async def test_channel_send_descarta_target_del_llm(
+async def test_channel_send_target_explicito_se_respeta(
     uc: ScheduleTaskUseCase,
     repo: SQLiteSchedulerRepo,
 ) -> None:
-    """Si el LLM envía 'target' directamente, debe ser descartado y reemplazado por el contexto."""
-    contexto = ChannelContext(channel_type="telegram", user_id="987654")
+    """Si el LLM envía un 'target' explícito 'canal:id', se RESPETA — permite
+    programar un envío a un chat distinto del de la conversación (ej. un grupo)."""
+    contexto = ChannelContext(channel_type="telegram", user_id="987654")  # conversación
     tool = _make_tool(uc, contexto)
 
     resultado = await tool.execute(
         operation="create",
-        name="tarea-target-ignorado",
+        name="aviso-grupo",
         task_kind="one_shot",
         trigger_type="channel_send",
         schedule="+1h",
-        trigger_payload={"text": "Prueba", "target": "cli:local"},
+        trigger_payload={"text": "Prueba", "target": "telegram:-1001582404077"},
     )
 
     assert resultado.success, f"La tool falló: {resultado.error}"
@@ -154,5 +156,5 @@ async def test_channel_send_descarta_target_del_llm(
     tarea = await repo.get_task(task_id)
     assert tarea is not None
     assert isinstance(tarea.trigger_payload, ChannelSendPayload)
-    # El target del LLM debe haber sido ignorado; se usa el del contexto
-    assert tarea.trigger_payload.target == "telegram:987654"
+    # El target explícito del LLM gana sobre el de la conversación
+    assert tarea.trigger_payload.target == "telegram:-1001582404077"

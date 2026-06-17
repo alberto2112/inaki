@@ -18,11 +18,12 @@ Coverage:
   - BuiltinTaskProtectedError → ToolResult(success=False)
   - Unexpected exception → ToolResult(success=False) with generic message
 - created_by is ALWAYS agent_id from constructor, never from kwargs
-- T4: channel_send → target auto-inyectado desde ChannelContext.routing_key
+- T4: channel_send → target auto-inyectado desde ChannelContext.routing_key (default)
 - T4: channel_send + user_id override → target reconstruido con channel_type del contexto
 - T4: channel_send sin contexto → error descriptivo
 - T4: trigger no channel_send → sin inyección (comportamiento existente)
-- T4: LLM envía 'target' en payload → silenciosamente descartado
+- T4: LLM envía 'target' explícito 'canal:id' → se RESPETA (enviar a otro chat)
+- T4: 'target' malformado (sin ':') → error accionable
 """
 
 from __future__ import annotations
@@ -952,30 +953,72 @@ async def test_create_agent_send_hereda_output_channel() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_channel_send_target_en_payload_descartado_silenciosamente() -> None:
-    """LLM envía 'target' en payload → descartado silenciosamente; se usa el del contexto."""
-    ctx = ChannelContext(channel_type="telegram", user_id="123")
+async def test_create_channel_send_target_explicito_se_respeta() -> None:
+    """LLM envía 'target' explícito 'canal:id' → se RESPETA (enviar a otro chat),
+    NO se pisa con el de la conversación. Caso real: programar un aviso a un grupo
+    de Telegram distinto del privado donde se habla con el agente."""
+    ctx = ChannelContext(channel_type="telegram", user_id="123")  # conversación = privado
     tool, uc = _make_tool(get_channel_context=lambda: ctx)
-    created = _make_task(task_id=13, name="Target Strip")
+    created = _make_task(task_id=13, name="Aviso Grupo")
     uc.create_task.return_value = created
 
     result = await tool.execute(
         operation="create",
-        name="Target Strip",
+        name="Aviso Grupo",
         task_kind="one_shot",
         trigger_type="channel_send",
-        trigger_payload={"text": "test", "target": "hacker:000"},  # debe ignorarse
+        trigger_payload={"text": "test", "target": "telegram:-1001582404077"},
         schedule="2099-06-01T10:00:00Z",
     )
 
     assert result.success is True
     call_arg: ScheduledTask = uc.create_task.call_args[0][0]
-    # target debe venir del contexto, no del LLM. isinstance narrowea el Union
-    # de payloads y le da acceso a .target a mypy.
-    from core.domain.entities.task import ChannelSendPayload
-
     assert isinstance(call_arg.trigger_payload, ChannelSendPayload)
-    assert call_arg.trigger_payload.target == "telegram:123"
+    # el target del LLM gana sobre el de la conversación
+    assert call_arg.trigger_payload.target == "telegram:-1001582404077"
+
+
+@pytest.mark.asyncio
+async def test_create_channel_send_target_explicito_no_requiere_contexto() -> None:
+    """Con 'target' explícito, channel_send funciona aunque NO haya contexto de
+    canal (el destino es autosuficiente)."""
+    tool, uc = _make_tool(get_channel_context=lambda: None)
+    created = _make_task(task_id=14, name="Aviso Grupo")
+    uc.create_task.return_value = created
+
+    result = await tool.execute(
+        operation="create",
+        name="Aviso Grupo",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "test", "target": "telegram:-1001582404077"},
+        schedule="2099-06-01T10:00:00Z",
+    )
+
+    assert result.success is True
+    call_arg: ScheduledTask = uc.create_task.call_args[0][0]
+    assert isinstance(call_arg.trigger_payload, ChannelSendPayload)
+    assert call_arg.trigger_payload.target == "telegram:-1001582404077"
+
+
+@pytest.mark.asyncio
+async def test_create_channel_send_target_malformado_da_error() -> None:
+    """'target' sin formato 'canal:id' → error accionable (no se inventa un destino)."""
+    ctx = ChannelContext(channel_type="telegram", user_id="123")
+    tool, uc = _make_tool(get_channel_context=lambda: ctx)
+
+    result = await tool.execute(
+        operation="create",
+        name="Target Malo",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "test", "target": "-1001582404077"},  # falta 'telegram:'
+        schedule="2099-06-01T10:00:00Z",
+    )
+
+    assert result.success is False
+    assert "target" in result.output.lower()
+    uc.create_task.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -1030,20 +1073,64 @@ async def test_update_channel_send_user_id_override() -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_channel_send_sin_contexto_error() -> None:
-    """update channel_send sin contexto de canal → error descriptivo."""
+async def test_update_channel_send_sin_contexto_conserva_existente() -> None:
+    """update channel_send de solo-texto sin contexto → conserva el target
+    existente (editar el texto de una tarea no requiere estar en conversación)."""
     tool, uc = _make_tool(get_channel_context=lambda: None)
     existing = _make_task(task_id=202, trigger_type=TriggerType.CHANNEL_SEND)
+    existing.trigger_payload = ChannelSendPayload(target="telegram:-100999", text="viejo")
     uc.get_task.return_value = existing
+    uc.update_task.return_value = _make_task(task_id=202)
 
     result = await tool.execute(
         operation="update",
         task_id=202,
-        trigger_payload={"text": "texto"},
+        trigger_payload={"text": "texto nuevo"},
+    )
+
+    assert result.success is True
+    payload = uc.update_task.call_args[1]["trigger_payload"]
+    assert payload.target == "telegram:-100999"
+    assert payload.text == "texto nuevo"
+
+
+@pytest.mark.asyncio
+async def test_update_channel_send_target_explicito_se_respeta() -> None:
+    """update channel_send con 'target' explícito → redirige a otro chat."""
+    tool, uc = _make_tool()
+    existing = _make_task(task_id=203, trigger_type=TriggerType.CHANNEL_SEND)
+    existing.trigger_payload = ChannelSendPayload(target="telegram:old", text="viejo")
+    uc.get_task.return_value = existing
+    uc.update_task.return_value = _make_task(task_id=203)
+
+    result = await tool.execute(
+        operation="update",
+        task_id=203,
+        trigger_payload={"text": "hola", "target": "telegram:-1001582404077"},
+    )
+
+    assert result.success is True
+    payload = uc.update_task.call_args[1]["trigger_payload"]
+    assert payload.target == "telegram:-1001582404077"
+
+
+@pytest.mark.asyncio
+async def test_update_channel_send_user_id_sin_contexto_error() -> None:
+    """update channel_send con user_id pero sin contexto → error (no se puede
+    resolver el channel_type). Con 'target' explícito no haría falta el contexto."""
+    tool, uc = _make_tool(get_channel_context=lambda: None)
+    existing = _make_task(task_id=204, trigger_type=TriggerType.CHANNEL_SEND)
+    existing.trigger_payload = ChannelSendPayload(target="telegram:old", text="viejo")
+    uc.get_task.return_value = existing
+
+    result = await tool.execute(
+        operation="update",
+        task_id=204,
+        trigger_payload={"text": "hola", "user_id": "777"},
     )
 
     assert result.success is False
-    assert "contexto de canal" in result.output.lower()
+    assert "target" in result.output.lower() or "contexto" in result.output.lower()
 
 
 # ---------------------------------------------------------------------------

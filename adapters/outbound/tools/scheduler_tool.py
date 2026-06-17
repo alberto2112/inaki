@@ -210,8 +210,9 @@ class SchedulerTool(ITool):
                     "REQUIRED for 'create' and 'update'. Action-specific payload — "
                     "MUST be a JSON object (not a string, not omitted). "
                     "Shape depends on trigger_type: "
-                    'channel_send → {"text": "mensaje"} (target se inyecta del contexto; '
-                    "NO incluir channel_id/target). "
+                    'channel_send → {"text": "mensaje"}: por default va a la conversación '
+                    'actual. Para enviar a OTRO chat, incluí "target" como routing key '
+                    '"canal:id" (ej. "telegram:-1001582404077"). '
                     'agent_send → {"task": "lo que el agente debe hacer"} '
                     "(agent_id se resuelve a 'self' automáticamente; "
                     "incluilo explícito solo para delegar a otro agente). "
@@ -398,23 +399,22 @@ class SchedulerTool(ITool):
                 if past_error is not None:
                     return past_error
 
-        # --- Inyección de contexto de canal para channel_send ---
+        # --- Resolución de target para channel_send ---
         if trigger_type_raw == "channel_send":
-            context = self._get_channel_context()
-            if context is None:
-                return self._error(
-                    "No hay contexto de canal disponible. "
-                    "channel_send solo funciona en conversaciones interactivas."
-                )
-            # Descartar silenciosamente 'target' que el LLM pueda haber enviado
-            trigger_payload_raw.pop("target", None)
-            # Determinar target: si LLM envió user_id, reconstruir con channel_type del contexto
-            llm_user_id = trigger_payload_raw.pop("user_id", None)
-            if llm_user_id is not None:
-                trigger_payload_raw["target"] = f"{context.channel_type}:{llm_user_id}"
-                trigger_payload_raw["user_id"] = llm_user_id
-            else:
-                trigger_payload_raw["target"] = context.routing_key
+            target, err = self._resolve_channel_send_target(trigger_payload_raw)
+            if err is not None:
+                return err
+            if target is None:
+                # El LLM no informó destino → default: la conversación actual.
+                context = self._get_channel_context()
+                if context is None:
+                    return self._error(
+                        "No hay contexto de canal disponible. channel_send necesita una "
+                        "conversación interactiva o un 'target' explícito "
+                        "(ej. 'telegram:-1001582404077')."
+                    )
+                target = context.routing_key
+            trigger_payload_raw["target"] = target
 
         # --- Resolución de 'self' para agent_send ---
         # Si el LLM no especifica agent_id o usa el alias 'self', apuntamos al
@@ -635,26 +635,19 @@ class SchedulerTool(ITool):
                 return self._error(
                     f"Cannot update trigger_payload for system trigger type '{trigger_type_str}'."
                 )
-            # Inyección de contexto de canal para channel_send (misma lógica que _create)
+            # Resolución de target para channel_send (misma lógica que _create)
             if trigger_type_str == "channel_send":
-                context = self._get_channel_context()
-                if context is None:
-                    return self._error(
-                        "No hay contexto de canal disponible. "
-                        "channel_send solo funciona en conversaciones interactivas."
-                    )
-                payload_raw.pop("target", None)
-                llm_user_id = payload_raw.pop("user_id", None)
-                if llm_user_id is not None:
-                    payload_raw["target"] = f"{context.channel_type}:{llm_user_id}"
-                    payload_raw["user_id"] = llm_user_id
-                else:
-                    # En la rama trigger_type_str == "channel_send", el payload
-                    # existente DEBE ser ChannelSendPayload (invariante por
-                    # construcción). El isinstance le da el narrowing a mypy
-                    # frente al Union de los 5 tipos posibles.
+                target, err = self._resolve_channel_send_target(payload_raw)
+                if err is not None:
+                    return err
+                if target is None:
+                    # El LLM no informó destino → conservar el target existente.
+                    # En esta rama el payload existente DEBE ser ChannelSendPayload
+                    # (invariante por construcción); el isinstance narrowea el Union
+                    # de los 5 tipos posibles para mypy.
                     assert isinstance(existing.trigger_payload, ChannelSendPayload)
-                    payload_raw["target"] = existing.trigger_payload.target
+                    target = existing.trigger_payload.target
+                payload_raw["target"] = target
 
             # Resolución de 'self' para agent_send (misma lógica que _create)
             if trigger_type_str == "agent_send":
@@ -901,6 +894,53 @@ class SchedulerTool(ITool):
             "task_status": task.status.value,
             "enabled": task.enabled,
         }
+
+    def _resolve_channel_send_target(
+        self, payload_raw: dict[str, Any]
+    ) -> tuple[str | None, ToolResult | None]:
+        """Resuelve el ``target`` de un channel_send a partir del payload del LLM.
+
+        Prioridad:
+          1. ``target`` explícito (routing key ``"canal:id"``, ej.
+             ``"telegram:-1001582404077"``) → enviar a un chat distinto del de la
+             conversación. Lo usa el LLM cuando el usuario nombra un destino concreto.
+          2. ``user_id`` → ``"{channel_type del contexto}:{user_id}"`` (otro usuario
+             del mismo canal que la conversación en curso).
+          3. nada informado → ``(None, None)``: el caller decide el default
+             (la conversación actual en create; el target existente en update).
+
+        Muta ``payload_raw`` quitando las claves ``target``/``user_id`` ya consumidas
+        para que solo queden los campos del modelo. Devuelve ``(target, None)`` si se
+        resolvió, ``(None, None)`` si el LLM no informó destino, o ``(None, error)``
+        si el ``target`` está malformado o un ``user_id`` no puede resolverse por
+        falta de contexto.
+        """
+        explicit = payload_raw.pop("target", None)
+        if isinstance(explicit, str) and explicit.strip():
+            candidate = explicit.strip()
+            prefix, sep, dest = candidate.partition(":")
+            if not (sep and prefix and dest):
+                return None, self._error(
+                    f"Invalid 'target': '{candidate}'. Use the form 'channel:id' "
+                    f"(e.g. 'telegram:-1001582404077'). Omit 'target' to send to the "
+                    f"current conversation."
+                )
+            # El target explícito gana sobre user_id (destino completo y sin ambigüedad).
+            payload_raw.pop("user_id", None)
+            return candidate, None
+
+        llm_user_id = payload_raw.pop("user_id", None)
+        if llm_user_id is not None:
+            context = self._get_channel_context()
+            if context is None:
+                return None, self._error(
+                    "No hay contexto de canal para resolver 'user_id'. Usá un 'target' "
+                    "explícito (ej. 'telegram:-1001582404077')."
+                )
+            payload_raw["user_id"] = str(llm_user_id)
+            return f"{context.channel_type}:{llm_user_id}", None
+
+        return None, None
 
     def _check_not_past(self, dt: datetime, schedule_raw: str) -> ToolResult | None:
         """Devuelve un error si el datetime quedó en el pasado (con gracia de 60s).

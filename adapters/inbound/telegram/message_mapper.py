@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Awaitable, Callable
 from html import escape as _html_escape
+from typing import Any
 
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 from telegram import Update
+from telegram.constants import ParseMode
+from telegram.error import BadRequest
+
+logger = logging.getLogger(__name__)
 
 _md = MarkdownIt("commonmark", {"html": False}).enable("strikethrough")
 
@@ -295,6 +302,57 @@ def format_response(response: str) -> str:
     return _render(tokens).strip()
 
 
+# Fragmentos del mensaje con que Telegram (HTTP 400) rechaza un HTML mal formado.
+# Si el envío falla por esto reintentamos en texto plano: vale más que el usuario
+# lea el contenido crudo a que reciba un "Error:" opaco y pierda la respuesta.
+_PARSE_ERROR_HINTS: tuple[str, ...] = (
+    "can't parse",
+    "cant parse",
+    "can't find end",
+    "unsupported start tag",
+    "unclosed",
+    "entities",
+)
+
+
+def _es_error_de_parseo(exc: BadRequest) -> bool:
+    """``True`` si el ``BadRequest`` viene de un HTML que Telegram no pudo parsear."""
+    mensaje = str(exc).lower()
+    return any(hint in mensaje for hint in _PARSE_ERROR_HINTS)
+
+
+async def send_html_or_plain(
+    send: Callable[[str, ParseMode | None], Awaitable[Any]],
+    response: str,
+) -> None:
+    """Envía ``response`` como HTML de Telegram, con fallback a texto plano.
+
+    Telegram rechaza con HTTP 400 ("can't parse entities") cualquier mensaje cuyo
+    HTML quede mal formado — un ``<`` que se coló sin escapar, un tag sin cerrar
+    por un edge case del renderer, etc. Sin contención, el handler de arriba cae a
+    su ``except`` y el usuario recibe "Error: ..." en lugar de la respuesta.
+
+    Estrategia: intentar con ``format_response`` + ``ParseMode.HTML``; si Telegram
+    rechaza el parseo, reintentar con el ``response`` markdown CRUDO y sin
+    ``parse_mode`` (legible aunque pierda el formato). Cualquier otro ``BadRequest``
+    (chat inexistente, texto > 4096, etc.) se re-lanza tal cual para que el handler
+    lo trate como siempre.
+
+    Args:
+        send: callable async ``(texto, parse_mode) -> Awaitable``. Abstrae el
+            transporte concreto — sirve igual para ``message.reply_text`` que para
+            ``bot.send_message`` (cada call-site pasa su propio closure).
+        response: la respuesta markdown del LLM, sin formatear.
+    """
+    try:
+        await send(format_response(response), ParseMode.HTML)
+    except BadRequest as exc:
+        if not _es_error_de_parseo(exc):
+            raise
+        logger.warning("Telegram rechazó el HTML; reintento en texto plano: %s", exc)
+        await send(response, None)
+
+
 def _escape(text: str) -> str:
     return _html_escape(text, quote=False)
 
@@ -338,6 +396,21 @@ def _render_inline(token: Token) -> str:
         elif child.content:
             out.append(_escape(child.content))
     return "".join(out)
+
+
+# Una cita pasa a colapsable (<blockquote expandable>) cuando es lo bastante larga
+# como para comerse la pantalla: Telegram la pliega con un "mostrar más". Umbrales
+# por criterio — sin knob de config (uso doméstico, ver CLAUDE.md).
+_BLOCKQUOTE_EXPAND_MIN_LINEAS = 4
+_BLOCKQUOTE_EXPAND_MIN_CHARS = 280
+
+
+def _cita_es_larga(inner_html: str) -> bool:
+    """``True`` si la cita amerita render colapsable por su largo."""
+    lineas = inner_html.count("\n") + 1
+    return (
+        lineas >= _BLOCKQUOTE_EXPAND_MIN_LINEAS or len(inner_html) >= _BLOCKQUOTE_EXPAND_MIN_CHARS
+    )
 
 
 def _render(tokens: list[Token]) -> str:
@@ -426,7 +499,8 @@ def _render(tokens: list[Token]) -> str:
                 inner.append(tokens[j])
                 j += 1
             inner_html = _render(inner).strip()
-            out.append(f"<blockquote>{inner_html}</blockquote>\n\n")
+            tag = "blockquote expandable" if _cita_es_larga(inner_html) else "blockquote"
+            out.append(f"<{tag}>{inner_html}</blockquote>\n\n")
             i = j + 1
             continue
 

@@ -17,14 +17,13 @@ import logging
 from typing import Any
 
 from telegram import Update
-from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 from adapters.inbound.telegram.message_mapper import (
     _TIPOS_GRUPO,
     _safe_optional_str,
     compose_sender_identity,
-    format_response,
+    send_html_or_plain,
     telegram_update_to_input,
 )
 from adapters.inbound.turn_dispatch import dispatch_inbound_turn
@@ -435,7 +434,9 @@ class TelegramBot(
                 )
                 return
 
-            await message.reply_text(format_response(response), parse_mode=ParseMode.HTML)
+            await send_html_or_plain(
+                lambda text, pm: message.reply_text(text, parse_mode=pm), response
+            )
 
             # Emitir broadcast DESPUÉS del reply, solo para grupos, fire-and-forget.
             # Gated por broadcast.emit.assistant_response (default true).

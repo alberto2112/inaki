@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from adapters.inbound.telegram.message_mapper import format_response
+import pytest
+from telegram.constants import ParseMode
+from telegram.error import BadRequest
+
+from adapters.inbound.telegram.message_mapper import format_response, send_html_or_plain
 
 
 def test_empty_response_returns_empty():
@@ -138,3 +142,86 @@ def test_realistic_llm_response():
     assert "<code>auth</code>" in result
     assert "1. Token expirado" in result
     assert '<a href="https://docs.ex.com">docs</a>' in result
+
+
+# ---------------------------------------------------------------------------
+# blockquote expandable — citas largas se vuelven colapsables
+# ---------------------------------------------------------------------------
+
+
+def test_blockquote_corto_no_expande():
+    """Una cita breve queda como <blockquote> normal (el caso ya cubierto arriba,
+    explícito acá para fijar el borde inferior del umbral)."""
+    result = format_response("> dato breve")
+    assert result == "<blockquote>dato breve</blockquote>"
+    assert "expandable" not in result
+
+
+def test_blockquote_largo_por_lineas_es_expandable():
+    """Cita de 4+ líneas → <blockquote expandable> (cierre sigue siendo </blockquote>)."""
+    md = "> linea uno\n> linea dos\n> linea tres\n> linea cuatro"
+    result = format_response(md)
+    assert result.startswith("<blockquote expandable>")
+    assert result.endswith("</blockquote>")
+
+
+def test_blockquote_multilinea_corto_no_expande():
+    """Dos líneas no alcanzan el umbral de 4 → cita normal."""
+    md = "> linea uno\n> linea dos"
+    result = format_response(md)
+    assert result.startswith("<blockquote>")
+    assert "expandable" not in result
+
+
+def test_blockquote_largo_por_chars_es_expandable():
+    """Una sola línea pero muy larga (>= 280 chars) también colapsa."""
+    cita = ("palabra " * 40).strip()  # ~319 chars
+    result = format_response(f"> {cita}")
+    assert "<blockquote expandable>" in result
+
+
+# ---------------------------------------------------------------------------
+# send_html_or_plain — fallback a texto plano ante HTML inválido
+# ---------------------------------------------------------------------------
+
+
+async def test_send_html_or_plain_happy_envia_html():
+    """Sin error: un solo envío, con HTML formateado y ParseMode.HTML."""
+    llamadas: list[tuple[str, ParseMode | None]] = []
+
+    async def send(text: str, pm: ParseMode | None) -> None:
+        llamadas.append((text, pm))
+
+    await send_html_or_plain(send, "**hola**")
+
+    assert llamadas == [("<b>hola</b>", ParseMode.HTML)]
+
+
+async def test_send_html_or_plain_fallback_a_texto_plano():
+    """Si Telegram rechaza el parseo, reintenta con el markdown CRUDO sin parse_mode."""
+    llamadas: list[tuple[str, ParseMode | None]] = []
+
+    async def send(text: str, pm: ParseMode | None) -> None:
+        llamadas.append((text, pm))
+        if len(llamadas) == 1:
+            raise BadRequest("Can't parse entities: unsupported start tag")
+
+    await send_html_or_plain(send, "roto < sin cerrar")
+
+    assert len(llamadas) == 2
+    assert llamadas[0][1] == ParseMode.HTML  # 1er intento: HTML
+    assert llamadas[1] == ("roto < sin cerrar", None)  # 2do: crudo, sin parse_mode
+
+
+async def test_send_html_or_plain_reraise_si_no_es_error_de_parseo():
+    """Un BadRequest ajeno al parseo (chat inexistente, etc.) se re-lanza sin fallback."""
+    llamadas: list[tuple[str, ParseMode | None]] = []
+
+    async def send(text: str, pm: ParseMode | None) -> None:
+        llamadas.append((text, pm))
+        raise BadRequest("Chat not found")
+
+    with pytest.raises(BadRequest, match="Chat not found"):
+        await send_html_or_plain(send, "hola")
+
+    assert len(llamadas) == 1  # NO hubo segundo intento

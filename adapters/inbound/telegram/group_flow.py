@@ -12,15 +12,14 @@ import random
 from typing import TYPE_CHECKING, Any
 
 from telegram import Update
-from telegram.constants import ParseMode
 
 from adapters.inbound.telegram.message_mapper import (
     _safe_optional_str,
     compose_sender_identity,
     dirigido_a,
     format_group_message,
-    format_response,
     hay_destinatario_explicito,
+    send_html_or_plain,
 )
 from core.domain.value_objects.channel_context import ChannelContext
 
@@ -243,10 +242,11 @@ class TelegramGroupFlowMixin:
                 )
                 return
 
-            await self._app.bot.send_message(
-                chat_id=chat_id_int,
-                text=format_response(response),
-                parse_mode=ParseMode.HTML,
+            await send_html_or_plain(
+                lambda text, pm: self._app.bot.send_message(
+                    chat_id=chat_id_int, text=text, parse_mode=pm
+                ),
+                response,
             )
 
             asyncio.ensure_future(

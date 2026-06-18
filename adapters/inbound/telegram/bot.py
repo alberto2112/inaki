@@ -102,25 +102,40 @@ class TelegramBot(
         self._reactions: bool = tg_cfg.get("reactions", False)
         self._voice_enabled: bool = tg_cfg.get("voice_enabled", True)
 
-        # Config de broadcast: lista de chat_ids permitidos + behavior + bot_username
         self._allowed_chat_ids: list[str] = [str(cid) for cid in tg_cfg.get("allowed_chat_ids", [])]
+
+        # Config específica de grupos: timing/reacciones + política de respuesta
+        # (behavior, bot_username, rate_limiter). Soporta Pydantic model o dict crudo.
+        groups_raw = tg_cfg.get("groups") or {}
+        if hasattr(groups_raw, "model_dump"):
+            groups_dict: dict = groups_raw.model_dump()
+        elif isinstance(groups_raw, dict):
+            groups_dict = groups_raw
+        else:
+            groups_dict = {}
+
+        # Política de respuesta en grupos. Antes vivía en el bloque ``broadcast``,
+        # lo que obligaba a levantar el transporte TCP solo para configurarla; ahora
+        # cuelga de ``groups`` y aplica con o sin broadcast (migración groups-vs-broadcast).
+        self._behavior: str = groups_dict.get("behavior", "mention")
+        self._bot_username: str | None = groups_dict.get("bot_username")
+        self._rate_limit_max: int = int(groups_dict.get("rate_limiter", 5))
+        # Defaults preservados desde config para soportar `/ratelimit reset`.
+        # Las mutaciones en runtime (vía comando) NO se persisten — al reiniciar
+        # el daemon se vuelven a leer estos valores.
+        self._rate_limit_max_default: int = self._rate_limit_max
+        self._rate_limit_window_default: int = int(groups_dict.get("rate_limiter_window", 30))
+
+        # Config de broadcast (transporte TCP): el bot solo necesita los flags
+        # ``emit.*``. La topología (port/remote/auth) la consume el container al
+        # wirear el adapter — el bot no la lee.
         broadcast_raw = tg_cfg.get("broadcast") or {}
         if hasattr(broadcast_raw, "model_dump"):
-            # Ya es un Pydantic model (Batch 5 en adelante)
             broadcast_dict: dict = broadcast_raw.model_dump()
         elif isinstance(broadcast_raw, dict):
             broadcast_dict = broadcast_raw
         else:
             broadcast_dict = {}
-
-        self._behavior: str = broadcast_dict.get("behavior", "mention")
-        self._bot_username: str | None = broadcast_dict.get("bot_username")
-        self._rate_limit_max: int = int(broadcast_dict.get("rate_limiter", 5))
-        # Defaults preservados desde config para soportar `/ratelimit reset`.
-        # Las mutaciones en runtime (vía comando) NO se persisten — al reiniciar
-        # el daemon se vuelven a leer estos valores.
-        self._rate_limit_max_default: int = self._rate_limit_max
-        self._rate_limit_window_default: int = int(broadcast_dict.get("rate_limiter_window", 30))
 
         # Flags por event_type para emisión al canal de broadcast.
         # Defaults: solo assistant_response activo (backward-compat).
@@ -132,16 +147,6 @@ class TelegramBot(
             "user_input_voice": bool(emit_dict.get("user_input_voice", False)),
             "user_input_photo": bool(emit_dict.get("user_input_photo", False)),
         }
-
-        # Config específica de grupos (delays + override de reactions).
-        # Soporta tanto Pydantic model como dict crudo (compat con configs viejas).
-        groups_raw = tg_cfg.get("groups") or {}
-        if hasattr(groups_raw, "model_dump"):
-            groups_dict: dict = groups_raw.model_dump()
-        elif isinstance(groups_raw, dict):
-            groups_dict = groups_raw
-        else:
-            groups_dict = {}
 
         min_delay_cfg = groups_dict.get("min_delay_response")
         max_delay_cfg = groups_dict.get("max_delay_response")
@@ -500,7 +505,7 @@ class TelegramBot(
             logger.warning(
                 "Telegram bot '%s': bot_username en config ('%s') no coincide "
                 "con el username real del bot ('@%s'). "
-                "Actualizá broadcast.bot_username en la config para evitar fallos en mention detection.",
+                "Actualizá groups.bot_username en la config para evitar fallos en mention detection.",
                 self._settings.id,
                 self._bot_username,
                 real_username,

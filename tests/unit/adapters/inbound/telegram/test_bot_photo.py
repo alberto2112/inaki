@@ -587,8 +587,10 @@ def _mk_agent_cfg_con_emit_photo(allowed_user_ids: list[int]) -> MagicMock:
         "allowed_chat_ids": [99],
         "reactions": True,
         "voice_enabled": False,
-        "broadcast": {
+        "groups": {
             "behavior": "mention",
+        },
+        "broadcast": {
             "emit": {
                 "assistant_response": True,
                 "user_input_photo": True,

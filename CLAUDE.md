@@ -152,6 +152,36 @@ Secrets are YAML-only (no env vars). `*.secrets.yaml` files are gitignored.
 
 ## Migration Notes
 
+### `groups-vs-broadcast`
+
+La **política de respuesta en grupos** (`behavior`, `bot_username`, `rate_limiter`,
+`rate_limiter_window`) se movió de `channels.telegram.broadcast` a
+`channels.telegram.groups`. Razón: esos campos describen *cómo responde el bot en un
+grupo* — aplican con o sin broadcast TCP —, pero vivían en `BroadcastConfig`, cuyo
+validador exige `port XOR remote`. Eso **obligaba a levantar el transporte LAN solo
+para configurar el comportamiento**: no podías tener `behavior: mention` en un bot
+sin broadcast. Ahora `groups` cubre timing (`min/max_delay_response`, `reactions`) +
+política, y `BroadcastConfig` queda como **transporte puro** (`port`/`remote`/`auth`/`emit`).
+
+**Cambio de wiring clave**: el `FixedWindowRateLimiter` ya **no** se instancia dentro
+de `_wire_broadcast_for_agent` atado a la presencia de `broadcast:`. Ahora se crea cuando
+`groups.behavior == "autonomous"` (independiente de broadcast) y se guarda en
+`AgentContainer.group_rate_limiter` (renombrado desde `broadcast_rate_limiter`). Un bot
+autónomo sin LAN ahora tiene rate limiting real — antes el limiter quedaba en `None`.
+El `group_flow` y el receiver bot-to-bot comparten esa misma instancia.
+
+**Migración automática en caliente** (`migrate_telegram_group_fields` en `config_loader.py`,
+llamada desde `ensure_user_config` ANTES de cargar la config, por eso surte efecto en la
+sesión actual): al arrancar, mueve los 4 campos de `broadcast` a `groups` en `global.yaml`,
+`global.secrets.yaml` y todos los `agents/*.yaml` (ruamel, preserva comentarios). Idempotente;
+`groups` gana ante conflicto; si `broadcast` queda sin transporte tras mover, se elimina el
+bloque (no dispara el validador port-XOR-remote). El setup TUI deriva los campos por
+introspección del schema → `behavior` aparece solo bajo la sección GROUPS, sin tocar el TUI.
+
+**Sin migración de DB ni pasos manuales del operador.** Backward-compat: configs viejas se
+migran solas. El corte es limpio (el bot lee SOLO de `groups`, sin fallback a `broadcast`):
+si por un path raro la migración no corriera, un bot caería al default `behavior: mention`.
+
 ### `channel-send-history-persist`
 
 El trigger `channel_send` ahora **persiste el texto enviado en el historial**

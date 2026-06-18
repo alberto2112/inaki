@@ -93,7 +93,7 @@ class TelegramCommandsMixin:
             "/scheduler show <id> — Detalle de una tarea\n"
             "/scheduler enable <id> — Habilitar una tarea\n"
             "/scheduler disable <id> — Deshabilitar una tarea\n"
-            "/ratelimit — Mostrar/ajustar el rate limiter del broadcast en runtime\n"
+            "/ratelimit — Mostrar/ajustar el rate limiter de grupos (autonomous) en runtime\n"
             "/reload — Reiniciar el daemon (cierra y vuelve a levantar todos los canales)\n"
             "/start — Presentación\n"
             "/help — Este mensaje"
@@ -231,7 +231,8 @@ class TelegramCommandsMixin:
 
         if self._rate_limiter is None:
             await message.reply_text(
-                "El broadcast no está configurado en este agente — el rate limiter no aplica."
+                "El rate limiter solo aplica en grupos con behavior=autonomous — "
+                "este agente no tiene ese modo configurado."
             )
             return
 
@@ -438,7 +439,7 @@ class TelegramCommandsMixin:
             BotCommand("reconcile", "Reconsiderar recuerdos relacionados"),
             BotCommand("scheduler", "Gestionar tareas programadas (list/show/enable/disable)"),
             BotCommand("chatid", "Obtener el ID del chat actual (útil para configurar grupos)"),
-            BotCommand("ratelimit", "Ver/ajustar el rate limiter del broadcast en runtime"),
+            BotCommand("ratelimit", "Ver/ajustar el rate limiter de grupos (autonomous) en runtime"),
             BotCommand(
                 "reload", "Reiniciar el daemon (cierra y vuelve a levantar todos los canales)"
             ),

@@ -245,6 +245,7 @@ def ensure_user_config(config_dir: Path, agents_dir: Path) -> None:
         logger.info("Secrets file creado: %s", secrets_yaml)
 
     migrate_tool_config_to_own_file(config_dir)
+    migrate_telegram_group_fields(config_dir)
 
 
 def migrate_tool_config_to_own_file(config_dir: Path) -> None:
@@ -312,6 +313,94 @@ def migrate_tool_config_to_own_file(config_dir: Path) -> None:
         return
 
     logger.info("Migración tool_config: bloque movido de %s a %s", secrets_path, store_path)
+
+
+# Campos de *comportamiento en grupos* que migraron de ``channels.telegram.broadcast``
+# a ``channels.telegram.groups``. El transporte TCP (port/remote/auth/emit) NO se toca.
+_GROUP_BEHAVIOR_FIELDS = ("behavior", "bot_username", "rate_limiter", "rate_limiter_window")
+
+
+def migrate_telegram_group_fields(config_dir: Path) -> None:
+    """Migración one-shot: mueve ``behavior``/``bot_username``/``rate_limiter``/
+    ``rate_limiter_window`` de ``channels.telegram.broadcast`` a
+    ``channels.telegram.groups``.
+
+    Esos campos describen *cómo responde el bot en un grupo* (aplica con o sin
+    broadcast TCP), pero vivían en ``BroadcastConfig``, lo que obligaba a levantar
+    el transporte solo para configurarlos. Esta función reubica instalaciones previas.
+
+    Procesa ``global.yaml``, ``global.secrets.yaml`` y todos los YAML bajo
+    ``agents/`` — cada campo puede vivir en cualquier capa del merge de 4 niveles.
+    Idempotente: si ``broadcast`` no tiene ninguno de los campos, no toca el archivo.
+    ``groups`` gana ante conflicto (campo presente en ambos → se descarta el de
+    ``broadcast``). Si ``broadcast`` queda vacío tras mover (solo tenía comportamiento,
+    sin transporte) se elimina el bloque. Preserva comentarios (ruamel).
+    """
+    from ruamel.yaml import YAML
+
+    yaml_rt = YAML()
+    yaml_rt.preserve_quotes = True
+
+    archivos = [config_dir / "global.yaml", config_dir / "global.secrets.yaml"]
+    agents_dir = config_dir / "agents"
+    if agents_dir.is_dir():
+        archivos.extend(sorted(agents_dir.glob("*.yaml")))
+
+    for path in archivos:
+        if not path.exists():
+            continue
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                doc = yaml_rt.load(f)
+        except OSError as exc:
+            logger.error("Migración groups: no se pudo leer %s (%s)", path, exc)
+            continue
+        if not isinstance(doc, dict) or not _move_group_fields_broadcast_to_groups(doc):
+            continue
+        try:
+            with path.open("w", encoding="utf-8") as f:
+                yaml_rt.dump(doc, f)
+        except OSError as exc:
+            logger.error("Migración groups: no se pudo escribir %s (%s)", path, exc)
+            continue
+        logger.info("Migración groups: comportamiento movido broadcast→groups en %s", path)
+
+
+def _move_group_fields_broadcast_to_groups(doc: dict) -> bool:
+    """Mueve los campos de comportamiento de ``telegram.broadcast`` a
+    ``telegram.groups`` dentro de un doc ruamel ya cargado. Devuelve ``True`` si
+    hubo cambios (in-place sobre ``doc``)."""
+    channels = doc.get("channels")
+    if not isinstance(channels, dict):
+        return False
+    telegram = channels.get("telegram")
+    if not isinstance(telegram, dict):
+        return False
+    broadcast = telegram.get("broadcast")
+    if not isinstance(broadcast, dict):
+        return False
+
+    presentes = [campo for campo in _GROUP_BEHAVIOR_FIELDS if campo in broadcast]
+    if not presentes:
+        return False
+
+    groups = telegram.get("groups")
+    if not isinstance(groups, dict):
+        groups = {}
+        telegram["groups"] = groups
+
+    for campo in presentes:
+        valor = broadcast.pop(campo)
+        # groups gana ante conflicto: solo escribimos si no estaba ya definido ahí.
+        if campo not in groups:
+            groups[campo] = valor
+
+    # Un broadcast sin transporte (port/remote) ya no es broadcast: lo eliminamos
+    # para no disparar el validador port-XOR-remote con un bloque vacío.
+    if not broadcast:
+        del telegram["broadcast"]
+
+    return True
 
 
 class _HasChannels(Protocol):

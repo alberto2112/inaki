@@ -33,7 +33,7 @@ def agent_cfg() -> MagicMock:
         "token": "dummy-token",
         "allowed_user_ids": [12345],
         "reactions": False,
-        "broadcast": {
+        "groups": {
             "behavior": "autonomous",
             "rate_limiter": 5,
             "rate_limiter_window": 60,
@@ -271,4 +271,4 @@ async def test_sin_rate_limiter_responde_aviso(agent_cfg, mock_container):
     await bot._cmd_ratelimit(update, context)
 
     msg = update.message.reply_text.call_args.args[0]
-    assert "broadcast no está configurado" in msg.lower()
+    assert "behavior=autonomous" in msg.lower()

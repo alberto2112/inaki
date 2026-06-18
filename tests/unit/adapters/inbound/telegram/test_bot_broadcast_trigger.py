@@ -40,7 +40,7 @@ def agent_cfg_autonomous() -> MagicMock:
         "token": "dummy-token",
         "allowed_user_ids": [],
         "reactions": False,
-        "broadcast": {
+        "groups": {
             "behavior": "autonomous",
             "bot_username": "inaki_bot",
             "rate_limiter": 5,
@@ -127,7 +127,7 @@ async def test_subscribe_broadcast_trigger_mention_noop(mock_container, mock_rec
     cfg.telegram = {
         "token": "dummy-token",
         "allowed_user_ids": [],
-        "broadcast": {
+        "groups": {
             "behavior": "mention",
             "bot_username": "inaki_bot",
         },

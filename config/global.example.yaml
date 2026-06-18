@@ -466,12 +466,48 @@ user:
 #     # token → agents/{id}.secrets.yaml
 #
 #     # -------------------------------------------------------------------------
-#     # [channels.telegram.broadcast] — Canal de broadcast entre asistentes
+#     # [channels.telegram.groups] — Comportamiento del bot en CHATS GRUPALES
+#     # -------------------------------------------------------------------------
+#     # OPCIONAL. Política de respuesta + timing en grupos. Aplica con o SIN
+#     # broadcast TCP: un solo bot en un grupo igual usa estos flags. (behavior/
+#     # bot_username/rate_limiter vivían antes en `broadcast`; se movieron acá
+#     # porque no dependen del transporte — ver docs/configuracion.md.)
+#     # groups:
+#     #   behavior: "mention"      # listen | mention | autonomous
+#     #                            #   listen     — nunca responde, solo escucha.
+#     #                            #   mention    — (DEFAULT) responde solo si lo
+#     #                            #                mencionan (@bot_username o reply).
+#     #                            #   autonomous — responde cuando considere que
+#     #                            #                aporta; puede contestar EXACTAMENTE
+#     #                            #                `__SKIP__` para callar (el sistema
+#     #                            #                detecta el marcador y no envía nada).
+#     #                            #                ⚠ Combinar SIEMPRE con rate_limiter.
+#     #   bot_username: "inaki_bot"  # Username del bot (sin @). Necesario para la
+#     #                              # detección de menciones en modo 'mention'.
+#     #   rate_limiter: 5          # Máx respuestas proactivas (autonomous) POR VENTANA
+#     #                            # por chat. Exactamente N pasan; la N+1 se bloquea
+#     #                            # hasta que la ventana expire. Aplica a mensajes
+#     #                            # entrantes Telegram y a triggers broadcast.
+#     #   rate_limiter_window: 30  # Ventana del rate limiter en segundos (default 30).
+#     #                            # ⚠ En autonomous, un ciclo bot-to-bot toma 15-40s
+#     #                            # (flush delay + LLM + red); si la ventana es menor,
+#     #                            # el contador se resetea entre intercambios y el
+#     #                            # limiter es inefectivo. Recomendado: 300 (5min) o +.
+#     #   min_delay_response: 9.5  # Delay aleatorio mín/máx (segundos) antes de
+#     #   max_delay_response: 60.0 # responder en grupo (coalesce de mensajes seguidos).
+#     #   reactions: true          # Override de `reactions` para grupos (ausente = hereda).
+#     #
+#     # -------------------------------------------------------------------------
+#     # [channels.telegram.broadcast] — TRANSPORTE LAN entre asistentes
 #     # -------------------------------------------------------------------------
 #     # OPCIONAL. Permite a múltiples instancias de Inaki (cada una en su
 #     # Raspberry, en la MISMA LAN) verse mutuamente en un grupo Telegram
 #     # compartido. Necesario porque la Bot API de Telegram NO entrega a un bot
 #     # los mensajes de OTROS bots — se necesita un canal lateral.
+#     #
+#     # Este bloque modela SOLO la red. La política de respuesta (behavior,
+#     # bot_username, rate_limiter) vive en `groups` (arriba). Para responder de
+#     # forma autónoma a lo que llega por el LAN, poné `groups.behavior: autonomous`.
 #     #
 #     # Topología: estrella (un server, N clients). Wire: JSON line-delimited
 #     # sobre TCP, firmado HMAC-SHA256 con ventana de frescura de 60s
@@ -481,50 +517,20 @@ user:
 #     # Un broadcast: port XOR remote. No ambos, no ninguno si el bloque existe.
 #     # Dos canales del MISMO agente no pueden declarar el mismo `broadcast.port`.
 #     #
-#     # Modos de behavior:
-#     #   listen      — recibe del broadcast, pero NO responde en Telegram.
-#     #                 Útil para un "oyente" pasivo o un agente de análisis.
-#     #   mention     — (DEFAULT) responde solo si lo mencionan (@bot_username
-#     #                 o text_mention). Modo seguro para grupos con varios bots.
-#     #   autonomous  — responde siempre que considere que aporta algo. El LLM
-#     #                 puede responder EXACTAMENTE `[SKIP]` cuando no tiene nada
-#     #                 útil — el sistema detecta el marcador y no envía nada.
-#     #                 ⚠ Combinar SIEMPRE con `rate_limiter` para evitar loops.
-#     #                 ⚠ En autonomous, el bot también dispara el pipeline ante
-#     #                 CUALQUIER mensaje broadcast recibido de otro bot. El LLM
-#     #                 decide si responder (o emitir [SKIP]) leyendo el prefijo
-#     #                 de origen inyectado en el user_input.
-#     #
 #     # --- Modo SERVER (el Inaki que acepta conexiones) ---
 #     # broadcast:
 #     #   port: 6499              # Puerto TCP donde escucha (1024..65535).
 #     #   auth: "shared-secret"   # Secret compartido HMAC. → SECRETS
-#     #   bot_username: "inaki_dev_bot"
-#     #                           # Username del bot (sin @). Usado para mention
-#     #                           # detection vía message.entities de Telegram.
-#     #   behavior: "mention"     # listen | mention | autonomous
-#     #   rate_limiter: 5         # Máx respuestas POR VENTANA por (agent_id,
-#     #                           # chat_id). Exactamente N pasan; la N+1 se
-#     #                           # bloquea hasta que la ventana expire. Aplica a
-#     #                           # mensajes entrantes Telegram y a triggers
-#     #                           # broadcast.
-#     #   rate_limiter_window: 30 # Duración de la ventana en segundos (default
-#     #                           # 30). ⚠ En behavior=autonomous, un ciclo
-#     #                           # bot-to-bot suele tomar 15-40s (flush delay +
-#     #                           # LLM + red). Si la ventana es menor que el
-#     #                           # ciclo, el contador se resetea entre
-#     #                           # intercambios y el limiter es inefectivo.
-#     #                           # Recomendado: 300 (5min) o más.
+#     #   emit:                   # OPCIONAL — qué eventos se emiten al LAN.
+#     #     assistant_response: true   # (default) respuestas del LLM tras un turno.
+#     #     user_input_voice: false    # transcripciones de audio (activar en 1 bot).
+#     #     user_input_photo: false    # descripciones de foto (activar en 1 bot).
 #     #
 #     # --- Modo CLIENT (el Inaki que se conecta al server) ---
 #     # broadcast:
 #     #   remote:
 #     #     host: "192.168.1.50:6499"  # host:port del server.
 #     #     auth: "shared-secret"      # DEBE matchear el auth del server. → SECRETS
-#     #   bot_username: "inaki_pro_bot"
-#     #   behavior: "autonomous"
-#     #   rate_limiter: 5
-#     #   rate_limiter_window: 300
 #     #
 #     # Reconexión automática con backoff exponencial + jitter. El cliente queda
 #     # reintentando hasta que el server levante — no hay feature flag; la

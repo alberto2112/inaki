@@ -33,9 +33,11 @@ def _mk_agent_cfg(
         "token": "dummy-token",
         "allowed_user_ids": [],
         "voice_enabled": True,
-        "broadcast": {
+        "groups": {
             "behavior": "mention",
             "rate_limiter": 5,
+        },
+        "broadcast": {
             "emit": {
                 "assistant_response": emit_assistant_response,
                 "user_input_voice": emit_user_input_voice,

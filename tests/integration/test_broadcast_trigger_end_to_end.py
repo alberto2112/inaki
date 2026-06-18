@@ -51,7 +51,7 @@ def _agent_cfg(agent_id: str, bot_username: str) -> MagicMock:
         "token": "fake-token",
         "allowed_user_ids": [],
         "reactions": False,
-        "broadcast": {
+        "groups": {
             "behavior": "autonomous",
             "bot_username": bot_username,
             "rate_limiter": 5,

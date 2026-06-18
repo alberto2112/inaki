@@ -881,7 +881,29 @@ If `allowed_chat_ids` is empty or absent, only private chats from users in
 
 ---
 
-**`channels.telegram.broadcast`** — server mode (this instance listens for incoming connections):
+**`channels.telegram.groups`** — response policy and timing in group chats. Applies
+**with or without** broadcast: a lone bot in a group still uses these flags. `behavior`,
+`bot_username`, `rate_limiter` and `rate_limiter_window` used to live under `broadcast`,
+which forced you to stand up the TCP transport just to configure how the bot replies.
+They now live here because they don't depend on the transport.
+
+```yaml
+channels:
+  telegram:
+    groups:
+      behavior: mention            # listen | mention | autonomous
+      bot_username: "inaki_a_bot"  # bot username without @, for mention detection
+      rate_limiter: 5              # max proactive responses per window per chat
+      rate_limiter_window: 30      # window duration in seconds (default 30)
+      min_delay_response: 9.5      # random min/max delay before answering in a group
+      max_delay_response: 60.0
+      reactions: true              # override the channel `reactions` flag for groups
+```
+
+---
+
+**`channels.telegram.broadcast`** — server mode (this instance listens for incoming connections).
+This block models the **transport only**; the response policy lives in `groups` (above):
 
 ```yaml
 channels:
@@ -890,10 +912,6 @@ channels:
     broadcast:
       port: 1234                          # TCP listen port (1024..65535)
       auth: "shared-secret-entre-agentes" # HMAC-SHA256 shared secret
-      bot_username: "inaki_a_bot"         # bot username without @, for mention detection
-      behavior: mention                   # listen | mention | autonomous
-      rate_limiter: 5                     # max proactive responses per window per chat
-      rate_limiter_window: 30             # window duration in seconds (default 30)
 ```
 
 ---
@@ -908,11 +926,9 @@ channels:
       remote:
         host: "192.168.1.10:1234"           # server ip:port
         auth: "shared-secret-entre-agentes" # must match the server
-      bot_username: "inaki_b_bot"
-      behavior: autonomous
-      rate_limiter: 5
-      rate_limiter_window: 300            # ⚠ recommended 300s (5min) for autonomous
 ```
+
+To respond autonomously to what arrives over the LAN, set `groups.behavior: autonomous`.
 
 ---
 
@@ -961,15 +977,15 @@ Telegram conversations to enter long-term memory.
 
 ---
 
-### Behavior modes (`behavior`)
+### Behavior modes (`groups.behavior`)
 
 | Mode | Description |
 |------|-------------|
 | `listen` | The bot never responds. It only absorbs context in the broadcast buffer. Useful for an "observer" agent. |
 | `mention` | The bot responds only when someone mentions it with `@bot_username`. **Default in groups.** |
-| `autonomous` | The LLM decides whether to respond. If it has nothing useful to contribute, it responds with `[SKIP]` internally and the system sends nothing to the group. Additionally, the bot triggers its pipeline on **any broadcast message** (bot-to-bot): the user_input is injected with a `[<source>]` prefix and the LLM decides whether to respond or emit `[SKIP]`. Allows two bots to converse with each other in a group. |
+| `autonomous` | The LLM decides whether to respond. If it has nothing useful to contribute, it responds with `__SKIP__` internally and the system sends nothing to the group. Additionally, if broadcast is configured, the bot triggers its pipeline on **any broadcast message** (bot-to-bot): the user_input is injected with a `[<source>]` prefix and the LLM decides whether to respond or emit `__SKIP__`. Allows two bots to converse with each other in a group. |
 
-The **rate limiter** (`rate_limiter: 5`) applies in `autonomous` mode for both paths:
+The **rate limiter** (`groups.rate_limiter: 5`) applies in `autonomous` mode for both paths:
 incoming Telegram messages **and** bot-to-bot broadcast triggers. It allows exactly
 N messages per fixed window (configurable via `rate_limiter_window`, default `30` seconds),
 per `(agent, chat_id)` combination. The N+1th emission within the same window is discarded

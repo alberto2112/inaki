@@ -44,7 +44,7 @@ def agent_cfg_autonomous() -> MagicMock:
         "token": "dummy-token",
         "allowed_user_ids": [],
         "reactions": False,
-        "broadcast": {
+        "groups": {
             "behavior": "autonomous",
             "bot_username": "inaki_bot",
         },

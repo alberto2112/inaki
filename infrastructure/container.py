@@ -278,7 +278,11 @@ class AgentContainer:
         # Tipo: TcpBroadcastAdapter | None (evitamos importar el adapter en __init__
         # para no crear dependencia circular; el tipo se declara como object).
         self.broadcast_adapter: object | None = None
-        self.broadcast_rate_limiter: FixedWindowRateLimiter | None = None
+        # Rate limiter de grupos (behavior=autonomous). Vive a nivel de grupos, NO de
+        # broadcast: un bot autónomo sin LAN igual lo necesita para no spammear el
+        # grupo (migración groups-vs-broadcast). Lo consume group_flow y, si hay
+        # broadcast, el receiver bot-to-bot.
+        self.group_rate_limiter: FixedWindowRateLimiter | None = None
 
         # Factories resuelven el proveedor correcto leyendo cfg.embedding.provider y cfg.llm.provider
         # y componen ResolvedXConfig contra el registry top-level de providers.
@@ -1574,11 +1578,11 @@ class AppContainer:
                 logger.error("Error en wire_scheduler para agente '%s': %s", agent_id, exc)
 
     def _wire_broadcast_adapters(self) -> None:
-        # Wire broadcast adapters — requiere todos los containers ya construidos.
-        # Por cada agente con un canal telegram que incluya bloque broadcast:, se
-        # instancia un TcpBroadcastAdapter (+ BroadcastBuffer + FixedWindowRateLimiter)
-        # y se almacena en el container. El lifecycle (start/stop) se gestiona en
-        # AppContainer.startup() / shutdown().
+        # Wire de recursos telegram per-agente — requiere todos los containers ya
+        # construidos. Por cada agente con canal telegram, _wire_broadcast_for_agent
+        # resuelve el rate limiter de grupos (behavior=autonomous) y, si hay bloque
+        # broadcast:, un TcpBroadcastAdapter (+ BroadcastBuffer). El lifecycle
+        # (start/stop) del adapter se gestiona en AppContainer.startup() / shutdown().
         self._broadcast_adapters: list[object] = []  # TcpBroadcastAdapter instances
         for agent_cfg in self.registry.list_regular():
             try:
@@ -1775,15 +1779,18 @@ class AppContainer:
 
     def _wire_broadcast_for_agent(self, agent_cfg: AgentConfig) -> None:
         """
-        Instancia y almacena el TcpBroadcastAdapter para un agente, si aplica.
+        Wirea los recursos derivados de la config telegram de un agente. Parsea
+        ``channels.telegram`` una vez y reparte en dos responsabilidades:
 
-        Reglas:
-        - Solo aplica si el agente tiene channel ``telegram`` con bloque ``broadcast:``.
-        - Si broadcast.port → rol server; host = "0.0.0.0".
-        - Si broadcast.remote → rol client; host/port derivados de remote.host ("ip:port").
-        - Se almacena ``broadcast_adapter`` y ``broadcast_rate_limiter`` en el
-          AgentContainer correspondiente.
-        - Si el agente no tiene container (falló en _build_agent_containers) se omite silenciosamente.
+        1. **Rate limiter de grupos** (``group_rate_limiter``): se instancia si
+           ``groups.behavior == "autonomous"``, con ``groups.rate_limiter_window``.
+           NO depende del broadcast — un bot autónomo sin LAN igual lo necesita.
+        2. **TcpBroadcastAdapter** (``broadcast_adapter``): solo si hay bloque
+           ``broadcast:``. server si ``port`` (host "0.0.0.0"); client si ``remote``
+           (host/port de ``remote.host`` "ip:port").
+
+        Si el agente no tiene container (falló en _build_agent_containers) o no tiene
+        canal telegram, se omite silenciosamente.
         """
         from adapters.broadcast.tcp import TcpBroadcastAdapter
 
@@ -1801,15 +1808,30 @@ class AppContainer:
         except Exception as exc:
             logger.warning(
                 "Agente '%s': no se pudo parsear TelegramChannelConfig — "
-                "broadcast wiring omitido: %s",
+                "broadcast/grupos wiring omitido: %s",
                 agent_cfg.id,
                 exc,
             )
             return
 
+        # (1) Rate limiter de grupos — solo behavior=autonomous lo necesita
+        # (mention/listen no responden proactivamente). Independiente del broadcast:
+        # se resuelve aunque el agente no tenga transporte TCP configurado.
+        groups_cfg = tg_cfg.groups
+        if groups_cfg is not None and groups_cfg.behavior == "autonomous":
+            container.group_rate_limiter = FixedWindowRateLimiter(
+                window_seconds=float(groups_cfg.rate_limiter_window)
+            )
+            logger.info(
+                "Agente '%s': rate limiter de grupos wired (autonomous, window=%ds)",
+                agent_cfg.id,
+                groups_cfg.rate_limiter_window,
+            )
+
+        # (2) Adapter TCP de broadcast — solo si hay bloque broadcast.
         broadcast_cfg = tg_cfg.broadcast
         if broadcast_cfg is None:
-            # Sin bloque broadcast → nada que hacer.
+            # Sin transporte LAN (el rate limiter de grupos ya se resolvió arriba).
             return
 
         # Determinar rol y parámetros de conexión.
@@ -1854,9 +1876,6 @@ class AppContainer:
             auth_str = remote.auth
 
         buffer = BroadcastBuffer()
-        rate_limiter = FixedWindowRateLimiter(
-            window_seconds=float(broadcast_cfg.rate_limiter_window)
-        )
         adapter = TcpBroadcastAdapter(
             agent_id=agent_cfg.id,
             role=role,
@@ -1867,7 +1886,6 @@ class AppContainer:
         )
 
         container.broadcast_adapter = adapter
-        container.broadcast_rate_limiter = rate_limiter
         self._broadcast_adapters.append(adapter)
 
         logger.info(

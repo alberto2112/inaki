@@ -71,8 +71,10 @@ async def _run_telegram_bot(agent_cfg, container, app_container=None) -> None:
     from infrastructure.container import build_telegram_bot_ports, build_telegram_bot_settings
 
     # Leer adapters de broadcast del container (wired en Phase 4 de AppContainer).
+    # El rate limiter es de grupos (behavior=autonomous), no del broadcast — puede
+    # existir aunque el agente no tenga transporte TCP (migración groups-vs-broadcast).
     broadcast_adapter = getattr(container, "broadcast_adapter", None)
-    rate_limiter = getattr(container, "broadcast_rate_limiter", None)
+    rate_limiter = getattr(container, "group_rate_limiter", None)
     reloader = getattr(app_container, "reloader", None) if app_container else None
 
     try:
@@ -105,7 +107,7 @@ async def _run_telegram_bot(agent_cfg, container, app_container=None) -> None:
         await bot.setup_commands()
 
         # Validación de bot_username contra la API de Telegram (non-blocking).
-        # Solo aplica si hay broadcast config con bot_username declarado.
+        # Solo aplica si hay groups config con bot_username declarado.
         await bot.verificar_bot_username()
 
         # Suscripción al canal broadcast para trigger bot-to-bot (solo autonomous).

@@ -28,7 +28,7 @@ from core.domain.services.rate_limiter import FixedWindowRateLimiter
 
 
 def _make_agent_cfg(behavior: str = "mention") -> MagicMock:
-    """Mock de AgentConfig con config de telegram y broadcast."""
+    """Mock de AgentConfig con config de telegram y comportamiento de grupos."""
     cfg = MagicMock()
     cfg.id = "agente_test"
     cfg.name = "Inaki Test"
@@ -38,7 +38,7 @@ def _make_agent_cfg(behavior: str = "mention") -> MagicMock:
         "allowed_user_ids": [],
         "reactions": False,
         "allowed_chat_ids": [],
-        "broadcast": {
+        "groups": {
             "behavior": behavior,
             "bot_username": "inaki_test_bot",
             "rate_limiter": 5,

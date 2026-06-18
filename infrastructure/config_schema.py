@@ -518,7 +518,14 @@ class BroadcastEmitConfig(BaseModel):
 
 class BroadcastConfig(BaseModel):
     """
-    Config del canal de broadcast TCP entre instancias de Inaki.
+    Config del **transporte** de broadcast TCP entre instancias de Inaki.
+
+    Esta clase modela SOLO la capa de red (topología + emisión de eventos). El
+    **comportamiento del bot en grupos** (``behavior``, ``bot_username``,
+    ``rate_limiter``, ``rate_limiter_window``) NO vive acá: vive en
+    ``TelegramGroupsConfig`` (``channels.telegram.groups``), porque aplica a
+    cualquier grupo — haya o no broadcast TCP activo. Mezclar ambos forzaba a
+    levantar el transporte solo para configurar cómo responde el bot.
 
     Un nodo opera como **servidor** si declara ``port`` (sin ``remote``).
     Un nodo opera como **cliente** si declara ``remote`` (sin ``port``).
@@ -536,33 +543,8 @@ class BroadcastConfig(BaseModel):
     remote: RemoteBroadcastConfig | None = None
     """Config del servidor remoto al que conectar como cliente. ``None`` → modo servidor."""
 
-    behavior: Literal["listen", "mention", "autonomous"] = "mention"
-    """
-    Modo de comportamiento en grupos:
-    - ``listen`` → nunca invoca el LLM, solo escucha.
-    - ``mention`` → invoca el LLM solo si el mensaje menciona al bot.
-    - ``autonomous`` → invoca el LLM ante cualquier mensaje (sujeto a rate limiter).
-    """
-
-    rate_limiter: int = 5
-    """Máximo de respuestas proactivas (modo ``autonomous``) por ventana por chat.
-
-    El primer mensaje que SUPERA este límite (``counter > rate_limiter``) es bloqueado;
-    es decir, exactamente ``rate_limiter`` mensajes pasan por ventana."""
-
-    rate_limiter_window: int = 30
-    """Duración de la ventana del rate limiter en segundos. Default 30s.
-
-    Importante: el ciclo bot-to-bot toma typically 15-40s (delay de flush + LLM + red).
-    Si la ventana es menor que el ciclo, el contador se resetea entre intercambios
-    y el limiter es inefectivo — bots pueden hablar indefinidamente. Para grupos con
-    behavior='autonomous' se recomienda 300s (5min) o más."""
-
     auth: str | None = None
     """Secreto HMAC-SHA256 del servidor. Obligatorio cuando ``port`` está seteado."""
-
-    bot_username: str | None = None
-    """Username del bot Telegram (sin ``@``) para detección de menciones en modo ``mention``."""
 
     emit: BroadcastEmitConfig = BroadcastEmitConfig()
     """Flags que controlan qué tipos de eventos se emiten al broadcast.
@@ -604,9 +586,14 @@ class TelegramGroupsConfig(BaseModel):
     """
     Config tipada del comportamiento del bot en chats grupales.
 
-    Todos los campos son opcionales y se resuelven contra defaults definidos en
-    el adaptador. Ausencia explícita (``None``) significa "heredar del nivel
-    padre" cuando aplica (caso ``reactions``) o "usar default del módulo".
+    Cubre dos cosas:
+    - **Timing/reacciones** (``min_delay_response``, ``max_delay_response``,
+      ``reactions``): opcionales, ``None`` = "heredar del padre" (``reactions``)
+      o "usar default del módulo" (delays).
+    - **Política de respuesta** (``behavior``, ``bot_username``, ``rate_limiter``,
+      ``rate_limiter_window``): cómo decide el bot responder en un grupo. Antes
+      vivían en ``BroadcastConfig``, lo que obligaba a levantar el transporte TCP
+      solo para configurarlos. Ahora aplican a cualquier grupo, con o sin broadcast.
     """
 
     model_config = ConfigDict(extra="allow")
@@ -619,6 +606,31 @@ class TelegramGroupsConfig(BaseModel):
 
     reactions: bool | None = None
     """Override del flag ``channels.telegram.reactions`` para chats grupales. ``None`` → hereda del padre."""
+
+    behavior: Literal["listen", "mention", "autonomous"] = "mention"
+    """
+    Modo de comportamiento en grupos:
+    - ``listen`` → nunca invoca el LLM, solo escucha.
+    - ``mention`` → invoca el LLM solo si el mensaje menciona al bot (requiere ``bot_username``).
+    - ``autonomous`` → invoca el LLM ante cualquier mensaje (sujeto a rate limiter).
+    """
+
+    bot_username: str | None = None
+    """Username del bot Telegram (sin ``@``) para detección de menciones en modo ``mention``."""
+
+    rate_limiter: int = 5
+    """Máximo de respuestas proactivas (modo ``autonomous``) por ventana por chat.
+
+    El primer mensaje que SUPERA este límite (``counter > rate_limiter``) es bloqueado;
+    es decir, exactamente ``rate_limiter`` mensajes pasan por ventana."""
+
+    rate_limiter_window: int = 30
+    """Duración de la ventana del rate limiter en segundos. Default 30s.
+
+    Importante: el ciclo bot-to-bot toma típicamente 15-40s (delay de flush + LLM + red).
+    Si la ventana es menor que el ciclo, el contador se resetea entre intercambios
+    y el limiter es inefectivo — bots pueden hablar indefinidamente. Para grupos con
+    ``behavior='autonomous'`` se recomienda 300s (5min) o más."""
 
     @model_validator(mode="after")
     def _validar_delays(self) -> "TelegramGroupsConfig":

@@ -36,12 +36,13 @@ after any change in `adapters/broadcast/` or the Telegram handler.
      telegram:
        allowed_user_ids: [YOUR_USER_ID]
        allowed_chat_ids: []          # will be filled after Scenario D
+       groups:
+         behavior: mention
+         bot_username: "inaki_a_bot"
+         rate_limiter: 5
        broadcast:
          port: 1234
          auth: "shared-secret-between-agents"
-         bot_username: "inaki_a_bot"
-         behavior: mention
-         rate_limiter: 5
    ```
 
 4. Configure `~/.inaki/config/agents/<id>.yaml` on the **client Pi** (inaki_b):
@@ -50,13 +51,14 @@ after any change in `adapters/broadcast/` or the Telegram handler.
      telegram:
        allowed_user_ids: [YOUR_USER_ID]
        allowed_chat_ids: []
+       groups:
+         behavior: mention
+         bot_username: "inaki_b_bot"
+         rate_limiter: 5
        broadcast:
          remote:
            host: "192.168.1.10:1234"           # Server Pi IP
            auth: "shared-secret-between-agents"
-         bot_username: "inaki_b_bot"
-         behavior: mention
-         rate_limiter: 5
    ```
    The `auth` secret **must be identical** on both sides.
 

@@ -110,7 +110,9 @@ class TestAgentPersistAdd:
     def test_anadir_campo_secret_va_a_secrets(self):
         page = _agent_page()
         parent = SchemaNode(path=("channels", "telegram"), label="telegram", is_section=True)
-        opt = AddableOption("token", "token", is_section=False, default_value="")
+        # is_secret=True lo deriva el builder del marcador del schema (token está
+        # marcado). La capa se elige por ese flag, NO por el nombre del campo.
+        opt = AddableOption("token", "token", is_section=False, default_value="", is_secret=True)
         _run(page, page.persist_add, parent, opt)
 
         _, layer = _call(page._container.update_agent_layer.execute)

@@ -11,7 +11,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from adapters.inbound.setup_tui._cambios import cambios_anidados, eliminar_en_path
-from adapters.inbound.setup_tui._schema import _is_secret
 from adapters.inbound.setup_tui._schema_tree import build_schema_tree
 from adapters.inbound.setup_tui.domain.schema_node import SchemaNode
 from adapters.inbound.setup_tui.screens._tree_editor import TreeEditorPage
@@ -85,11 +84,7 @@ class GlobalPage(TreeEditorPage):
 
     def persist_add(self, parent: SchemaNode, option: "AddableOption") -> None:
         valor: Any = {} if option.is_section else option.default_value
-        layer = (
-            LayerName.GLOBAL_SECRETS
-            if (not option.is_section and _is_secret(option.key))
-            else LayerName.GLOBAL
-        )
+        layer = LayerName.GLOBAL_SECRETS if option.is_secret else LayerName.GLOBAL
         self._aplicar(cambios_anidados(parent.path + (option.key,), valor), layer)
 
     def persist_delete(self, node: SchemaNode) -> None:

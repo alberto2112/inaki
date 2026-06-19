@@ -28,11 +28,25 @@ _SECRET_KEYWORDS = ("api_key", "token", "auth_key", "auth", "password", "secret"
 _LONG_KEYWORDS = ("system_prompt", "description", "body", "content", "text")
 
 
-def _is_secret(name: str) -> bool:
-    """True si el nombre del campo sugiere que es un secret.
+def _field_is_secret(field_info: FieldInfo | None) -> bool:
+    """True si el campo está marcado como secreto en el schema.
 
-    Match estricto (igual o sufijo ``_kw``) para evitar falsos positivos:
-    ``max_tokens`` contiene ``token`` como substring pero NO es un secret.
+    FUENTE DE VERDAD explícita: ``Field(json_schema_extra={"secret": True})``.
+    Reemplaza la heurística por nombre (frágil): un campo es secreto porque el
+    schema lo declara, no porque su nombre se parezca a uno.
+    """
+    if field_info is None:
+        return False
+    extra = field_info.json_schema_extra
+    return isinstance(extra, dict) and bool(extra.get("secret"))
+
+
+def _name_suggests_secret(name: str) -> bool:
+    """True si el NOMBRE del campo sugiere un secreto.
+
+    Ya NO se usa en runtime (la verdad es ``_field_is_secret`` sobre el marcador
+    del schema). Se conserva solo para el guard de tests, que detecta campos con
+    nombre sospechoso sin marcar — un olvido que dejaría un secreto sin enmascarar.
     """
     lower = name.lower()
     return any(lower == kw or lower.endswith(f"_{kw}") for kw in _SECRET_KEYWORDS)
@@ -81,19 +95,21 @@ def _default_as_str(field_info: FieldInfo) -> str | None:
     return str(default)
 
 
-def _infer_kind(name: str, annotation: Any) -> FieldKind:
-    """Infiere el kind del campo a partir del nombre y la anotación."""
+def _infer_kind(name: str, annotation: Any, field_info: FieldInfo | None = None) -> FieldKind:
+    """Infiere el kind del campo a partir de la anotación, el marcador de secreto
+    del schema y el nombre (solo para texto largo)."""
     unwrapped = _unwrap_optional(annotation)
 
     if _is_literal(unwrapped):
         return "enum"
-    # ``bool`` se detecta por tipo exacto (identidad), antes que las heurísticas
-    # por nombre: un campo booleano nunca debe caer en secret/long/scalar porque
-    # se edita con un toggle, no tipeando "true"/"false". ``is`` evita que un
-    # ``int`` matchee (bool es subclase de int, pero la anotación es distinta).
+    # ``bool`` se detecta por tipo exacto (identidad), antes que las heurísticas:
+    # un campo booleano nunca debe caer en secret/long/scalar porque se edita con
+    # un toggle, no tipeando "true"/"false". ``is`` evita que un ``int`` matchee
+    # (bool es subclase de int, pero la anotación es distinta).
     if unwrapped is bool:
         return "bool"
-    if _is_secret(name):
+    # Secreto = lo que el schema MARCA (no lo que el nombre sugiere).
+    if _field_is_secret(field_info):
         return "secret"
     if _is_long(name):
         return "long"

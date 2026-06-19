@@ -35,6 +35,8 @@ class AddableOption:
             mostrar como ayuda en el modal. Vacío si no hay.
         default_value: Valor inicial al añadir un campo simple (el default del
             schema). Irrelevante para secciones (se crean como ``{}``).
+        is_secret: Si el campo está marcado como secreto en el schema. Decide a
+            qué capa (``*.secrets.yaml``) lo escribe la página al añadirlo.
     """
 
     key: str
@@ -42,6 +44,7 @@ class AddableOption:
     is_section: bool
     description: str = ""
     default_value: Any = None
+    is_secret: bool = False
 
 
 @dataclass

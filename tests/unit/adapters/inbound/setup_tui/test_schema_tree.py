@@ -254,6 +254,22 @@ def test_extra_key_no_declarada_se_muestra_como_hoja():
 # --------------------------------------------------------------------------
 
 
+def test_campo_marcado_secret_se_infiere_kind_secret():
+    """End-to-end: un campo con Field(json_schema_extra={'secret':True}) en el
+    schema real llega al árbol como kind='secret' (no por su nombre)."""
+    from infrastructure.config import TelegramChannelConfig
+
+    tree = build_schema_tree(
+        TelegramChannelConfig, {"token": "TKN"}, root_label="telegram"
+    )
+    token = _hijo(tree, "token")
+    assert token.field.kind == "secret"  # type: ignore[union-attr]
+    # 'token' ausente → addable marcado is_secret (decide la capa al añadirlo).
+    tree2 = build_schema_tree(TelegramChannelConfig, {}, root_label="telegram")
+    token_opt = next(o for o in tree2.addable if o.key == "token")
+    assert token_opt.is_secret is True
+
+
 def test_integracion_con_agentconfig_real():
     from infrastructure.config import AgentConfig, TelegramChannelConfig
 

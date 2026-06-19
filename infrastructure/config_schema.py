@@ -98,7 +98,7 @@ class ProviderConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: str | None = None
-    api_key: str | None = None
+    api_key: str | None = Field(default=None, json_schema_extra={"secret": True})
     base_url: str | None = None
 
 
@@ -483,7 +483,7 @@ class RemoteBroadcastConfig(BaseModel):
     host: str
     """Dirección del servidor en formato ``ip:port`` (ej: ``"192.168.1.10:9000"``)."""
 
-    auth: str
+    auth: str = Field(json_schema_extra={"secret": True})
     """Secreto compartido con el servidor para autenticación HMAC-SHA256."""
 
 
@@ -543,7 +543,7 @@ class BroadcastConfig(BaseModel):
     remote: RemoteBroadcastConfig | None = None
     """Config del servidor remoto al que conectar como cliente. ``None`` → modo servidor."""
 
-    auth: str | None = None
+    auth: str | None = Field(default=None, json_schema_extra={"secret": True})
     """Secreto HMAC-SHA256 del servidor. Obligatorio cuando ``port`` está seteado."""
 
     emit: BroadcastEmitConfig = BroadcastEmitConfig()
@@ -664,7 +664,7 @@ class TelegramChannelConfig(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    token: str = ""
+    token: str = Field(default="", json_schema_extra={"secret": True})
     """Token del bot de Telegram (BotFather). Requerido para que el canal levante."""
 
     allowed_user_ids: list[int] = Field(default_factory=list)
@@ -781,7 +781,7 @@ class AdminConfig(BaseModel):
 
     port: int = 6497
     host: str = "127.0.0.1"
-    auth_key: str | None = None
+    auth_key: str | None = Field(default=None, json_schema_extra={"secret": True})
     chat_timeout: float = 300.0
     """Timeout en segundos para turnos de chat vía REST (POST /admin/chat/turn)."""
 
@@ -888,7 +888,7 @@ class SceneConfig(BaseModel):
     model: str = "claude-sonnet-4-6"
     prompt_template: str | None = None
     """Prompt personalizado en español. None = usar el prompt built-in del adaptador."""
-    api_key: str | None = None
+    api_key: str | None = Field(default=None, json_schema_extra={"secret": True})
     """API key del proveedor. Conviene en global.secrets.yaml bajo photos.scene.api_key."""
 
 
@@ -941,7 +941,9 @@ class GlobalConfig(BaseModel):
     admin: AdminConfig = AdminConfig()
     user: UserConfig = UserConfig()
     transcription: TranscriptionConfig | None = None
-    knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)  # default_factory: ver nota en `scheduler` (RuntimePath en T7)
+    knowledge: KnowledgeConfig = Field(
+        default_factory=KnowledgeConfig
+    )  # default_factory: ver nota en `scheduler` (RuntimePath en T7)
     photos: PhotosConfig | None = None
     """Configuración del pipeline de fotos. None = feature desactivada (no se carga nada)."""
     providers: dict[str, ProviderConfig] = {}

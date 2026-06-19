@@ -14,7 +14,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from adapters.inbound.setup_tui._cambios import cambios_anidados, eliminar_en_path
-from adapters.inbound.setup_tui._schema import _is_secret
 from adapters.inbound.setup_tui._schema_tree import build_schema_tree
 from adapters.inbound.setup_tui.domain.schema_node import SchemaNode
 from adapters.inbound.setup_tui.screens._tree_editor import TreeEditorPage
@@ -121,11 +120,7 @@ class AgentDetailPage(TreeEditorPage):
         valor: Any = {} if option.is_section else option.default_value
         # Un campo secret recién creado va a la capa de secrets (coherente con la
         # edición posterior). Las secciones siempre a la capa principal.
-        layer = (
-            self._secrets_layer
-            if (not option.is_section and _is_secret(option.key))
-            else self._main_layer
-        )
+        layer = self._secrets_layer if option.is_secret else self._main_layer
         self._aplicar(cambios_anidados(parent.path + (option.key,), valor), layer)
 
     def persist_delete(self, node: SchemaNode) -> None:

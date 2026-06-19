@@ -24,6 +24,7 @@ from pydantic_core import PydanticUndefined
 
 from adapters.inbound.setup_tui._schema import (
     _default_as_str,
+    _field_is_secret,
     _infer_kind,
     _literal_choices,
     _unwrap_optional,
@@ -155,6 +156,7 @@ def _build_section(
                     is_section=False,
                     description=descripcion,
                     default_value=_default_value(field_info),
+                    is_secret=_field_is_secret(field_info),
                 )
             )
 
@@ -247,7 +249,7 @@ def _build_leaf(
     ``provider`` → adaptadores autodescubiertos). Los tri-estado no se tocan.
     """
     unwrapped = _unwrap_optional(annotation)
-    kind = _infer_kind(name, annotation)
+    kind = _infer_kind(name, annotation, field_info)
     enum_choices = _literal_choices(unwrapped) if kind == "enum" else None
 
     ruta_dotted = ".".join(path + (name,))

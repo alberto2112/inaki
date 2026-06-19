@@ -92,10 +92,12 @@ class TreeEditorPage(Screen):
         Binding("k", "cursor_up", show=False, priority=True),
         Binding("down", "cursor_down", show=False, priority=True),
         Binding("j", "cursor_down", show=False, priority=True),
-        Binding("enter", "enter", show=False),
-        Binding("a", "add", show=False),
-        Binding("d", "delete", show=False),
-        Binding("escape", "back", show=False),
+        # priority para que el widget Tree (que tiene el foco) no se los coma:
+        # Enter baja al panel / edita; Esc sube; a/d añaden/eliminan.
+        Binding("enter", "enter", show=False, priority=True),
+        Binding("a", "add", show=False, priority=True),
+        Binding("d", "delete", show=False, priority=True),
+        Binding("escape", "back", show=False, priority=True),
     ]
 
     def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
@@ -238,14 +240,18 @@ class TreeEditorPage(Screen):
             self._detail_rows[self._detail_cursor].scroll_visible(animate=False)
 
     def action_cursor_up(self) -> None:
-        if self._focus_zone != "detail":
+        # En el árbol delegamos al widget Tree (su navegación nativa); el binding
+        # priority de la página captura la flecha, así que hay que reenviarla.
+        if self._focus_zone == "tree":
+            self.query_one("#nav", Tree).action_cursor_up()
             return
         if self._detail_cursor > 0:
             self._detail_cursor -= 1
             self._refresh_detail_selection()
 
     def action_cursor_down(self) -> None:
-        if self._focus_zone != "detail":
+        if self._focus_zone == "tree":
+            self.query_one("#nav", Tree).action_cursor_down()
             return
         if self._detail_cursor < len(self._detail_rows) - 1:
             self._detail_cursor += 1

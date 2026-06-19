@@ -71,3 +71,50 @@ def test_field_is_secret_lee_el_marcador():
 
 def test_field_is_secret_none_es_false():
     assert _field_is_secret(None) is False
+
+
+# --------------------------------------------------------------------------
+# iter_declared_secrets — la SecretsPage proactiva (paso 1.5)
+# --------------------------------------------------------------------------
+
+
+def _secrets(values):
+    from adapters.inbound.setup_tui._schema_tree import iter_declared_secrets
+
+    return {
+        ".".join(p): ok
+        for p, ok, _ in iter_declared_secrets(
+            AgentConfig, values, channel_schemas={"telegram": TelegramChannelConfig}
+        )
+    }
+
+
+def test_secreto_configurado_vs_pendiente():
+    res = _secrets(
+        {
+            "id": "a",
+            "name": "N",
+            "channels": {"telegram": {"token": "TKN"}},
+            "providers": {"openai": {"type": "openai"}, "groq": {"api_key": "K"}},
+        }
+    )
+    assert res["channels.telegram.token"] is True  # configurado
+    assert res["providers.openai.api_key"] is False  # pendiente (sin api_key)
+    assert res["providers.groq.api_key"] is True  # configurado
+
+
+def test_subseccion_ausente_no_genera_ruido():
+    """broadcast NO configurado → su auth NO aparece (evita pendientes de features
+    no usadas). Al activar broadcast, sí aparece."""
+    sin = _secrets({"id": "a", "name": "N", "channels": {"telegram": {"token": "T"}}})
+    assert not any("broadcast" in k for k in sin)
+
+    con = _secrets(
+        {"id": "a", "name": "N", "channels": {"telegram": {"token": "T", "broadcast": {"port": 9}}}}
+    )
+    assert con["channels.telegram.broadcast.auth"] is False
+
+
+def test_token_vacio_cuenta_como_pendiente():
+    res = _secrets({"id": "a", "name": "N", "channels": {"telegram": {"token": ""}}})
+    assert res["channels.telegram.token"] is False

@@ -17,7 +17,7 @@ composition root y trata cada canal como una sub-sección tipada.
 from __future__ import annotations
 
 import inspect
-from typing import Any, get_origin
+from typing import Any, get_args, get_origin
 
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
@@ -293,6 +293,80 @@ def _build_leaf(
 def _es_tipo_dict(annotation: Any) -> bool:
     """``True`` si la anotación (desenvuelta de Optional) es un ``dict[...]``."""
     return get_origin(_unwrap_optional(annotation)) is dict
+
+
+def _dict_value_model(annotation: Any) -> type[BaseModel] | None:
+    """Si la anotación es ``dict[str, X]`` con ``X`` un ``BaseModel``, devuelve X."""
+    args = get_args(_unwrap_optional(annotation))
+    if len(args) == 2:
+        v = args[1]
+        if inspect.isclass(v) and issubclass(v, BaseModel):
+            return v
+    return None
+
+
+# Path del secreto, ¿configurado?, valor actual (si lo hay).
+DeclaredSecret = tuple[tuple[str, ...], bool, Any]
+
+
+def iter_declared_secrets(
+    model: type[BaseModel],
+    values: dict[str, Any],
+    *,
+    channel_schemas: dict[str, type[BaseModel]] | None = None,
+    path: tuple[str, ...] = (),
+) -> list[DeclaredSecret]:
+    """Recorre ``model`` + ``values`` y recolecta TODOS los campos secretos
+    declarados (marcados en el schema), con su estado de configuración.
+
+    Permite a la SecretsPage ser proactiva: enumera qué secretos EXISTEN según
+    el schema y la estructura configurada, no solo los que ya están escritos.
+    ``configured`` = la clave está presente y no vacía. Maneja ``channels``
+    (heterogéneo, vía ``channel_schemas``) y cualquier ``dict[str, BaseModel]``
+    (homogéneo, ej. ``providers``) recursando por cada entrada presente.
+    """
+    out: list[DeclaredSecret] = []
+    values = values if isinstance(values, dict) else {}
+    channel_schemas = channel_schemas or {}
+
+    for name, field_info in model.model_fields.items():
+        annotation = field_info.annotation
+        if annotation is None:
+            continue
+
+        if _field_is_secret(field_info):
+            configurado = name in values and values.get(name) not in (None, "")
+            out.append((path + (name,), configurado, values.get(name)))
+            continue
+
+        sub = _unwrap_optional(annotation)
+
+        if name == "channels" and channel_schemas and _es_tipo_dict(annotation):
+            for canal, cval in (values.get("channels") or {}).items():
+                schema = channel_schemas.get(canal)
+                if schema is not None:
+                    out += iter_declared_secrets(
+                        schema,
+                        cval,
+                        channel_schemas=channel_schemas,
+                        path=path + ("channels", canal),
+                    )
+        elif _es_tipo_dict(annotation):
+            vmodel = _dict_value_model(annotation)
+            if vmodel is not None:
+                for k, v in (values.get(name) or {}).items():
+                    out += iter_declared_secrets(
+                        vmodel, v, channel_schemas=channel_schemas, path=path + (name, k)
+                    )
+        elif name in values and inspect.isclass(sub) and issubclass(sub, BaseModel):
+            # Solo se recursa en sub-secciones PRESENTES: un secreto de broadcast
+            # no aplica si el usuario no activó broadcast (evita ruido de pendientes
+            # de features no usadas). Al activar la sección, su secreto aparece.
+            out += iter_declared_secrets(
+                sub, values.get(name) or {}, channel_schemas=channel_schemas, path=path + (name,)
+            )
+
+    return out
 
 
 def _safe_value(raw: Any) -> Any:

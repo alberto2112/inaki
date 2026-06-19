@@ -1,4 +1,10 @@
-"""SecretsPage — vista consolidada de todos los secrets (global + por agente)."""
+"""SecretsPage — vista consolidada y PROACTIVA de los secrets.
+
+A diferencia de la versión reactiva (que solo listaba lo ya escrito), recorre el
+schema efectivo con ``iter_declared_secrets`` y muestra TODOS los secretos
+declarados —marcados en el schema— separando los configurados de los PENDIENTES.
+Así el operador ve de un vistazo qué falta por configurar, no solo lo que hay.
+"""
 
 from __future__ import annotations
 
@@ -6,10 +12,13 @@ from typing import TYPE_CHECKING, Any
 
 from textual.app import ComposeResult
 
+from adapters.inbound.setup_tui._schema_tree import iter_declared_secrets
 from adapters.inbound.setup_tui.domain.field import Field
 from adapters.inbound.setup_tui.screens._base import BasePage
 from adapters.inbound.setup_tui.widgets.config_row import ConfigRow
 from adapters.inbound.setup_tui.widgets.section_header import SectionHeader
+from core.ports.config_repository import LayerName
+from core.use_cases.config._merge import deep_merge_con_eliminaciones
 
 if TYPE_CHECKING:
     from adapters.inbound.setup_tui.di import SetupContainer
@@ -23,24 +32,6 @@ if TYPE_CHECKING:
 # Re-exportado desde widgets/_masking.py para mantener la compatibilidad de tests
 # y permitir que SecretsPage no dependa directamente del módulo de widgets.
 from adapters.inbound.setup_tui.widgets._masking import mask_secret as _mask_secret  # noqa: E402, F401
-
-
-def _flatten(data: dict[str, Any], prefix: str = "") -> list[tuple[str, Any]]:
-    """Aplana un dict anidado en lista de ``(clave_punto, valor)``.
-
-    Ejemplo: ``{"providers": {"openai": {"api_key": "sk-x"}}}``
-    → ``[("providers.openai.api_key", "sk-x")]``
-
-    Solo aplana hasta el nivel donde el valor ya NO es dict.
-    """
-    items: list[tuple[str, Any]] = []
-    for key, val in data.items():
-        full_key = f"{prefix}.{key}" if prefix else key
-        if isinstance(val, dict):
-            items.extend(_flatten(val, full_key))
-        else:
-            items.append((full_key, val))
-    return items
 
 
 def _unflatten(flat_key: str, value: Any) -> dict[str, Any]:
@@ -93,68 +84,63 @@ class SecretsPage(BasePage):
             yield ConfigRow(Field(label="(sin container)", value="no disponible", kind="scalar"))
             return
 
-        from textual.widgets import Label
-
-        from core.ports.config_repository import LayerName
-
-        # ---- Secrets globales ----
-        yield SectionHeader("GLOBAL SECRETS")
-        global_secrets: dict[str, Any] = {}
+        # ---- Global: config efectiva (global.yaml + global.secrets.yaml) ----
         try:
-            global_secrets = self._container.repo.read_layer(LayerName.GLOBAL_SECRETS)
-        except Exception as exc:
-            yield Label(
-                f"  [red]error al leer global.secrets.yaml: {type(exc).__name__}: {exc}[/red]",
-                markup=True,
-            )
+            global_eff = self._container.get_effective_config.execute().datos
+        except Exception:
+            global_eff = {}
+        yield from self._emit_scope("GLOBAL", "global", self._container.global_schema, global_eff)
 
-        items_global = _flatten(global_secrets)
-        if items_global:
-            for flat_key, raw_val in items_global:
-                raw_str = str(raw_val) if raw_val is not None else ""
-                # Field guarda el valor REAL — el masking es solo display
-                # (lo aplica ConfigRow). Esto evita que el modal reciba la
-                # versión enmascarada y la persista al guardar.
-                field = Field(label=flat_key, value=raw_str, kind="secret")
-                self._field_meta[id(field)] = ("global", flat_key)
-                yield ConfigRow(field)
-        else:
-            yield ConfigRow(
-                Field(label="(vacío)", value="sin secrets globales configurados", kind="scalar")
-            )
-
-        # ---- Secrets por agente ----
+        # ---- Por agente: capa principal + secrets mergeadas ----
         try:
             agent_ids = self._container.list_agents.execute()
         except Exception:
             agent_ids = []
 
         for agent_id in agent_ids:
-            agent_error: str | None = None
-            agent_secrets: dict[str, Any] = {}
             try:
-                agent_secrets = self._container.repo.read_layer(
+                main = self._container.repo.read_layer(LayerName.AGENT, agent_id=agent_id)
+                secrets = self._container.repo.read_layer(
                     LayerName.AGENT_SECRETS, agent_id=agent_id
                 )
-            except Exception as exc:
-                agent_error = f"{type(exc).__name__}: {exc}"
-
-            items_agent = _flatten(agent_secrets)
-            if not items_agent and agent_error is None:
+                agent_eff = deep_merge_con_eliminaciones(main, secrets)
+            except Exception:
                 continue
+            yield from self._emit_scope(
+                f"AGENT/{agent_id.upper()}",
+                f"agent/{agent_id}",
+                self._container.agent_schema,
+                agent_eff,
+            )
 
-            yield SectionHeader(f"AGENT/{agent_id.upper()}")
-            if agent_error is not None:
-                yield Label(
-                    f"  [red]error al leer secrets de '{agent_id}': {agent_error}[/red]",
-                    markup=True,
-                )
-                continue
-            for flat_key, raw_val in items_agent:
-                raw_str = str(raw_val) if raw_val is not None else ""
-                # Field guarda el valor REAL — masking solo en display.
-                field = Field(label=flat_key, value=raw_str, kind="secret")
-                self._field_meta[id(field)] = (f"agent/{agent_id}", flat_key)
+    def _emit_scope(
+        self, titulo: str, scope_tag: str, schema: Any, effective: dict[str, Any]
+    ) -> ComposeResult:
+        """Emite las filas de un scope: secretos configurados + sección de pendientes."""
+        if self._container is None:
+            return
+        declared = iter_declared_secrets(
+            schema, effective, channel_schemas=self._container.channel_schemas
+        )
+        configurados = [(p, v) for p, ok, v in declared if ok]
+        pendientes = [p for p, ok, _ in declared if not ok]
+        if not configurados and not pendientes:
+            return
+
+        yield SectionHeader(titulo)
+        for path, raw_val in configurados:
+            flat = ".".join(path)
+            # Field guarda el valor REAL; el masking es solo display (ConfigRow).
+            field = Field(label=flat, value=str(raw_val or ""), kind="secret")
+            self._field_meta[id(field)] = (scope_tag, flat)
+            yield ConfigRow(field)
+
+        if pendientes:
+            yield SectionHeader(f"{titulo} · PENDIENTES")
+            for path in pendientes:
+                flat = ".".join(path)
+                field = Field(label=flat, value="", kind="secret")
+                self._field_meta[id(field)] = (scope_tag, flat)
                 yield ConfigRow(field)
 
     def _on_field_saved(self, field: Field) -> None:

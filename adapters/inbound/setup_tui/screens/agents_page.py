@@ -282,6 +282,17 @@ class AgentsPage(BasePage):
     def breadcrumb(self) -> str:
         return "inaki / config / sub-agents" if self._is_sub_agent else "inaki / config / agents"
 
+    def status_text(self) -> str:
+        return (
+            "[bold]↑↓[/bold] [dim]navegar[/dim]   "
+            "[bold]enter[/bold] [dim]editar[/dim]   "
+            "[bold]n[/bold] [dim]nuevo[/dim]   "
+            "[bold]c[/bold] [dim]clonar[/dim]   "
+            "[bold]supr[/bold] [dim]eliminar[/dim]   "
+            "[bold]esc[/bold] [dim]volver[/dim]   "
+            "[bold]q[/bold] [dim]salir[/dim]"
+        )
+
     def compose_body(self) -> ComposeResult:
         agentes: list[str] = []
         if self._container is not None:

@@ -8,7 +8,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Input, Label
+from textual.widgets import Input, Label, Select
 
 from adapters.inbound.setup_tui.domain.field import Field
 from adapters.inbound.setup_tui.modals._dialog import dialog_css
@@ -26,13 +26,17 @@ if TYPE_CHECKING:
 
 
 class _EditProviderModal(ModalScreen[dict[str, str | bool] | None]):
-    """Modal con 4 campos para crear o editar un provider del registry.
+    """Modal para crear o editar un provider del registry.
 
-    Cuando ``edit_mode=True``, el campo key está deshabilitado (no se puede
-    renombrar un provider existente — habría que clonar + eliminar).
+    El ADAPTADOR (vendor) se elige de una lista de los disponibles —no se escribe
+    a mano—; el ``nombre`` (key) se autocompleta con el adaptador y solo se cambia
+    para el caso avanzado de varias cuentas del mismo proveedor. El ``type`` se
+    deriva: si el nombre coincide con el adaptador queda implícito (``None``);
+    si difiere, se persiste el adaptador como ``type``.
 
-    Retorna un dict con keys ``key``, ``type``, ``base_url``, ``api_key``
-    (cualquiera puede estar vacío/None), o ``None`` si el usuario cancela.
+    Cuando ``edit_mode=True``, el nombre (key) está deshabilitado (renombrar = clonar
+    + eliminar). Retorna un dict con keys ``key``, ``type``, ``base_url``,
+    ``api_key``, o ``None`` si se cancela.
     """
 
     DEFAULT_CSS = (
@@ -46,6 +50,9 @@ class _EditProviderModal(ModalScreen[dict[str, str | bool] | None]):
         margin-top: 0;
         background: #0d0d0d;
         border: tall $primary;
+    }
+    _EditProviderModal #dialog Select {
+        margin-top: 0;
     }
     _EditProviderModal #dialog .campo-label {
         height: 1;
@@ -63,6 +70,7 @@ class _EditProviderModal(ModalScreen[dict[str, str | bool] | None]):
 
     def __init__(
         self,
+        adapters: tuple[str, ...],
         key: str = "",
         type_val: str = "",
         base_url: str = "",
@@ -73,33 +81,50 @@ class _EditProviderModal(ModalScreen[dict[str, str | bool] | None]):
         self._type_val = type_val
         self._base_url = base_url
         self._edit_mode = edit_mode
+        # Adaptador efectivo actual (al editar): el type explícito o, si no hay, la key.
+        inicial = type_val or key
+        # Garantizar que el adaptador actual esté entre las opciones (aunque sea
+        # uno custom no descubierto), para poder representarlo al editar.
+        opciones = list(adapters)
+        if inicial and inicial not in opciones:
+            opciones.insert(0, inicial)
+        self._adapters = tuple(opciones)
+        self._adapter_inicial = inicial or (opciones[0] if opciones else "")
 
     def compose(self) -> ComposeResult:
         titulo = f"editar  {self._key}" if self._edit_mode else "nuevo provider"
         with Vertical(id="dialog"):
             yield Label(titulo, classes="titulo")
 
-            yield Label(
-                "key  [dim](nombre del provider)[/dim]"
-                + ("  [dim]— no editable[/dim]" if self._edit_mode else ""),
-                classes="campo-label",
+            yield Label("proveedor  [dim](elegí el adaptador)[/dim]", classes="campo-label")
+            yield Select(
+                [(a, a) for a in self._adapters],
+                value=self._adapter_inicial or Select.BLANK,
+                allow_blank=not self._adapters,
+                id="input_adapter",
             )
-            inp_key = Input(value=self._key, id="input_key", disabled=self._edit_mode)
-            yield inp_key
-
-            yield Label("type  [dim](groq / openai / ollama / …)[/dim]", classes="campo-label")
-            yield Input(value=self._type_val, placeholder="opcional", id="input_type")
-
-            yield Label("base_url  [dim](override del endpoint)[/dim]", classes="campo-label")
-            yield Input(value=self._base_url, placeholder="opcional", id="input_base_url")
 
             yield Label(
-                "api_key  [dim](vacío = no modificar)[/dim]",
+                "nombre"
+                + (
+                    "  [dim]— no editable[/dim]"
+                    if self._edit_mode
+                    else "  [dim](auto; cambialo solo para varias cuentas del mismo proveedor)[/dim]"
+                ),
                 classes="campo-label",
             )
-            inp_key2 = Input(placeholder="sk-…", password=True, id="input_api_key")
-            inp_key2.select_on_focus = False
-            yield inp_key2
+            yield Input(value=self._key, id="input_key", disabled=self._edit_mode)
+
+            yield Label(
+                "base_url  [dim](dejalo vacío para usar el endpoint por defecto)[/dim]",
+                classes="campo-label",
+            )
+            yield Input(value=self._base_url, placeholder="(por defecto)", id="input_base_url")
+
+            yield Label("api_key  [dim](vacío = no modificar)[/dim]", classes="campo-label")
+            inp_api = Input(placeholder="sk-…", password=True, id="input_api_key")
+            inp_api.select_on_focus = False
+            yield inp_api
 
             yield Label(
                 "[bold]ctrl+s[/bold] [dim]guardar[/dim]   [bold]esc[/bold] [dim]cancelar[/dim]",
@@ -108,20 +133,34 @@ class _EditProviderModal(ModalScreen[dict[str, str | bool] | None]):
 
     def on_mount(self) -> None:
         if self._edit_mode:
-            self.query_one("#input_type", Input).focus()
+            self.query_one("#input_base_url", Input).focus()
         else:
-            self.query_one("#input_key", Input).focus()
+            self.query_one("#input_adapter", Select).focus()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """Al elegir adaptador en modo crear, autocompleta el nombre con su valor."""
+        if self._edit_mode or event.value is Select.BLANK:
+            return
+        self.query_one("#input_key", Input).value = str(event.value)
 
     def action_commit(self) -> None:
         key = self._key if self._edit_mode else self.query_one("#input_key", Input).value.strip()
         if not key:
-            self.app.notify("la key no puede estar vacía", severity="warning", timeout=2)
+            self.app.notify("el nombre no puede estar vacío", severity="warning", timeout=2)
             return
 
+        adapter_raw = self.query_one("#input_adapter", Select).value
+        adaptador = "" if adapter_raw is Select.BLANK else str(adapter_raw)
+        if not adaptador:
+            self.app.notify("elegí un proveedor", severity="warning", timeout=2)
+            return
+
+        # type explícito SOLO si el nombre difiere del adaptador (caso avanzado).
+        type_val = "" if key == adaptador else adaptador
         self.dismiss(
             {
                 "key": key,
-                "type": self.query_one("#input_type", Input).value.strip(),
+                "type": type_val,
                 "base_url": self.query_one("#input_base_url", Input).value.strip(),
                 "api_key": self.query_one("#input_api_key", Input).value.strip(),
             }
@@ -280,6 +319,7 @@ class ProvidersPage(BasePage):
 
         self.app.push_screen(
             _EditProviderModal(
+                adapters=self._adapter_choices(),
                 key=field.label,
                 type_val=getattr(provider_info, "type", "") or "",
                 base_url=getattr(provider_info, "base_url", "") or "",
@@ -297,9 +337,15 @@ class ProvidersPage(BasePage):
     def action_create_provider(self) -> None:
         """Abre el modal de creación de un provider nuevo."""
         self.app.push_screen(
-            _EditProviderModal(edit_mode=False),
+            _EditProviderModal(adapters=self._adapter_choices(), edit_mode=False),
             self._after_create_provider,
         )
+
+    def _adapter_choices(self) -> tuple[str, ...]:
+        """Adaptadores disponibles para elegir en el modal (autodescubiertos)."""
+        if self._container is None:
+            return ()
+        return self._container.dynamic_enums.get("provider", ())
 
     def _after_create_provider(self, datos: dict[str, Any] | None) -> None:
         if datos is None or self._container is None:

@@ -324,6 +324,13 @@ def iter_declared_secrets(
     ``configured`` = la clave está presente y no vacía. Maneja ``channels``
     (heterogéneo, vía ``channel_schemas``) y cualquier ``dict[str, BaseModel]``
     (homogéneo, ej. ``providers``) recursando por cada entrada presente.
+
+    LÍMITE DELIBERADO: solo cubre secretos del SCHEMA de config (providers,
+    channels, admin, photos.scene...). Los secretos de **tools y skills quedan
+    FUERA por diseño** — su config es conversacional vía el Tool Config Protocol
+    (``config_namespace`` + ``IToolConfigStore``), le da libertad al dev y no hay
+    sección de tools/skills en el setup TUI donde mostrarlos. NO "completar" esto
+    para tools: no es un olvido, es el borde del sistema.
     """
     out: list[DeclaredSecret] = []
     values = values if isinstance(values, dict) else {}

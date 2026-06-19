@@ -20,11 +20,18 @@ class StatusBar(Static):
     }
     """
 
+    _DEFAULT = (
+        "[bold]↑↓[/bold] [dim]navegar[/dim]   "
+        "[bold]enter[/bold] [dim]editar[/dim]   "
+        "[bold]q[/bold] [dim]salir[/dim]   "
+        "[bold]?[/bold] [dim]ayuda[/dim]"
+    )
+
+    def __init__(self, text: str | None = None) -> None:
+        """``text`` permite a cada pantalla declarar sus propios atajos; sin él
+        se usa el conjunto genérico."""
+        super().__init__()
+        self._text = text or self._DEFAULT
+
     def render(self) -> str:  # type: ignore[override]
-        return (
-            "[bold]↑↓[/bold] [dim]navegar[/dim]   "
-            "[bold]enter[/bold] [dim]editar[/dim]   "
-            "[bold]s[/bold] [dim]guardar[/dim]   "
-            "[bold]q[/bold] [dim]salir[/dim]   "
-            "[bold]?[/bold] [dim]ayuda[/dim]"
-        )
+        return self._text

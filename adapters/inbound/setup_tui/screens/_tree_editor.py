@@ -35,7 +35,11 @@ from textual.widgets import Label, Tree
 
 from adapters.inbound.setup_tui.domain.field import Field
 from adapters.inbound.setup_tui.domain.schema_node import SchemaNode, breadcrumb_parts
-from adapters.inbound.setup_tui.widgets.detail_row import DetailRow, field_value_markup
+from adapters.inbound.setup_tui.widgets.detail_row import (
+    DetailRow,
+    field_value_class,
+    field_value_markup,
+)
 from adapters.inbound.setup_tui.widgets.status_bar import StatusBar
 from adapters.inbound.setup_tui.widgets.top_bar import TopBar
 
@@ -162,7 +166,14 @@ class TreeEditorPage(Screen):
         with Horizontal(id="split"):
             yield Tree(self.root_label() if self._safe_label() else "config", id="nav")
             yield VerticalScroll(id="detail")
-        yield StatusBar()
+        yield StatusBar(
+            "[bold]↑↓[/bold] [dim]navegar[/dim]   "
+            "[bold]enter[/bold] [dim]editar/abrir[/dim]   "
+            "[bold]a[/bold] [dim]añadir[/dim]   "
+            "[bold]d[/bold] [dim]eliminar[/dim]   "
+            "[bold]esc[/bold] [dim]volver[/dim]   "
+            "[bold]q[/bold] [dim]salir[/dim]"
+        )
 
     def _safe_label(self) -> bool:
         try:
@@ -208,13 +219,20 @@ class TreeEditorPage(Screen):
 
         crumb = " › ".join(breadcrumb_parts(section, self._root_label_or_empty()))
         await detail.mount(Label(crumb, classes="crumb"))
+        await detail.mount(Label(section.label, classes="title"))
 
         rows: list[DetailRow] = []
         for leaf in section.leaf_children:
             if leaf.field is None:
                 continue
             markup, muted = field_value_markup(leaf.field)
-            row = DetailRow(key=leaf.label, value_markup=markup, is_add=False, muted=muted)
+            row = DetailRow(
+                key=leaf.label,
+                value_markup=markup,
+                is_add=False,
+                muted=muted,
+                value_class=field_value_class(leaf.field),
+            )
             self._detail_items.append(("field", leaf))
             rows.append(row)
 
@@ -377,7 +395,9 @@ class TreeEditorPage(Screen):
     def _refresh_current_row(self, field: Field) -> None:
         if 0 <= self._detail_cursor < len(self._detail_rows):
             markup, muted = field_value_markup(field)
-            self._detail_rows[self._detail_cursor].refresh_value(markup, muted)
+            self._detail_rows[self._detail_cursor].refresh_value(
+                markup, muted, field_value_class(field)
+            )
 
     # ------------------------------------------------------------------
     # Add / Delete

@@ -50,26 +50,32 @@ class DetailRow(Static):
         width: 1fr;
         color: $success;
     }
-    DetailRow > .val.-muted {
-        color: $text-muted;
-    }
+    DetailRow > .val.-muted { color: $text-muted; }
+    DetailRow > .val.-enum { color: $warning; }
+    DetailRow > .val.-bool { color: #41d4c8; }
+    DetailRow > .val.-num { color: #f59b42; }
+    DetailRow > .val.-secret { color: $text-muted; }
     """
 
     selected: reactive[bool] = reactive(False)
 
-    def __init__(self, *, key: str, value_markup: str, is_add: bool, muted: bool) -> None:
+    def __init__(
+        self, *, key: str, value_markup: str, is_add: bool, muted: bool, value_class: str = ""
+    ) -> None:
         super().__init__()
         self._key = key
         self._value_markup = value_markup
         self._is_add = is_add
         self._muted = muted
+        self._value_class = value_class
 
     def compose(self) -> ComposeResult:
         if self._is_add:
             self.add_class("-add")
         yield Label(" ", classes="ind")
         yield Label(self._key, classes="key")
-        yield Label(self._value_markup, classes="val -muted" if self._muted else "val", markup=True)
+        cls = "val -muted" if self._muted else f"val {self._value_class}".strip()
+        yield Label(self._value_markup, classes=cls, markup=True)
 
     def watch_selected(self, value: bool) -> None:
         self.set_class(value, "-selected")
@@ -78,16 +84,34 @@ class DetailRow(Static):
         except Exception:
             pass
 
-    def refresh_value(self, value_markup: str, muted: bool) -> None:
+    def refresh_value(self, value_markup: str, muted: bool, value_class: str = "") -> None:
         """Re-renderiza la columna de valor tras una edición."""
         self._value_markup = value_markup
         self._muted = muted
+        self._value_class = value_class
         try:
             val = self.query_one(".val", Label)
             val.update(value_markup)
-            val.set_class(muted, "-muted")
+            val.set_classes(("val -muted" if muted else f"val {value_class}").strip())
         except Exception:
             pass
+
+
+def field_value_class(field: Field) -> str:
+    """Clase CSS de color para el valor según su tipo (-enum/-bool/-num/-secret)."""
+    if field.is_tristate and field.tristate_state in ("inherit", "override_null"):
+        return "-muted"
+    if field.kind == "enum":
+        return "-enum"
+    if field.kind == "bool":
+        return "-bool"
+    if field.kind == "secret":
+        return "-secret"
+    if isinstance(field.value, bool):
+        return "-bool"
+    if isinstance(field.value, (int, float)):
+        return "-num"
+    return ""
 
 
 def field_value_markup(field: Field) -> tuple[str, bool]:

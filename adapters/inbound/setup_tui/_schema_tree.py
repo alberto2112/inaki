@@ -40,6 +40,7 @@ def build_schema_tree(
     channel_schemas: dict[str, type[BaseModel]] | None = None,
     tristate_paths: frozenset[str] | None = None,
     exclude_keys: frozenset[str] = frozenset(),
+    dynamic_enums: dict[str, tuple[str, ...]] | None = None,
 ) -> SchemaNode:
     """Construye el árbol de config a partir del schema y los valores actuales.
 
@@ -65,6 +66,7 @@ def build_schema_tree(
         channel_schemas=channel_schemas or {},
         tristate_paths=tristate_paths or frozenset(),
         exclude_keys=exclude_keys,
+        dynamic_enums=dynamic_enums or {},
     )
 
 
@@ -77,6 +79,7 @@ def _build_section(
     channel_schemas: dict[str, type[BaseModel]],
     tristate_paths: frozenset[str],
     exclude_keys: frozenset[str],
+    dynamic_enums: dict[str, tuple[str, ...]],
 ) -> SchemaNode:
     """Construye un nodo sección y recursa sobre sus hijos presentes."""
     children: list[SchemaNode] = []
@@ -102,6 +105,7 @@ def _build_section(
                         channel_schemas=channel_schemas,
                         tristate_paths=tristate_paths,
                         exclude_keys=exclude_keys,
+                        dynamic_enums=dynamic_enums,
                     )
                 )
             else:
@@ -123,6 +127,7 @@ def _build_section(
                         channel_schemas=channel_schemas,
                         tristate_paths=tristate_paths,
                         exclude_keys=exclude_keys,
+                        dynamic_enums=dynamic_enums,
                     )
                 )
             else:
@@ -139,6 +144,7 @@ def _build_section(
                     values,
                     path=path,
                     tristate_paths=tristate_paths,
+                    dynamic_enums=dynamic_enums,
                 )
             )
         else:
@@ -185,6 +191,7 @@ def _build_channels_node(
     channel_schemas: dict[str, type[BaseModel]],
     tristate_paths: frozenset[str],
     exclude_keys: frozenset[str],
+    dynamic_enums: dict[str, tuple[str, ...]],
 ) -> SchemaNode:
     """Construye el nodo ``channels``: una sección cuyos hijos son los canales
     presentes (tipados vía ``channel_schemas``) y cuyos ``addable`` son los
@@ -203,6 +210,7 @@ def _build_channels_node(
                 channel_schemas=channel_schemas,
                 tristate_paths=tristate_paths,
                 exclude_keys=exclude_keys,
+                dynamic_enums=dynamic_enums,
             )
         )
 
@@ -230,18 +238,30 @@ def _build_leaf(
     *,
     path: tuple[str, ...],
     tristate_paths: frozenset[str],
+    dynamic_enums: dict[str, tuple[str, ...]],
 ) -> SchemaNode:
-    """Construye un nodo hoja (campo editable) reusando la inferencia de kind."""
+    """Construye un nodo hoja (campo editable) reusando la inferencia de kind.
+
+    Si el nombre del campo está en ``dynamic_enums``, se fuerza ``kind="enum"``
+    con esos choices aunque el schema lo declare como ``str`` libre (ej.
+    ``provider`` → adaptadores autodescubiertos). Los tri-estado no se tocan.
+    """
     unwrapped = _unwrap_optional(annotation)
     kind = _infer_kind(name, annotation)
     enum_choices = _literal_choices(unwrapped) if kind == "enum" else None
+
+    ruta_dotted = ".".join(path + (name,))
+    es_tristate = ruta_dotted in tristate_paths
+    if name in dynamic_enums and not es_tristate:
+        kind = "enum"
+        enum_choices = dynamic_enums[name]
+
     default_str = _default_as_str(field_info)
 
     raw = values.get(name, "")
     value = raw if raw is not None else ""
 
-    ruta = ".".join(path + (name,))
-    is_tristate = ruta in tristate_paths
+    is_tristate = es_tristate
     tristate_state = None
     if is_tristate:
         if name not in values:

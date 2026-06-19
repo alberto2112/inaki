@@ -192,6 +192,39 @@ def test_tristate_se_marca_por_path_dotted():
     assert provider.field.tristate_state == "override_value"  # type: ignore[union-attr]
 
 
+def test_dynamic_enums_fuerza_enum_en_provider():
+    """Un campo str libre cuyo nombre está en dynamic_enums se vuelve enum."""
+    tree = build_schema_tree(
+        _Agent,
+        {"id": "a", "name": "N", "llm": {"provider": "openai", "model": "x"}},
+        root_label="r",
+        channel_schemas=_CHANNEL_SCHEMAS,
+        exclude_keys=frozenset({"providers"}),
+        dynamic_enums={"provider": ("openai", "anthropic", "groq")},
+    )
+    provider = _hijo(_hijo(tree, "llm"), "provider")
+    assert provider.field.kind == "enum"  # type: ignore[union-attr]
+    assert provider.field.enum_choices == ("openai", "anthropic", "groq")  # type: ignore[union-attr]
+    # 'model' no está en dynamic_enums → sigue libre (scalar)
+    assert _hijo(_hijo(tree, "llm"), "model").field.kind == "scalar"  # type: ignore[union-attr]
+
+
+def test_tristate_gana_sobre_dynamic_enum():
+    """Un campo tri-estado (memories.llm.provider) NO se convierte en enum aunque
+    'provider' esté en dynamic_enums — el tri-estado tiene prioridad."""
+    tree = build_schema_tree(
+        _Agent,
+        {"id": "a", "name": "N", "llm": {"provider": "openai"}},
+        root_label="r",
+        channel_schemas=_CHANNEL_SCHEMAS,
+        tristate_paths=frozenset({"llm.provider"}),
+        dynamic_enums={"provider": ("openai", "anthropic")},
+    )
+    provider = _hijo(_hijo(tree, "llm"), "provider")
+    assert provider.field.is_tristate is True  # type: ignore[union-attr]
+    assert provider.field.kind != "enum"  # type: ignore[union-attr]
+
+
 def test_exclude_keys_oculta_providers():
     tree = build_schema_tree(
         _Agent,

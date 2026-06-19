@@ -63,6 +63,7 @@ class GlobalPage(TreeEditorPage):
             datos,
             root_label="global",
             exclude_keys=_EXCLUDE,
+            dynamic_enums=self._container.dynamic_enums,
         )
 
     def persist_field_saved(self, leaf: SchemaNode, field: "Field") -> None:

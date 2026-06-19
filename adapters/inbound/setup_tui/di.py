@@ -58,6 +58,11 @@ class SetupContainer:
     # solo). Lo inyecta el composition root; el árbol de schema lo usa para tratar
     # cada canal como sub-sección tipada. Vacío = sin tratamiento especial.
     channel_schemas: dict[str, type[BaseModel]]
+    # Choices dinámicos por NOMBRE de campo, para campos cuyo conjunto de valores
+    # válidos se conoce en runtime pero no está en el schema como ``Literal``
+    # (ej. ``provider`` → adaptadores autodescubiertos por las factories). El
+    # composition root los computa e inyecta; el árbol marca esos campos como enum.
+    dynamic_enums: dict[str, tuple[str, ...]]
 
 
 def build_setup_container(
@@ -65,6 +70,7 @@ def build_setup_container(
     global_schema: type[BaseModel],
     agent_schema: type[BaseModel],
     channel_schemas: dict[str, type[BaseModel]] | None = None,
+    dynamic_enums: dict[str, tuple[str, ...]] | None = None,
 ) -> SetupContainer:
     """
     Construye el contenedor offline para la TUI de setup.
@@ -78,6 +84,8 @@ def build_setup_container(
         channel_schemas: Registry ``nombre_canal → modelo`` (ej.
                        ``{"telegram": TelegramChannelConfig}``) para resolver el
                        dict ``channels`` del agente. ``None`` → ``{}``.
+        dynamic_enums: Choices por nombre de campo (ej. ``{"provider": (...)}``)
+                       computados en runtime. ``None`` → ``{}``.
 
     Returns:
         ``SetupContainer`` con todos los use cases cableados.
@@ -98,4 +106,5 @@ def build_setup_container(
         global_schema=global_schema,
         agent_schema=agent_schema,
         channel_schemas=channel_schemas or {},
+        dynamic_enums=dynamic_enums or {},
     )

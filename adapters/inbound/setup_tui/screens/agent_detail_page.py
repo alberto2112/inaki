@@ -99,6 +99,7 @@ class AgentDetailPage(TreeEditorPage):
             channel_schemas=self._container.channel_schemas,
             tristate_paths=_TRISTATE_PATHS,
             exclude_keys=_EXCLUDE,
+            dynamic_enums=self._container.dynamic_enums,
         )
 
     def persist_field_saved(self, leaf: SchemaNode, field: "Field") -> None:

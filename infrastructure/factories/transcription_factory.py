@@ -63,6 +63,12 @@ class TranscriptionProviderFactory:
         )
 
     @classmethod
+    def available(cls) -> list[str]:
+        """Nombres de los adaptadores de transcripción disponibles (autodescubiertos)."""
+        cls._load()
+        return sorted(cls._registry)
+
+    @classmethod
     def _resolve_adapter(
         cls, provider_key: str, type_override: str | None
     ) -> type[BaseTranscriptionProvider]:

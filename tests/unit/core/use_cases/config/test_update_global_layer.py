@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from core.ports.config_repository import IConfigRepository, LayerName
+from core.use_cases.config._merge import CampoTriestado, TristadoValor
 from core.use_cases.config.update_global_layer import UpdateGlobalLayerUseCase
 
 
@@ -48,6 +49,41 @@ def test_merge_sobre_datos_existentes(repo: MagicMock) -> None:
     assert datos_escritos["llm"]["model"] == "nuevo"
     assert datos_escritos["llm"]["temperature"] == 0.7
     assert datos_escritos["app"]["name"] == "Inaki"
+
+
+def test_borra_clave_con_campo_triestado_inherit(repo: MagicMock) -> None:
+    """Capacidad nueva: la capa global ahora soporta borrar una clave vía
+    ``CampoTriestado(INHERIT)`` (antes solo el carril de agente lo hacía)."""
+    repo.read_layer.return_value = {"llm": {"model": "x", "temperature": 0.7}}
+    uc = UpdateGlobalLayerUseCase(repo)
+    uc.execute({"llm": {"temperature": CampoTriestado(TristadoValor.INHERIT)}})
+
+    escritos = repo.write_layer.call_args[0][1]
+    assert "temperature" not in escritos["llm"]
+    assert escritos["llm"]["model"] == "x"
+
+
+def test_borra_seccion_anidada_completa(repo: MagicMock) -> None:
+    """Borrar una sub-sección entera poda solo esa rama, deja el resto intacto."""
+    repo.read_layer.return_value = {
+        "channels": {"telegram": {"token": "T", "groups": {"behavior": "autonomous"}}}
+    }
+    uc = UpdateGlobalLayerUseCase(repo)
+    uc.execute({"channels": {"telegram": {"groups": CampoTriestado(TristadoValor.INHERIT)}}})
+
+    telegram = repo.write_layer.call_args[0][1]["channels"]["telegram"]
+    assert "groups" not in telegram
+    assert telegram["token"] == "T"
+
+
+def test_anade_seccion_vacia(repo: MagicMock) -> None:
+    """Añadir una sección la crea como ``{}`` (defaults los aplica Pydantic al cargar)."""
+    repo.read_layer.return_value = {}
+    uc = UpdateGlobalLayerUseCase(repo)
+    uc.execute({"channels": {"telegram": {}}})
+
+    escritos = repo.write_layer.call_args[0][1]
+    assert escritos["channels"]["telegram"] == {}
 
 
 def test_capa_de_agente_lanza_error(repo: MagicMock) -> None:

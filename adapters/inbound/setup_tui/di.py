@@ -49,16 +49,22 @@ class SetupContainer:
     upsert_provider: UpsertProviderUseCase
     delete_provider: DeleteProviderUseCase
     # Clases de schema Pydantic inyectadas por el composition root (inaki/).
-    # Los screens las usan para introspección (``sections_for_model``) y
+    # Los screens las usan para introspección (``build_schema_tree``) y
     # validación — así el setup_tui NO importa ``infrastructure.config``.
     global_schema: type[BaseModel]
     agent_schema: type[BaseModel]
+    # Registry ``nombre_canal → modelo`` para resolver el dict ``channels`` del
+    # agente (``AgentConfig.channels`` es ``dict[str, dict]``, no introspectable
+    # solo). Lo inyecta el composition root; el árbol de schema lo usa para tratar
+    # cada canal como sub-sección tipada. Vacío = sin tratamiento especial.
+    channel_schemas: dict[str, type[BaseModel]]
 
 
 def build_setup_container(
     config_dir: Path | None,
     global_schema: type[BaseModel],
     agent_schema: type[BaseModel],
+    channel_schemas: dict[str, type[BaseModel]] | None = None,
 ) -> SetupContainer:
     """
     Construye el contenedor offline para la TUI de setup.
@@ -69,6 +75,9 @@ def build_setup_container(
         global_schema: clase Pydantic ``GlobalConfig`` — la inyecta el
                        composition root (el setup_tui no importa infrastructure).
         agent_schema: clase Pydantic ``AgentConfig`` — ídem.
+        channel_schemas: Registry ``nombre_canal → modelo`` (ej.
+                       ``{"telegram": TelegramChannelConfig}``) para resolver el
+                       dict ``channels`` del agente. ``None`` → ``{}``.
 
     Returns:
         ``SetupContainer`` con todos los use cases cableados.
@@ -88,4 +97,5 @@ def build_setup_container(
         delete_provider=DeleteProviderUseCase(repo),
         global_schema=global_schema,
         agent_schema=agent_schema,
+        channel_schemas=channel_schemas or {},
     )

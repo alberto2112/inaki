@@ -9,39 +9,22 @@ Gestiona el tri-estado de ``memory.llm.*`` (Inherit / Override / Override-to-nul
 
 from __future__ import annotations
 
-from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from core.ports.config_repository import LayerName
+from core.use_cases.config._merge import (
+    CampoTriestado,
+    TristadoValor,
+    deep_merge_con_eliminaciones,
+    resolver_tristados,
+)
 
 if TYPE_CHECKING:
     from core.ports.config_repository import IConfigRepository
 
-# Sentinel que diferencia "no tocar este campo" de "borrar este campo".
-_SENTINEL_ELIMINAR = object()
-
-
-class TristadoValor(str, Enum):
-    """
-    Tri-estado para campos que distinguen ausente vs null vs valor explícito.
-
-    Aplica principalmente a ``memory.llm.*`` en la config de agentes:
-    - ``INHERIT`` → campo ausente del YAML (hereda del LLM base del agente).
-    - ``OVERRIDE_VALOR`` → campo presente con valor explícito.
-    - ``OVERRIDE_NULL`` → campo presente con valor ``null`` (pisa con None explícito).
-    """
-
-    INHERIT = "inherit"
-    OVERRIDE_VALOR = "valor"
-    OVERRIDE_NULL = "null"
-
-
-class CampoTriestado:
-    """Envuelve un valor con su modo tri-estado."""
-
-    def __init__(self, modo: TristadoValor, valor: Any = None) -> None:
-        self.modo = modo
-        self.valor = valor
+# Re-exportados desde ``_merge`` para no romper imports existentes
+# (``setup_tui/screens/agent_detail_page.py`` y los tests los toman de acá).
+__all__ = ["CampoTriestado", "TristadoValor", "UpdateAgentLayerUseCase"]
 
 
 class UpdateAgentLayerUseCase:
@@ -88,46 +71,6 @@ class UpdateAgentLayerUseCase:
             )
 
         datos_actuales = self._repo.read_layer(layer, agent_id=agent_id)
-        datos_resueltos = _resolver_tristados(cambios)
-        datos_nuevos = _deep_merge_con_eliminaciones(datos_actuales, datos_resueltos)
+        datos_resueltos = resolver_tristados(cambios)
+        datos_nuevos = deep_merge_con_eliminaciones(datos_actuales, datos_resueltos)
         self._repo.write_layer(layer, datos_nuevos, agent_id=agent_id)
-
-
-def _resolver_tristados(cambios: dict[str, Any]) -> dict[str, Any]:
-    """
-    Recorre ``cambios`` y reemplaza ``CampoTriestado`` por su valor efectivo
-    o por ``_SENTINEL_ELIMINAR`` si el modo es INHERIT.
-    """
-    resultado: dict[str, Any] = {}
-    for k, v in cambios.items():
-        if isinstance(v, CampoTriestado):
-            if v.modo == TristadoValor.INHERIT:
-                resultado[k] = _SENTINEL_ELIMINAR
-            elif v.modo == TristadoValor.OVERRIDE_NULL:
-                resultado[k] = None
-            else:
-                resultado[k] = v.valor
-        elif isinstance(v, dict):
-            resultado[k] = _resolver_tristados(v)
-        else:
-            resultado[k] = v
-    return resultado
-
-
-def _deep_merge_con_eliminaciones(base: dict, override: dict) -> dict:
-    """
-    Merge recursivo que respeta el sentinel de eliminación.
-
-    - Si el valor en override es ``_SENTINEL_ELIMINAR`` → elimina la clave de base.
-    - Si es dict en ambos → merge recursivo.
-    - Caso contrario → override pisa base.
-    """
-    result = dict(base)
-    for key, value in override.items():
-        if value is _SENTINEL_ELIMINAR:
-            result.pop(key, None)
-        elif isinstance(value, dict) and isinstance(result.get(key), dict):
-            result[key] = _deep_merge_con_eliminaciones(result[key], value)
-        else:
-            result[key] = value
-    return result

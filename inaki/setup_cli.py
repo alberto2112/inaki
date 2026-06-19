@@ -55,12 +55,15 @@ def _lanzar_tui() -> None:
     """
     from adapters.inbound.setup_tui.app import SetupApp
     from adapters.inbound.setup_tui.di import build_setup_container
-    from infrastructure.config import AgentConfig, GlobalConfig
+    from infrastructure.config import AgentConfig, GlobalConfig, TelegramChannelConfig
 
     container = build_setup_container(
         config_dir=None,
         global_schema=GlobalConfig,
         agent_schema=AgentConfig,
+        # Registry de canales para introspeccionar el dict ``channels`` del agente.
+        # Al sumar un canal nuevo (slack, etc.) agregar su modelo acá.
+        channel_schemas={"telegram": TelegramChannelConfig},
     )
     app = SetupApp(container)
     app.run()

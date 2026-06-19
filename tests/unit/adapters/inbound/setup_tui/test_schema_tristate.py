@@ -9,7 +9,19 @@ Verifica que:
 from __future__ import annotations
 
 from adapters.inbound.setup_tui._schema import sections_for_model
-from adapters.inbound.setup_tui.screens.agent_detail_page import _TRISTATE_PATHS
+
+# Paths en formato de SECCIÓN (uppercase) que consume ``sections_for_model``.
+# (La página v3 usa paths dotted lowercase con ``build_schema_tree``; este test
+# cubre el mecanismo plano legacy de ``sections_for_model``.)
+_TRISTATE_PATHS = frozenset(
+    {
+        "MEMORIES.LLM.provider",
+        "MEMORIES.LLM.model",
+        "MEMORIES.LLM.temperature",
+        "MEMORIES.LLM.max_tokens",
+        "MEMORIES.LLM.reasoning_effort",
+    }
+)
 
 
 class TestSectionsForModelTristateAgentConfig:

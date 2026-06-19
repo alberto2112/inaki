@@ -1,141 +1,127 @@
-"""GlobalPage — edición de la configuración global (global.yaml + global.secrets.yaml)."""
+"""GlobalPage — edición de la config global (global.yaml + global.secrets.yaml).
+
+Hereda ``TreeEditorPage`` (split-pane TUI v3). El árbol cuelga las secciones
+presentes en los YAML globales; el panel edita los campos hoja. Solo se pinta lo
+presente. ``providers`` se excluye (tiene su propia página). ``channels`` global
+es un ``BaseModel`` tipado → se introspecciona normal (sin ``channel_schemas``).
+"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from textual.app import ComposeResult
-
-from adapters.inbound.setup_tui._cambios import build_cambios
-from adapters.inbound.setup_tui._schema import sections_for_model
-from adapters.inbound.setup_tui.domain.field import Field
-from adapters.inbound.setup_tui.screens._base import BasePage
-from adapters.inbound.setup_tui.widgets.config_row import ConfigRow
-from adapters.inbound.setup_tui.widgets.section_header import SectionHeader
+from adapters.inbound.setup_tui._cambios import cambios_anidados, eliminar_en_path
+from adapters.inbound.setup_tui._schema import _is_secret
+from adapters.inbound.setup_tui._schema_tree import build_schema_tree
+from adapters.inbound.setup_tui.domain.schema_node import SchemaNode
+from adapters.inbound.setup_tui.screens._tree_editor import TreeEditorPage
+from adapters.inbound.setup_tui.screens._warnings import warn_on_invalid_refs
+from core.ports.config_repository import LayerName
+from core.use_cases.config._merge import (
+    CampoTriestado,
+    TristadoValor,
+    deep_merge_con_eliminaciones,
+)
 
 if TYPE_CHECKING:
     from adapters.inbound.setup_tui.di import SetupContainer
+    from adapters.inbound.setup_tui.domain.field import Field
+    from adapters.inbound.setup_tui.domain.schema_node import AddableOption
+    from adapters.inbound.setup_tui.modals.tristate import TristateResult
 
-# Mapeo de section_name → clave top-level del YAML global.
-# Las claves son los nombres exactos que emite ``sections_for_model``.
-# Las sub-secciones anidadas (ej. MEMORIES.LLM) se mapean a la misma clave
-# top-level que su padre porque el repo las escribe como dicts anidados.
-# build_cambios solo consulta el primer segmento, así que la entrada MEMORIES
-# cubre LLM/CONSOLIDATION/RECONCILIATION.
-_SECTION_TO_YAML_KEY: dict[str, str] = {
-    "APP": "app",
-    "LLM": "llm",
-    "EMBEDDING": "embedding",
-    "MEMORIES": "memories",
-    "CHAT_HISTORY": "chat_history",
-    "SKILLS": "skills",
-    "TOOLS": "tools",
-    "SEMANTIC_ROUTING": "semantic_routing",
-    "SCHEDULER": "scheduler",
-    "SCHEDULER.CHANNEL_FALLBACK": "scheduler",
-    "WORKSPACE": "workspace",
-    "DELEGATION": "delegation",
-    "ADMIN": "admin",
-    "USER": "user",
-    "TRANSCRIPTION": "transcription",
-    "KNOWLEDGE": "knowledge",
-    "PHOTOS": "photos",
-    "PHOTOS.FACES": "photos",
-    "PHOTOS.SCENE": "photos",
-    "PHOTOS.DEDUP": "photos",
-}
+_EXCLUDE = frozenset({"providers"})
 
 
-class GlobalPage(BasePage):
-    """Página de edición de configuración global.
+class GlobalPage(TreeEditorPage):
+    """Página de edición de configuración global."""
 
-    Carga el config efectivo mergeado (global.yaml + global.secrets.yaml),
-    introspecciona ``GlobalConfig`` vía ``_schema.py`` para generar las secciones
-    y los ``Field``, y persiste cada edición inmediatamente al repo.
-    """
-
-    def __init__(self, container: "SetupContainer | None", **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, container: "SetupContainer | None", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._container = container
-        # Mapeo field → (section_name, field_name) para construir el cambio al guardar
-        self._field_section: dict[int, tuple[str, str]] = {}
+
+    # ------------------------------------------------------------------
+    # Hooks de TreeEditorPage
+    # ------------------------------------------------------------------
+
+    def root_label(self) -> str:
+        return "global"
 
     def breadcrumb(self) -> str:
         return "inaki / config / global"
 
-    def compose_body(self) -> ComposeResult:
-        from textual.widgets import Label
-
+    def reload_root(self) -> SchemaNode:
         if self._container is None:
-            yield SectionHeader("ERROR AL CARGAR CONFIG")
-            yield Label("  [red]Sin contenedor de configuración[/red]", markup=True)
-            return
-
-        # Cargar valores actuales
-        current: dict[str, Any] = {}
-        error_msg: str | None = None
+            return SchemaNode(path=(), label="global", is_section=True)
         try:
-            efectiva = self._container.get_effective_config.execute()
-            current = efectiva.datos
-        except Exception as exc:
-            error_msg = f"{type(exc).__name__}: {exc}"
-
-        # Si la lectura falló (ej. YAML malformado, claves duplicadas) mostramos
-        # el error en lugar de un schema con todos los campos vacíos.
-        if error_msg is not None:
-            yield SectionHeader("ERROR AL CARGAR CONFIG")
-            yield Label(f"  [red]{error_msg}[/red]", markup=True)
-            yield Label(
-                "  [dim]Corregí el archivo YAML a mano y volvé a abrir esta pantalla.[/dim]",
-                markup=True,
-            )
-            return
-
-        # Generar secciones con el schema mapper (clase inyectada vía el container)
-        sections = sections_for_model(self._container.global_schema, current, section_prefix="APP")
-
-        for section_name, fields in sections:
-            yield SectionHeader(section_name)
-            for field in fields:
-                # Registrar a qué sección pertenece para el guardado
-                self._field_section[id(field)] = (section_name, field.label)
-                row = ConfigRow(field)
-                yield row
-
-    def _on_field_saved(self, field: Field) -> None:
-        """Persiste el cambio inmediatamente en la capa global correspondiente."""
-        if self._container is None:
-            return
-
-        from core.ports.config_repository import LayerName
-
-        section_name, field_name = self._field_section.get(id(field), ("", field.label))
-
-        # Determinar la capa: secrets si el kind es "secret", sino GLOBAL
-        layer = LayerName.GLOBAL_SECRETS if field.kind == "secret" else LayerName.GLOBAL
-
-        # build_cambios respeta secciones anidadas: MEMORIES.LLM → {memories: {llm: ...}}
-        cambios = build_cambios(
-            section_name=section_name,
-            field_name=field_name,
-            value=field.value,
-            section_to_yaml=_SECTION_TO_YAML_KEY,
+            base = self._container.repo.read_layer(LayerName.GLOBAL)
+            secrets = self._container.repo.read_layer(LayerName.GLOBAL_SECRETS)
+            datos = deep_merge_con_eliminaciones(base, secrets)
+        except Exception:
+            datos = {}
+        return build_schema_tree(
+            self._container.global_schema,
+            datos,
+            root_label="global",
+            exclude_keys=_EXCLUDE,
         )
 
+    def persist_field_saved(self, leaf: SchemaNode, field: "Field") -> None:
+        layer = LayerName.GLOBAL_SECRETS if field.kind == "secret" else LayerName.GLOBAL
+        self._aplicar(cambios_anidados(leaf.path, field.value), layer)
+
+    def persist_tristate_saved(
+        self, leaf: SchemaNode, field: "Field", result: "TristateResult"
+    ) -> None:
+        # La config global no declara campos tri-estado, pero respetamos el
+        # contrato por si una sub-sección los introdujera en el futuro.
+        if result.mode == "inherit":
+            campo: Any = CampoTriestado(TristadoValor.INHERIT)
+        elif result.mode == "override_null":
+            campo = CampoTriestado(TristadoValor.OVERRIDE_NULL)
+        else:
+            campo = CampoTriestado(TristadoValor.OVERRIDE_VALOR, result.value or "")
+        self._aplicar(cambios_anidados(leaf.path, campo), LayerName.GLOBAL)
+
+    def persist_add(self, parent: SchemaNode, option: "AddableOption") -> None:
+        valor: Any = {} if option.is_section else option.default_value
+        layer = (
+            LayerName.GLOBAL_SECRETS
+            if (not option.is_section and _is_secret(option.key))
+            else LayerName.GLOBAL
+        )
+        self._aplicar(cambios_anidados(parent.path + (option.key,), valor), layer)
+
+    def persist_delete(self, node: SchemaNode) -> None:
+        if self._container is None:
+            return
+        cambios = eliminar_en_path(node.path)
+        for layer in (LayerName.GLOBAL, LayerName.GLOBAL_SECRETS):
+            try:
+                datos = self._container.repo.read_layer(layer)
+            except Exception:
+                continue
+            if _existe_path(datos, node.path):
+                self._aplicar(cambios, layer)
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _aplicar(self, cambios: dict[str, Any], layer: LayerName) -> None:
+        if self._container is None:
+            return
         try:
             self._container.update_global_layer.execute(cambios=cambios, layer=layer)
-            self.app.notify(
-                f"guardado: {field_name}",
-                title="global config",
-                timeout=2,
-            )
-            # Post-save: avisar si el cambio rompió alguna referencia cruzada
-            # (default_agent, llm.provider, embedding.provider, etc.).
-            self._warn_on_invalid_refs()
+            warn_on_invalid_refs(self._container, self.app.notify)
         except Exception as exc:
-            self.app.notify(
-                f"error al guardar {field_name}: {exc}",
-                title="error",
-                severity="error",
-                timeout=4,
-            )
+            self.app.notify(f"error al guardar: {exc}", title="error", severity="error", timeout=4)
+
+
+def _existe_path(datos: dict[str, Any], path: tuple[str, ...]) -> bool:
+    """``True`` si ``path`` está presente en el dict ``datos`` (clave a clave)."""
+    cur: Any = datos
+    for k in path:
+        if not isinstance(cur, dict) or k not in cur:
+            return False
+        cur = cur[k]
+    return True

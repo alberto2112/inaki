@@ -13,6 +13,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from core.ports.config_repository import LayerName
+from core.use_cases.config._merge import (
+    deep_merge_con_eliminaciones,
+    resolver_tristados,
+)
 
 if TYPE_CHECKING:
     from core.ports.config_repository import IConfigRepository
@@ -41,12 +45,15 @@ class UpdateGlobalLayerUseCase:
         """
         Escribe ``cambios`` en la capa ``layer``.
 
-        Lee la capa actual, aplica los cambios (merge superficial sobre las
-        secciones top-level modificadas) y persiste.
+        Lee la capa actual, aplica un merge recursivo con los cambios (soporta
+        ``CampoTriestado(INHERIT)`` para ELIMINAR una clave, igual que el carril
+        de agente) y persiste.
 
         Args:
             cambios: Dict con los campos a actualizar. El nivel top-level
                      debe coincidir con las secciones del YAML (``app``, ``llm``, etc.).
+                     Un valor ``CampoTriestado(TristadoValor.INHERIT)`` elimina
+                     esa clave del YAML.
             layer: Capa destino. Solo ``GLOBAL`` o ``GLOBAL_SECRETS`` son válidos aquí.
 
         Raises:
@@ -58,16 +65,6 @@ class UpdateGlobalLayerUseCase:
             )
 
         datos_actuales = self._repo.read_layer(layer)
-        datos_nuevos = _deep_merge(datos_actuales, cambios)
+        datos_resueltos = resolver_tristados(cambios)
+        datos_nuevos = deep_merge_con_eliminaciones(datos_actuales, datos_resueltos)
         self._repo.write_layer(layer, datos_nuevos)
-
-
-def _deep_merge(base: dict, override: dict) -> dict:
-    """Merge recursivo campo a campo. Override tiene prioridad."""
-    result = dict(base)
-    for key, value in override.items():
-        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = _deep_merge(result[key], value)
-        else:
-            result[key] = value
-    return result

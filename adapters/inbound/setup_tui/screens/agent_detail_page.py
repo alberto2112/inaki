@@ -1,71 +1,55 @@
-"""AgentDetailPage — vista detallada y edición de la config de un agente."""
+"""AgentDetailPage — edición de un agente/sub-agente (split-pane TUI v3).
+
+Hereda ``TreeEditorPage``: el árbol cuelga las secciones presentes en
+``agents/{id}.yaml`` (+ secrets) y el panel edita los campos hoja. Solo se pinta
+lo presente; añadir/eliminar secciones y campos se hace con los modales.
+
+El dict ``channels`` se introspecciona vía ``channel_schemas`` del container
+(``AgentConfig.channels`` es ``dict[str, dict]``, no tipado). ``providers`` se
+excluye del árbol — tiene su propia página.
+"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from textual.app import ComposeResult
-
-from adapters.inbound.setup_tui._cambios import build_cambios
-from adapters.inbound.setup_tui._schema import sections_for_model
-from adapters.inbound.setup_tui.domain.field import Field
-from adapters.inbound.setup_tui.screens._base import BasePage
-from adapters.inbound.setup_tui.widgets.config_row import ConfigRow
-from adapters.inbound.setup_tui.widgets.section_header import SectionHeader
+from adapters.inbound.setup_tui._cambios import cambios_anidados, eliminar_en_path
+from adapters.inbound.setup_tui._schema import _is_secret
+from adapters.inbound.setup_tui._schema_tree import build_schema_tree
+from adapters.inbound.setup_tui.domain.schema_node import SchemaNode
+from adapters.inbound.setup_tui.screens._tree_editor import TreeEditorPage
+from adapters.inbound.setup_tui.screens._warnings import warn_on_invalid_refs
 from core.ports.config_repository import LayerName
+from core.use_cases.config._merge import (
+    CampoTriestado,
+    TristadoValor,
+    deep_merge_con_eliminaciones,
+)
 
 if TYPE_CHECKING:
     from adapters.inbound.setup_tui.di import SetupContainer
+    from adapters.inbound.setup_tui.domain.field import Field
+    from adapters.inbound.setup_tui.domain.schema_node import AddableOption
+    from adapters.inbound.setup_tui.modals.tristate import TristateResult
 
-# Mapeo de section_name → clave top-level del YAML de agente.
-# Las claves son los nombres exactos que emite ``sections_for_model``.
-# Las secciones anidadas (ej. MEMORIES.LLM) se mapean a la misma clave
-# top-level que su padre porque el repo las escribe como dicts anidados.
-# build_cambios solo consulta el primer segmento (parts[0]), así que con la
-# entrada del padre MEMORIES alcanza para LLM/CONSOLIDATION/RECONCILIATION.
-_SECTION_TO_YAML_KEY: dict[str, str] = {
-    # Sección raíz del AgentConfig (campos simples: id, name, description, system_prompt)
-    "AGENTCONFIG": "agent",
-    # Sub-secciones generadas por sections_for_model (nombre = field name UPPER)
-    "LLM": "llm",
-    "EMBEDDING": "embedding",
-    "MEMORIES": "memories",
-    "CHAT_HISTORY": "chat_history",
-    "SKILLS": "skills",
-    "TOOLS": "tools",
-    "SEMANTIC_ROUTING": "semantic_routing",
-    "WORKSPACE": "workspace",
-    "DELEGATION": "delegation",
-    "TRANSCRIPTION": "transcription",
-}
-
-# Rutas triestadas: campos de memories.llm que el agente puede heredar del global.
-# El prefijo MEMORIES.LLM coincide con el nombre de sección generado por el schema mapper.
+# Sub-campos de memories.llm que usan tri-estado (heredar / valor / null).
+# Paths dotted lowercase reales del schema (AgentConfig.memories.llm.*).
 _TRISTATE_PATHS: frozenset[str] = frozenset(
     {
-        "MEMORIES.LLM.provider",
-        "MEMORIES.LLM.model",
-        "MEMORIES.LLM.temperature",
-        "MEMORIES.LLM.max_tokens",
-        "MEMORIES.LLM.reasoning_effort",
+        "memories.llm.provider",
+        "memories.llm.model",
+        "memories.llm.temperature",
+        "memories.llm.max_tokens",
+        "memories.llm.reasoning_effort",
     }
 )
 
-# Campos raíz del AgentConfig que se mapean directamente (sin sección contenedora)
-_ROOT_SECTION_FIELDS = {"id", "name", "description", "system_prompt"}
+# Secciones del schema que NO se editan en esta página (tienen su propia vista).
+_EXCLUDE = frozenset({"providers"})
 
 
-class AgentDetailPage(BasePage):
-    """Página de edición del config de un agente específico.
-
-    Carga la capa principal del agente (``agents/{id}.yaml`` o, para
-    sub-agentes, ``agents/sub-agents/{id}.yaml``), la introspecciona vía el
-    schema mapper y permite editar campo por campo mediante modales.
-
-    Las ediciones se persisten inmediatamente en la capa correcta:
-    - Campos ``secret`` → capa de secrets (``AGENT_SECRETS`` / ``SUB_AGENT_SECRETS``)
-    - Resto → capa principal (``AGENT`` / ``SUB_AGENT``)
-    """
+class AgentDetailPage(TreeEditorPage):
+    """Página de edición del config de un agente específico (regular o sub-agente)."""
 
     def __init__(
         self,
@@ -78,8 +62,6 @@ class AgentDetailPage(BasePage):
         self._container = container
         self._agent_id = agent_id
         self._is_sub_agent = is_sub_agent
-        # Mapeo field → (section_name, field_name) para el guardado
-        self._field_section: dict[int, tuple[str, str]] = {}
 
     @property
     def _main_layer(self) -> LayerName:
@@ -89,146 +71,112 @@ class AgentDetailPage(BasePage):
     def _secrets_layer(self) -> LayerName:
         return LayerName.SUB_AGENT_SECRETS if self._is_sub_agent else LayerName.AGENT_SECRETS
 
+    # ------------------------------------------------------------------
+    # Hooks de TreeEditorPage
+    # ------------------------------------------------------------------
+
+    def root_label(self) -> str:
+        return self._agent_id
+
     def breadcrumb(self) -> str:
         base = "sub-agents" if self._is_sub_agent else "agents"
         return f"inaki / config / {base} / {self._agent_id}"
 
-    def compose_body(self) -> ComposeResult:
-        from textual.widgets import Label
-
+    def reload_root(self) -> SchemaNode:
         if self._container is None:
-            yield SectionHeader(f"ERROR AL CARGAR AGENT {self._agent_id}")
-            yield Label("  [red]Sin contenedor de configuración[/red]", markup=True)
-            return
-
-        current: dict[str, Any] = {}
-        error_msg: str | None = None
+            return SchemaNode(path=(), label=self._agent_id, is_section=True)
         try:
-            current = self._container.repo.read_layer(self._main_layer, agent_id=self._agent_id)
-        except Exception as exc:
-            error_msg = f"{type(exc).__name__}: {exc}"
-
-        if error_msg is not None:
-            yield SectionHeader(f"ERROR AL CARGAR AGENT {self._agent_id}")
-            yield Label(f"  [red]{error_msg}[/red]", markup=True)
-            yield Label(
-                "  [dim]Corregí el archivo YAML a mano y volvé a abrir esta pantalla.[/dim]",
-                markup=True,
-            )
-            return
-
-        # Generar secciones usando el schema de agente (clase inyectada vía el container).
-        # Los campos de memories.llm se marcan como triestados para que el usuario
-        # pueda elegir entre heredar del global, valor propio o null explícito.
-        sections = sections_for_model(
-            self._container.agent_schema, current, tristate_paths=_TRISTATE_PATHS
+            main = self._container.repo.read_layer(self._main_layer, agent_id=self._agent_id)
+            secrets = self._container.repo.read_layer(self._secrets_layer, agent_id=self._agent_id)
+            datos = deep_merge_con_eliminaciones(main, secrets)
+        except Exception:
+            # YAML roto: árbol vacío en vez de crash (el usuario corrige a mano).
+            datos = {}
+        return build_schema_tree(
+            self._container.agent_schema,
+            datos,
+            root_label=self._agent_id,
+            channel_schemas=self._container.channel_schemas,
+            tristate_paths=_TRISTATE_PATHS,
+            exclude_keys=_EXCLUDE,
         )
 
-        for section_name, fields in sections:
-            yield SectionHeader(section_name)
-            for field in fields:
-                self._field_section[id(field)] = (section_name, field.label)
-                yield ConfigRow(field)
-
-    def _on_field_saved(self, field: Field) -> None:
-        """Persiste el cambio en la capa del agente correspondiente."""
-        if self._container is None:
-            return
-
-        section_name, field_name = self._field_section.get(id(field), ("", field.label))
-
-        # Determinar la capa: secrets para campos secret, sino la capa principal
+    def persist_field_saved(self, leaf: SchemaNode, field: "Field") -> None:
         layer = self._secrets_layer if field.kind == "secret" else self._main_layer
+        self._aplicar(cambios_anidados(leaf.path, field.value), layer)
 
-        # build_cambios respeta:
-        #   - root fields (id/name/description/system_prompt) → flat {field: value}
-        #   - secciones anidadas (MEMORIES.LLM) → {memories: {llm: {field: value}}}
-        cambios: dict[str, Any] = build_cambios(
-            section_name=section_name,
-            field_name=field_name,
-            value=field.value,
-            section_to_yaml=_SECTION_TO_YAML_KEY,
-            root_fields=_ROOT_SECTION_FIELDS,
-        )
-
-        try:
-            self._container.update_agent_layer.execute(
-                agent_id=self._agent_id,
-                cambios=cambios,
-                layer=layer,
-            )
-            self.app.notify(
-                f"guardado: {field_name}",
-                title=f"agente {self._agent_id}",
-                timeout=2,
-            )
-            # Post-save: avisar si el cambio rompió alguna referencia cruzada
-            self._warn_on_invalid_refs()
-        except Exception as exc:
-            self.app.notify(
-                f"error al guardar {field_name}: {exc}",
-                title="error",
-                severity="error",
-                timeout=4,
-            )
-
-    def _on_tristate_field_saved(self, field: Field, result: Any) -> None:
-        """Persiste un campo triestado en la capa AGENT del agente.
-
-        Traduce el ``TristateResult`` a ``CampoTriestado`` y llama a
-        ``update_agent_layer.execute`` con la estructura adecuada.
-        """
-        if self._container is None:
-            return
-
-        from core.use_cases.config.update_agent_layer import CampoTriestado, TristadoValor
-
+    def persist_tristate_saved(
+        self, leaf: SchemaNode, field: "Field", result: "TristateResult"
+    ) -> None:
         if result.mode == "inherit":
             campo = CampoTriestado(TristadoValor.INHERIT)
         elif result.mode == "override_null":
             campo = CampoTriestado(TristadoValor.OVERRIDE_NULL)
         else:
-            # Coerción de tipo desde el string del input
-            valor_tipado = self._coerce_value(field, result.value or "")
-            campo = CampoTriestado(TristadoValor.OVERRIDE_VALOR, valor=valor_tipado)
+            campo = CampoTriestado(TristadoValor.OVERRIDE_VALOR, _coerce(field, result.value or ""))
+        self._aplicar(cambios_anidados(leaf.path, campo), self._main_layer)
 
-        cambios: dict[str, Any] = {"memories": {"llm": {field.label: campo}}}
+    def persist_add(self, parent: SchemaNode, option: "AddableOption") -> None:
+        valor: Any = {} if option.is_section else option.default_value
+        # Un campo secret recién creado va a la capa de secrets (coherente con la
+        # edición posterior). Las secciones siempre a la capa principal.
+        layer = (
+            self._secrets_layer
+            if (not option.is_section and _is_secret(option.key))
+            else self._main_layer
+        )
+        self._aplicar(cambios_anidados(parent.path + (option.key,), valor), layer)
+
+    def persist_delete(self, node: SchemaNode) -> None:
+        # La clave puede vivir en la capa principal o en secrets. Solo se poda en
+        # la capa donde EXISTE: aplicar el sentinel sobre una capa que no tiene el
+        # path escribiría una rama nueva con el marcador (basura no serializable).
+        if self._container is None:
+            return
+        cambios = eliminar_en_path(node.path)
+        for layer in (self._main_layer, self._secrets_layer):
+            try:
+                datos = self._container.repo.read_layer(layer, agent_id=self._agent_id)
+            except Exception:
+                continue
+            if _existe_path(datos, node.path):
+                self._aplicar(cambios, layer)
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _aplicar(self, cambios: dict[str, Any], layer: LayerName) -> None:
+        if self._container is None:
+            return
         try:
             self._container.update_agent_layer.execute(
-                agent_id=self._agent_id,
-                cambios=cambios,
-                layer=self._main_layer,
+                agent_id=self._agent_id, cambios=cambios, layer=layer
             )
-            self.app.notify(
-                f"guardado: memories.llm.{field.label}",
-                title="agente",
-                timeout=2,
-            )
-            # Post-save: avisar si el override rompió alguna referencia cruzada
-            # (por ejemplo memories.llm.provider apuntando a un provider inexistente).
-            self._warn_on_invalid_refs()
+            warn_on_invalid_refs(self._container, self.app.notify)
         except Exception as exc:
-            self.app.notify(
-                f"error: {exc}",
-                title="error",
-                severity="error",
-                timeout=4,
-            )
+            self.app.notify(f"error al guardar: {exc}", title="error", severity="error", timeout=4)
 
-    @staticmethod
-    def _coerce_value(field: Field, value: str) -> Any:
-        """Intenta convertir ``value`` al tipo más adecuado según ``field.kind``.
 
-        Orden de prueba: int → float → str original.
-        """
-        if field.kind == "scalar":
-            # Intentar conversión numérica para campos escalares
-            try:
-                return int(value)
-            except (ValueError, TypeError):
-                pass
-            try:
-                return float(value)
-            except (ValueError, TypeError):
-                pass
-        return value
+def _existe_path(datos: dict[str, Any], path: tuple[str, ...]) -> bool:
+    """``True`` si ``path`` está presente en el dict ``datos`` (clave a clave)."""
+    cur: Any = datos
+    for k in path:
+        if not isinstance(cur, dict) or k not in cur:
+            return False
+        cur = cur[k]
+    return True
+
+
+def _coerce(field: "Field", value: str) -> Any:
+    """Convierte el string del input al tipo del campo (int → float → str)."""
+    if field.kind == "scalar":
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            pass
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            pass
+    return value

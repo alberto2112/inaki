@@ -178,17 +178,17 @@ Recorre `model` (Pydantic) + `current_values` (dict del YAML mergeado) recursiva
   - `screens/_warnings.py` (NUEVO): warn_on_invalid_refs extraído (compartido).
   - Tests viejos arreglados: test_agent_detail_helpers (→ `_coerce`),
     test_schema_tristate (set uppercase local). **Suite completa: 2553 verde.**
-- [~] **FASE 5 — Cobertura de integración (hecha) + limpieza (DIFERIDA)**
+- [x] **FASE 5 — Cobertura de integración + limpieza del sistema viejo** ✅
   - [x] `test_page_persistence.py` (10): hooks persist_* de ambas páginas
     construyen el `cambios` por path correcto y eligen capa (principal vs secrets).
   - [x] Comentario obsoleto en `di.py` actualizado (build_schema_tree).
-  - [ ] **DIFERIDO hasta validación visual** — borrar `sections_for_model` /
-    `_fields_for_model` / `_should_skip` de `_schema.py` (sin uso en prod) +
-    reescribir guards groups/broadcast-emit con `build_schema_tree` + borrar tests
-    del mecanismo plano. Razón del diferimiento: NO quitar el sistema viejo antes de
-    confirmar que `build_schema_tree`+TreeEditorPage funcionan en la TUI real (no hay
-    Pilot → la capa Textual no tiene test automático). Es secuenciación prudente, no
-    deuda aceptada: se ejecuta apenas el usuario valide `inaki setup`.
+  - [x] `_schema.py` reducido a helpers de inferencia: borrados `sections_for_model`,
+    `_fields_for_model`, `_should_skip` (sin uso en prod). Cero refs residuales.
+  - [x] Guards `test_groups_introspection` + `test_broadcast_emit_introspection`
+    reescritos con `build_schema_tree` (este último ahora verifica que channels SÍ
+    se introspecciona desde AgentConfig — lo que el rediseño habilitó). Borrados
+    `test_schema.py` + `test_schema_tristate.py`; `test_schema_bool` reducido a
+    `_infer_kind`. Suite completa: 2528 verde.
 
 ## VALIDACIÓN VISUAL PENDIENTE (única tarea bloqueante para cerrar)
 Probar `inaki setup` → entrar a un agente con `channels.telegram`:
@@ -200,9 +200,11 @@ Si algo de la capa Textual falla, ajustar `screens/_tree_editor.py` (eventos
 `on_tree_node_highlighted`, mount async). La LÓGICA (builder, persistencia, nav)
 está cubierta por tests.
 
-## Estado actual (2026-06-19): FASES 0-4 COMPLETAS Y VERDES. FASE 5 parcial (cobertura
-## hecha; limpieza de `sections_for_model` diferida a post-validación-visual).
-## Suite completa: 2563 passed. mypy + ruff verdes. SIN COMMIT (pendiente aprobación).
+## Estado actual (2026-06-19): TODAS LAS FASES (0-5) COMPLETAS Y VERDES.
+## Suite completa: 2528 passed. mypy (507 files) + ruff verdes.
+## Commit 1 (punto estable): 3d1fcad. Commit 2 (limpieza sistema viejo): pendiente push.
+## ÚNICO PENDIENTE: validación visual de la capa Textual con `inaki setup` (sin Pilot
+## en el repo → no hay test automático de la interacción; la lógica sí está cubierta).
 
 ## Invariantes a NO romper
 

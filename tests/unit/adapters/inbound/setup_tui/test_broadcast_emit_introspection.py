@@ -1,71 +1,72 @@
-"""Tests de introspección Pydantic para BroadcastEmitConfig en la TUI.
+"""Introspección de BroadcastEmitConfig en la TUI (v3, árbol de schema).
 
-Verifica dos cosas:
-
-1. Cuando se introspeccionan ``BroadcastConfig``, el sub-modelo
-   ``BroadcastEmitConfig`` aparece como sección editable con sus 3 flags.
-   Esto garantiza que el day-zero requirement está cumplido en el modelo
-   Pydantic — la TUI puede renderizar los flags si se le pasa BroadcastConfig.
-
-2. Documenta la limitación actual: ``AgentConfig.channels`` es un
-   ``dict[str, dict[str, Any]]`` y el schema mapper SALTA dicts. Por lo
-   tanto, ``broadcast.emit.*`` (igual que el resto de ``channels.*``) NO
-   aparece en la TUI cuando se introspecciona desde ``AgentConfig``.
-   Esta limitación es preexistente y aplica a todo el bloque ``channels``;
-   resolverla requiere un refactor separado que tipifique ``channels``.
+Verifica que ``channels.telegram.broadcast.emit`` y sus 3 flags llegan al árbol
+cuando se introspecciona ``AgentConfig`` con ``channel_schemas``. Esto es lo que
+el rediseño split-pane resolvió: antes ``channels`` (dict crudo) era invisible
+en el setup; el viejo test documentaba esa limitación — ahora la cubre al revés.
 """
 
 from __future__ import annotations
 
-from adapters.inbound.setup_tui._schema import sections_for_model
-from infrastructure.config import AgentConfig, BroadcastConfig
+from adapters.inbound.setup_tui._schema_tree import build_schema_tree
+from adapters.inbound.setup_tui.domain.schema_node import SchemaNode
+from infrastructure.config import AgentConfig, BroadcastConfig, TelegramChannelConfig
+
+_EMIT_FLAGS = {"assistant_response", "user_input_voice", "user_input_photo"}
+_CHANNELS = {"telegram": TelegramChannelConfig}
 
 
-def test_broadcast_config_introspeccion_directa_expone_emit():
-    """Pasando BroadcastConfig directo, la TUI ve la sub-sección EMIT con sus 3 flags."""
-    sections = sections_for_model(BroadcastConfig, {})
-    section_names = [name for name, _ in sections]
+def _hijo(node: SchemaNode, key: str) -> SchemaNode:
+    return next(c for c in node.children if c.key == key)
 
-    assert "EMIT" in section_names, (
-        f"BroadcastEmitConfig debería aparecer como sección 'EMIT' al introspeccionar "
-        f"BroadcastConfig. Secciones encontradas: {section_names}"
+
+def test_broadcast_directo_expone_emit_con_sus_flags():
+    """Introspeccionando BroadcastConfig con emit presente, el árbol ve la
+    sub-sección emit y sus 3 flags como hojas."""
+    tree = build_schema_tree(
+        BroadcastConfig,
+        {"emit": {"assistant_response": True, "user_input_voice": False, "user_input_photo": False}},
+        root_label="broadcast",
     )
-
-    emit_fields = next(fields for name, fields in sections if name == "EMIT")
-    field_labels = {f.label for f in emit_fields}
-
-    assert field_labels == {
-        "assistant_response",
-        "user_input_voice",
-        "user_input_photo",
-    }, f"EMIT debería tener exactamente los 3 flags. Encontrados: {field_labels}"
+    emit = _hijo(tree, "emit")
+    assert emit.is_section is True
+    assert {c.key for c in emit.children} == _EMIT_FLAGS
 
 
-def test_agent_config_no_introspecciona_channels_limitacion_conocida():
-    """Documenta la limitación: AgentConfig.channels (dict[str, Any]) no se introspecciona.
-
-    Si este test empieza a fallar (es decir, CHANNELS aparece en las secciones),
-    significa que alguien tipificó ``AgentConfig.channels`` — gran noticia. En
-    ese caso, actualizar la TUI para mapear las nuevas secciones nested de
-    broadcast.emit y borrar este test.
-    """
-    sections = sections_for_model(AgentConfig, {})
-    section_names = [name for name, _ in sections]
-
-    # channels es dict[str, Any] → schema mapper lo skippea por _SKIP_ORIGINS
-    assert "CHANNELS" not in section_names
-    # Por lo tanto broadcast tampoco aparece (está nested dentro de channels)
-    assert not any(
-        "BROADCAST" in name or "EMIT" in name or "CHANNEL" in name for name in section_names
+def test_emit_flags_visibles_desde_agentconfig_via_channels():
+    """El día-cero que el rediseño habilitó: channels.telegram.broadcast.emit
+    es navegable desde AgentConfig gracias a channel_schemas (antes invisible)."""
+    valores = {
+        "id": "anacleto",
+        "name": "Anacleto",
+        "channels": {
+            "telegram": {
+                "broadcast": {
+                    "port": 6499,
+                    "emit": {"user_input_voice": True},
+                }
+            }
+        },
+    }
+    tree = build_schema_tree(
+        AgentConfig,
+        valores,
+        root_label="anacleto",
+        channel_schemas=_CHANNELS,
+        exclude_keys=frozenset({"providers"}),
     )
+    emit = _hijo(_hijo(_hijo(_hijo(tree, "channels"), "telegram"), "broadcast"), "emit")
+    assert emit.path == ("channels", "telegram", "broadcast", "emit")
+    assert _hijo(emit, "user_input_voice").field.value is True  # type: ignore[union-attr]
+    # Los flags no presentes se ofrecen como addable (regla 'solo lo presente').
+    assert {"assistant_response", "user_input_photo"} <= {o.key for o in emit.addable}
 
 
-def test_broadcast_emit_default_values_legibles_via_introspeccion():
-    """Los valores default de BroadcastEmitConfig se exponen correctamente en los Field."""
-    sections = sections_for_model(BroadcastConfig, {})
-    emit_fields = next(fields for name, fields in sections if name == "EMIT")
-    by_label = {f.label: f for f in emit_fields}
-
-    assert by_label["assistant_response"].default == "True"
-    assert by_label["user_input_voice"].default == "False"
-    assert by_label["user_input_photo"].default == "False"
+def test_emit_defaults_legibles_via_addable():
+    """Los defaults de los flags llegan como default_value en las opciones addable."""
+    tree = build_schema_tree(BroadcastConfig, {"emit": {}}, root_label="broadcast")
+    emit = _hijo(tree, "emit")
+    by_key = {o.key: o for o in emit.addable}
+    assert by_key["assistant_response"].default_value is True
+    assert by_key["user_input_voice"].default_value is False
+    assert by_key["user_input_photo"].default_value is False

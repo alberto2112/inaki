@@ -1,44 +1,31 @@
-"""Introspección de modelos Pydantic para generar lista de Fields editables.
+"""Helpers de inferencia de tipos del schema Pydantic para la TUI de setup.
 
-Este módulo convierte un ``BaseModel`` de Pydantic en una lista de secciones
-con sus campos editables, inferiendo el ``kind`` de cada campo desde el tipo
-y el nombre del campo. Es el source of truth para la TUI — al agregar campos
-al schema de Pydantic, la TUI los recoge automáticamente sin cambios adicionales.
+Infieren el ``kind`` editable de un campo (scalar / enum / long / secret / bool),
+su default y las opciones de un ``Literal`` a partir de la anotación y el nombre.
+Son consumidos por ``_schema_tree.build_schema_tree`` (TUI v3, árbol split-pane).
 
 Reglas de inferencia de kind:
   - ``Literal[...]``              → ``"enum"`` con las opciones del Literal.
+  - ``bool`` (o ``bool | None``)  → ``"bool"`` (toggle, detectado por tipo exacto).
   - nombre sugiere secret         → ``"secret"`` (api_key, token, auth, auth_key, password, secret).
   - nombre sugiere texto largo    → ``"long"`` (system_prompt, description, body).
   - otro                          → ``"scalar"``.
-
-Los campos de tipo ``BaseModel`` (sub-secciones) se expanden como secciones
-separadas con el nombre de la clave en MAYÚSCULAS. Si un campo de sub-sección
-tiene a su vez sub-campos de tipo ``BaseModel``, se recursa un nivel adicional
-usando ``deep_section_names`` para controlar qué nombres de campo se expanden.
-
-Los campos de tipo ``dict``, ``list`` y similares no se renderizan en la TUI
-(son demasiado complejos para edición inline).
 """
 
 from __future__ import annotations
 
-import inspect
 from typing import Any, Literal, get_args, get_origin
 
-from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 
-from adapters.inbound.setup_tui.domain.field import Field, FieldKind
+from adapters.inbound.setup_tui.domain.field import FieldKind
 
 # Palabras clave que indican que un campo es un secret
 _SECRET_KEYWORDS = ("api_key", "token", "auth_key", "auth", "password", "secret")
 
 # Palabras clave que indican que un campo es un texto largo
 _LONG_KEYWORDS = ("system_prompt", "description", "body", "content", "text")
-
-# Tipos Python que NO se renderizan en la TUI (demasiado complejos)
-_SKIP_ORIGINS = (dict, list, set, frozenset)
 
 
 def _is_secret(name: str) -> bool:
@@ -111,190 +98,3 @@ def _infer_kind(name: str, annotation: Any) -> FieldKind:
     if _is_long(name):
         return "long"
     return "scalar"
-
-
-def _should_skip(annotation: Any) -> bool:
-    """True si el campo debe omitirse en la TUI (dict, list, sub-BaseModel, etc.)."""
-    unwrapped = _unwrap_optional(annotation)
-    origin = get_origin(unwrapped)
-
-    if origin in _SKIP_ORIGINS:
-        return True
-
-    # Tipo directo (sin genérico)
-    if inspect.isclass(unwrapped):
-        if issubclass(unwrapped, BaseModel):
-            return True  # sub-secciones se manejan por separado
-        if unwrapped in (dict, list, set, frozenset, tuple):
-            return True
-
-    return False
-
-
-def _fields_for_model(
-    model: type[BaseModel],
-    current_values: dict[str, Any],
-    *,
-    tristate_prefix: str = "",
-    tristate_paths: frozenset[str] | None = None,
-) -> list[Field]:
-    """Genera la lista de ``Field`` para los campos simples de un modelo.
-
-    Los campos cuyo tipo es ``BaseModel`` (sub-sección) se omiten — se manejan
-    con ``sections_for_model`` de forma recursiva.
-
-    Args:
-        model: Modelo Pydantic a introspeccionar.
-        current_values: Valores actuales de la capa.
-        tristate_prefix: Prefijo de la sección actual (MAYÚSCULAS) para construir
-            la ruta del campo y detectar si es triestado.
-        tristate_paths: Conjunto de rutas ``"SECCION.campo"`` (sección en MAYÚSCULAS,
-            campo en minúsculas) para marcar como triestado.
-    """
-    tristate_paths = tristate_paths or frozenset()
-    fields: list[Field] = []
-
-    for name, field_info in model.model_fields.items():
-        annotation = field_info.annotation
-        if annotation is None:
-            continue
-
-        unwrapped = _unwrap_optional(annotation)
-
-        # Sub-secciones → se procesan recursivamente en sections_for_model
-        if inspect.isclass(unwrapped) and issubclass(unwrapped, BaseModel):
-            continue
-
-        if _should_skip(annotation):
-            continue
-
-        kind = _infer_kind(name, annotation)
-        enum_choices = None
-        if kind == "enum":
-            enum_choices = _literal_choices(unwrapped)
-
-        current_value = current_values.get(name, "")
-        default_str = _default_as_str(field_info)
-
-        # Determinar si el campo está marcado como triestado
-        ruta = f"{tristate_prefix}.{name}" if tristate_prefix else name
-        is_tristate = ruta in tristate_paths
-
-        # Inferir el estado triestado actual desde el valor cargado
-        tristate_state = None
-        if is_tristate:
-            if name not in current_values:
-                tristate_state = "inherit"
-            elif current_values.get(name) is None:
-                tristate_state = "override_null"
-            else:
-                tristate_state = "override_value"
-
-        fields.append(
-            Field(
-                label=name,
-                value=current_value if current_value is not None else "",
-                kind=kind,
-                enum_choices=enum_choices,
-                default=default_str,
-                is_tristate=is_tristate,
-                tristate_state=tristate_state,
-            )
-        )
-
-    return fields
-
-
-def sections_for_model(
-    model: type[BaseModel],
-    current_values: dict[str, Any],
-    *,
-    section_prefix: str = "",
-    tristate_paths: frozenset[str] | None = None,
-) -> list[tuple[str, list[Field]]]:
-    """Genera la lista de secciones ``(nombre, [Field, ...])`` para un modelo.
-
-    Para cada campo de tipo ``BaseModel`` en el modelo raíz, crea una sección
-    con el nombre en MAYÚSCULAS y los campos editables del sub-modelo.
-
-    Cuando un sub-modelo tiene a su vez sub-campos ``BaseModel``, se recursa un
-    nivel más para exponerlos (por ejemplo, ``MemoriesConfig.llm`` → sección
-    ``MEMORIES.LLM``).
-
-    Los campos simples del modelo raíz van en una sección con el nombre del
-    modelo (o ``section_prefix`` si se provee).
-
-    Args:
-        model: El modelo Pydantic a introspeccionar.
-        current_values: Dict con los valores actuales mergeados de las capas.
-        section_prefix: Nombre de la sección raíz. Si vacío, se usa el nombre
-            del modelo en MAYÚSCULAS.
-        tristate_paths: Conjunto de rutas ``"seccion.campo"`` (ambos en minúsculas)
-            cuyos ``Field`` se marcan con ``is_tristate=True``.
-            Ej: ``frozenset({"memories.llm.provider", "memories.llm.model"})``.
-
-    Returns:
-        Lista de ``(section_name, [Field, ...])`` lista para renderizar en la TUI.
-    """
-    tristate_paths = tristate_paths or frozenset()
-    sections: list[tuple[str, list[Field]]] = []
-
-    # Campos simples del modelo raíz
-    root_name = section_prefix.upper() or model.__name__.upper()
-    root_fields = _fields_for_model(
-        model, current_values, tristate_prefix=root_name, tristate_paths=tristate_paths
-    )
-    if root_fields:
-        sections.append((root_name, root_fields))
-
-    # Sub-secciones (campos tipo BaseModel)
-    for name, field_info in model.model_fields.items():
-        annotation = field_info.annotation
-        if annotation is None:
-            continue
-        unwrapped = _unwrap_optional(annotation)
-
-        if not (inspect.isclass(unwrapped) and issubclass(unwrapped, BaseModel)):
-            continue
-
-        sub_values = current_values.get(name) or {}
-        if not isinstance(sub_values, dict):
-            sub_values = {}
-
-        section_name = name.upper()
-        sub_fields = _fields_for_model(
-            unwrapped,
-            sub_values,
-            tristate_prefix=section_name,
-            tristate_paths=tristate_paths,
-        )
-        if sub_fields:
-            sections.append((section_name, sub_fields))
-
-        # Recursar un nivel más para sub-sub-modelos (ej: MemoriesConfig.llm).
-        # Se usa la ruta "PADRE.HIJO" (ej: "MEMORY.LLM") como nombre de sección
-        # para que sea legible y predecible sin depender del nombre de la clase.
-        for sub_name, sub_field_info in unwrapped.model_fields.items():
-            sub_ann = sub_field_info.annotation
-            if sub_ann is None:
-                continue
-            sub_unwrapped = _unwrap_optional(sub_ann)
-            if not (inspect.isclass(sub_unwrapped) and issubclass(sub_unwrapped, BaseModel)):
-                continue
-
-            nested_values = sub_values.get(sub_name) or {}
-            if not isinstance(nested_values, dict):
-                nested_values = {}
-
-            # Nombre de sección basado en la ruta padre.hijo (MAYÚSCULAS)
-            nested_section_name = f"{section_name}.{sub_name}".upper()
-            nested_fields = _fields_for_model(
-                sub_unwrapped,
-                nested_values,
-                tristate_prefix=nested_section_name,
-                tristate_paths=tristate_paths,
-            )
-            if nested_fields:
-                sections.append((nested_section_name, nested_fields))
-
-    return sections

@@ -268,7 +268,7 @@ class ProvidersPage(BasePage):
             "[bold]↑↓[/bold] [dim]navegar[/dim]   "
             "[bold]enter[/bold] [dim]editar[/dim]   "
             "[bold]n[/bold] [dim]nuevo[/dim]   "
-            "[bold]delete[/bold] [dim]eliminar[/dim]   "
+            "[bold]supr[/bold] [dim]eliminar[/dim]   "
             "[bold]esc[/bold] [dim]volver[/dim]   "
             "[bold]q[/bold] [dim]salir[/dim]"
         )

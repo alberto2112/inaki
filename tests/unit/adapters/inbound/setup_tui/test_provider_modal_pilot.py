@@ -14,6 +14,14 @@ from textual.widgets import Input, Select
 from adapters.inbound.setup_tui.screens.providers_page import _EditProviderModal
 
 
+def test_footer_de_providers_anuncia_nuevo_y_eliminar():
+    """El footer de ProvidersPage debe listar las teclas n (nuevo) y delete."""
+    from adapters.inbound.setup_tui.screens.providers_page import ProvidersPage
+
+    texto = ProvidersPage.__new__(ProvidersPage).status_text()
+    assert "nuevo" in texto and "eliminar" in texto
+
+
 def test_select_autocompleta_el_nombre_y_deriva_type_implicito():
     """Elegir 'groq' → el nombre se autocompleta a 'groq' → type queda implícito."""
     capturado: dict = {}

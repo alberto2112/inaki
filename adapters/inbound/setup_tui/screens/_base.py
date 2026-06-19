@@ -70,11 +70,18 @@ class BasePage(Screen):
     # compose estándar
     # ------------------------------------------------------------------
 
+    def status_text(self) -> str | None:
+        """Atajos a mostrar en el footer. ``None`` usa el set genérico.
+
+        Las subclases con bindings propios (ej. ``n`` nuevo, ``delete``) lo
+        sobreescriben para que esas teclas aparezcan en la barra inferior."""
+        return None
+
     def compose(self) -> ComposeResult:
         yield TopBar(self.breadcrumb())
         with ScrollableContainer():
             yield from self.compose_body()
-        yield StatusBar()
+        yield StatusBar(self.status_text())
 
     def on_mount(self) -> None:
         # Recolectar las filas montadas para manejar el cursor

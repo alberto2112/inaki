@@ -19,7 +19,7 @@ from textual.widgets import Tree
 
 from adapters.inbound.setup_tui.app import SetupApp
 from adapters.inbound.setup_tui.di import build_setup_container
-from adapters.inbound.setup_tui.widgets.config_row import ConfigRow
+from adapters.inbound.setup_tui.widgets.detail_row import DetailRow
 from infrastructure.config import AgentConfig, GlobalConfig, TelegramChannelConfig
 
 
@@ -107,23 +107,76 @@ def test_channels_aparece_en_el_arbol_del_agente(tmp_path, monkeypatch):
 
 
 def test_enter_baja_al_panel_y_escape_vuelve(tmp_path, monkeypatch):
-    """Enter sobre una sección con campos enfoca el panel; Esc vuelve al árbol."""
+    """Enter sobre una sección con ítems enfoca el panel; Esc vuelve al árbol."""
     container = _container(tmp_path, monkeypatch)
 
     async def _run():
         app = SetupApp(container)
         async with app.run_test() as pilot:
             await _abrir_global(pilot)
-            await pilot.press("down")  # -> 'app' (tiene campos hoja)
+            await pilot.press("down")  # -> 'app'
             await pilot.pause()
             await pilot.pause()
-            assert any(app.screen.query(ConfigRow))  # el panel se pobló
+            assert any(app.screen.query(DetailRow))  # el panel se pobló
             await pilot.press("enter")  # bajar al panel
             await pilot.pause()
             assert app.screen._focus_zone == "detail"
             await pilot.press("escape")  # volver al árbol
             await pilot.pause()
             assert app.screen._focus_zone == "tree"
+
+    asyncio.run(_run())
+
+
+def test_enter_sobre_campo_presente_abre_editor(tmp_path, monkeypatch):
+    """Bug original: Enter sobre un campo no editaba. Ahora abre el modal."""
+    container = _container(tmp_path, monkeypatch)
+
+    async def _run():
+        app = SetupApp(container)
+        async with app.run_test() as pilot:
+            await _abrir_agente(pilot)
+            await pilot.press("down")  # -> 'llm' (provider/model presentes)
+            await pilot.pause()
+            await pilot.pause()
+            await pilot.press("enter")  # bajar al panel (primer campo)
+            await pilot.pause()
+            await pilot.press("enter")  # editar el campo
+            await pilot.pause()
+            # se abrió un modal de edición encima de la página
+            assert type(app.screen).__name__.startswith("Edit")
+
+    asyncio.run(_run())
+
+
+def test_enter_sobre_opcion_add_crea_la_clave(tmp_path, monkeypatch):
+    """Enter sobre '+ campo' añade la clave y aparece como campo presente."""
+    container = _container(tmp_path, monkeypatch)
+
+    async def _run():
+        app = SetupApp(container)
+        async with app.run_test() as pilot:
+            await _abrir_agente(pilot)
+            # navegar a groups (tiene 'behavior' presente + addables como bot_username)
+            await pilot.press("down", "down", "down", "down")  # llm, channels, telegram, groups
+            await pilot.pause()
+            await pilot.pause()
+            page = app.screen
+            assert page._current_section.key == "groups"
+            # bajar al panel y buscar el primer ítem 'add'
+            await pilot.press("enter")
+            await pilot.pause()
+            idx_add = next(i for i, (k, _) in enumerate(page._detail_items) if k == "add")
+            for _ in range(idx_add):
+                await pilot.press("down")
+            await pilot.pause()
+            opt = page._detail_items[idx_add][1]
+            await pilot.press("enter")  # añadir esa opción
+            await pilot.pause()
+            await pilot.pause()
+            # tras repintar, esa clave ahora es un campo presente del árbol/panel
+            presentes = {leaf.label for leaf in page._current_section.leaf_children}
+            assert opt.key in presentes
 
     asyncio.run(_run())
 

@@ -80,6 +80,41 @@ class IHistoryStore(ABC):
         ...
 
     @abstractmethod
+    async def search(
+        self,
+        agent_id: str,
+        query: str | None = None,
+        role: str | None = None,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        limit: int = 20,
+    ) -> list[Message]:
+        """Busca mensajes crudos del historial del agente por texto, rol y/o scope.
+
+        Pensado para consultas puntuales ("¿qué se dijo sobre X?", "revisá la
+        conversación con el chat Y") que devuelven los mensajes TAL CUAL, sin
+        cargar toda la ventana en memoria ni pasar por el extractor de recuerdos.
+
+        Siempre filtra por ``agent_id`` (aislamiento cross-agente, igual que el
+        resto del port — un agente nunca ve el historial de otro).
+
+        Args:
+            agent_id: Identificador del agente. Filtro obligatorio.
+            query: Subcadena a buscar en ``content`` (``LIKE %query%``,
+                case-insensitive). ``None`` o vacío → sin filtro de texto.
+            role: Si no es ``None``, filtra por rol exacto (``"user"`` / ``"assistant"``).
+            channel: Si no es ``None``, filtra por canal exacto.
+            chat_id: Si no es ``None``, apunta a UNA conversación. ``None`` →
+                busca en todo el historial del agente.
+            limit: Máximo de mensajes a devolver.
+
+        Returns:
+            Lista de ``Message`` (cada uno con su ``channel``/``chat_id`` de
+            origen), ordenada de más reciente a más antiguo.
+        """
+        ...
+
+    @abstractmethod
     async def load_uninfused(
         self,
         agent_id: str,

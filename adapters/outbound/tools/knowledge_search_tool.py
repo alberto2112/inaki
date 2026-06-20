@@ -23,7 +23,9 @@ class KnowledgeSearchTool(ITool):
         "or when you need prior context about a topic. "
         "Required parameter: 'query' (search text). "
         "Optional parameter: 'top_k' (max number of results, default 5). "
-        "Optional parameter: 'source' (restrict search to a specific source ID, e.g. 'memory')."
+        "Optional parameter: 'source' (restrict search to a specific source ID, e.g. 'memory'). "
+        "For the user's own remembered FACTS use `search_memory`; for the EXACT "
+        "text of a past conversation use `search_history`."
     )
     # Disparadores multilingües solo para el embedding del semantic routing.
     routing_keywords = (

@@ -84,6 +84,12 @@ CREATE TABLE IF NOT EXISTS agent_state (
 """
 
 
+def _escape_like(text: str) -> str:
+    """Escapa los comodines de ``LIKE`` (``%`` ``_``) y el propio ``\\`` para
+    tratar la query como literal. Se usa junto a ``ESCAPE '\\'`` en el SQL."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _build_where_filters(
     agent_id: str,
     channel: str | None = None,
@@ -242,6 +248,43 @@ class SQLiteHistoryStore(IHistoryStore):
                 "WHERE agent_id = ? ORDER BY id ASC",
                 (agent_id,),
             )
+        return [self._row_to_message(r) for r in rows]
+
+    async def search(
+        self,
+        agent_id: str,
+        query: str | None = None,
+        role: str | None = None,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        limit: int = 20,
+    ) -> list[Message]:
+        # Reusa el builder de filtros base (agent_id obligatorio + channel/chat_id
+        # opcionales) y le agrega el filtro de texto y rol propios de la búsqueda.
+        filtros, params_base = _build_where_filters(agent_id, channel=channel, chat_id=chat_id)
+        condiciones = [filtros]
+        params: list = list(params_base)
+
+        if query:
+            # Escapamos los comodines para tratar la query como literal: buscar
+            # "50%" no debe matchear todo. ESCAPE define el carácter de escape.
+            condiciones.append("content LIKE ? ESCAPE '\\'")
+            params.append(f"%{_escape_like(query)}%")
+
+        if role:
+            condiciones.append("role = ?")
+            params.append(role)
+
+        where = " AND ".join(condiciones)
+        async with self._conn() as conn:
+            await self._ensure_schema(conn)
+            rows = await conn.execute_fetchall(
+                f"SELECT role, content, created_at, channel, chat_id FROM history "
+                f"WHERE {where} "
+                f"ORDER BY id DESC LIMIT ?",
+                (*params, max(1, limit)),
+            )
+        # DESC en el SQL → más recientes primero (lo que se quiere en una búsqueda).
         return [self._row_to_message(r) for r in rows]
 
     async def load_uninfused(

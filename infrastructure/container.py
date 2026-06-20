@@ -602,6 +602,7 @@ class AgentContainer:
         )
         from adapters.outbound.tools.patch_file_tool import PatchFileTool
         from adapters.outbound.tools.read_file_tool import ReadFileTool
+        from adapters.outbound.tools.search_history_tool import SearchHistoryTool
         from adapters.outbound.tools.web_search_tool import WebSearchTool
         from adapters.outbound.tools.write_file_tool import WriteFileTool
 
@@ -657,6 +658,12 @@ class AgentContainer:
         self._tools.register(SearchMemoryTool(memory=self._memory, embedder=self._embedder))
         self._tools.register(DeleteMemoryTool(memory=self._memory))
         self._tools.register(UpdateMemoryTool(memory=self._memory, embedder=self._embedder))
+        # Búsqueda en el historial CRUDO de conversación (mensajes tal cual),
+        # scopeada al agent_id de este container. Reemplaza la vieja extensión
+        # ext/search_history que abría el SQLite por path sin filtro de agente.
+        self._tools.register(
+            SearchHistoryTool(history=self._history, agent_id=self.agent_config.id)
+        )
         self._tools.register(WebSearchTool(config_store=self._tool_config_store))
         self._tools.register(ReadFileTool(workspace=workspace_path, containment=ws_cfg.containment))
         self._tools.register(

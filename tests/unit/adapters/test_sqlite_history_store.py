@@ -536,3 +536,83 @@ async def test_load_state_with_corrupt_json_returns_empty(history_store):
     state = await history_store.load_state("agent1")
     assert state.sticky_skills == {}
     assert state.sticky_tools == {}
+
+
+# ---------------------------------------------------------------------------
+# search() — búsqueda en el historial crudo
+# ---------------------------------------------------------------------------
+
+
+async def _seed_search_corpus(store: SQLiteHistoryStore) -> None:
+    """Siembra mensajes de dos agentes y dos chats para los tests de search."""
+    await store.append(
+        "agent1", Message(role=Role.USER, content="Cuánto cuesta el dólar hoy"),
+        channel="telegram", chat_id="100",
+    )
+    await store.append(
+        "agent1", Message(role=Role.ASSISTANT, content="El dólar está a 1000 pesos"),
+        channel="telegram", chat_id="100",
+    )
+    await store.append(
+        "agent1", Message(role=Role.USER, content="Y el euro a cuánto está"),
+        channel="telegram", chat_id="200",
+    )
+    # Otro agente, mismo chat_id 100 — NO debe filtrarse al buscar agent1.
+    await store.append(
+        "agent2", Message(role=Role.USER, content="dólar secreto de otro agente"),
+        channel="telegram", chat_id="100",
+    )
+
+
+async def test_search_filtra_por_texto(history_store):
+    await _seed_search_corpus(history_store)
+    res = await history_store.search("agent1", query="dólar")
+    contenidos = [m.content for m in res]
+    assert "Cuánto cuesta el dólar hoy" in contenidos
+    assert "El dólar está a 1000 pesos" in contenidos
+    assert "Y el euro a cuánto está" not in contenidos
+
+
+async def test_search_nunca_cruza_agentes(history_store):
+    """Defensa de aislamiento: buscar en agent1 jamás devuelve filas de agent2."""
+    await _seed_search_corpus(history_store)
+    res = await history_store.search("agent1", query="dólar")
+    assert all(m.content != "dólar secreto de otro agente" for m in res)
+    # Y agent2 solo ve lo suyo.
+    res2 = await history_store.search("agent2", query="dólar")
+    assert [m.content for m in res2] == ["dólar secreto de otro agente"]
+
+
+async def test_search_filtra_por_chat_id(history_store):
+    await _seed_search_corpus(history_store)
+    res = await history_store.search("agent1", chat_id="200")
+    assert [m.content for m in res] == ["Y el euro a cuánto está"]
+
+
+async def test_search_filtra_por_rol(history_store):
+    await _seed_search_corpus(history_store)
+    res = await history_store.search("agent1", role="assistant")
+    assert all(m.role == Role.ASSISTANT for m in res)
+    assert [m.content for m in res] == ["El dólar está a 1000 pesos"]
+
+
+async def test_search_sin_query_devuelve_recientes_primero(history_store):
+    await _seed_search_corpus(history_store)
+    res = await history_store.search("agent1", chat_id="100")
+    # DESC: el último insertado del chat 100 va primero.
+    assert res[0].content == "El dólar está a 1000 pesos"
+    assert res[-1].content == "Cuánto cuesta el dólar hoy"
+
+
+async def test_search_respeta_limit(history_store):
+    await _seed_search_corpus(history_store)
+    res = await history_store.search("agent1", limit=1)
+    assert len(res) == 1
+
+
+async def test_search_escapa_comodines_like(history_store):
+    """Un '%' en la query es literal, no un comodín que matchea todo."""
+    await history_store.append("agent1", Message(role=Role.USER, content="subió 50% ayer"))
+    await history_store.append("agent1", Message(role=Role.USER, content="texto sin signos"))
+    res = await history_store.search("agent1", query="50%")
+    assert [m.content for m in res] == ["subió 50% ayer"]

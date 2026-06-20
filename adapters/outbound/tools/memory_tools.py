@@ -64,7 +64,10 @@ class SearchMemoryTool(ITool):
         "Required: 'query' (search text). "
         "Optional: 'top_k' (max results, default 5, capped at 20). "
         "Returns each result with its UUID `id`, content, relevance, tags, "
-        "creation date, scope (channel + chat_id of origin), and similarity score."
+        "creation date, scope (channel + chat_id of origin), and similarity score. "
+        "This searches DISTILLED facts — for the verbatim text of a past "
+        "conversation use `search_history`; for documents or knowledge bases use "
+        "`knowledge_search`."
     )
     # Disparadores multilingües solo para el embedding del semantic routing.
     routing_keywords = (

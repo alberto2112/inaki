@@ -57,6 +57,9 @@ class _FakeHistoryStore(IHistoryStore):
     async def load_full(self, *args, **kwargs) -> list[Message]:  # noqa: ARG002
         return list(self.messages)
 
+    async def search(self, *args, **kwargs) -> list[Message]:  # noqa: ARG002
+        return list(self.messages)
+
     async def load_uninfused(self, *args, **kwargs) -> list[Message]:  # noqa: ARG002
         return []
 

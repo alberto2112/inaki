@@ -17,6 +17,7 @@ import logging
 from typing import Any
 
 from telegram import Update
+from telegram.error import BadRequest, NetworkError
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 from adapters.inbound.telegram.message_mapper import (
@@ -206,6 +207,41 @@ class TelegramBot(
         self._app.add_handler(MessageHandler(filters.Document.ALL, self._handle_silent_media))
         self._app.add_handler(MessageHandler(filters.LOCATION, self._handle_message))
         self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
+
+        # Error handler global. Telegram puede fallar por red (TimedOut /
+        # ConnectTimeout) en CUALQUIER reply. Sin esto, PTB loguea el traceback
+        # crudo ("No error handlers are registered") y deja el update sin
+        # confirmar → tras un restart se re-entrega y vuelve a fallar (el bot
+        # "se queda bobo"). Lo centralizamos acá en vez de envolver cada
+        # reply_text uno por uno (evita la explosión N×M de handlers).
+        self._app.add_error_handler(self._on_error)
+
+    async def _on_error(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Maneja excepciones no capturadas de cualquier handler de Telegram.
+
+        Decisión de diseño: si el error es de RED con Telegram, el canal está
+        caído — responder por él sería otro fallo a manejar (otro TimedOut). Solo
+        registramos en el journal (stderr → systemd) y seguimos; el bot NO se
+        queda bobo por un blip de red ni vomita un traceback crudo.
+
+        ``BadRequest`` hereda de ``NetworkError`` pero NO es un blip de red: es un
+        request malformado (bug nuestro). Lo dejamos caer al log de ERROR completo
+        junto con cualquier otra excepción inesperada, para que quede visible.
+        """
+        err = context.error
+        if isinstance(err, NetworkError) and not isinstance(err, BadRequest):
+            logger.warning(
+                "Telegram '%s': error de red transitorio con Telegram, update ignorado: %s",
+                self._settings.id,
+                err,
+            )
+            return
+        logger.error(
+            "Telegram '%s': error no manejado procesando un update: %s",
+            self._settings.id,
+            err,
+            exc_info=err,
+        )
 
     def _is_allowed(self, user_id: int) -> bool:
         if not self._allowed_ids:

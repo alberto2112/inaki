@@ -7,6 +7,10 @@ from types import SimpleNamespace
 
 
 from adapters.outbound.config_repository.yaml_tool_config_store import YamlToolConfigStore
+from adapters.outbound.history.sqlite_history_store import (
+    HistoryStoreSettings,
+    SQLiteHistoryStore,
+)
 from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
 from adapters.outbound.tools.tool_registry import ToolRegistry
 from infrastructure.container import AgentContainer
@@ -54,6 +58,11 @@ def _make_container(tmp_path: Path) -> AgentContainer:
     container._skills = YamlSkillRepository(embedder)
     container._embedder = embedder
     container._memory = FakeMemory()
+    # _history lo consume _register_tools (SearchHistoryTool); el container real
+    # lo arma en container.py:303. Usamos un store real en archivo temporal.
+    container._history = SQLiteHistoryStore(
+        HistoryStoreSettings(db_filename=str(tmp_path / "history.db"))
+    )
     container.agent_config = SimpleNamespace(  # type: ignore[assignment]
         id="test-agent",
         workspace=SimpleNamespace(

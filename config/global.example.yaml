@@ -45,6 +45,7 @@
 #     groq:       { api_key: "gsk_...",  base_url: "https://api.groq.com/openai/v1" }
 #     openai:     { api_key: "sk-..." }
 #     openrouter: { api_key: "sk-or-..." }
+#     anthropic:  { api_key: "sk-ant-..." }   # Claude nativo (/v1/messages)
 #     # ollama: no requiere entrada, usa default http://localhost:11434
 #
 # Multi-instance (billing separado con el mismo adapter):
@@ -80,7 +81,8 @@ app:
 # -----------------------------------------------------------------------------
 llm:
   provider: "openrouter"      # KEY del `providers:` registry que provee las creds.
-                              # Opciones nativas: openrouter, openai, ollama, groq.
+                              # Adapters nativos: openrouter, openai, openai_responses,
+                              # anthropic, deepseek, groq, ollama.
                               # Añadir nuevo proveedor: crear
                               # adapters/outbound/providers/{name}.py con
                               # PROVIDER_NAME = "{name}" (descubrimiento automático)
@@ -91,6 +93,8 @@ llm:
                               #   OpenRouter:  "anthropic/claude-3-5-haiku"
                               #                "anthropic/claude-sonnet-4-5"
                               #                "google/gemini-flash-1.5"
+                              #   Anthropic nativo (provider: anthropic):
+                              #                "claude-sonnet-4-5" (sin prefijo vendor)
                               #                "meta-llama/llama-3.1-8b-instruct"
                               #   OpenAI:      "gpt-4o-mini", "gpt-4o"
                               #   Ollama:      "llama3.2", "mistral", "phi3"

@@ -202,6 +202,10 @@ providers:
     base_url: "https://openrouter.ai/api/v1"
   openai:
     api_key: "sk-..."
+  anthropic:
+    # Native Claude via /v1/messages (NOT OpenAI-compat). Model IDs carry no
+    # vendor prefix, e.g. model: "claude-sonnet-4-5".
+    api_key: "sk-ant-..."
   groq:
     api_key: "gsk_..."
     base_url: "https://api.groq.com/openai/v1"

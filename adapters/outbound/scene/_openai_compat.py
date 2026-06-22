@@ -17,7 +17,7 @@ from core.domain.errors import SceneDescriptionError
 logger = logging.getLogger(__name__)
 
 _PROMPT_DEFAULT = (
-    "Describe the scene in this image in Spanish."
+    "Describe the scene in this image."
     "Include the setting, the people present, relevant objects, and visible activities."
     "Be precise and objective."
 )

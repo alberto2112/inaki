@@ -24,9 +24,9 @@ PROVIDER_NAME = "anthropic"
 logger = logging.getLogger(__name__)
 
 _PROMPT_DEFAULT = (
-    "Describí la escena de esta imagen en español. "
-    "Incluí el entorno, las personas presentes, los objetos relevantes y las actividades visibles. "
-    "Sé preciso y objetivo."
+    "Describe the scene in this image."
+    "Include the setting, the people present, relevant objects, and visible activities."
+    "Be precise and objective."
 )
 
 _ANTHROPIC_VERSION = "2023-06-01"
@@ -64,14 +64,14 @@ class AnthropicSceneDescriberAdapter(ISceneDescriberPort):
         image_bytes: bytes,
         prompt: str | None = None,
     ) -> str:
-        """Describe la escena de una imagen usando Claude multimodal.
+        """Describe the scene of an image using Claude multimodal.
 
         Args:
             image_bytes: Bytes de la imagen (JPEG o PNG).
             prompt: Prompt personalizado. Si es None, usa prompt_template o el default.
 
         Returns:
-            Descripción de la escena en español.
+            Description of the scene.
 
         Raises:
             SceneDescriptionError: Si Anthropic falla, timeout o error HTTP.

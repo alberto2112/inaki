@@ -47,14 +47,14 @@ class GroqSceneDescriberAdapter(ISceneDescriberPort):
         image_bytes: bytes,
         prompt: str | None = None,
     ) -> str:
-        """Describe la escena de una imagen usando Groq Vision multimodal.
+        """Describe the scene of an image using Groq Vision multimodal.
 
         Args:
             image_bytes: Bytes de la imagen (JPEG o PNG).
             prompt: Prompt personalizado. Si es None, usa prompt_template o el default.
 
         Returns:
-            Descripción de la escena en español.
+            Description of the scene.
 
         Raises:
             SceneDescriptionError: Si Groq falla, timeout o error HTTP.

@@ -44,14 +44,14 @@ class OpenAISceneDescriberAdapter(ISceneDescriberPort):
         image_bytes: bytes,
         prompt: str | None = None,
     ) -> str:
-        """Describe la escena de una imagen usando OpenAI multimodal.
+        """Describe the scene of an image using OpenAI multimodal.
 
         Args:
             image_bytes: Bytes de la imagen (JPEG o PNG).
             prompt: Prompt personalizado. Si es None, usa prompt_template o el default.
 
         Returns:
-            Descripción de la escena en español.
+            Description of the scene.
 
         Raises:
             SceneDescriptionError: Si OpenAI falla, timeout o error HTTP.

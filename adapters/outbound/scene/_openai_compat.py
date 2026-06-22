@@ -17,9 +17,9 @@ from core.domain.errors import SceneDescriptionError
 logger = logging.getLogger(__name__)
 
 _PROMPT_DEFAULT = (
-    "Describí la escena de esta imagen en español. "
-    "Incluí el entorno, las personas presentes, los objetos relevantes y las actividades visibles. "
-    "Sé preciso y objetivo."
+    "Describe the scene in this image in Spanish."
+    "Include the setting, the people present, relevant objects, and visible activities."
+    "Be precise and objective."
 )
 
 _MAX_TOKENS = 1024

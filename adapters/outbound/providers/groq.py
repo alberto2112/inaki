@@ -1,120 +1,26 @@
-"""Proveedor LLM via Groq API (compatible con OpenAI)."""
+"""Proveedor LLM via Groq API (compatible con OpenAI ``/chat/completions``)."""
 
 from __future__ import annotations
 
-import json
-import logging
-from collections.abc import AsyncIterator
+from typing import ClassVar
 
-import httpx
-
-from adapters.outbound.providers.base import BaseLLMProvider, ResolvedLLMConfig
-from core.domain.entities.message import Message
-from core.domain.errors import LLMError
-from core.domain.value_objects.llm_response import LLMResponse
+from adapters.outbound.providers.openai_compatible import OpenAICompatibleProvider
 
 PROVIDER_NAME = "groq"
 
-logger = logging.getLogger(__name__)
 
+class GroqProvider(OpenAICompatibleProvider):
+    _provider_label: ClassVar[str] = "Groq"
+    _default_base_url: ClassVar[str] = "https://api.groq.com/openai/v1"
 
-class GroqProvider(BaseLLMProvider):
-    def __init__(self, cfg: ResolvedLLMConfig) -> None:
-        if not cfg.api_key:
-            raise LLMError("Groq requiere api_key en providers.groq.api_key")
-        self._cfg = cfg
-        self._base_url = cfg.base_url or "https://api.groq.com/openai/v1"
-        self._headers = {
-            "Authorization": f"Bearer {cfg.api_key}",
-            "Content-Type": "application/json",
-        }
-
-    async def complete(
-        self,
-        messages: list[Message],
-        system_prompt: str,
-        tools: list[dict] | None = None,
-    ) -> LLMResponse:
+    def _completion_params(self, *, stream: bool) -> dict:
+        # Groq usa ``max_completion_tokens`` solo con reasoning; los modelos
+        # clásicos esperan ``max_tokens``.
         token_key = "max_completion_tokens" if self._cfg.reasoning_effort else "max_tokens"
-        payload: dict = {
-            "model": self._cfg.model,
-            "messages": self._build_messages(messages, system_prompt),
+        params: dict = {
             "temperature": self._cfg.temperature,
             token_key: self._cfg.max_tokens,
         }
         if self._cfg.reasoning_effort:
-            payload["reasoning_effort"] = self._cfg.reasoning_effort
-        if tools:
-            payload["tools"] = tools
-            payload["tool_choice"] = "auto"
-
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
-                    f"{self._base_url}/chat/completions",
-                    headers=self._headers,
-                    json=payload,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-        except httpx.HTTPStatusError as exc:
-            body = exc.response.text[:500]
-            raise LLMError(f"Groq HTTP {exc.response.status_code}: {body}") from exc
-        except httpx.HTTPError as exc:
-            raise LLMError(f"Groq HTTP error: {exc}") from exc
-
-        choice = data["choices"][0]
-        message = choice["message"]
-        content = message.get("content") or ""
-        tool_calls = message.get("tool_calls") or []
-        logger.info("%s", self._format_response_log("Groq", content, tool_calls))
-
-        return LLMResponse(
-            text_blocks=[content] if content else [],
-            tool_calls=tool_calls,
-            raw=json.dumps(message, ensure_ascii=False),
-        )
-
-    async def stream(
-        self,
-        messages: list[Message],
-        system_prompt: str,
-    ) -> AsyncIterator[str]:
-        token_key = "max_completion_tokens" if self._cfg.reasoning_effort else "max_tokens"
-        payload: dict = {
-            "model": self._cfg.model,
-            "messages": self._build_messages(messages, system_prompt),
-            "temperature": self._cfg.temperature,
-            token_key: self._cfg.max_tokens,
-            "stream": True,
-        }
-        if self._cfg.reasoning_effort:
-            payload["reasoning_effort"] = self._cfg.reasoning_effort
-        try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                async with client.stream(
-                    "POST",
-                    f"{self._base_url}/chat/completions",
-                    headers=self._headers,
-                    json=payload,
-                ) as resp:
-                    resp.raise_for_status()
-                    async for line in resp.aiter_lines():
-                        if not line.startswith("data: "):
-                            continue
-                        data_str = line[6:]
-                        if data_str.strip() == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(data_str)
-                            delta = chunk["choices"][0]["delta"]
-                            if content := delta.get("content"):
-                                yield content
-                        except (json.JSONDecodeError, KeyError):
-                            continue
-        except httpx.HTTPStatusError as exc:
-            await exc.response.aread()
-            body = exc.response.text[:500]
-            raise LLMError(f"Groq HTTP {exc.response.status_code}: {body}") from exc
-        except httpx.HTTPError as exc:
-            raise LLMError(f"Groq stream error: {exc}") from exc
+            params["reasoning_effort"] = self._cfg.reasoning_effort
+        return params

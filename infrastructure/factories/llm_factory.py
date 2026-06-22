@@ -41,10 +41,15 @@ class LLMProviderFactory:
             if provider_name is None:
                 continue
             for attr in vars(module).values():
+                # La clase concreta del provider se DEFINE en su módulo; las bases
+                # (BaseLLMProvider, OpenAICompatibleProvider) llegan importadas y
+                # tienen otro __module__. Filtrar por módulo de definición evita
+                # registrar la base de familia en vez del provider concreto: el
+                # orden de vars() pone los imports antes que la definición local.
                 if (
                     isinstance(attr, type)
                     and issubclass(attr, BaseLLMProvider)
-                    and attr is not BaseLLMProvider
+                    and attr.__module__ == module.__name__
                 ):
                     cls._registry[provider_name] = attr
                     logger.debug("LLM provider registrado: '%s' → %s", provider_name, attr.__name__)

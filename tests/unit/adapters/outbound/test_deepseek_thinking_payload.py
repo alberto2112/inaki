@@ -102,7 +102,9 @@ async def test_complete_captures_reasoning_content_into_thinking() -> None:
     fake_client.__aexit__.return_value = None
     fake_client.post.return_value = fake_resp
 
-    with patch("adapters.outbound.providers.deepseek.httpx.AsyncClient", return_value=fake_client):
+    with patch(
+        "adapters.outbound.providers.openai_compatible.httpx.AsyncClient", return_value=fake_client
+    ):
         result = await provider.complete([Message(role=Role.USER, content="hola")], "sys")
 
     assert result.text == "respuesta final"
@@ -126,7 +128,9 @@ async def test_complete_thinking_none_when_response_lacks_field() -> None:
     fake_client.__aexit__.return_value = None
     fake_client.post.return_value = fake_resp
 
-    with patch("adapters.outbound.providers.deepseek.httpx.AsyncClient", return_value=fake_client):
+    with patch(
+        "adapters.outbound.providers.openai_compatible.httpx.AsyncClient", return_value=fake_client
+    ):
         result = await provider.complete([Message(role=Role.USER, content="hi")], "sys")
 
     assert result.thinking is None
@@ -150,7 +154,9 @@ async def test_complete_empty_string_reasoning_content_treated_as_none() -> None
     fake_client.__aexit__.return_value = None
     fake_client.post.return_value = fake_resp
 
-    with patch("adapters.outbound.providers.deepseek.httpx.AsyncClient", return_value=fake_client):
+    with patch(
+        "adapters.outbound.providers.openai_compatible.httpx.AsyncClient", return_value=fake_client
+    ):
         result = await provider.complete([Message(role=Role.USER, content="hi")], "sys")
 
     assert result.thinking is None
@@ -175,7 +181,7 @@ async def test_complete_uses_configured_timeout_in_httpx_client() -> None:
     fake_client.post.return_value = fake_resp
 
     with patch(
-        "adapters.outbound.providers.deepseek.httpx.AsyncClient", return_value=fake_client
+        "adapters.outbound.providers.openai_compatible.httpx.AsyncClient", return_value=fake_client
     ) as ctor:
         await provider.complete([Message(role=Role.USER, content="hi")], "sys")
 
@@ -198,7 +204,9 @@ async def test_http_error_message_includes_exception_type_and_timeout() -> None:
     fake_client.__aexit__.return_value = None
     fake_client.post.side_effect = httpx.ReadTimeout("")
 
-    with patch("adapters.outbound.providers.deepseek.httpx.AsyncClient", return_value=fake_client):
+    with patch(
+        "adapters.outbound.providers.openai_compatible.httpx.AsyncClient", return_value=fake_client
+    ):
         with pytest.raises(LLMError) as exc_info:
             await provider.complete([Message(role=Role.USER, content="hi")], "sys")
 

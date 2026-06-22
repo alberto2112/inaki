@@ -1,117 +1,25 @@
-"""Proveedor LLM via OpenRouter API (compatible con OpenAI API)."""
+"""Proveedor LLM via OpenRouter API (compatible con OpenAI ``/chat/completions``)."""
 
 from __future__ import annotations
 
-import json
-import logging
-from collections.abc import AsyncIterator
+from typing import ClassVar
 
-import httpx
-
-from adapters.outbound.providers.base import BaseLLMProvider, ResolvedLLMConfig
-from core.domain.entities.message import Message
-from core.domain.errors import LLMError
-from core.domain.value_objects.llm_response import LLMResponse
+from adapters.outbound.providers.base import ResolvedLLMConfig
+from adapters.outbound.providers.openai_compatible import OpenAICompatibleProvider
 
 PROVIDER_NAME = "openrouter"
 
-logger = logging.getLogger(__name__)
 
+class OpenRouterProvider(OpenAICompatibleProvider):
+    _provider_label: ClassVar[str] = "OpenRouter"
+    _default_base_url: ClassVar[str] = "https://openrouter.ai/api/v1"
 
-class OpenRouterProvider(BaseLLMProvider):
-    _DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+    def _build_headers(self, cfg: ResolvedLLMConfig) -> dict[str, str]:
+        # OpenRouter usa ``HTTP-Referer`` para atribución de la app.
+        return {**super()._build_headers(cfg), "HTTP-Referer": "https://github.com/inaki"}
 
-    def __init__(self, cfg: ResolvedLLMConfig) -> None:
-        if not cfg.api_key:
-            raise LLMError("OpenRouter requiere api_key en providers.openrouter.api_key")
-        self._cfg = cfg
-        self._base_url = cfg.base_url or self._DEFAULT_BASE_URL
-        self._headers = {
-            "Authorization": f"Bearer {cfg.api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/inaki",
-        }
-
-    async def complete(
-        self,
-        messages: list[Message],
-        system_prompt: str,
-        tools: list[dict] | None = None,
-    ) -> LLMResponse:
-        payload: dict = {
-            "model": self._cfg.model,
-            "messages": self._build_messages(messages, system_prompt),
+    def _completion_params(self, *, stream: bool) -> dict:
+        return {
             "temperature": self._cfg.temperature,
             "max_tokens": self._cfg.max_tokens,
         }
-        if tools:
-            payload["tools"] = tools
-            payload["tool_choice"] = "auto"
-
-        try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                resp = await client.post(
-                    f"{self._base_url}/chat/completions",
-                    headers=self._headers,
-                    json=payload,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-        except httpx.HTTPStatusError as exc:
-            body = exc.response.text[:500]
-            raise LLMError(f"OpenRouter HTTP {exc.response.status_code}: {body}") from exc
-        except httpx.HTTPError as exc:
-            raise LLMError(f"OpenRouter HTTP error: {exc}") from exc
-
-        choice = data["choices"][0]
-        message = choice["message"]
-        content = message.get("content") or ""
-        tool_calls = message.get("tool_calls") or []
-        logger.info("%s", self._format_response_log("OpenRouter", content, tool_calls))
-
-        return LLMResponse(
-            text_blocks=[content] if content else [],
-            tool_calls=tool_calls,
-            raw=json.dumps(message, ensure_ascii=False),
-        )
-
-    async def stream(
-        self,
-        messages: list[Message],
-        system_prompt: str,
-    ) -> AsyncIterator[str]:
-        payload = {
-            "model": self._cfg.model,
-            "messages": self._build_messages(messages, system_prompt),
-            "temperature": self._cfg.temperature,
-            "max_tokens": self._cfg.max_tokens,
-            "stream": True,
-        }
-        try:
-            async with httpx.AsyncClient(timeout=120) as client:
-                async with client.stream(
-                    "POST",
-                    f"{self._base_url}/chat/completions",
-                    headers=self._headers,
-                    json=payload,
-                ) as resp:
-                    resp.raise_for_status()
-                    async for line in resp.aiter_lines():
-                        if not line.startswith("data: "):
-                            continue
-                        data_str = line[6:]
-                        if data_str.strip() == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(data_str)
-                            delta = chunk["choices"][0]["delta"]
-                            if content := delta.get("content"):
-                                yield content
-                        except (json.JSONDecodeError, KeyError):
-                            continue
-        except httpx.HTTPStatusError as exc:
-            await exc.response.aread()
-            body = exc.response.text[:500]
-            raise LLMError(f"OpenRouter HTTP {exc.response.status_code}: {body}") from exc
-        except httpx.HTTPError as exc:
-            raise LLMError(f"OpenRouter stream error: {exc}") from exc

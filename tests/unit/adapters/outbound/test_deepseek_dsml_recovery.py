@@ -143,7 +143,9 @@ async def test_complete_recovers_dsml_without_retry() -> None:
     provider = DeepSeekProvider(_cfg())
     client = _fake_client(_fake_message_response({"content": DSML_INBOX, "tool_calls": None}))
 
-    with patch("adapters.outbound.providers.deepseek.httpx.AsyncClient", return_value=client):
+    with patch(
+        "adapters.outbound.providers.openai_compatible.httpx.AsyncClient", return_value=client
+    ):
         result = await provider.complete([Message(role=Role.USER, content="leé mi mail")], "sys")
 
     # Una sola llamada: el parse NO dispara retry.
@@ -162,7 +164,9 @@ async def test_complete_preserves_narration_around_dsml_block() -> None:
     content = "Voy a intentar directamente:\n\n" + DSML_INBOX
     client = _fake_client(_fake_message_response({"content": content, "tool_calls": None}))
 
-    with patch("adapters.outbound.providers.deepseek.httpx.AsyncClient", return_value=client):
+    with patch(
+        "adapters.outbound.providers.openai_compatible.httpx.AsyncClient", return_value=client
+    ):
         result = await provider.complete([Message(role=Role.USER, content="leé mi mail")], "sys")
 
     assert client.post.call_count == 1
@@ -193,7 +197,9 @@ async def test_complete_retries_once_when_parse_fails() -> None:
     )
 
     with (
-        patch("adapters.outbound.providers.deepseek.httpx.AsyncClient", return_value=client),
+        patch(
+            "adapters.outbound.providers.openai_compatible.httpx.AsyncClient", return_value=client
+        ),
         patch("adapters.outbound.providers.deepseek.asyncio.sleep", new=AsyncMock()) as sleep,
     ):
         result = await provider.complete([Message(role=Role.USER, content="leé mi mail")], "sys")
@@ -217,7 +223,9 @@ async def test_complete_strips_when_dsml_persists_after_retry() -> None:
     )
 
     with (
-        patch("adapters.outbound.providers.deepseek.httpx.AsyncClient", return_value=client),
+        patch(
+            "adapters.outbound.providers.openai_compatible.httpx.AsyncClient", return_value=client
+        ),
         patch("adapters.outbound.providers.deepseek.asyncio.sleep", new=AsyncMock()),
     ):
         result = await provider.complete([Message(role=Role.USER, content="leé mi mail")], "sys")
@@ -238,7 +246,9 @@ async def test_complete_retry_recovers_parseable_dsml() -> None:
     )
 
     with (
-        patch("adapters.outbound.providers.deepseek.httpx.AsyncClient", return_value=client),
+        patch(
+            "adapters.outbound.providers.openai_compatible.httpx.AsyncClient", return_value=client
+        ),
         patch("adapters.outbound.providers.deepseek.asyncio.sleep", new=AsyncMock()),
     ):
         result = await provider.complete([Message(role=Role.USER, content="leé mi mail")], "sys")
@@ -265,7 +275,9 @@ async def test_complete_normal_response_untouched() -> None:
     ]
     client = _fake_client(_fake_message_response({"content": "", "tool_calls": native_tc}))
 
-    with patch("adapters.outbound.providers.deepseek.httpx.AsyncClient", return_value=client):
+    with patch(
+        "adapters.outbound.providers.openai_compatible.httpx.AsyncClient", return_value=client
+    ):
         result = await provider.complete([Message(role=Role.USER, content="buscá")], "sys")
 
     assert client.post.call_count == 1

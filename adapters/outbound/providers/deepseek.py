@@ -1,4 +1,10 @@
-"""Proveedor LLM via DeepSeek API (compatible con OpenAI)."""
+"""Proveedor LLM via DeepSeek API (compatible con OpenAI ``/chat/completions``).
+
+Hereda de ``OpenAICompatibleProvider`` (payload, red, stream y manejo de errores
+compartidos) y aporta SOLO lo propio de DeepSeek: el sampling thinking-aware
+(``_completion_params``) y el workaround DSML, que requiere override de
+``complete``.
+"""
 
 from __future__ import annotations
 
@@ -6,13 +12,9 @@ import asyncio
 import json
 import logging
 import re
-from collections.abc import AsyncIterator
 
-import httpx
-
-from adapters.outbound.providers.base import BaseLLMProvider, ResolvedLLMConfig
+from adapters.outbound.providers.openai_compatible import OpenAICompatibleProvider
 from core.domain.entities.message import Message
-from core.domain.errors import LLMError
 from core.domain.value_objects.llm_response import LLMResponse
 
 PROVIDER_NAME = "deepseek"
@@ -138,75 +140,35 @@ def _strip_dsml(content: str) -> str:
     return cleaned.strip()
 
 
-class DeepSeekProvider(BaseLLMProvider):
-    def __init__(self, cfg: ResolvedLLMConfig) -> None:
-        if not cfg.api_key:
-            raise LLMError("DeepSeek requiere api_key en providers.deepseek.api_key")
-        self._cfg = cfg
-        self._base_url = cfg.base_url or "https://api.deepseek.com/v1"
-        self._headers = {
-            "Authorization": f"Bearer {cfg.api_key}",
-            "Content-Type": "application/json",
-        }
+class DeepSeekProvider(OpenAICompatibleProvider):
+    _provider_label = "DeepSeek"
+    _default_base_url = "https://api.deepseek.com/v1"
 
     @property
     def thinking_active(self) -> bool:
         return self._cfg.thinking_active
 
-    def _build_payload(
-        self,
-        messages: list[Message],
-        system_prompt: str,
-        tools: list[dict] | None,
-    ) -> dict:
-        """Arma el payload de chat/completions con thinking-aware sampling.
+    def _completion_params(self, *, stream: bool) -> dict:
+        """Sampling thinking-aware.
 
-        Cuando ``thinking_active``, DeepSeek rechaza ``temperature``, ``top_p``,
-        ``presence_penalty`` y ``frequency_penalty`` — los omitimos.
+        Con ``thinking`` activo (y fuera de stream), DeepSeek rechaza
+        ``temperature``, ``top_p``, ``presence_penalty`` y ``frequency_penalty``
+        → solo mandamos ``thinking: enabled`` + ``reasoning_effort``. En stream el
+        thinking se desactiva siempre (el stream interactivo es para chat rápido).
         """
-        payload: dict = {
-            "model": self._cfg.model,
-            "messages": self._build_messages(messages, system_prompt),
-            "max_tokens": self._cfg.max_tokens,
-        }
-        if self._cfg.thinking_active:
-            payload["thinking"] = {"type": "enabled"}
-            payload["reasoning_effort"] = self._cfg.reasoning_effort
+        params: dict = {"max_tokens": self._cfg.max_tokens}
+        if self._cfg.thinking_active and not stream:
+            params["thinking"] = {"type": "enabled"}
+            params["reasoning_effort"] = self._cfg.reasoning_effort
         else:
-            payload["temperature"] = self._cfg.temperature
-            payload["thinking"] = {"type": "disabled"}
-        if tools:
-            payload["tools"] = tools
-            payload["tool_choice"] = "auto"
-        return payload
+            params["temperature"] = self._cfg.temperature
+            params["thinking"] = {"type": "disabled"}
+        return params
 
     async def _request_message(self, payload: dict) -> dict:
-        """POST a ``chat/completions``; devuelve el dict ``message`` del choice 0.
-
-        Centraliza red + manejo de errores HTTP para que ``complete()`` y el
-        retry de recuperación DSML compartan exactamente el mismo path.
-        """
-        try:
-            async with httpx.AsyncClient(timeout=self._cfg.timeout_seconds) as client:
-                resp = await client.post(
-                    f"{self._base_url}/chat/completions",
-                    headers=self._headers,
-                    json=payload,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-        except httpx.HTTPStatusError as exc:
-            body = exc.response.text[:500]
-            raise LLMError(f"DeepSeek HTTP {exc.response.status_code}: {body}") from exc
-        except httpx.HTTPError as exc:
-            # Muchas excepciones de httpx (ReadTimeout, ConnectTimeout, RemoteProtocolError)
-            # tienen __str__ vacío. Incluimos el tipo para que el mensaje sea
-            # accionable en logs y en el canal del usuario.
-            detail = str(exc) or repr(exc)
-            raise LLMError(
-                f"DeepSeek HTTP error ({type(exc).__name__}, timeout={self._cfg.timeout_seconds}s): {detail}"
-            ) from exc
-
+        """``message`` del choice 0. Reusa el ``_request`` (red + manejo de errores)
+        de ``OpenAICompatibleProvider`` — lo comparten ``complete`` y el retry DSML."""
+        data = await self._request(payload)
         return data["choices"][0]["message"]
 
     async def _recover_dsml(
@@ -285,48 +247,3 @@ class DeepSeekProvider(BaseLLMProvider):
             thinking=reasoning,
             raw=json.dumps(message, ensure_ascii=False),
         )
-
-    async def stream(
-        self,
-        messages: list[Message],
-        system_prompt: str,
-    ) -> AsyncIterator[str]:
-        payload: dict = {
-            "model": self._cfg.model,
-            "messages": self._build_messages(messages, system_prompt),
-            "temperature": self._cfg.temperature,
-            "max_tokens": self._cfg.max_tokens,
-            "stream": True,
-            "thinking": {"type": "disabled"},
-        }
-        try:
-            async with httpx.AsyncClient(timeout=self._cfg.timeout_seconds) as client:
-                async with client.stream(
-                    "POST",
-                    f"{self._base_url}/chat/completions",
-                    headers=self._headers,
-                    json=payload,
-                ) as resp:
-                    resp.raise_for_status()
-                    async for line in resp.aiter_lines():
-                        if not line.startswith("data: "):
-                            continue
-                        data_str = line[6:]
-                        if data_str.strip() == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(data_str)
-                            delta = chunk["choices"][0]["delta"]
-                            if content := delta.get("content"):
-                                yield content
-                        except (json.JSONDecodeError, KeyError):
-                            continue
-        except httpx.HTTPStatusError as exc:
-            await exc.response.aread()
-            body = exc.response.text[:500]
-            raise LLMError(f"DeepSeek HTTP {exc.response.status_code}: {body}") from exc
-        except httpx.HTTPError as exc:
-            detail = str(exc) or repr(exc)
-            raise LLMError(
-                f"DeepSeek stream error ({type(exc).__name__}, timeout={self._cfg.timeout_seconds}s): {detail}"
-            ) from exc

@@ -30,6 +30,7 @@ from core.domain.value_objects.channel_context import (
 from core.use_cases.run_agent import RunAgentUseCase
 from core.domain.value_objects.agent_settings import OneShotSettings
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
+from core.domain.services.scheduler_service import SchedulerService
 from core.use_cases.schedule_task import ScheduleTaskUseCase
 from infrastructure.config import (
     AgentConfig,
@@ -131,6 +132,12 @@ def _build_minimal_container(
 
 def _make_mock_schedule_uc() -> MagicMock:
     return MagicMock(spec=ScheduleTaskUseCase)
+
+
+def _make_mock_runner() -> MagicMock:
+    runner = MagicMock(spec=SchedulerService)
+    runner.run_task_now = AsyncMock()
+    return runner
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +245,7 @@ def test_wire_scheduler_pasa_get_channel_context() -> None:
     container = _build_minimal_container(agent_cfg, global_cfg)
     uc = _make_mock_schedule_uc()
 
-    container.wire_scheduler(uc, "America/Argentina/Buenos_Aires")
+    container.wire_scheduler(uc, _make_mock_runner(), "America/Argentina/Buenos_Aires")
 
     assert "scheduler" in container._tools._tools
     tool = container._tools._tools["scheduler"]
@@ -277,7 +284,7 @@ def test_wire_scheduler_callable_no_es_lambda_none() -> None:
     container = _build_minimal_container(agent_cfg, global_cfg)
     uc = _make_mock_schedule_uc()
 
-    container.wire_scheduler(uc, "UTC")
+    container.wire_scheduler(uc, _make_mock_runner(), "UTC")
 
     tool = container._tools._tools["scheduler"]
     assert isinstance(tool, SchedulerTool)

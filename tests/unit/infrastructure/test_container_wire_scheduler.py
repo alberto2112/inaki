@@ -32,6 +32,7 @@ from infrastructure.config import (
     ProviderConfig,
 )
 from infrastructure.container import AgentContainer
+from core.domain.services.scheduler_service import SchedulerService
 from core.use_cases.schedule_task import ScheduleTaskUseCase
 
 
@@ -135,6 +136,13 @@ def _make_mock_use_case() -> MagicMock:
     return uc
 
 
+def _make_mock_runner() -> MagicMock:
+    """Mock del IManualTaskRunner (SchedulerService) inyectado en la tool."""
+    runner = MagicMock(spec=SchedulerService)
+    runner.run_task_now = AsyncMock()
+    return runner
+
+
 # ---------------------------------------------------------------------------
 # Test 1 — Idempotency: wire_scheduler twice → exactly one "scheduler" entry
 # ---------------------------------------------------------------------------
@@ -149,9 +157,10 @@ def test_wire_scheduler_idempotent() -> None:
     global_cfg = _make_global_config()
     container = _build_minimal_container(agent_cfg, global_cfg)
     uc = _make_mock_use_case()
+    runner = _make_mock_runner()
 
-    container.wire_scheduler(uc, "America/Argentina/Buenos_Aires")
-    container.wire_scheduler(uc, "America/Argentina/Buenos_Aires")  # second call — must be no-op
+    container.wire_scheduler(uc, runner, "America/Argentina/Buenos_Aires")
+    container.wire_scheduler(uc, runner, "America/Argentina/Buenos_Aires")  # 2nd — must be no-op
 
     scheduler_names = [name for name in container._tools._tools if name == "scheduler"]
     assert len(scheduler_names) == 1, (
@@ -173,7 +182,7 @@ def test_wire_scheduler_noop_when_use_case_is_none() -> None:
     global_cfg = _make_global_config()
     container = _build_minimal_container(agent_cfg, global_cfg)
 
-    container.wire_scheduler(None, "UTC")
+    container.wire_scheduler(None, _make_mock_runner(), "UTC")
 
     assert "scheduler" not in container._tools._tools, (
         "scheduler tool must NOT be registered when schedule_task_uc is None"
@@ -196,9 +205,10 @@ def test_wire_scheduler_registers_tool_with_correct_config() -> None:
     global_cfg = _make_global_config()
     container = _build_minimal_container(agent_cfg, global_cfg)
     uc = _make_mock_use_case()
+    runner = _make_mock_runner()
     timezone = "Europe/Madrid"
 
-    container.wire_scheduler(uc, timezone)
+    container.wire_scheduler(uc, runner, timezone)
 
     assert "scheduler" in container._tools._tools, (
         "scheduler tool must be registered after wire_scheduler"
@@ -213,6 +223,8 @@ def test_wire_scheduler_registers_tool_with_correct_config() -> None:
     )
     # Verify the use case reference is the one we passed
     assert tool._uc is uc
+    # Verify the manual runner reference is the one we passed
+    assert tool._runner is runner
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +244,7 @@ def test_wire_scheduler_sets_wired_flag() -> None:
 
     assert container._scheduler_wired is False, "flag must start False"
 
-    container.wire_scheduler(uc, "UTC")
+    container.wire_scheduler(uc, _make_mock_runner(), "UTC")
 
     assert container._scheduler_wired is True, "flag must be True after wiring"
 
@@ -251,12 +263,12 @@ def test_wire_scheduler_none_does_not_set_flag() -> None:
     global_cfg = _make_global_config()
     container = _build_minimal_container(agent_cfg, global_cfg)
 
-    container.wire_scheduler(None, "UTC")
+    container.wire_scheduler(None, _make_mock_runner(), "UTC")
     assert container._scheduler_wired is False
 
     # Now wire with a real use case — must still work
     uc = _make_mock_use_case()
-    container.wire_scheduler(uc, "UTC")
+    container.wire_scheduler(uc, _make_mock_runner(), "UTC")
     assert container._scheduler_wired is True
     assert "scheduler" in container._tools._tools
 
@@ -277,8 +289,8 @@ def test_wire_scheduler_idempotent_different_args() -> None:
     uc1 = _make_mock_use_case()
     uc2 = _make_mock_use_case()
 
-    container.wire_scheduler(uc1, "UTC")
-    container.wire_scheduler(uc2, "Asia/Tokyo")  # second call — must be no-op
+    container.wire_scheduler(uc1, _make_mock_runner(), "UTC")
+    container.wire_scheduler(uc2, _make_mock_runner(), "Asia/Tokyo")  # second call — must be no-op
 
     tool = container._tools._tools["scheduler"]
     # El registry tipa los valores como ITool; narrowamos a SchedulerTool para

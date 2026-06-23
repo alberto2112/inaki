@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -42,8 +43,11 @@ def _make_tool(
     uc: ScheduleTaskUseCase,
     context: ChannelContext | None,
 ) -> SchedulerTool:
+    runner = MagicMock()
+    runner.run_task_now = AsyncMock()
     return SchedulerTool(
         schedule_task_uc=uc,
+        manual_runner=runner,
         agent_id="test-agent",
         user_timezone="America/Argentina/Buenos_Aires",
         get_channel_context=lambda: context,

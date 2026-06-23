@@ -42,6 +42,7 @@ from core.domain.entities.task_log import TaskLog
 from core.domain.errors import InvalidTriggerTypeError, TaskNotFoundError
 from core.domain.utils.cron import next_cron_occurrence, resolve_timezone
 from core.domain.value_objects.manual_run_result import ManualRunResult
+from core.ports.inbound.scheduler_port import IManualTaskRunner
 
 if TYPE_CHECKING:
     from core.ports.outbound.scheduler_dispatch_port import SchedulerDispatchPorts
@@ -50,7 +51,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SchedulerService:
+class SchedulerService(IManualTaskRunner):
     def __init__(
         self,
         repo: ISchedulerRepository,

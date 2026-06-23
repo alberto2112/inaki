@@ -5,6 +5,21 @@ from typing import Any
 
 from core.domain.entities.task import ScheduledTask
 from core.domain.entities.task_log import TaskLog
+from core.domain.value_objects.manual_run_result import ManualRunResult
+
+
+class IManualTaskRunner(ABC):
+    """Disparo manual on-demand de una tarea, fuera de su agenda.
+
+    Segregado de ``ISchedulerUseCase`` a propósito (ISP): el CRUD de tareas solo
+    necesita el repo, mientras que correr una tarea requiere el motor de dispatch
+    (canales, LLM, shell...). Lo implementa el ``SchedulerService`` (el motor de
+    ejecución), no el use case de CRUD. Lo consumen la tool ``scheduler`` (op
+    ``run``), el CLI (``inaki scheduler run``) y el REST admin (``POST /scheduler/run``).
+    """
+
+    @abstractmethod
+    async def run_task_now(self, task_id: int) -> ManualRunResult: ...
 
 
 class ISchedulerUseCase(ABC):

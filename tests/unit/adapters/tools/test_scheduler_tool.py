@@ -52,6 +52,7 @@ from core.domain.errors import (
     TooManyActiveTasksError,
 )
 from core.domain.value_objects.channel_context import ChannelContext
+from core.domain.value_objects.manual_run_result import ManualRunResult
 from core.ports.outbound.tool_port import ToolResult
 
 
@@ -68,9 +69,14 @@ def _make_tool(
     agent_id: str = _AGENT_ID,
     user_timezone: str = _USER_TZ,
     uc: MagicMock | None = None,
+    runner: MagicMock | None = None,
     get_channel_context=None,
 ) -> tuple[SchedulerTool, MagicMock]:
-    """Returns (tool, mock_uc). mock_uc has all methods as AsyncMock by default."""
+    """Returns (tool, mock_uc). mock_uc has all methods as AsyncMock by default.
+
+    El ``manual_runner`` (op ``run``) se queda como atributo ``tool._runner``; los
+    tests que ejercitan ``run`` pasan su propio mock o leen ``tool._runner``.
+    """
     if uc is None:
         uc = MagicMock()
         uc.create_task = AsyncMock()
@@ -80,6 +86,9 @@ def _make_tool(
         uc.delete_task = AsyncMock()
         uc.list_logs = AsyncMock()
         uc.get_log = AsyncMock()
+    if runner is None:
+        runner = MagicMock()
+        runner.run_task_now = AsyncMock()
     # Por defecto usa el contexto de canal estándar de prueba
     if get_channel_context is None:
 
@@ -88,6 +97,7 @@ def _make_tool(
 
     tool = SchedulerTool(
         schedule_task_uc=uc,
+        manual_runner=runner,
         agent_id=agent_id,
         user_timezone=user_timezone,
         get_channel_context=get_channel_context,
@@ -1558,6 +1568,112 @@ async def test_enable_sin_task_id_retorna_error() -> None:
     result = await tool.execute(operation="enable")
     assert result.success is False
     assert "task_id" in (result.error or "")
+
+
+# ---------------------------------------------------------------------------
+# run — disparo manual on-demand (NO destructivo)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_invoca_manual_runner_y_devuelve_resultado() -> None:
+    """run delega en IManualTaskRunner.run_task_now con el task_id y echo-ea el resultado."""
+    runner = MagicMock()
+    runner.run_task_now = AsyncMock(
+        return_value=ManualRunResult(task_id=107, success=True, output="ok", error=None)
+    )
+    tool, _ = _make_tool(runner=runner)
+
+    result = await tool.execute(operation="run", task_id=107)
+
+    runner.run_task_now.assert_awaited_once_with(107)
+    assert result.success is True
+    payload = json.loads(result.output)
+    assert payload == {
+        "ran": True,
+        "task_id": 107,
+        "trigger_success": True,
+        "output": "ok",
+        "error": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_run_acepta_task_id_como_string_numerico() -> None:
+    """El LLM puede mandar el id como '107' — se coacciona a int antes de delegar."""
+    runner = MagicMock()
+    runner.run_task_now = AsyncMock(
+        return_value=ManualRunResult(task_id=107, success=True, output=None, error=None)
+    )
+    tool, _ = _make_tool(runner=runner)
+
+    result = await tool.execute(operation="run", task_id="107")
+
+    runner.run_task_now.assert_awaited_once_with(107)
+    assert result.success is True
+
+
+@pytest.mark.asyncio
+async def test_run_trigger_fallido_es_dato_no_error_de_tool() -> None:
+    """Un trigger que ejecuta pero falla → ToolResult.success=True con trigger_success=False.
+
+    Mismo criterio que log_get con 'no encontrado': el fallo del trigger es DATO
+    para que el LLM decida, no un error de la tool (que dispararía el circuit breaker).
+    """
+    runner = MagicMock()
+    runner.run_task_now = AsyncMock(
+        return_value=ManualRunResult(
+            task_id=107, success=False, output=None, error="boom en el shell"
+        )
+    )
+    tool, _ = _make_tool(runner=runner)
+
+    result = await tool.execute(operation="run", task_id=107)
+
+    assert result.success is True
+    payload = json.loads(result.output)
+    assert payload["ran"] is True
+    assert payload["trigger_success"] is False
+    assert payload["error"] == "boom en el shell"
+
+
+@pytest.mark.asyncio
+async def test_run_task_inexistente_es_error_de_tool() -> None:
+    """TaskNotFoundError → ToolResult(success=False), igual que get/delete."""
+    runner = MagicMock()
+    runner.run_task_now = AsyncMock(side_effect=TaskNotFoundError("Task 999 not found"))
+    tool, _ = _make_tool(runner=runner)
+
+    result = await tool.execute(operation="run", task_id=999)
+
+    assert result.success is False
+    assert "999" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_run_sin_task_id_retorna_error() -> None:
+    runner = MagicMock()
+    runner.run_task_now = AsyncMock()
+    tool, _ = _make_tool(runner=runner)
+
+    result = await tool.execute(operation="run")
+
+    assert result.success is False
+    assert "task_id" in (result.error or "")
+    runner.run_task_now.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_task_id_invalido_retorna_error() -> None:
+    runner = MagicMock()
+    runner.run_task_now = AsyncMock()
+    tool, _ = _make_tool(runner=runner)
+
+    result = await tool.execute(operation="run", task_id="no-soy-int")
+
+    assert result.success is False
+    assert "Invalid 'task_id'" in (result.error or "")
+    runner.run_task_now.assert_not_awaited()
 
 
 @pytest.mark.asyncio

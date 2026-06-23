@@ -8,6 +8,9 @@ Operations:
   - delete   : elimina una tarea (builtin tasks protegidas)
   - enable   : habilita una tarea (re-arma FAILED/MISSED)
   - disable  : deshabilita una tarea sin borrarla (pausa)
+  - run      : dispara una tarea AHORA, fuera de su agenda — NO destructivo
+               (no toca status/next_run/executions_remaining; un recurrente no
+               decrementa ni avanza su slot, un oneshot no pasa a COMPLETED)
   - logs     : lista logs de ejecución (una tarea o global si se omite task_id)
   - log_get  : obtiene un log por ID con output/error completos (sin truncación)
 
@@ -50,7 +53,7 @@ from core.domain.value_objects.channel_context import ChannelContext
 from core.ports.outbound.tool_port import ITool, ToolResult
 
 if TYPE_CHECKING:
-    from core.ports.inbound.scheduler_port import ISchedulerUseCase
+    from core.ports.inbound.scheduler_port import IManualTaskRunner, ISchedulerUseCase
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +74,7 @@ _VALID_OPERATIONS = (
     "delete",
     "enable",
     "disable",
+    "run",
     "logs",
     "log_get",
 )
@@ -145,7 +149,7 @@ class SchedulerTool(ITool):
         "a reminder ('remind me tomorrow at 9'), a recurring action ('every Monday', 'every day at 8am'), "
         "a one-time future action ('in one hour', 'next Friday'), or an alert/notification at a given time. "
         "Also use it to review or change existing scheduled tasks. "
-        "Operations: create, list, get, update, delete, logs, log_get. "
+        "Operations: create, list, get, update, delete, enable, disable, run, logs, log_get. "
         "Use 'create' to schedule a future action (one_shot or recurring). "
         "REQUIRED for 'create': name, task_kind, trigger_type, trigger_payload, schedule. "
         "trigger_payload is ALWAYS required for 'create' — it is the object that describes "
@@ -157,6 +161,11 @@ class SchedulerTool(ITool):
         "Use 'delete' to remove a non-builtin task permanently. "
         "Use 'enable' to turn a task on (also re-arms a failed/missed task). "
         "Use 'disable' to pause a task without deleting it. "
+        "Use 'run' to fire a task RIGHT NOW, off-schedule, as a one-off — use it when the "
+        "user asks to run/execute an existing task immediately (e.g. 'run task 107 now'). "
+        "It is NON-destructive: it does NOT touch the task's status, next_run or "
+        "executions_remaining, so a recurring task keeps its schedule and does not "
+        "consume an execution. Requires task_id. "
         "Use 'logs' to list execution logs (newest first, paginated, outputs truncated to 1000 chars). "
         "Omit task_id to list the latest logs across all tasks; include task_id to filter by task. "
         "Use 'log_get' to fetch a single log by id with the FULL untruncated output/error. "
@@ -168,11 +177,16 @@ class SchedulerTool(ITool):
         "poné un recordatorio, alarma, despertador, recordatorio, todos los días, todas las semanas, "
         "cada lunes, cada día, en una hora, en diez minutos, mañana a las, esta noche, la semana que viene, "
         "tarea recurrente, tarea programada, recurrente, periódico. "
+        "corré la tarea ahora, ejecutá la tarea ahora, corré la tarea ya, disparar la tarea, "
+        "correr la tarea manualmente, forzar la ejecución, ejecutar ahora, probá la tarea. "
         "remind me, set a reminder, set an alarm, schedule, scheduled task, recurring task, every day, "
         "every Monday, every week, in one hour, in ten minutes, tomorrow at, tonight, next week, later, "
         "wake me up, notify me at, alert me, cron job, periodic task. "
+        "run the task now, run task now, execute the task now, trigger the task, fire the task now, "
+        "run it manually, force run, test the task. "
         "rappelle-moi, mets un rappel, planifie, tâche récurrente, tous les jours, chaque lundi, "
-        "dans une heure, demain à, rappel, alarme, réveille-moi, plus tard."
+        "dans une heure, demain à, rappel, alarme, réveille-moi, plus tard. "
+        "exécute la tâche maintenant, lance la tâche maintenant, déclencher la tâche."
     )
     parameters_schema = {
         "type": "object",
@@ -252,7 +266,7 @@ class SchedulerTool(ITool):
             "task_id": {
                 "type": "integer",
                 "description": (
-                    "Task ID (required for get, update, delete, enable, disable). "
+                    "Task ID (required for get, update, delete, enable, disable, run). "
                     "For 'logs': optional — omit to list the latest logs across all tasks."
                 ),
             },
@@ -285,11 +299,16 @@ class SchedulerTool(ITool):
         self,
         *,
         schedule_task_uc: ISchedulerUseCase,
+        manual_runner: IManualTaskRunner,
         agent_id: str,
         user_timezone: str,
         get_channel_context: Callable[[], ChannelContext | None],
     ) -> None:
         self._uc = schedule_task_uc
+        # Motor de ejecución (harness-global) — corre una tarea on-demand sin tocar
+        # su agenda. Segregado de `_uc` (CRUD) porque disparar un trigger necesita
+        # los puertos de dispatch, no solo el repo. Ver IManualTaskRunner.
+        self._runner = manual_runner
         self._agent_id = agent_id
         self._user_timezone = user_timezone
         self._get_channel_context = get_channel_context
@@ -311,6 +330,8 @@ class SchedulerTool(ITool):
                 return await self._set_enabled(kwargs, enabled=True)
             if operation == "disable":
                 return await self._set_enabled(kwargs, enabled=False)
+            if operation == "run":
+                return await self._run(kwargs)
             if operation == "logs":
                 return await self._logs(kwargs)
             if operation == "log_get":
@@ -739,6 +760,51 @@ class SchedulerTool(ITool):
                     "enabled": task.enabled,
                     "task_status": task.status.value,
                     "next_run_at": task.next_run.isoformat() if task.next_run else None,
+                }
+            ),
+            success=True,
+        )
+
+    async def _run(self, params: dict[str, Any]) -> ToolResult:
+        """Dispara una tarea AHORA, fuera de su agenda — NO destructivo.
+
+        Delega en ``IManualTaskRunner.run_task_now`` (el motor de ejecución): corre
+        el trigger UNA vez sin la máquina de reintentos y sin tocar
+        ``status``/``next_run``/``executions_remaining``. Un recurrente conserva su
+        agenda y NO consume una ejecución; un oneshot NO pasa a COMPLETED. Sin
+        protección de builtins: correr no muta la tarea (a diferencia de
+        update/delete), igual que el CLI y el REST admin.
+
+        El fallo del trigger (p. ej. un shell que sale con código !=0) NO es un
+        error de la tool: se devuelve como dato (``success=false`` + ``error`` en el
+        output, ``ToolResult.success=True``) para que el LLM decida qué hacer —
+        mismo criterio que ``log_get`` con "no encontrado". Solo es error de la tool
+        que la tarea no exista o que falte/sea inválido el ``task_id``.
+        """
+        task_id = params.get("task_id")
+        if task_id is None:
+            return self._error("Missing required parameter 'task_id'.")
+        try:
+            task_id = int(task_id)
+        except (TypeError, ValueError):
+            return self._error(f"Invalid 'task_id': '{task_id}'. Must be an integer.")
+
+        try:
+            result = await self._runner.run_task_now(task_id)
+        except TaskNotFoundError as exc:
+            return self._error(str(exc))
+        except SchedulerError as exc:
+            return self._error(str(exc))
+
+        return ToolResult(
+            tool_name=self.name,
+            output=json.dumps(
+                {
+                    "ran": True,
+                    "task_id": result.task_id,
+                    "trigger_success": result.success,
+                    "output": result.output,
+                    "error": result.error,
                 }
             ),
             success=True,

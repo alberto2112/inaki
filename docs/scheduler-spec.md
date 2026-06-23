@@ -372,6 +372,16 @@ manual path. The remaining trigger types (`shell_exec`, `consolidate_memory`,
 | Trigger ran OK | Prints the trigger output (if any) + `"Task <ID> ran manually — schedule unchanged."` |
 | Trigger ran but failed | Prints the error to stderr and exits non-zero (the schedule is still left untouched) |
 
+**Same capability, three surfaces.** The non-destructive manual run lives once in
+`SchedulerService.run_task_now` (exposed via the `IManualTaskRunner` inbound port) and is
+reached from three places: the CLI (`inaki scheduler run <ID>`), the admin endpoint
+(`POST /scheduler/run`), and the **LLM tool** (`scheduler` op `run`, requires `task_id`).
+The tool path lets the user ask in natural language — e.g. *"run task 107 now"* — and the
+agent fires it on demand. A failed trigger is returned to the LLM as **data**
+(`trigger_success: false` + `error` in the result, with the tool call itself reported as
+successful), not as a tool error — so the agent can report the failure instead of blindly
+retrying. Only a missing/invalid `task_id` or a non-existent task is a tool-level error.
+
 ---
 
 ### `inaki scheduler edit <ID>`

@@ -68,6 +68,7 @@ from core.domain.services.broadcast_buffer import BroadcastBuffer
 from core.domain.value_objects.channel_context import current_channel_context
 from core.domain.services.rate_limiter import FixedWindowRateLimiter
 from core.domain.services.scheduler_service import SchedulerService
+from core.ports.inbound.scheduler_port import IManualTaskRunner
 from core.ports.outbound.memory_port import IMemoryRepository
 from core.ports.outbound.scope_registry_port import IScopeRegistry
 from core.ports.outbound.tool_config_port import IToolConfigStore
@@ -884,16 +885,22 @@ class AgentContainer:
         )
 
     def wire_scheduler(
-        self, schedule_task_uc: ScheduleTaskUseCase | None, user_timezone: str
+        self,
+        schedule_task_uc: ScheduleTaskUseCase | None,
+        manual_runner: IManualTaskRunner | None,
+        user_timezone: str,
     ) -> None:
         """
         Phase-3 wiring: registers the scheduler tool.
 
-        Must be called AFTER AppContainer has constructed schedule_task_uc
-        (which depends on scheduler_repo, available only at AppContainer level).
-        Idempotente: segunda llamada es no-op. No-op también si schedule_task_uc es None.
+        Must be called AFTER AppContainer has constructed schedule_task_uc y
+        scheduler_service (ambos dependen de scheduler_repo, disponible solo a
+        nivel AppContainer). El ``manual_runner`` es el ``SchedulerService``
+        harness-global: corre tareas on-demand (op ``run`` de la tool) sin tocar
+        su agenda. Idempotente: segunda llamada es no-op. No-op también si
+        schedule_task_uc o manual_runner son None.
         """
-        if schedule_task_uc is None:
+        if schedule_task_uc is None or manual_runner is None:
             return
         if self._scheduler_wired:
             return
@@ -903,6 +910,7 @@ class AgentContainer:
         self._tools.register(
             SchedulerTool(
                 schedule_task_uc=schedule_task_uc,
+                manual_runner=manual_runner,
                 agent_id=self.agent_config.id,
                 user_timezone=user_timezone,
                 get_channel_context=self.get_channel_context,
@@ -1580,7 +1588,9 @@ class AppContainer:
             if self.registry.is_sub_agent(agent_id):
                 continue
             try:
-                container.wire_scheduler(self.schedule_task_uc, user_timezone)
+                container.wire_scheduler(
+                    self.schedule_task_uc, self.scheduler_service, user_timezone
+                )
             except Exception as exc:
                 logger.error("Error en wire_scheduler para agente '%s': %s", agent_id, exc)
 

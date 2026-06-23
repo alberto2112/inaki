@@ -63,18 +63,46 @@ RuntimePath = Annotated[str, BeforeValidator(_resolve_runtime_path)]
 
 
 # ---------------------------------------------------------------------------
+# Base común de los modelos de configuración
+# ---------------------------------------------------------------------------
+
+
+class _ConfigBaseModel(BaseModel):
+    """Base de TODOS los modelos de configuración del schema.
+
+    Activa ``use_attribute_docstrings``: Pydantic captura el docstring que sigue
+    a cada campo y lo expone como ``FieldInfo.description``. De este modo la
+    ÚNICA fuente de verdad de la documentación de cada parámetro es su docstring
+    acá — el setup TUI ya consume ``description`` (árbol de schema + modal de
+    alta de campo/sección) para describir cada opción. Sin este flag, los 130+
+    docstrings del schema no llegaban a la UI y había que leer el código para
+    descubrir qué se podía configurar.
+
+    Los ``model_config`` propios de las subclases (``extra="forbid"``,
+    ``validate_default``, ``strict``...) se MERGEAN con este — no se pierden.
+
+    Caveat de runtime: Pydantic lee la fuente vía ``inspect.getsource`` al
+    definir la clase. Funciona con los ``.py`` presentes en disco (deploy actual:
+    systemd + código fuente). Si en el futuro se empaqueta SIN fuentes (zipapp,
+    solo ``.pyc``), revalidar que las descripciones se sigan poblando.
+    """
+
+    model_config = ConfigDict(use_attribute_docstrings=True)
+
+
+# ---------------------------------------------------------------------------
 # Sub-configs
 # ---------------------------------------------------------------------------
 
 
-class AppConfig(BaseModel):
+class AppConfig(_ConfigBaseModel):
     name: str = "Inaki"
     log_level: str = "INFO"
     ext_dirs: ExpandedPathList = ["ext", "~/.inaki/ext"]
     default_agent: str = "general"
 
 
-class ProviderConfig(BaseModel):
+class ProviderConfig(_ConfigBaseModel):
     """
     Entrada del registry top-level de proveedores.
 
@@ -105,7 +133,7 @@ class ProviderConfig(BaseModel):
 _LLM_TIMEOUT_FALLBACK = 60
 
 
-class LLMConfig(BaseModel):
+class LLMConfig(_ConfigBaseModel):
     provider: str = "openrouter"
     model: str = "anthropic/claude-3-5-haiku"
     temperature: float = 0.7
@@ -152,7 +180,7 @@ class LLMConfig(BaseModel):
             return 2.0
 
 
-class EmbeddingConfig(BaseModel):
+class EmbeddingConfig(_ConfigBaseModel):
     model_config = ConfigDict(validate_default=True)  # RuntimePath en los defaults
 
     provider: str = "e5_onnx"
@@ -162,7 +190,7 @@ class EmbeddingConfig(BaseModel):
     cache_filename: RuntimePath = "data/embedding_cache.db"  # relativo a ~/.inaki/
 
 
-class TranscriptionConfig(BaseModel):
+class TranscriptionConfig(_ConfigBaseModel):
     """Config del provider de transcripción de audio (opcional)."""
 
     provider: str = "groq"
@@ -177,7 +205,7 @@ class TranscriptionConfig(BaseModel):
 # transcription). Las factories de infrastructure los componen desde acá.
 
 
-class MemoryLLMConfig(BaseModel):
+class MemoryLLMConfig(_ConfigBaseModel):
     """
     Override parcial de ``LLMConfig`` para el LLM base COMPARTIDO por los dos
     jobs de memoria (consolidación y reconciliación) en modo directo.
@@ -210,7 +238,7 @@ class MemoryLLMConfig(BaseModel):
     timeout_seconds: int | None = None
 
 
-class ConsolidationConfig(BaseModel):
+class ConsolidationConfig(_ConfigBaseModel):
     """Configuración del job de consolidación (extracción → digest → trim)."""
 
     enabled: bool = True
@@ -253,7 +281,7 @@ class ConsolidationConfig(BaseModel):
     """
 
 
-class ReconciliationConfig(BaseModel):
+class ReconciliationConfig(_ConfigBaseModel):
     """Configuración del job de reconciliación de memoria («reflection»)."""
 
     enabled: bool = False
@@ -292,7 +320,7 @@ class ReconciliationConfig(BaseModel):
     """
 
 
-class MemoriesConfig(BaseModel):
+class MemoriesConfig(_ConfigBaseModel):
     """
     Configuración del subsistema de memoria a largo plazo.
 
@@ -349,7 +377,7 @@ class MemoriesConfig(BaseModel):
         return base.model_copy(update=overrides)
 
 
-class ChatHistoryConfig(BaseModel):
+class ChatHistoryConfig(_ConfigBaseModel):
     model_config = ConfigDict(validate_default=True)  # RuntimePath en los defaults
 
     db_filename: RuntimePath = "data/history.db"  # relativo a ~/.inaki/
@@ -358,7 +386,7 @@ class ChatHistoryConfig(BaseModel):
     # True = compartir todo el historial del agente entre canales/chats
 
 
-class ChannelsGlobalConfig(BaseModel):
+class ChannelsGlobalConfig(_ConfigBaseModel):
     """Flags transversales de presentación al usuario en cualquier canal.
 
     Se configura SOLO a nivel global (``global.yaml`` → ``channels:``). No hay
@@ -376,7 +404,7 @@ class ChannelsGlobalConfig(BaseModel):
     """
 
 
-class ChannelFallbackConfig(BaseModel):
+class ChannelFallbackConfig(_ConfigBaseModel):
     """Config de fallbacks para el routing de canales del scheduler.
 
     Cuando una task dispara un envío a un canal que no tiene sink nativo
@@ -401,7 +429,7 @@ class ChannelFallbackConfig(BaseModel):
     overrides: dict[str, str] = {}
 
 
-class SchedulerConfig(BaseModel):
+class SchedulerConfig(_ConfigBaseModel):
     model_config = ConfigDict(validate_default=True)  # RuntimePath en los defaults
 
     enabled: bool = True
@@ -417,14 +445,14 @@ class SchedulerConfig(BaseModel):
     channel_fallback: ChannelFallbackConfig = ChannelFallbackConfig()
 
 
-class SkillsConfig(BaseModel):
+class SkillsConfig(_ConfigBaseModel):
     semantic_routing_min_skills: int = 10
     semantic_routing_top_k: int = 3
     semantic_routing_min_score: float = 0.0
     sticky_ttl: int = 3  # Turnos que una skill seleccionada sobrevive; 0 = disabled
 
 
-class ToolsConfig(BaseModel):
+class ToolsConfig(_ConfigBaseModel):
     semantic_routing_min_tools: int = 10
     semantic_routing_top_k: int = 5
     semantic_routing_min_score: float = 0.0
@@ -442,7 +470,7 @@ class ToolsConfig(BaseModel):
     padre. En el turno normal (``RunAgentUseCase`` con semantic routing) el campo es inerte."""
 
 
-class SemanticRoutingConfig(BaseModel):
+class SemanticRoutingConfig(_ConfigBaseModel):
     """Políticas transversales al pipeline de semantic routing (skills + tools).
 
     ``min_words_threshold``: si el user_input tiene MENOS palabras que este
@@ -458,7 +486,7 @@ class SemanticRoutingConfig(BaseModel):
 ContainmentMode = Literal["strict", "warn", "off"]
 
 
-class WorkspaceConfig(BaseModel):
+class WorkspaceConfig(_ConfigBaseModel):
     """
     Workspace sobre el que operan las tools de filesystem.
 
@@ -477,7 +505,7 @@ class WorkspaceConfig(BaseModel):
         object.__setattr__(self, "path", str(Path(self.path).expanduser()))
 
 
-class RemoteBroadcastConfig(BaseModel):
+class RemoteBroadcastConfig(_ConfigBaseModel):
     """Config de conexión al servidor broadcast remoto (modo client)."""
 
     host: str
@@ -487,7 +515,7 @@ class RemoteBroadcastConfig(BaseModel):
     """Secreto compartido con el servidor para autenticación HMAC-SHA256."""
 
 
-class BroadcastEmitConfig(BaseModel):
+class BroadcastEmitConfig(_ConfigBaseModel):
     """Flags por agente que controlan qué tipos de eventos se emiten al broadcast.
 
     Cada flag corresponde a un ``event_type`` del ``BroadcastMessage``:
@@ -516,7 +544,7 @@ class BroadcastEmitConfig(BaseModel):
     """Si ``True``, emite ``event_type="user_input_photo"`` tras procesar una foto."""
 
 
-class BroadcastConfig(BaseModel):
+class BroadcastConfig(_ConfigBaseModel):
     """
     Config del **transporte** de broadcast TCP entre instancias de Inaki.
 
@@ -582,7 +610,7 @@ class BroadcastConfig(BaseModel):
         return self
 
 
-class TelegramGroupsConfig(BaseModel):
+class TelegramGroupsConfig(_ConfigBaseModel):
     """
     Config tipada del comportamiento del bot en chats grupales.
 
@@ -654,7 +682,7 @@ class TelegramGroupsConfig(BaseModel):
         return self
 
 
-class TelegramChannelConfig(BaseModel):
+class TelegramChannelConfig(_ConfigBaseModel):
     """
     Config tipada del canal Telegram.
 
@@ -696,7 +724,7 @@ class TelegramChannelConfig(BaseModel):
     """Config específica para chats grupales (delays, override de reactions). None = todos los defaults."""
 
 
-class KnowledgeSourceConfig(BaseModel):
+class KnowledgeSourceConfig(_ConfigBaseModel):
     """Configuración de una fuente de conocimiento externa."""
 
     id: str
@@ -730,7 +758,7 @@ class KnowledgeSourceConfig(BaseModel):
     """Score mínimo de coseno para incluir un chunk."""
 
 
-class KnowledgeConfig(BaseModel):
+class KnowledgeConfig(_ConfigBaseModel):
     """Configuración global del pipeline de knowledge pre-fetch."""
 
     model_config = ConfigDict(validate_default=True)
@@ -762,21 +790,21 @@ class KnowledgeConfig(BaseModel):
     """Lista de fuentes de conocimiento externas configuradas."""
 
 
-class DelegationConfig(BaseModel):
+class DelegationConfig(_ConfigBaseModel):
     """Config global de delegación (aplica a todos los agentes como valores por defecto)."""
 
     max_iterations_per_sub: int = 10
     timeout_seconds: int = 60
 
 
-class AgentDelegationConfig(BaseModel):
+class AgentDelegationConfig(_ConfigBaseModel):
     """Config de delegación por agente."""
 
     enabled: bool = False
     allowed_targets: list[str] = []
 
 
-class AdminConfig(BaseModel):
+class AdminConfig(_ConfigBaseModel):
     """Configuración del admin server del daemon."""
 
     port: int = 6497
@@ -786,7 +814,7 @@ class AdminConfig(BaseModel):
     """Timeout en segundos para turnos de chat vía REST (POST /admin/chat/turn)."""
 
 
-class UserConfig(BaseModel):
+class UserConfig(_ConfigBaseModel):
     """Preferencias del usuario."""
 
     timezone: str = ""
@@ -832,7 +860,7 @@ class UserConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class AgentConfig(BaseModel):
+class AgentConfig(_ConfigBaseModel):
     id: str
     name: str
     description: str
@@ -861,7 +889,7 @@ class AgentConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class FacesConfig(BaseModel):
+class FacesConfig(_ConfigBaseModel):
     """Configuración del proveedor de reconocimiento facial (InsightFace)."""
 
     provider: Literal["insightface"] = "insightface"
@@ -881,7 +909,7 @@ class FacesConfig(BaseModel):
         return self
 
 
-class SceneConfig(BaseModel):
+class SceneConfig(_ConfigBaseModel):
     """Configuración del proveedor de descripción de escena (LLM multimodal)."""
 
     provider: Literal["anthropic", "openai", "groq"] = "anthropic"
@@ -892,7 +920,7 @@ class SceneConfig(BaseModel):
     """API key del proveedor. Conviene en global.secrets.yaml bajo photos.scene.api_key."""
 
 
-class DedupConfig(BaseModel):
+class DedupConfig(_ConfigBaseModel):
     """Configuración del job nocturno de deduplicación de personas."""
 
     enabled: bool = True
@@ -902,7 +930,7 @@ class DedupConfig(BaseModel):
     """Score mínimo de similitud coseno entre centroides para reportar par duplicado."""
 
 
-class PhotosConfig(BaseModel):
+class PhotosConfig(_ConfigBaseModel):
     """Configuración del pipeline de fotos (reconocimiento facial + escena)."""
 
     enabled: bool = True
@@ -919,7 +947,7 @@ class PhotosConfig(BaseModel):
     dedup: DedupConfig = DedupConfig()
 
 
-class GlobalConfig(BaseModel):
+class GlobalConfig(_ConfigBaseModel):
     app: AppConfig
     llm: LLMConfig
     embedding: EmbeddingConfig

@@ -36,7 +36,7 @@ inaki (cli.py → app)
 │   │       ├── SqliteEmbeddingCache(cache_filename)
 │   │       ├── SQLiteMemoryRepository(db_filename, embedder)
 │   │       ├── LLMProviderFactory.create(cfg) → ILLMProvider
-│   │       ├── (if memory.llm differs:) separate LLMProviderFactory for consolidation
+│   │       ├── (if memories.llm differs:) separate LLMProviderFactory for consolidation
 │   │       ├── YamlSkillRepository(embedder, cache)
 │   │       ├── SQLiteHistoryStore(history_cfg)
 │   │       ├── ToolRegistry() + register(builtin tools)
@@ -47,7 +47,7 @@ inaki (cli.py → app)
 │   │       ├── RunAgentUseCase(llm, memory, ..., settings=build_run_agent_settings(cfg))
 │   │       ├── RunAgentOneShotUseCase(llm, tools, settings=OneShotSettings(...))
 │   │       └── ConsolidateMemoryUseCase(llm, memory, embedder, history, agent_id,
-│   │                                    settings=build_memory_settings(cfg.memory))
+│   │                                    settings=build_memory_settings(cfg.memories))
 │   │
 │   ├── Second pass — wire_delegation:
 │   │   └── Registers `delegate` tool with a `build_child` closure (get_sub_agent_raw +
@@ -55,7 +55,7 @@ inaki (cli.py → app)
 │   │       Containers must exist before cross-references.
 │   │
 │   ├── Build enabled_agents = {id: container.consolidate_memory
-│   │                           for each container where agent_config.memory.enabled}
+│   │                           for each container where agent_config.memories.consolidation.enabled}
 │   ├── ConsolidateAllAgentsUseCase(enabled_agents, delay_seconds)
 │   │
 │   ├── LLMDispatcherAdapter(agents) — SINGLE shared instance (lock-per-scope)
@@ -125,7 +125,7 @@ inaki consolidate
     ├── With --agent X:
     │   ├── container = app.get_agent("X")
     │   ├── await container.consolidate_memory.execute()
-    │   │   └── consolidates only X (ignores memory.enabled)
+    │   │   └── consolidates only X (ignores memories.consolidation.enabled)
     │   └── print(f"X: {result}")
     │
     └── Without --agent:
@@ -177,7 +177,7 @@ AgentContainer.__init__(agent_config, global_config, scope_registry)
 ├── LLMProviderFactory.create(cfg) → ILLMProvider
 │   └── Provider based on cfg.llm.provider (openrouter, groq, ollama, openai, deepseek)
 │
-├── (if memory.llm differs from llm:) separate LLMProviderFactory for consolidation
+├── (if memories.llm differs from llm:) separate LLMProviderFactory for consolidation
 │
 ├── YamlSkillRepository(embedder, cache)
 │   └── _ensure_loaded() — loads and embeds YAMLs registered via add_file() on first use (lazy)
@@ -205,7 +205,7 @@ AgentContainer.__init__(agent_config, global_config, scope_registry)
 │                   settings=build_run_agent_settings(cfg), knowledge, ...)
 ├── RunAgentOneShotUseCase(llm, tools, settings=OneShotSettings(...)) — scheduler (no history)
 └── ConsolidateMemoryUseCase(llm/memory_llm, memory, embedder, history, agent_id,
-                             settings=build_memory_settings(cfg.memory))
+                             settings=build_memory_settings(cfg.memories))
 ```
 
 **Note:** use cases never receive `AgentConfig` — each one declares its parameters
@@ -270,7 +270,7 @@ WHERE agent_id = ?
     LIMIT ?
   );
 ```
-Preserves the last N messages for the agent (N = resolved `memory.keep_last_messages`,
+Preserves the last N messages for the agent (N = resolved `memories.consolidation.keep_last_messages`,
 with sentinel `0 → 84`). Transactional: only runs after successful
 extraction + persistence.
 
@@ -317,7 +317,7 @@ AppContainer.startup()
 │
 └── _reconcile_consolidate_memory_task()
     │
-    ├── target_schedule ← global_config.memory.schedule
+    ├── target_schedule ← global_config.memories.consolidation.schedule
     ├── existing ← scheduler_repo.get_task(CONSOLIDATE_MEMORY_TASK_ID)  # id=1
     │
     ├── If existing is None:
@@ -443,7 +443,7 @@ run sees `load_uninfused → []` and returns without touching anything.
 
 ## Memory Reconciliation Flow
 
-Memory reconciliation is independent of consolidation and runs as a nightly scheduled builtin task per agent (`reconcile_memory_{agent_id}`, cron from `memory.reconcile_schedule`). It requires `memory.reconcile_enabled: true` in the agent's YAML.
+Memory reconciliation is independent of consolidation and runs as a nightly scheduled builtin task per agent (`reconcile_memory_{agent_id}`, cron from `memories.reconciliation.schedule`). It requires `memories.reconciliation.enabled: true` in the agent's YAML.
 
 ### Builtin Task Reconciliation at Startup
 
@@ -454,8 +454,8 @@ AppContainer.startup()
 │
 └── _reconcile_reconcile_memory_tasks()
     │
-    ├── For each agent with memory.reconcile_enabled = true:
-    │   ├── target_schedule ← agent_config.memory.reconcile_schedule
+    ├── For each agent with memories.reconciliation.enabled = true:
+    │   ├── target_schedule ← agent_config.memories.reconciliation.schedule
     │   ├── task_name ← f"reconcile_memory_{agent_id}"
     │   ├── existing ← scheduler_repo.get_task_by_name(task_name)
     │   │
@@ -465,7 +465,7 @@ AppContainer.startup()
     │   └── If existing exists → same check pattern as consolidate_memory:
     │       schedule changed, FAILED status, NULL next_run → save if needed
     │
-    └── For each agent with memory.reconcile_enabled = false:
+    └── For each agent with memories.reconciliation.enabled = false:
         └── If task exists in DB → disable it (does NOT delete)
 ```
 
@@ -494,10 +494,10 @@ ReconcileMemoryUseCase.execute()
 │
 ├── For each seed (SEED-BASED mode, best-effort):
 │   │
-│   ├── neighbors ← memory.search_with_scores(seed.embedding, top_k=reconcile_top_k)
+│   ├── neighbors ← memory.search_with_scores(seed.embedding, top_k=top_k)
 │   │   # KNN via sqlite-vec; returns list of (MemoryEntry, score)
 │   │
-│   ├── Filter: score < reconcile_similarity_threshold → discard
+│   ├── Filter: score < similarity_threshold → discard
 │   ├── Filter: channel or chat_id ≠ seed's scope → discard
 │   │   (scope filter done in use case — search_with_scores has no native scope support)
 │   │
@@ -532,4 +532,4 @@ ReconcileMemoryUseCase.execute()
 
 **Best-effort:** unlike consolidation (which is transactional), a cluster failure does not abort the rest. Seeds from a failed cluster remain `reconciled=0` and are retried in the next scheduled run.
 
-**Scope filtering:** `search_with_scores` does not filter by `(channel, chat_id)` natively (V1 limitation). The use case retrieves `reconcile_top_k` neighbors and discards those outside the seed's scope in application code. The `top_k` must be generous enough to find enough in-scope neighbors despite the oversample.
+**Scope filtering:** `search_with_scores` does not filter by `(channel, chat_id)` natively (V1 limitation). The use case retrieves `top_k` neighbors and discards those outside the seed's scope in application code. The `top_k` must be generous enough to find enough in-scope neighbors despite the oversample.

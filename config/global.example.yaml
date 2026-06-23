@@ -27,7 +27,7 @@
 # -----------------------------------------------------------------------------
 #
 # Single source of truth para `api_key` y `base_url` por vendor. Las features
-# (`llm`, `embedding`, `transcription`, `memory.llm`) NO declaran credenciales
+# (`llm`, `embedding`, `transcription`, `memories.llm`) NO declaran credenciales
 # — solo referencian una entrada de este registry por nombre vía `provider: <key>`.
 #
 # Cada entrada soporta:

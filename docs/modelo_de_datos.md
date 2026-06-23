@@ -265,7 +265,7 @@ AgentConfig ──────────────────► AgentConta
     │                               │
     ├── LLMConfig ──────────────► ILLMProvider
     ├── EmbeddingConfig ─────────► IEmbeddingProvider
-    ├── MemoryConfig ────────────► IMemoryRepository
+    ├── MemoriesConfig ──────────► IMemoryRepository
     ├── ChatHistoryConfig ───────► IHistoryStore
     └── channels: dict           Tools: IToolExecutor
                                  Skills: ISkillRepository

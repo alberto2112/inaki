@@ -436,12 +436,12 @@ CREATE INDEX IF NOT EXISTS idx_memories_scope
 SQL
 ```
 
-**Cambios de config**: el default de `memory.digest_filename` pasa de
+**Cambios de config**: el default de `memories.digest_filename` pasa de
 `mem/last_memories.md` a `mem/digest_{channel}_{chat_id}.md`. Si tenés un override
 explícito en tu YAML, actualizalo al template — sin placeholders el sistema vuelve a
 escribir un único archivo (comportamiento legacy, recuerdos cruzados).
 
-**Cambio semántico de `memory.delay_seconds`**: ahora también se respeta entre
+**Cambio semántico de `memories.consolidation.delay_seconds`**: ahora también se respeta entre
 scopes `(channel, chat_id)` dentro del mismo agente, no solo entre agentes en la
 consolidación global.
 

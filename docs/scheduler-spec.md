@@ -65,7 +65,7 @@ The scheduler is a background task execution engine that runs continuously withi
 
 ### 2.1 Daily memory consolidation
 
-Builtin case. The scheduler runs memory consolidation for all enabled agents according to the cron configured in `memory.schedule` (default: `0 3 * * *` = 3 AM user-local every day).
+Builtin case. The scheduler runs memory consolidation for all enabled agents according to the cron configured in `memories.consolidation.schedule` (default: `0 3 * * *` = 3 AM user-local every day).
 
 **Trigger**: `consolidate_memory`  
 **Frequency**: recurring, configurable cron  
@@ -562,7 +562,7 @@ class ConsolidateMemoryPayload(BaseModel):
 
 ### `reconcile_memory`
 
-Runs memory reconciliation for a specific agent. Created automatically as one builtin task per agent with `memory.reconcile_enabled: true`.
+Runs memory reconciliation for a specific agent. Created automatically as one builtin task per agent with `memories.reconciliation.enabled: true`.
 
 ```python
 class ReconcileMemoryPayload(BaseModel):
@@ -696,12 +696,13 @@ Cron expressions are evaluated in `user.timezone` (empty → UTC fallback).
 ### `memory` block (affects builtin task)
 
 ```yaml
-memory:
-  schedule: "0 3 * * *"    # Cron for the builtin consolidate_memory task
-  delay_seconds: 2          # Pause between agents during consolidation
+memories:
+  consolidation:
+    schedule: "0 3 * * *"  # Cron for the builtin consolidate_memory task
+    delay_seconds: 2        # Pause between agents during consolidation
 ```
 
-If `memory.schedule` changes, the scheduler detects the change on startup and automatically updates the builtin task (ID 1).
+If `memories.consolidation.schedule` changes, the scheduler detects the change on startup and automatically updates the builtin task (ID 1).
 
 ---
 
@@ -717,13 +718,13 @@ name:         consolidate_memory
 description:  Global memory consolidation (all enabled agents)
 task_kind:    RECURRENT
 trigger_type: consolidate_memory
-schedule:     configurable via memory.schedule (default: "0 3 * * *")
+schedule:     configurable via memories.consolidation.schedule (default: "0 3 * * *")
 executions_remaining: null (infinite)
 ```
 
 **Reconciliation on startup** (`AppContainer._reconcile_consolidate_memory_task`):
 
-1. Reads `memory.schedule` from config
+1. Reads `memories.consolidation.schedule` from config
 2. Queries the task in the DB
 3. If it doesn't exist → creates it (`seed_builtin`)
 4. If the schedule changed → updates + recalculates `next_run`
@@ -733,7 +734,7 @@ executions_remaining: null (infinite)
 
 ### IDs 10+ — `reconcile_memory_{agent_id}`
 
-One builtin task is created per agent that has `memory.reconcile_enabled: true`. IDs are allocated starting at `_RECONCILE_MEMORY_BASE_ID = 10`.
+One builtin task is created per agent that has `memories.reconciliation.enabled: true`. IDs are allocated starting at `_RECONCILE_MEMORY_BASE_ID = 10`.
 
 ```
 id:           10  (10 for the first agent, 11 for the second, etc.)
@@ -741,7 +742,7 @@ name:         reconcile_memory_{agent_id}
 description:  Memory reconciliation for agent {agent_id}
 task_kind:    RECURRENT
 trigger_type: reconcile_memory
-schedule:     configurable via memory.reconcile_schedule (default: "0 4 * * 1")
+schedule:     configurable via memories.reconciliation.schedule (default: "0 4 * * 1")
 executions_remaining: null (infinite)
 ```
 
@@ -749,7 +750,7 @@ executions_remaining: null (infinite)
 
 Same pattern as `consolidate_memory` (ID 1):
 
-1. For each agent with `memory.reconcile_enabled: true`, reads `memory.reconcile_schedule` from config
+1. For each agent with `memories.reconciliation.enabled: true`, reads `memories.reconciliation.schedule` from config
 2. Queries the corresponding task in the DB by name `reconcile_memory_{agent_id}`
 3. If it doesn't exist → creates it (`seed_builtin`)
 4. If the schedule changed → updates + recalculates `next_run`
@@ -757,7 +758,7 @@ Same pattern as `consolidate_memory` (ID 1):
 6. If `next_run == NULL` → recalculates
 7. If the payload is corrupt (`ValidationError`) → deletes and re-creates clean
 
-Tasks are added/removed automatically when agents enable or disable `reconcile_enabled`.
+Tasks are added/removed automatically when agents enable or disable reconciliation (`reconciliation.enabled`).
 
 ---
 

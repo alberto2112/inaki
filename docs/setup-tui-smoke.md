@@ -147,7 +147,7 @@ bat ~/.inaki/config/agents/smoke-test.yaml
 
 ---
 
-## 8. AgentDetailPage — editing flow with tri-state (memory.llm)
+## 8. AgentDetailPage — editing flow with tri-state (memories.llm)
 
 1. In `AgentsPage`, select `smoke-test` → Enter → `AgentDetailPage`.
 2. Breadcrumb shows `inaki / config / agents / smoke-test`.
@@ -168,9 +168,9 @@ bat ~/.inaki/config/agents/smoke-test.yaml
 bat ~/.inaki/config/agents/smoke-test.yaml
 ```
 
-- [ ] `memory.llm.provider` does NOT appear in the agent YAML (inherited).
-- [ ] `memory.llm.model: gpt-4o` appears explicitly.
-- [ ] `memory.llm.temperature: null` appears explicitly.
+- [ ] `memories.llm.provider` does NOT appear in the agent YAML (inherited).
+- [ ] `memories.llm.model: gpt-4o` appears explicitly.
+- [ ] `memories.llm.temperature: null` appears explicitly.
 
 ---
 

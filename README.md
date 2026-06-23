@@ -136,8 +136,9 @@ description: Personal general-purpose assistant
 system_prompt: |
   You are Inaki, a personal AI assistant.
 
-memory:
-  enabled: true
+memories:
+  consolidation:
+    enabled: true
 ```
 
 ---

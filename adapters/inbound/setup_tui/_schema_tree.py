@@ -41,7 +41,7 @@ def build_schema_tree(
     channel_schemas: dict[str, type[BaseModel]] | None = None,
     tristate_paths: frozenset[str] | None = None,
     exclude_keys: frozenset[str] = frozenset(),
-    dynamic_enums: dict[str, tuple[str, ...]] | None = None,
+    dynamic_choices: dict[str, tuple[str, ...]] | None = None,
 ) -> SchemaNode:
     """Construye el árbol de config a partir del schema y los valores actuales.
 
@@ -67,7 +67,7 @@ def build_schema_tree(
         channel_schemas=channel_schemas or {},
         tristate_paths=tristate_paths or frozenset(),
         exclude_keys=exclude_keys,
-        dynamic_enums=dynamic_enums or {},
+        dynamic_choices=dynamic_choices or {},
     )
 
 
@@ -80,7 +80,7 @@ def _build_section(
     channel_schemas: dict[str, type[BaseModel]],
     tristate_paths: frozenset[str],
     exclude_keys: frozenset[str],
-    dynamic_enums: dict[str, tuple[str, ...]],
+    dynamic_choices: dict[str, tuple[str, ...]],
 ) -> SchemaNode:
     """Construye un nodo sección y recursa sobre sus hijos presentes."""
     children: list[SchemaNode] = []
@@ -106,7 +106,7 @@ def _build_section(
                         channel_schemas=channel_schemas,
                         tristate_paths=tristate_paths,
                         exclude_keys=exclude_keys,
-                        dynamic_enums=dynamic_enums,
+                        dynamic_choices=dynamic_choices,
                     )
                 )
             else:
@@ -128,7 +128,7 @@ def _build_section(
                         channel_schemas=channel_schemas,
                         tristate_paths=tristate_paths,
                         exclude_keys=exclude_keys,
-                        dynamic_enums=dynamic_enums,
+                        dynamic_choices=dynamic_choices,
                     )
                 )
             else:
@@ -145,7 +145,7 @@ def _build_section(
                     values,
                     path=path,
                     tristate_paths=tristate_paths,
-                    dynamic_enums=dynamic_enums,
+                    dynamic_choices=dynamic_choices,
                 )
             )
         else:
@@ -193,7 +193,7 @@ def _build_channels_node(
     channel_schemas: dict[str, type[BaseModel]],
     tristate_paths: frozenset[str],
     exclude_keys: frozenset[str],
-    dynamic_enums: dict[str, tuple[str, ...]],
+    dynamic_choices: dict[str, tuple[str, ...]],
 ) -> SchemaNode:
     """Construye el nodo ``channels``: una sección cuyos hijos son los canales
     presentes (tipados vía ``channel_schemas``) y cuyos ``addable`` son los
@@ -212,7 +212,7 @@ def _build_channels_node(
                 channel_schemas=channel_schemas,
                 tristate_paths=tristate_paths,
                 exclude_keys=exclude_keys,
-                dynamic_enums=dynamic_enums,
+                dynamic_choices=dynamic_choices,
             )
         )
 
@@ -240,13 +240,15 @@ def _build_leaf(
     *,
     path: tuple[str, ...],
     tristate_paths: frozenset[str],
-    dynamic_enums: dict[str, tuple[str, ...]],
+    dynamic_choices: dict[str, tuple[str, ...]],
 ) -> SchemaNode:
     """Construye un nodo hoja (campo editable) reusando la inferencia de kind.
 
-    Si el nombre del campo está en ``dynamic_enums``, se fuerza ``kind="enum"``
-    con esos choices aunque el schema lo declare como ``str`` libre (ej.
-    ``provider`` → adaptadores autodescubiertos). Los tri-estado no se tocan.
+    Si la RUTA dotted del campo está en ``dynamic_choices``, se fuerza
+    ``kind="enum"`` con esos choices — siempre que el campo NO sea ya un Literal
+    del schema (ese gana) ni un tri-estado. Mapeo por ruta (no por nombre) para
+    no pisar homónimos de otras secciones: ``photos.scene.provider`` es Literal y
+    conserva sus opciones; ``llm.provider`` → providers declarados.
     """
     unwrapped = _unwrap_optional(annotation)
     kind = _infer_kind(name, annotation, field_info)
@@ -254,9 +256,12 @@ def _build_leaf(
 
     ruta_dotted = ".".join(path + (name,))
     es_tristate = ruta_dotted in tristate_paths
-    if name in dynamic_enums and not es_tristate:
+    # Choices dinámicos por RUTA (no por nombre): precisos por ubicación y, con
+    # ``kind != "enum"``, NUNCA pisan un Literal del schema (ese gana). El
+    # tri-estado también tiene prioridad (su edición va por su propio modal).
+    if ruta_dotted in dynamic_choices and not es_tristate and kind != "enum":
         kind = "enum"
-        enum_choices = dynamic_enums[name]
+        enum_choices = dynamic_choices[ruta_dotted]
 
     default_str = _default_as_str(field_info)
 

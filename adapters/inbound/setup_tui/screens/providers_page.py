@@ -355,7 +355,7 @@ class ProvidersPage(BasePage):
         """Adaptadores disponibles para elegir en el modal (autodescubiertos)."""
         if self._container is None:
             return ()
-        return self._container.dynamic_enums.get("provider", ())
+        return self._container.provider_adapters
 
     def _after_create_provider(self, datos: dict[str, Any] | None) -> None:
         if datos is None or self._container is None:

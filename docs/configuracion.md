@@ -50,12 +50,31 @@ Every edit is done 100% in a modal — no inline editing. Four modal types:
 | Field type | Modal | Keys |
 |------------|-------|------|
 | `scalar` (str, int, float) | `EditScalarModal` — Input with pre-filled value | `Enter` saves, `Esc` cancels |
-| `enum` (Literal) | `EditEnumModal` — ListView with options | `↑↓ + Enter`, `Esc` cancels |
+| `enum` (`Literal` of the schema, or a field with known values by path) | `EditEnumModal` — ListView with options | `↑↓ + Enter`, `Esc` cancels |
 | `long` (system_prompt, description) | `EditLongModal` — TextArea | `Ctrl+S` saves, `Esc` cancels |
 | `secret` (api_key, token, auth) | `EditSecretModal` — Input password=True | `Enter` saves, `Esc` cancels |
 
 Current values are **pre-filled** in the modal. If the field is empty, the
-Pydantic default is shown dimmed as a reference.
+Pydantic default is shown dimmed as a reference. Each field's **description**
+(its docstring in the schema, exposed via `use_attribute_docstrings`) is shown as
+inline help when adding a field or section.
+
+### Dynamic lists for known-value fields
+
+Some fields are plain `str` in the schema but have a **known set of valid values
+at runtime** — the tree edits them as a list (`EditEnumModal`), not free text, so
+a typo can't break a cross-reference:
+
+| Field (by path) | List source |
+|-----------------|-------------|
+| `llm.provider`, `embedding.provider`, `transcription.provider` | providers declared in `providers:` (global + agent scope) |
+| `memories.consolidation.agent_id`, `memories.reconciliation.agent_id` | declared sub-agents |
+
+The mapping is **by path, not by name**, so a `Literal` field keeps its own
+options (e.g. `photos.scene.provider` stays `anthropic`/`openai`/`groq`, not the
+global provider list) and a tri-state field (`memories.llm.*`) keeps its
+inherit/value/null modal. The provider's **adapter type** in `ProvidersPage` is
+likewise chosen from the auto-discovered adapter list.
 
 ### Escape hatch `<null>`
 

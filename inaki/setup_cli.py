@@ -61,8 +61,9 @@ def _lanzar_tui() -> None:
     from infrastructure.factories.transcription_factory import TranscriptionProviderFactory
 
     # Adaptadores de proveedor disponibles (autodescubiertos por las factories).
-    # El campo `provider`/`type` se ofrece como lista en vez de texto libre: los
-    # vendors SON conocidos (cada uno tiene su adapter), a diferencia del `model`.
+    # Alimentan el desplegable de TIPO en la página de providers. Los choices del
+    # árbol (`*.provider` → providers declarados; `*.agent_id` → sub-agentes) los
+    # resuelve `setup_tui.choices.resolve_choices` con el repo, no esta lista.
     provider_choices = tuple(
         sorted(
             set(LLMProviderFactory.available())
@@ -78,9 +79,7 @@ def _lanzar_tui() -> None:
         # Registry de canales para introspeccionar el dict ``channels`` del agente.
         # Al sumar un canal nuevo (slack, etc.) agregar su modelo acá.
         channel_schemas={"telegram": TelegramChannelConfig},
-        # `provider` y `type` (entradas de providers) se editan eligiendo de la
-        # lista de adaptadores; el `model` queda libre (puede ser cualquiera).
-        dynamic_enums={"provider": provider_choices, "type": provider_choices},
+        provider_adapters=provider_choices,
     )
     app = SetupApp(container)
     app.run()

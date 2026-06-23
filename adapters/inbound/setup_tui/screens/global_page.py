@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from adapters.inbound.setup_tui._cambios import cambios_anidados, eliminar_en_path
 from adapters.inbound.setup_tui._schema_tree import build_schema_tree
+from adapters.inbound.setup_tui.choices import resolve_choices
 from adapters.inbound.setup_tui.domain.schema_node import SchemaNode
 from adapters.inbound.setup_tui.screens._tree_editor import TreeEditorPage
 from adapters.inbound.setup_tui.screens._warnings import warn_on_invalid_refs
@@ -62,7 +63,7 @@ class GlobalPage(TreeEditorPage):
             datos,
             root_label="global",
             exclude_keys=_EXCLUDE,
-            dynamic_enums=self._container.dynamic_enums,
+            dynamic_choices=resolve_choices(self._container.repo, datos),
         )
 
     def persist_field_saved(self, leaf: SchemaNode, field: "Field") -> None:

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### setup-tui: descripciones de campo + listas dinámicas
+
+- El setup TUI muestra la **descripción de cada campo** (docstring del schema vía
+  `use_attribute_docstrings`) como ayuda al añadir un campo o sección — antes
+  había que leer el código fuente.
+- Los campos con **valores conocidos** se editan como **lista** en vez de texto
+  libre: `llm/embedding/transcription.provider` ofrecen los providers declarados
+  en `providers:`; `memories.{consolidation,reconciliation}.agent_id` ofrecen los
+  sub-agentes declarados. Mapeo por ruta; respeta los `Literal` del schema
+  (`photos.scene.provider` conserva sus opciones).
+
 ### setup-tui-config
 
 - `inaki setup` y `inaki setup tui` ahora abren la **TUI Textual** para editar

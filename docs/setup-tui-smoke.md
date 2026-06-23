@@ -174,6 +174,21 @@ bat ~/.inaki/config/agents/smoke-test.yaml
 
 ---
 
+## 8b. Known-value fields are edited as a list
+
+1. In `GlobalPage`, navigate to `LLM → provider`.
+2. Press `Enter` → an `EditEnumModal` (list) opens, NOT a free-text input.
+3. The options are the providers declared in `providers:`.
+
+**Verify:**
+
+- [ ] `llm.provider` opens a selectable list, not a text box.
+- [ ] The listed options match the keys under `providers:` in `global.yaml`.
+- [ ] A `Literal` field (e.g. `workspace → containment`) still lists its own
+      schema options (`strict`/`warn`/`off`), unaffected by the provider list.
+
+---
+
 ## 9. Cross-ref Validation — warning for invalid reference
 
 1. In `GlobalPage`, navigate to `APP → default_agent`.

@@ -68,6 +68,19 @@ def _literal_choices(annotation: Any) -> tuple[str, ...]:
     return tuple(str(a) for a in get_args(annotation))
 
 
+def _list_item_type(annotation: Any) -> str | None:
+    """Si la anotación (desenvuelta de ``Optional``) es ``list[X]`` con X escalar
+    (``str``/``int``/``float``), devuelve el nombre del tipo del item. ``None`` si
+    no es una lista de escalares (ej. ``list[BaseModel]`` → se edita aparte, no
+    como lista simple). Alimenta el editor de listas (``EditListModal``)."""
+    unwrapped = _unwrap_optional(annotation)
+    if get_origin(unwrapped) is list:
+        args = get_args(unwrapped)
+        if args and args[0] in (str, int, float):
+            return args[0].__name__
+    return None
+
+
 def _unwrap_optional(annotation: Any) -> Any:
     """Desenvuelve ``Optional[X]`` / ``X | None`` → ``X``.
 
@@ -108,6 +121,9 @@ def _infer_kind(name: str, annotation: Any, field_info: FieldInfo | None = None)
     # (bool es subclase de int, pero la anotación es distinta).
     if unwrapped is bool:
         return "bool"
+    # Lista de escalares (str/int/float) → editor de listas (no texto raw).
+    if _list_item_type(annotation) is not None:
+        return "list"
     # Secreto = lo que el schema MARCA (no lo que el nombre sugiere).
     if _field_is_secret(field_info):
         return "secret"

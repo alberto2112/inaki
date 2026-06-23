@@ -333,3 +333,49 @@ def test_integracion_con_agentconfig_real():
     assert _hijo(groups, "bot_username").field.value == "anacleto_ia_bot"  # type: ignore[union-attr]
     # broadcast no está → addable en telegram
     assert "broadcast" in _addable_keys(telegram)
+
+
+# --------------------------------------------------------------------------
+# Listas de valores simples → kind="list" (editor de listas, no texto raw)
+# --------------------------------------------------------------------------
+
+
+def test_lista_de_escalares_es_kind_list():
+    class _M(BaseModel):
+        ids: list[int] = []
+        tags: list[str] = []
+
+    tree = build_schema_tree(_M, {"ids": [1, 2], "tags": ["a"]}, root_label="m")
+    ids = _hijo(tree, "ids")
+    assert ids.field.kind == "list"  # type: ignore[union-attr]
+    assert ids.field.list_item_type == "int"  # type: ignore[union-attr]
+    assert ids.field.value == [1, 2]  # type: ignore[union-attr]
+    tags = _hijo(tree, "tags")
+    assert tags.field.kind == "list"  # type: ignore[union-attr]
+    assert tags.field.list_item_type == "str"  # type: ignore[union-attr]
+
+
+def test_lista_de_objetos_no_es_kind_list():
+    """list[BaseModel] (ej. knowledge.sources) NO cae a kind=list — es lista de
+    OBJETOS, fuera del alcance del editor de listas simples."""
+
+    class _Item(BaseModel):
+        x: int = 0
+
+    class _M(BaseModel):
+        items: list[_Item] = []
+
+    tree = build_schema_tree(_M, {"items": [{"x": 1}]}, root_label="m")
+    assert _hijo(tree, "items").field.kind != "list"  # type: ignore[union-attr]
+
+
+def test_telegram_allowed_ids_es_lista_editable():
+    """End-to-end con el schema real: allowed_user_ids deja de ser texto raw."""
+    from infrastructure.config import TelegramChannelConfig
+
+    tree = build_schema_tree(
+        TelegramChannelConfig, {"allowed_user_ids": [123, 456]}, root_label="telegram"
+    )
+    node = _hijo(tree, "allowed_user_ids")
+    assert node.field.kind == "list"  # type: ignore[union-attr]
+    assert node.field.list_item_type == "int"  # type: ignore[union-attr]

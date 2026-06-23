@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 # Tipos de campo soportados por los modales de edición.
-FieldKind = Literal["scalar", "enum", "long", "secret", "bool"]
+FieldKind = Literal["scalar", "enum", "long", "secret", "bool", "list"]
 
 # Estados posibles del tri-estado (cuando is_tristate=True).
 TristateEstado = Literal["inherit", "override_value", "override_null"]
@@ -21,6 +21,9 @@ class Field:
         value: Valor actual (mutable — se actualiza tras cada edición).
         kind: Tipo de editor que se lanza al editar este campo.
         enum_choices: Opciones válidas para campos de tipo ``"enum"``.
+        list_item_type: Tipo de los items para ``kind == "list"`` (``"int"`` /
+            ``"str"`` / ``"float"``). Lo usa ``EditListModal`` para parsear/validar
+            cada item al agregarlo. ``None`` cuando el campo no es una lista.
         default: Default del schema Pydantic; se muestra en dim si el campo está vacío.
         is_tristate: Si ``True``, el campo soporta 3 estados:
             ``"inherit"`` (heredar del global), ``"override_value"`` (valor explícito)
@@ -33,6 +36,7 @@ class Field:
     value: Any
     kind: FieldKind
     enum_choices: tuple[str, ...] | None = field(default=None)
+    list_item_type: str | None = field(default=None)
     default: str | None = field(default=None)
     is_tristate: bool = field(default=False)
     tristate_state: TristateEstado | None = field(default=None)

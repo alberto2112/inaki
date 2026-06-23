@@ -26,6 +26,7 @@ from adapters.inbound.setup_tui._schema import (
     _default_as_str,
     _field_is_secret,
     _infer_kind,
+    _list_item_type,
     _literal_choices,
     _unwrap_optional,
 )
@@ -263,6 +264,7 @@ def _build_leaf(
         kind = "enum"
         enum_choices = dynamic_choices[ruta_dotted]
 
+    item_type = _list_item_type(annotation) if kind == "list" else None
     default_str = _default_as_str(field_info)
 
     raw = values.get(name, "")
@@ -288,6 +290,7 @@ def _build_leaf(
             value=value,
             kind=kind,
             enum_choices=enum_choices,
+            list_item_type=item_type,
             default=default_str,
             is_tristate=is_tristate,
             tristate_state=tristate_state,  # type: ignore[arg-type]

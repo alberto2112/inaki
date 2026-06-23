@@ -334,6 +334,7 @@ class TreeEditorPage(Screen):
 
         from adapters.inbound.setup_tui.modals.bool import EditBoolModal
         from adapters.inbound.setup_tui.modals.enum import EditEnumModal
+        from adapters.inbound.setup_tui.modals.list import EditListModal
         from adapters.inbound.setup_tui.modals.long import EditLongModal
         from adapters.inbound.setup_tui.modals.scalar import EditScalarModal
         from adapters.inbound.setup_tui.modals.secret import EditSecretModal
@@ -342,6 +343,8 @@ class TreeEditorPage(Screen):
             self.app.push_screen(EditBoolModal(field), self._after_bool_edit)
         elif field.kind == "enum":
             self.app.push_screen(EditEnumModal(field), self._after_edit)
+        elif field.kind == "list":
+            self.app.push_screen(EditListModal(field), self._after_list_edit)
         elif field.kind == "long":
             self.app.push_screen(EditLongModal(field), self._after_edit)
         elif field.kind == "secret":
@@ -364,6 +367,17 @@ class TreeEditorPage(Screen):
         self._notify_daemon_restart_needed()
 
     def _after_bool_edit(self, result: bool | None) -> None:
+        if result is None:
+            return
+        leaf = self._editing_leaf()
+        if leaf is None or leaf.field is None:
+            return
+        leaf.field.value = result
+        self._refresh_current_row(leaf.field)
+        self.persist_field_saved(leaf, leaf.field)
+        self._notify_daemon_restart_needed()
+
+    def _after_list_edit(self, result: "list | None") -> None:
         if result is None:
             return
         leaf = self._editing_leaf()

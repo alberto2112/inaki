@@ -461,6 +461,26 @@ def reload(
     print("Daemon reiniciando...")
 
 
+@app.command(name="gen-docs", hidden=True)
+def gen_docs() -> None:
+    """[dev] Regenera docs/config-reference.md desde el schema de configuración.
+
+    Tooling de desarrollo: solo tiene sentido desde el repo. El test de drift
+    `test_config_docs_drift.py` falla si el .md quedó desincronizado del schema —
+    correr esto lo resuelve.
+    """
+    from pathlib import Path
+
+    from infrastructure.config_docs import generate_config_reference
+
+    destino = Path(__file__).resolve().parent.parent / "docs" / "config-reference.md"
+    if not destino.parent.is_dir():
+        typer.echo(f"error: no existe {destino.parent} (¿fuera del repo?)", err=True)
+        raise typer.Exit(1)
+    destino.write_text(generate_config_reference(), encoding="utf-8")
+    typer.echo(f"✓ regenerado {destino}")
+
+
 @app.command()
 def consolidate(
     ctx: typer.Context,

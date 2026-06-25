@@ -2,7 +2,7 @@
 
 Cubre:
 - Usuario no autorizado → drop silencioso.
-- Album guard (media_group_id seteado) → drop silencioso, use case NO llamado.
+- Album (media_group_id) → dispara turno coalescido __ALBUM__, sin procesarlo como foto individual.
 - Feature disabled (process_photo=None) → reply de aviso, no use case.
 - Happy path private: reacción 👁, use case ejecutado, pipeline corrido.
 - Resultado con imagen anotada → reply_photo llamado.
@@ -145,8 +145,20 @@ async def test_user_no_autorizado_drop_silencioso(agent_cfg, mock_container) -> 
     update.message.reply_photo.assert_not_called()
 
 
-async def test_album_guard_media_group_id_drop_silencioso(agent_cfg, mock_container) -> None:
+async def test_album_dispara_pipeline_sin_procesar_como_foto(
+    agent_cfg, mock_container, monkeypatch
+) -> None:
+    """Un álbum (media_group_id) NO se procesa como foto individual (sin
+    process_photo ni record_photo_message), pero SÍ dispara el turno coalescido
+    con __ALBUM__ aunque no traiga caption — antes quedaba mudo."""
+    import adapters.inbound.telegram.media as media_mod
+
+    monkeypatch.setattr(media_mod, "ALBUM_GATHER_DELAY_SEC", 0.0)
+
     bot = _build_bot(agent_cfg, mock_container)
+    mock_container.telegram_file_repo = None  # gather → ([], "")
+    bot._run_pipeline = AsyncMock()
+    bot._set_reaction = AsyncMock()
     update = _mk_update(media_group_id="abc-123")
     context = MagicMock()
 
@@ -154,8 +166,11 @@ async def test_album_guard_media_group_id_drop_silencioso(agent_cfg, mock_contai
 
     mock_container.process_photo.execute.assert_not_called()
     mock_container.run_agent.record_photo_message.assert_not_called()
-    update.message.reply_text.assert_not_called()
     update.message.reply_photo.assert_not_called()
+    bot._run_pipeline.assert_awaited_once()
+    args, kwargs = bot._run_pipeline.call_args
+    user_input = args[1] if len(args) > 1 else kwargs.get("user_input")
+    assert user_input.startswith("__ALBUM__")
 
 
 async def test_feature_disabled_process_photo_none(agent_cfg) -> None:

@@ -39,6 +39,11 @@ logger = logging.getLogger(__name__)
 # y se persistan, y luego junta TODOS los paths para el LLM.
 ALBUM_GATHER_DELAY_SEC = 2.0
 
+# Máximo de media_group_id recordados para el dedup de álbumes (evita re-disparar
+# el turno por cada una de las N fotos del mismo álbum). Acotado para no crecer
+# indefinidamente — uso doméstico, los álbumes son efímeros.
+_ALBUM_DEDUP_MAX = 256
+
 
 _DEFAULT_EXT_BY_TYPE: dict[str, str] = {
     "photo": ".jpg",
@@ -72,6 +77,7 @@ class TelegramMediaMixin:
     _handle_group_message: Callable[..., Coroutine[Any, Any, None]]
     _schedule_group_flush: Callable[[str, str], None]
     _emit_event: Callable[..., Coroutine[Any, Any, None]]
+    _albums_seen: dict[str, None]
 
     async def _handle_photo_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -101,33 +107,45 @@ class TelegramMediaMixin:
             )
             return
 
-        # Álbumes: persisten file_id (sin face/scene). Si el mensaje trae
-        # caption (típicamente solo la primera foto del grupo), se trata como
-        # input del usuario y dispara pipeline UNA vez con __ALBUM__. Sin
-        # caption queda persistido para download_from_telegram(content_type='album').
+        # Álbumes: persisten file_id (sin face/scene) y disparan el pipeline UNA
+        # vez con __ALBUM__, traiga o no caption. Telegram entrega el álbum como
+        # N mensajes; usamos dedup por media_group_id para que solo el PRIMERO
+        # dispare el turno coalescido y los demás solo persistan. Antes, un álbum
+        # sin caption quedaba mudo y el bot "no se enteraba" — ahora siempre avisa.
         if message.media_group_id is not None:
             media_group_id = str(message.media_group_id)
             await self._persist_incoming_file(update)
-            caption = (getattr(message, "caption", None) or "").strip()
-            if not caption:
+            # Caption de ESTE mensaje, como fallback si el gather no lo recupera
+            # de los records (p.ej. el primer miembro que dispara antes de que el
+            # resto del álbum persista su caption).
+            caption_msg = (getattr(message, "caption", None) or "").strip()
+
+            # Dedup atómico (sin await entre el check y el add → seguro con
+            # concurrent_updates(True)): solo el primer miembro continúa.
+            if media_group_id in self._albums_seen:
                 return
+            self._albums_seen[media_group_id] = None
+            if len(self._albums_seen) > _ALBUM_DEDUP_MAX:
+                del self._albums_seen[next(iter(self._albums_seen))]
 
             # Race condition de Telegram: las demás fotos del álbum aún no han
             # llegado en este momento. Esperamos un poco para que se persistan
-            # y después juntamos TODAS las del media_group_id desde la DB.
+            # y después juntamos TODAS las del media_group_id (y el caption, venga
+            # en la foto que venga) desde la DB.
             await asyncio.sleep(ALBUM_GATHER_DELAY_SEC)
 
             chat_id_str = str(chat.id)
-            paths_album = await self._gather_album_paths(
+            paths_album, caption_db = await self._gather_album_paths(
                 media_group_id=media_group_id, chat_id=chat_id_str
             )
+            caption = caption_db or caption_msg
             if paths_album:
                 paths_str = "\n".join(f"- {p}" for p in paths_album)
                 ubicacion_album = f" ({len(paths_album)} photos):\n{paths_str}"
             else:
                 ubicacion_album = ""
 
-            user_input = f"__ALBUM__{ubicacion_album}\n\n{caption}"
+            user_input = f"__ALBUM__{ubicacion_album}\n\n{caption}".rstrip()
             chat_type_album = chat.type
             if chat_type_album in _TIPOS_GRUPO:
                 await self._handle_group_message(update, user_input, chat_type_album)
@@ -339,19 +357,23 @@ class TelegramMediaMixin:
             return "file", message.document, getattr(message.document, "mime_type", None)
         return None
 
-    async def _gather_album_paths(self, *, media_group_id: str, chat_id: str) -> list["Path"]:
-        """Junta y pre-descarga TODAS las fotos persistidas para un media_group_id.
+    async def _gather_album_paths(
+        self, *, media_group_id: str, chat_id: str
+    ) -> tuple[list["Path"], str]:
+        """Junta y pre-descarga TODAS las fotos de un media_group_id, con su caption.
 
         Llamar DESPUÉS de esperar la ventana ``ALBUM_GATHER_DELAY_SEC`` para
         que las demás fotos del álbum hayan sido persistidas por sus handlers.
 
-        Devuelve los paths absolutos en orden de recepción (received_at ASC,
-        coherente con la query del repo). Best-effort: si el repo o el
-        downloader no están, devuelve lista vacía.
+        Devuelve ``(paths, caption)``: los paths absolutos en orden de recepción
+        (received_at ASC) y el primer caption no-vacío entre los miembros
+        (Telegram suele ponerlo en una sola foto del álbum, no siempre la
+        primera). Best-effort: si el repo o el downloader no están, devuelve
+        ``([], "")``.
         """
         repo = self._ports.telegram_file_repo
         if repo is None:
-            return []
+            return [], ""
 
         try:
             # 100 cubre cualquier álbum razonable (Telegram limita a 10
@@ -371,12 +393,15 @@ class TelegramMediaMixin:
                 media_group_id,
                 exc,
             )
-            return []
+            return [], ""
 
         paths: list[Path] = []
+        caption = ""
         for record in records:
             if record.media_group_id != media_group_id:
                 continue
+            if not caption and record.caption:
+                caption = record.caption.strip()
             local_path = await self._pre_download_media(
                 file_id=record.file_id,
                 file_unique_id=record.file_unique_id,
@@ -385,7 +410,7 @@ class TelegramMediaMixin:
             )
             if local_path is not None:
                 paths.append(local_path)
-        return paths
+        return paths, caption
 
     async def _pre_download_media(
         self,

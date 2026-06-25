@@ -178,6 +178,11 @@ class TelegramBot(
         # tanto refleja "la última persona que habló en este chat".
         self._last_group_sender: dict[str, dict[str, str | None]] = {}
 
+        # Dedup de álbumes ya procesados (media_group_id). Telegram entrega un
+        # álbum como N mensajes (uno por foto); solo el primero dispara el turno
+        # coalescido, los demás solo persisten. Acotado para no crecer sin fin.
+        self._albums_seen: dict[str, None] = {}
+
         if not self._token:
             raise ValueError(f"Agente '{settings.id}': channels.telegram.token no configurado")
 

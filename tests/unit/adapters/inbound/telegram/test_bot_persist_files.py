@@ -2,7 +2,7 @@
 
 Cobertura:
 - Photo individual: persiste file_id con history_id.
-- Album (media_group_id seteado): persiste file_id con history_id=None y NO procesa.
+- Album (media_group_id seteado): persiste file_id con history_id=None y dispara el turno coalescido __ALBUM__ (no como foto individual), con o sin caption.
 - Voice/audio/video_note: persisten file_id antes del size-check.
 - Document/video: handlers MUDOS — solo persisten, sin reply.
 - Sin repo registrado: no rompe el flujo.
@@ -107,9 +107,16 @@ def _document_update(chat_id: int = -100):
 # ---------------------------------------------------------------------------
 
 
-async def test_album_persiste_file_id_y_no_procesa(monkeypatch):
+async def test_album_persiste_file_id_sin_procesar_como_foto(monkeypatch):
+    import adapters.inbound.telegram.media as media_mod
+
+    monkeypatch.setattr(media_mod, "ALBUM_GATHER_DELAY_SEC", 0.0)
+
     bot, container, repo = _make_bot()
+    repo.query_recent.return_value = []
     update = _photo_update(media_group_id="grupo-1")
+    bot._run_pipeline = AsyncMock()
+    bot._set_reaction = AsyncMock()
     ctx = MagicMock()
 
     await bot._handle_photo_message(update, ctx)
@@ -120,9 +127,10 @@ async def test_album_persiste_file_id_y_no_procesa(monkeypatch):
     assert record.file_id == "FOTO-123"
     assert record.media_group_id == "grupo-1"
     assert record.history_id is None
-    # No se procesó (process_photo=None igual nos sacaba pero verificamos que no se intentó persistir history)
+    # NO se procesa como foto individual (sin record_photo_message), pero SÍ
+    # dispara el turno de álbum coalescido.
     container.run_agent.record_photo_message.assert_not_awaited()
-    update.message.reply_text.assert_not_awaited()
+    bot._run_pipeline.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -222,16 +230,49 @@ async def test_album_con_caption_dispara_pipeline_en_privado(monkeypatch):
     assert "mandá esto a juan" in user_input
 
 
-async def test_album_sin_caption_solo_persiste_y_no_dispara_pipeline():
+async def test_album_sin_caption_igual_dispara_pipeline(monkeypatch):
+    """Cambio de diseño: un álbum sin caption ya NO queda mudo — dispara el
+    turno coalescido con __ALBUM__ para que el bot 'se entere' de las fotos."""
+    import adapters.inbound.telegram.media as media_mod
+
+    monkeypatch.setattr(media_mod, "ALBUM_GATHER_DELAY_SEC", 0.0)
+
     bot, container, repo = _make_bot()
+    repo.query_recent.return_value = []
     update = _photo_update(media_group_id="grupo-1")
     update.message.caption = None
     bot._run_pipeline = AsyncMock()
+    bot._set_reaction = AsyncMock()
 
     await bot._handle_photo_message(update, MagicMock())
 
     repo.save.assert_awaited_once()
-    bot._run_pipeline.assert_not_awaited()
+    bot._run_pipeline.assert_awaited_once()
+    args, kwargs = bot._run_pipeline.call_args
+    user_input = args[1] if len(args) > 1 else kwargs.get("user_input")
+    assert user_input.startswith("__ALBUM__")
+
+
+async def test_album_dedup_solo_la_primera_foto_dispara(monkeypatch):
+    """Las N fotos de un álbum comparten media_group_id; solo la PRIMERA dispara
+    el turno coalescido, las demás solo persisten (dedup por media_group_id)."""
+    import adapters.inbound.telegram.media as media_mod
+
+    monkeypatch.setattr(media_mod, "ALBUM_GATHER_DELAY_SEC", 0.0)
+
+    bot, container, repo = _make_bot()
+    repo.query_recent.return_value = []
+    bot._run_pipeline = AsyncMock()
+    bot._set_reaction = AsyncMock()
+
+    for _ in range(3):
+        update = _photo_update(media_group_id="grupo-dedup")
+        update.message.caption = None
+        await bot._handle_photo_message(update, MagicMock())
+
+    # Las 3 fotos se persisten, pero solo 1 dispara el pipeline.
+    assert repo.save.await_count == 3
+    bot._run_pipeline.assert_awaited_once()
 
 
 async def test_album_con_caption_recopila_todas_las_fotos_persistidas(monkeypatch, tmp_path):
@@ -321,12 +362,19 @@ async def test_silent_media_user_no_autorizado_no_persiste():
 # ---------------------------------------------------------------------------
 
 
-async def test_album_sin_repo_no_rompe():
+async def test_album_sin_repo_no_rompe(monkeypatch):
+    import adapters.inbound.telegram.media as media_mod
+
+    monkeypatch.setattr(media_mod, "ALBUM_GATHER_DELAY_SEC", 0.0)
+
     bot, container, repo = _make_bot(has_repo=False)
     update = _photo_update(media_group_id="grupo-1")
+    bot._run_pipeline = AsyncMock()
+    bot._set_reaction = AsyncMock()
     ctx = MagicMock()
-    # No debe lanzar
+    # No debe lanzar; con repo None el álbum igual dispara (sin paths).
     await bot._handle_photo_message(update, ctx)
+    bot._run_pipeline.assert_awaited_once()
 
 
 async def test_silent_media_sin_repo_no_rompe():

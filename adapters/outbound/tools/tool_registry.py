@@ -80,8 +80,39 @@ class ToolRegistry(IToolExecutor):
                 error=f"Tool no registrada: {tool_name}",
                 retryable=False,
             )
+        tool = self._tools[tool_name]
+
+        # Validar argumentos obligatorios ANTES de invocar. El LLM a veces emite
+        # tool calls incompletas (caso real: `delegate` sin `agent_id`). Sin esta
+        # guarda, `tool.execute(**kwargs)` revienta con un TypeError críptico
+        # ("missing 1 required positional argument: 'agent_id'") que el modelo no
+        # sabe interpretar ni corregir. Validamos contra el `required` del schema
+        # —el contrato que le advertimos al LLM— y devolvemos un error claro y
+        # RETRYABLE para que reintente con los campos que faltan, en vez de
+        # tripear el circuit breaker con un fallo que el modelo puede arreglar.
+        faltantes = _missing_required_args(tool, kwargs)
+        if faltantes:
+            logger.warning(
+                "Tool '%s' invocada sin argumentos obligatorios %s (recibidos: %s)",
+                tool_name,
+                faltantes,
+                list(kwargs.keys()),
+            )
+            return ToolResult(
+                tool_name=tool_name,
+                output=(
+                    f"Faltan argumentos obligatorios para '{tool_name}': "
+                    f"{', '.join(faltantes)}. Argumentos esperados: "
+                    f"{_format_expected_args(tool)}. Reintentá la llamada "
+                    f"incluyendo {', '.join(faltantes)}."
+                ),
+                success=False,
+                error=f"missing_required_args: {', '.join(faltantes)}",
+                retryable=True,
+            )
+
         try:
-            return await self._tools[tool_name].execute(**kwargs)
+            return await tool.execute(**kwargs)
         except Exception as exc:
             logger.exception("Error ejecutando tool '%s'", tool_name)
             return ToolResult(
@@ -147,3 +178,32 @@ class ToolRegistry(IToolExecutor):
         ranked = await self._rank_tools_by_query(query_embedding, top_k, min_score)
         top_names = {name for name, _ in ranked}
         return [self._schema_dict(tool) for tool in self._tools.values() if tool.name in top_names]
+
+
+def _missing_required_args(tool: ITool, kwargs: dict) -> list[str]:
+    """Devuelve los parámetros ``required`` del schema que no están en ``kwargs``.
+
+    Fuente de verdad: ``tool.parameters_schema["required"]`` — el contrato que
+    se le expone al LLM. Robusto ante schemas sin ``required`` o malformados.
+    """
+    schema = getattr(tool, "parameters_schema", None) or {}
+    required = schema.get("required", [])
+    if not isinstance(required, list):
+        return []
+    return [name for name in required if name not in kwargs]
+
+
+def _format_expected_args(tool: ITool) -> str:
+    """Formatea los parámetros del schema como ``nombre (obligatorio|opcional)``.
+
+    Le da al LLM el contrato completo de la tool en el mensaje de error, para
+    que sepa exactamente qué reenviar.
+    """
+    schema = getattr(tool, "parameters_schema", None) or {}
+    props = schema.get("properties", {})
+    if not isinstance(props, dict) or not props:
+        return "(sin parámetros declarados)"
+    required = set(schema.get("required", []) or [])
+    return ", ".join(
+        f"{name} ({'obligatorio' if name in required else 'opcional'})" for name in props
+    )

@@ -321,22 +321,66 @@ def _es_error_de_parseo(exc: BadRequest) -> bool:
     return any(hint in mensaje for hint in _PARSE_ERROR_HINTS)
 
 
+# Límite duro de Telegram para el texto de un mensaje (4096 chars). El formateo a
+# HTML EXPANDE el texto (escapes ``&lt;`` y tags ``<b></b>``), así que partimos el
+# markdown CRUDO con un límite conservador para que el HTML resultante no se pase
+# de 4096 y Telegram no rechace con BadRequest "message is too long".
+_TELEGRAM_MAX_CHARS = 4096
+_CHUNK_CHARS = 3500
+
+
+def split_message(text: str, limit: int = _CHUNK_CHARS) -> list[str]:
+    """Parte ``text`` en fragmentos de longitud ≤ ``limit`` para Telegram.
+
+    Prefiere cortar en límites de línea (``\\n``) para no romper palabras; si una
+    línea sola excede el límite, la corta duro. Devuelve ``[text]`` intacto cuando
+    ya entra en un solo mensaje (caso común → cero cambios de comportamiento).
+    """
+    if len(text) <= limit:
+        return [text]
+
+    chunks: list[str] = []
+    actual = ""
+    for linea in text.split("\n"):
+        # Una línea sola más larga que el límite → cortarla en pedazos duros.
+        while len(linea) > limit:
+            if actual:
+                chunks.append(actual)
+                actual = ""
+            chunks.append(linea[:limit])
+            linea = linea[limit:]
+        candidato = f"{actual}\n{linea}" if actual else linea
+        if len(candidato) <= limit:
+            actual = candidato
+        else:
+            if actual:
+                chunks.append(actual)
+            actual = linea
+    if actual:
+        chunks.append(actual)
+    return chunks
+
+
 async def send_html_or_plain(
     send: Callable[[str, ParseMode | None], Awaitable[Any]],
     response: str,
 ) -> None:
-    """Envía ``response`` como HTML de Telegram, con fallback a texto plano.
+    """Envía ``response`` como HTML de Telegram, troceado y con fallback a texto plano.
 
     Telegram rechaza con HTTP 400 ("can't parse entities") cualquier mensaje cuyo
     HTML quede mal formado — un ``<`` que se coló sin escapar, un tag sin cerrar
     por un edge case del renderer, etc. Sin contención, el handler de arriba cae a
     su ``except`` y el usuario recibe "Error: ..." en lugar de la respuesta.
 
-    Estrategia: intentar con ``format_response`` + ``ParseMode.HTML``; si Telegram
-    rechaza el parseo, reintentar con el ``response`` markdown CRUDO y sin
+    También trocea respuestas largas (``split_message``): Telegram corta en 4096
+    chars, así que una respuesta de 100+ líneas se enviaba como un solo request
+    grande (más lento → más expuesto a ``TimedOut``) o directamente rebotaba con
+    "message is too long". Cada fragmento viaja como un mensaje independiente.
+
+    Estrategia por fragmento: intentar con ``format_response`` + ``ParseMode.HTML``;
+    si Telegram rechaza el parseo, reintentar con el markdown CRUDO sin
     ``parse_mode`` (legible aunque pierda el formato). Cualquier otro ``BadRequest``
-    (chat inexistente, texto > 4096, etc.) se re-lanza tal cual para que el handler
-    lo trate como siempre.
+    (chat inexistente, etc.) se re-lanza tal cual para que el handler lo trate.
 
     Args:
         send: callable async ``(texto, parse_mode) -> Awaitable``. Abstrae el
@@ -344,13 +388,22 @@ async def send_html_or_plain(
             ``bot.send_message`` (cada call-site pasa su propio closure).
         response: la respuesta markdown del LLM, sin formatear.
     """
+    for fragmento in split_message(response):
+        await _send_fragmento(send, fragmento)
+
+
+async def _send_fragmento(
+    send: Callable[[str, ParseMode | None], Awaitable[Any]],
+    fragmento: str,
+) -> None:
+    """Envía UN fragmento: HTML primero, fallback a texto plano ante error de parseo."""
     try:
-        await send(format_response(response), ParseMode.HTML)
+        await send(format_response(fragmento), ParseMode.HTML)
     except BadRequest as exc:
         if not _es_error_de_parseo(exc):
             raise
         logger.warning("Telegram rechazó el HTML; reintento en texto plano: %s", exc)
-        await send(response, None)
+        await send(fragmento, None)
 
 
 def _escape(text: str) -> str:

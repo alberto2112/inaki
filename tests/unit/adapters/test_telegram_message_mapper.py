@@ -6,7 +6,11 @@ import pytest
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
 
-from adapters.inbound.telegram.message_mapper import format_response, send_html_or_plain
+from adapters.inbound.telegram.message_mapper import (
+    format_response,
+    send_html_or_plain,
+    split_message,
+)
 
 
 def test_empty_response_returns_empty():
@@ -225,3 +229,55 @@ async def test_send_html_or_plain_reraise_si_no_es_error_de_parseo():
         await send_html_or_plain(send, "hola")
 
     assert len(llamadas) == 1  # NO hubo segundo intento
+
+
+# ---------------------------------------------------------------------------
+# split_message — troceo de respuestas largas (Defecto 3: TimedOut/too-long)
+# ---------------------------------------------------------------------------
+
+
+def test_split_message_texto_corto_intacto():
+    """Texto que entra en un mensaje → se devuelve igual, sin trocear."""
+    assert split_message("hola mundo", limit=100) == ["hola mundo"]
+
+
+def test_split_message_corta_por_lineas():
+    """Trocea respetando límites de línea, cada fragmento ≤ limit."""
+    texto = "\n".join(f"linea {i}" for i in range(20))  # ~140 chars
+    fragmentos = split_message(texto, limit=40)
+
+    assert len(fragmentos) > 1
+    assert all(len(f) <= 40 for f in fragmentos)
+    # No se pierde ni se duplica contenido: reconstruir devuelve el original.
+    assert "\n".join(fragmentos) == texto
+
+
+def test_split_message_linea_mas_larga_que_el_limite_corta_duro():
+    """Una sola línea que excede el límite se parte en pedazos ≤ limit."""
+    texto = "x" * 250
+    fragmentos = split_message(texto, limit=100)
+
+    assert len(fragmentos) == 3
+    assert [len(f) for f in fragmentos] == [100, 100, 50]
+    assert "".join(fragmentos) == texto
+
+
+def test_split_message_usa_limite_default_grande():
+    """Con el límite real (~3500) un texto chico nunca se trocea."""
+    assert split_message("respuesta normal") == ["respuesta normal"]
+
+
+async def test_send_html_or_plain_trocea_respuesta_larga():
+    """Una respuesta larga se envía como varios mensajes independientes."""
+    llamadas: list[tuple[str, ParseMode | None]] = []
+
+    async def send(text: str, pm: ParseMode | None) -> None:
+        llamadas.append((text, pm))
+
+    larga = "\n".join(f"parrafo {i} " + "palabra " * 50 for i in range(20))
+    assert len(larga) > 3500  # supera un mensaje
+
+    await send_html_or_plain(send, larga)
+
+    assert len(llamadas) > 1  # se troceó
+    assert all(pm == ParseMode.HTML for _, pm in llamadas)

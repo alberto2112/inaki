@@ -496,6 +496,22 @@ class TelegramBot(
                 )
 
         except Exception as exc:
+            # Blip de red transitorio entregando la respuesta (TimedOut /
+            # ConnectTimeout). Para acá el turno YA corrió y la respuesta YA está
+            # persistida en history.db (RunAgentUseCase persiste ANTES de devolver):
+            # mandar otro reply_text sería otro fallo y le mostraría al usuario
+            # "Error: Timed out" sobre contenido que SÍ se guardó. Coherente con
+            # _on_error: logueamos a WARNING y seguimos. ``BadRequest`` hereda de
+            # ``NetworkError`` pero es un request malformado (bug nuestro) → cae al
+            # manejo de error real de abajo.
+            if isinstance(exc, NetworkError) and not isinstance(exc, BadRequest):
+                logger.warning(
+                    "Telegram '%s': error de red entregando la respuesta "
+                    "(ya persistida en history.db), se ignora: %s",
+                    self._settings.id,
+                    exc,
+                )
+                return
             logger.exception("Error procesando mensaje Telegram para '%s'", self._settings.id)
             await message.reply_text(f"Error: {exc}")
             await self._set_reaction(update, "👎")

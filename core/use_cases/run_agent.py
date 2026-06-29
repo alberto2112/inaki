@@ -45,6 +45,7 @@ from core.use_cases._tool_loop import run_tool_loop
 from core.use_cases._turn_pipeline import (
     INFLIGHT_CLARIFICATIONS_SECTION,
     assemble_turn_messages,
+    expand_includes,
     extract_trailing_user_batch,
     prefetch_knowledge,
     render_in_flight_section,
@@ -221,7 +222,8 @@ class RunAgentUseCase:
             except (FileNotFoundError, OSError):
                 continue
 
-        return "\n\n".join(part for part in (instructions, user_specific) if part.strip())
+        joined = "\n\n".join(part for part in (instructions, user_specific) if part.strip())
+        return expand_includes(joined, self._settings.include_base_dir)
 
     def _read_digest(self, channel: str | None = None, chat_id: str | None = None) -> str:
         """
@@ -490,7 +492,7 @@ class RunAgentUseCase:
             knowledge_chunks=knowledge_chunks,
         )
         system_prompt = context.build_system_prompt(
-            self._settings.system_prompt,
+            expand_includes(self._settings.system_prompt, self._settings.include_base_dir),
             extra_sections=extra_sections_snapshot or None,
         )
 
@@ -700,7 +702,9 @@ class RunAgentUseCase:
             sender_last_name=sender_last_name,
             knowledge_chunks=knowledge_chunks,
         )
-        system_prompt = context.build_system_prompt(self._settings.system_prompt)
+        system_prompt = context.build_system_prompt(
+            expand_includes(self._settings.system_prompt, self._settings.include_base_dir)
+        )
 
         return InspectResult(
             user_input=user_input,

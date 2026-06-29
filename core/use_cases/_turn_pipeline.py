@@ -21,8 +21,10 @@ secciones in-flight del system prompt, debug de foto).
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 
 from core.domain.entities.background_task import BackgroundTaskView
 from core.domain.entities.message import Message, Role
@@ -38,6 +40,62 @@ from core.ports.outbound.skill_port import ISkillRepository
 from core.ports.outbound.tool_port import IToolExecutor
 
 logger = logging.getLogger(__name__)
+
+# Una directiva ``@include`` SOLO se interpreta cuando ocupa su propia línea
+# (admite indentación al inicio). El path captura no-greedy hasta el primer ``)``.
+_INCLUDE_LINE_RE = re.compile(r"^\s*@include\((.+?)\)\s*$")
+# Token suelto para detectar/limpiar includes "sucios" embebidos en otro texto.
+_INCLUDE_TOKEN_RE = re.compile(r"@include\((.+?)\)")
+
+
+def expand_includes(text: str, base_dir: str) -> str:
+    """Expande directivas ``@include(<archivo>)`` en ``text`` — un solo nivel.
+
+    Corre ANTES de la sustitución de variables ``{{...}}`` (un archivo incluido
+    puede traer ``{{DATETIME}}`` y se resolverá después). Se aplica SOLO al
+    ``system_prompt`` del operador y al contexto per-user — nunca al contenido de
+    memoria/RAG (evita exfiltración de archivos vía prompt injection).
+
+    Detección: la directiva se interpreta únicamente cuando está **sola en su
+    línea** (tolera espacios de indentación). Un ``@include(...)`` embebido en
+    medio de prosa ("sucio") NO se expande.
+
+    Resolución del path: absoluto (empieza con ``/``) se usa tal cual; relativo se
+    ancla contra ``base_dir`` (el home de instancia, ``~/.inaki/``).
+
+    Profundidad 1: el contenido insertado se emite verbatim, SIN re-escanear — un
+    ``@include`` dentro de un archivo incluido no se procesa (evita loops e
+    iteraciones pesadas).
+
+    Ante fallos (siempre loguea ``warning`` y sigue):
+      - Include limpio pero archivo faltante / error de lectura → se suprime la
+        línea entera.
+      - Include sucio (no aislado en su línea) → se borra solo el token; sobrevive
+        el resto de la línea.
+    """
+    if "@include(" not in text:
+        return text
+
+    out: list[str] = []
+    for line in text.split("\n"):
+        clean = _INCLUDE_LINE_RE.match(line)
+        if clean:
+            raw_path = clean.group(1).strip()
+            resolved = Path(raw_path) if raw_path.startswith("/") else Path(base_dir) / raw_path
+            try:
+                # Verbatim y sin re-escanear: esto garantiza la profundidad 1.
+                out.append(resolved.read_text(encoding="utf-8"))
+            except OSError as exc:
+                logger.warning("@include no resuelto (%s), se suprime la línea: %s", exc, raw_path)
+            continue
+        if _INCLUDE_TOKEN_RE.search(line):
+            logger.warning(
+                "@include sucio (no aislado en su línea), token eliminado: %s", line.strip()
+            )
+            out.append(_INCLUDE_TOKEN_RE.sub("", line))
+            continue
+        out.append(line)
+    return "\n".join(out)
 
 
 def extract_trailing_user_batch(history: list[Message]) -> str:

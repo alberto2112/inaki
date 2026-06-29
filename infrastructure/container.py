@@ -151,6 +151,7 @@ def build_run_agent_settings(cfg: AgentConfig) -> RunAgentSettings:
         system_prompt=cfg.system_prompt,
         workspace_root=str(Path(cfg.workspace.path).expanduser().resolve()),
         users_dir=str(get_inaki_home() / "users"),
+        include_base_dir=str(get_inaki_home()),
         merge_chats=cfg.chat_history.merge_chats,
         min_words_threshold=cfg.semantic_routing.min_words_threshold,
         skills_min_skills=cfg.skills.semantic_routing_min_skills,

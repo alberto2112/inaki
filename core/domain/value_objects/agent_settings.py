@@ -117,6 +117,10 @@ class RunAgentSettings(BaseModel, frozen=True):
     system_prompt: str = ""
     workspace_root: str = ""
     users_dir: str = ""
+    # Base para resolver ``@include(<archivo>)`` relativos del prompt: el home de
+    # instancia (``~/.inaki/``), reanclado por ``--home``/``INAKI_HOME``. Llega
+    # pre-resuelto por el container. Vacío → los includes relativos resuelven contra cwd.
+    include_base_dir: str = ""
     merge_chats: bool = False
     min_words_threshold: int = 0
     skills_min_skills: int = 10

@@ -40,6 +40,7 @@ from core.domain.entities.task import (
 )
 from core.domain.entities.task_log import TaskLog
 from core.domain.errors import InvalidTriggerTypeError, TaskNotFoundError
+from core.domain.skip_marker import SKIP_MARKER, is_skip_response
 from core.domain.utils.cron import next_cron_occurrence, resolve_timezone
 from core.domain.value_objects.manual_run_result import ManualRunResult
 from core.ports.inbound.scheduler_port import IManualTaskRunner
@@ -403,8 +404,18 @@ class SchedulerService(IManualTaskRunner):
                 channel=channel,
                 chat_id=chat_id,
                 ephemeral=ephemeral,
+                skip_marker=SKIP_MARKER,
             )
             if payload.output_channel:
+                # Marcador __SKIP__ — el turno autónomo optó por silencio: NO se
+                # envía nada al canal (la persistencia ya la descartó execute()
+                # vía skip_marker). Se reporta en el metadata para que la corrida
+                # manual lo surface al testear ("la tarea decidió no enviar nada").
+                if is_skip_response(result):
+                    return None, {
+                        "original_target": payload.output_channel,
+                        "skipped": True,
+                    }
                 dr = await self._dispatch.channel_sender.send_message(
                     payload.output_channel, result
                 )

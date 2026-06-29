@@ -246,3 +246,58 @@ async def test_agent_send_with_output_channel_propaga_bucket(
     kwargs = dispatch.llm_dispatcher.dispatch.call_args.kwargs
     assert kwargs["channel"] == "telegram"
     assert kwargs["chat_id"] == "12345"
+
+
+# ---------------------------------------------------------------------------
+# AgentSend + __SKIP__ → el turno autónomo optó por silencio: NO se envía nada
+# al canal y se reporta skipped en el metadata (queda en task_logs).
+# ---------------------------------------------------------------------------
+
+
+@freeze_time("2025-06-01 12:00:00")
+async def test_agent_send_skip_marker_suprime_envio(
+    service: SchedulerService,
+    repo: SQLiteSchedulerRepo,
+    dispatch: MagicMock,
+) -> None:
+    # El LLM emite el marcador (con pre-amble, para validar detección tolerante).
+    dispatch.llm_dispatcher.dispatch = AsyncMock(return_value="Sin novedades relevantes. __SKIP__")
+    dispatch.channel_sender.send_message = AsyncMock()
+    dispatch.channel_sender.build_intermediate_sink = MagicMock(return_value=None)
+
+    task = ScheduledTask(
+        id=0,
+        name="silent-check",
+        task_kind=TaskKind.ONESHOT,
+        trigger_type=TriggerType.AGENT_SEND,
+        trigger_payload=AgentSendPayload(
+            agent_id="general",
+            task="comprobá X y no me digas nada si no hay nada importante",
+            output_channel="telegram:12345",
+        ),
+        schedule="2025-06-01T10:00:00+00:00",
+        next_run=datetime(2025, 6, 1, 10, 0, 0, tzinfo=timezone.utc),
+    )
+    saved_task = await repo.save_task(task)
+
+    await service._run_once()
+
+    # El dispatch recibió el skip_marker → execute() descarta persistencia.
+    kwargs = dispatch.llm_dispatcher.dispatch.call_args.kwargs
+    assert kwargs["skip_marker"] == "__SKIP__"
+    # NO se envió nada al canal.
+    dispatch.channel_sender.send_message.assert_not_awaited()
+
+    # El metadata del log reporta el skip.
+    import aiosqlite
+
+    async with aiosqlite.connect(repo._db_path) as conn:
+        conn.row_factory = aiosqlite.Row
+        rows = list(
+            await conn.execute_fetchall(
+                "SELECT * FROM task_logs WHERE task_id = ?", (saved_task.id,)
+            )
+        )
+    success_logs = [r for r in rows if r["status"] == "success"]
+    assert len(success_logs) == 1
+    assert '"skipped": true' in (success_logs[0]["metadata"] or "").lower()

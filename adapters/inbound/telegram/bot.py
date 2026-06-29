@@ -29,6 +29,7 @@ from adapters.inbound.telegram.message_mapper import (
 )
 from adapters.inbound.turn_dispatch import dispatch_inbound_turn
 from adapters.outbound.intermediate_sinks.telegram_live import TelegramLiveIntermediateSink
+from core.domain.skip_marker import SKIP_MARKER, is_skip_response
 from core.domain.value_objects.channel_context import ChannelContext
 from core.ports.outbound.broadcast_port import BroadcastEmitter, BroadcastReceiver
 from adapters.inbound.telegram.broadcast import TelegramBroadcastMixin
@@ -427,7 +428,7 @@ class TelegramBot(
         # in-flight no aplica (SCN-IFI-13/14 del spec).
         agent_id = self._ports.run_agent.get_agent_info().id
         scope = (agent_id, "telegram", str(chat_id))
-        skip_marker_value = "__SKIP__" if (self._behavior == "autonomous" and es_grupo) else None
+        skip_marker_value = SKIP_MARKER if (self._behavior == "autonomous" and es_grupo) else None
 
         # Si es grupo o si user_input is None (modo history-derived: foto enriquecida)
         # → saltar el branch in-flight y caer en el flow legacy.
@@ -472,7 +473,7 @@ class TelegramBot(
             # la instrucción "respondé EXACTAMENTE con __SKIP__"). Cualquier
             # ocurrencia suprime el envío al chat y el broadcast. El use case
             # aplica la misma regla para descartar la persistencia.
-            if self._behavior == "autonomous" and es_grupo and "__SKIP__" in response.upper():
+            if self._behavior == "autonomous" and es_grupo and is_skip_response(response):
                 logger.debug(
                     "autonomous_skip detectado (agent=%s, chat_id=%s)",
                     self._settings.id,

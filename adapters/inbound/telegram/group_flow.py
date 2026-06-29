@@ -21,6 +21,7 @@ from adapters.inbound.telegram.message_mapper import (
     hay_destinatario_explicito,
     send_html_or_plain,
 )
+from core.domain.skip_marker import SKIP_MARKER, is_skip_response
 from core.domain.value_objects.channel_context import ChannelContext
 
 
@@ -222,7 +223,7 @@ class TelegramGroupFlowMixin:
             # Scope (channel, chat_id) derivado de turn_ctx dentro de execute.
             response = await self._ports.run_agent.execute(
                 ctx=turn_ctx,
-                skip_marker="__SKIP__" if self._behavior == "autonomous" else None,
+                skip_marker=SKIP_MARKER if self._behavior == "autonomous" else None,
             )
 
             if not response:
@@ -234,7 +235,7 @@ class TelegramGroupFlowMixin:
             # TOLERANTE (mismo criterio que `_run_pipeline`): aceptamos la
             # ocurrencia en cualquier parte de la respuesta. La persistencia
             # ya se descartó arriba vía skip_marker con la misma regla.
-            if self._behavior == "autonomous" and "__SKIP__" in response.upper():
+            if self._behavior == "autonomous" and is_skip_response(response):
                 logger.debug(
                     "autonomous_skip detectado (agent=%s, chat_id=%s)",
                     self._settings.id,

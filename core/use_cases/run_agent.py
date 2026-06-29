@@ -24,6 +24,7 @@ from core.domain.entities.message import Message, Role
 from core.domain.entities.skill import Skill
 from core.domain.errors import ToolLoopMaxIterationsError
 from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
+from core.domain.skip_marker import is_skip_response
 from core.domain.value_objects.agent_context import AgentContext
 from core.domain.value_objects.agent_info import AgentInfoDTO
 from core.domain.value_objects.channel_context import (
@@ -563,11 +564,9 @@ class RunAgentUseCase:
                 "iteraciones de tools sin obtener una respuesta final."
             )
 
-        # Detección tolerante del skip_marker: aceptamos que aparezca en cualquier
-        # parte de la respuesta (case-insensitive) — los LLMs no siempre cumplen
-        # "respondé EXACTAMENTE con __SKIP__" al pie de la letra y suelen agregar
-        # pre/post-amble. Si está presente, descartamos persistencia.
-        skip_persist = skip_marker is not None and skip_marker.upper() in response.upper()
+        # Detección tolerante del skip_marker (ver core.domain.skip_marker): si el
+        # marcador aparece en cualquier parte de la respuesta, descartamos persistencia.
+        skip_persist = is_skip_response(response, skip_marker)
 
         if not ephemeral and not skip_persist:
             if routing.state_dirty:

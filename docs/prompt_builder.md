@@ -36,7 +36,10 @@ RunAgentUseCase.execute(user_input)
 │   └── Otherwise:
 │           retrieved_skills = all_skills  ← all skills
 │
-├── 5. AgentContext.build_system_prompt(base_prompt)
+├── 5. expand_includes(base_prompt) + expand_includes(user_context)
+│       → @include(<file>) directives expanded BEFORE the prompt is assembled
+│       → only over the operator's base prompt and the per-user context
+│   AgentContext.build_system_prompt(base_prompt)
 │       → system_prompt: str  ← joined sections + substitution of {{WORKSPACE}}, {{DATE}}, etc.
 │
 ├── 6. _tools.get_schemas() → all_schemas
@@ -108,6 +111,42 @@ Respondés en español rioplatense. Usás las tools cuando hace falta.
 - **Búsqueda Web**: Busca información en internet usando DuckDuckGo
   Cuando el usuario pregunta sobre eventos actuales, usá esta skill...
 ```
+
+### File Inclusion (`@include(<file>)`)
+
+**Function:** `expand_includes` in `core/use_cases/_turn_pipeline.py` (a pure free function, **not** part of the `AgentContext` value object — file I/O lives in the use-case layer, not in the domain).
+
+Before the prompt is assembled, `RunAgentUseCase` expands `@include(<file>)` directives. The included file's content is spliced in verbatim, which lets the operator compose a prompt out of reusable fragments.
+
+**Where it runs — and where it does NOT.** Inclusion is applied **only** to two trusted, operator-authored texts:
+
+1. The agent's **base system prompt** (from its YAML).
+2. The **per-user context** file (`~/.inaki/users/{channel}/...`, see `core/use_cases/run_agent.py::_read_user_context`).
+
+It is deliberately **never** applied to the memory digest, retrieved knowledge (RAG), skill blocks, or `extra_sections`. If it were, an `@include(~/.inaki/config/global.secrets.yaml)` planted inside a RAG document or a consolidated memory would exfiltrate that file straight into the prompt — a prompt-injection-to-arbitrary-file-read vector. Keeping inclusion on operator-authored text only closes that hole.
+
+**Rules:**
+
+| Aspect | Behavior |
+|--------|----------|
+| Recognition | A directive is expanded **only when it is alone on its line** (leading indentation is tolerated: `^\s*@include(<file>)\s*$`). |
+| Relative path | Resolved against the instance home `~/.inaki/` (injected as `RunAgentSettings.include_base_dir`, re-anchored by `--home`/`INAKI_HOME`). |
+| Absolute path | Starts with `/` → used as-is. |
+| Depth | **One level only.** The inserted content is emitted verbatim and **not** re-scanned, so an `@include` inside an included file is left literal (prevents loops and heavy iteration). |
+| Missing file / read error | The **whole line is removed** and a `warning` is logged. |
+| Dirty directive (not alone on its line, e.g. `Lorem ipsum @include(x)`) | Only the `@include(...)` token is stripped; the surrounding prose survives. A `warning` is logged. |
+| Ordering | Inclusion runs **before** variable substitution — so an included file may itself contain `{{DATE}}` etc., which is then resolved normally. |
+
+Example (in the agent's YAML `system_prompt`):
+
+```text
+Sos Inaki, un asistente personal.
+@include(prompts/tone.md)
+@include(/etc/inaki/shared/policies.md)
+Hoy es {{WEEKDAY[ES]}} {{DATE}}.
+```
+
+`prompts/tone.md` resolves to `~/.inaki/prompts/tone.md`; the second is absolute. A `{{DATE}}` inside either file still gets substituted afterward.
 
 ### Variable Substitution (`{{...}}`)
 

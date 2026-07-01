@@ -190,6 +190,7 @@ async def test_run_group_pipeline_inyecta_sender_desde_snapshot(
     assert isinstance(ctx, ChannelContext)
     assert ctx.channel_type == "telegram"
     assert ctx.chat_id == "-100123"
+    assert ctx.is_group is True
     assert ctx.sender_name == "Juan Pérez (@juan)"
     assert ctx.username == "juan"
     assert ctx.first_name == "Juan"
@@ -210,6 +211,7 @@ async def test_run_group_pipeline_sin_snapshot_deja_sender_none(
     mock_container.run_agent.execute.assert_awaited_once()
     ctx = mock_container.run_agent.execute.await_args.kwargs["ctx"]
     assert isinstance(ctx, ChannelContext)
+    assert ctx.is_group is True
     assert ctx.sender_name is None
     assert ctx.username is None
     assert ctx.first_name is None

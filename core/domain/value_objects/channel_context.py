@@ -11,14 +11,21 @@ class ChannelContext(BaseModel, frozen=True):
     Atributos:
         channel_type: Tipo de canal, por ejemplo "telegram", "cli", "rest", "daemon".
         user_id: Identificador del usuario en ese canal, por ejemplo "123456", "local".
+            En chats grupales NO es un id de usuario real — ver ``is_group``.
         chat_id: Identificador del chat real del turno (en Telegram puede ser el ID
             del grupo o el privado del usuario; en grupos NO coincide con ``user_id``).
             ``None`` cuando el canal no distingue chat de usuario (CLI/REST/daemon)
             o cuando el caller no lo informó.
+        is_group: ``True`` cuando el turno ocurre en un chat grupal (no hay un único
+            usuario dueño de la conversación). ``RunAgentUseCase._read_user_context``
+            lo usa para resolver el archivo de contexto por ``chat_id`` (identidad
+            estable del grupo) en vez de por ``username``/``user_id`` (identidad de
+            una persona) — un grupo no tiene "el" usuario.
         sender_name: Nombre legible compuesto del remitente para inyectar en el system
-            prompt (ej: ``"Juan Pérez (@juan_dev)"``). ``None`` cuando no aplica: chats
-            grupales (la identidad va embebida en el contenido del mensaje vía
-            ``format_group_message``), CLI, REST, scheduler triggers, etc.
+            prompt (ej: ``"Juan Pérez (@juan_dev)"``). En grupos refleja el ÚLTIMO
+            emisor humano del batch (heurística de ``group_flow.py``, NO la identidad
+            del grupo). ``None`` cuando no aplica: CLI, REST, scheduler triggers, o
+            grupo sin mensajes humanos previos.
         username: Handle ``@username`` del remitente sin el ``@`` inicial. ``None`` cuando
             el usuario no tiene username configurado en su perfil (Telegram lo permite).
         first_name: Nombre del remitente. En Telegram es un campo requerido por la API
@@ -32,6 +39,7 @@ class ChannelContext(BaseModel, frozen=True):
     channel_type: str
     user_id: str
     chat_id: str | None = None
+    is_group: bool = False
     sender_name: str | None = None
     username: str | None = None
     first_name: str | None = None

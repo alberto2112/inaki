@@ -115,8 +115,8 @@ Config lives in **`~/.inaki/`** (not in the repo). First run bootstraps from `co
 **4-layer YAML merge** (each layer overrides only fields it defines):
 1. `~/.inaki/config/global.yaml`
 2. `~/.inaki/config/global.secrets.yaml`
-3. `~/.inaki/config/agents/{id}.yaml`
-4. `~/.inaki/config/agents/{id}.secrets.yaml`
+3. `~/.inaki/agents/{id}.yaml`
+4. `~/.inaki/agents/{id}.secrets.yaml`
 
 Secrets are YAML-only (no env vars). `*.secrets.yaml` files are gitignored.
 
@@ -521,10 +521,14 @@ nulo y simplifica.
 (`session_id` del cliente) que normalmente no tiene archivo → sin contexto.
 
 **Telegram ya estaba listo**: el bot pobla `username` y `user_id` en el
-`ChannelContext` desde `update.message.from_user` (privados). En grupos
-`username=None` y `user_id=agent_id` → no se carga contexto per-user, lo cual es
-correcto (la identidad por mensaje va embebida en el contenido vía
-`format_group_message`).
+`ChannelContext` desde `update.message.from_user` (privados).
+
+> **Superseded (grupos)**: este párrafo originalmente decía "en grupos no se
+> carga contexto per-user". Eso fue cierto solo hasta `081144b`/`#34`, el MISMO
+> día, ~1h después: ese commit agregó el heurístico de último-emisor para
+> resolver `{{CHANNEL.SENDER}}` y reutilizó el mismo `ChannelContext` que ya
+> alimentaba `_read_user_context` — sin actualizar esta nota. Ver
+> `group-context-by-chat-id` para el comportamiento real/actual.
 
 **Defensa contra path traversal**: si `username` o `user_id` contienen `/`, `\`
 o `..`, ese candidato se descarta. Paranoia barata — los valores vienen del
@@ -621,6 +625,48 @@ La matriz aplica uniforme a los 4 handlers de mensaje (texto, foto, voz, media
 silenciosa). Los **comandos slash** (`/start`, `/clear`, `/scheduler`, etc.) quedan
 fuera: siguen siendo admin-only por `allowed_user_ids` vía `_is_allowed`, incluso
 en grupos autorizados (`/chatid` mantiene su bypass de `allowed_chat_ids`).
+
+### `group-context-by-chat-id`
+
+`RunAgentUseCase._read_user_context` resolvía el archivo de contexto en chats
+grupales por **el último emisor humano que escribió antes del flush**
+(heurística "last sender wins" de `group_flow.py`, pensada originalmente solo
+para resolver `{{CHANNEL.SENDER}}`, ver nota de doc drift en
+`per-user-context-files`). Eso era sorpresivo: el contexto inyectado podía
+cambiar de turno a turno según quién hubiera hablado último, y el fallback sin
+`@username` caía a `ctx.user_id` — que en el path de grupos es el **id del
+agente** (`TelegramBotSettings.id`), no un id de usuario real, así que en la
+práctica casi nunca resolvía nada.
+
+**Cambio**: un grupo ahora se trata como su propia entidad, identificada por su
+`chat_id` (estable), igual que ya hacían el digest de memoria y `agent_state`
+(ver `memory-scoped-by-channel-chat` / `agent-state-scoped-by-channel-chat`).
+`ChannelContext` suma el campo `is_group: bool = False`
+(`core/domain/value_objects/channel_context.py`). `_read_user_context` resuelve:
+
+```
+~/.inaki/users/{channel_type}/_common.md      ← siempre, sin cambios
+# is_group=True (grupo):
+~/.inaki/users/{channel_type}/{chat_id}.md    ← único candidato, SIN fallback
+# is_group=False (resto):
+~/.inaki/users/{channel_type}/{username}.md   ← preferente
+~/.inaki/users/{channel_type}/{user_id}.md    ← fallback
+```
+
+Sin fallback a `username`/`user_id` en grupos a propósito: esos campos siguen
+poblados (heurística de último emisor) pero ahora SOLO alimentan
+`{{CHANNEL.SENDER}}` y afines — no la identidad del grupo. El único lugar que
+construye `ChannelContext` para turnos grupales es `group_flow.py:213`
+(`_run_group_pipeline`); ahí se setea `is_group=True`. `bot.py:407`
+(`_run_pipeline`) es privado-only en la práctica — todo mensaje de grupo (texto,
+foto, voz, álbum) pasa por el buffer de `group_flow.py`.
+
+**Sin migración de DB ni cambios de config obligatorios.** `is_group` tiene
+default `False` — call sites existentes (CLI/REST, privados) no cambian de
+comportamiento. **Paso opcional del operador**: para darle contexto propio a un
+grupo, crear `~/.inaki/users/telegram/{chat_id}.md` (chat_id negativo en
+Telegram, obtenible con `/chatid` dentro del grupo — ver `telegram-group-auth`).
+Sin ese archivo, un grupo solo recibe `_common.md` (si existe).
 
 ## Git workflow
 

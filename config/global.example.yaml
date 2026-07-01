@@ -5,8 +5,8 @@
 # Este fichero documenta TODOS los parámetros configurables del sistema.
 # No es leído directamente — sirve como referencia canónica.
 #
-# Configuración real: config/global.yaml + config/agents/{id}.yaml
-# Secrets: config/global.secrets.yaml + config/agents/{id}.secrets.yaml
+# Configuración real: config/global.yaml + agents/{id}.yaml
+# Secrets: config/global.secrets.yaml + agents/{id}.secrets.yaml
 #          (nunca commitear *.secrets.yaml — están en .gitignore)
 #
 # Sistema de merge (4 capas, campo a campo):
@@ -14,9 +14,9 @@
 #       ↓
 #   config/global.secrets.yaml
 #       ↓
-#   config/agents/{id}.yaml
+#   agents/{id}.yaml
 #       ↓
-#   config/agents/{id}.secrets.yaml
+#   agents/{id}.secrets.yaml
 #       ↓
 #   AgentConfig resuelto
 # =============================================================================
@@ -73,7 +73,7 @@ app:
                               # DEBUG muestra llamadas HTTP, embeddings, tool calls
 
   default_agent: "general"    # Agente usado por CLI sin flag --agent
-                              # Debe coincidir con un archivo en config/agents/
+                              # Debe coincidir con un archivo en agents/
 
 
 # -----------------------------------------------------------------------------
@@ -430,7 +430,7 @@ user:
 
 
 # =============================================================================
-# CONFIGURACIÓN POR AGENTE — config/agents/{id}.yaml
+# CONFIGURACIÓN POR AGENTE — agents/{id}.yaml
 # =============================================================================
 # Los campos de abajo son propios de cada agente.
 # =============================================================================
@@ -545,7 +545,7 @@ user:
 
 
 # =============================================================================
-# SECRETS — config/global.secrets.yaml + config/agents/{id}.secrets.yaml
+# SECRETS — config/global.secrets.yaml + agents/{id}.secrets.yaml
 # =============================================================================
 # Los campos de abajo NUNCA van en archivos commiteables.
 # =============================================================================
@@ -562,7 +562,7 @@ user:
 #     username: "dominio\\user"
 #     password: "..."
 
-# config/agents/general.secrets.yaml:
+# agents/general.secrets.yaml:
 # channels:
 #   telegram:
 #     token: "7xxxxxxx:AAF..."   # Bot token de BotFather

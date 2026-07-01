@@ -1,16 +1,18 @@
 """Tests unitarios para ``RunAgentUseCase._read_user_context``.
 
-Cubre la resolución de archivos per-user que reemplazó al `~/.inaki/USER.md`
+Cubre la resolución de archivos per-entidad que reemplazó al `~/.inaki/USER.md`
 global. Capas concatenadas (la que falte se omite):
 
-  0. ``~/.inaki/users/{channel_type}/_common.md`` (común al canal, antes del per-user)
-  1. ``~/.inaki/users/{channel_type}/{username}.md``
-  2. ``~/.inaki/users/{channel_type}/{user_id}.md``
+  0. ``~/.inaki/users/{channel_type}/_common.md`` (común al canal, antes del específico)
+  1. Si ``ctx.is_group``: SOLO ``~/.inaki/users/{channel_type}/{chat_id}.md``
+     (sin fallback a username/user_id — un grupo no tiene "el" usuario)
+  2. Si no: ``~/.inaki/users/{channel_type}/{username}.md`` con fallback a
+     ``~/.inaki/users/{channel_type}/{user_id}.md``
   3. ``""`` (sin contexto)
 
 Casos especiales:
   - ``ctx=None`` (turno sin ChannelContext, ej: scheduler triggers) → ``""``
-  - Username con separadores de path o ``..`` → se skippea ese candidato
+  - Username/chat_id con separadores de path o ``..`` → se skippea ese candidato
   - Scope por canal: misma key en distintos canales = archivos distintos
 """
 
@@ -41,7 +43,14 @@ def users_root(tmp_path):
 
 @pytest.fixture
 def use_case(
-    users_root, agent_config, mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools
+    users_root,
+    agent_config,
+    mock_llm,
+    mock_memory,
+    mock_embedder,
+    mock_skills,
+    mock_history,
+    mock_tools,
 ):
     """RunAgentUseCase estándar — el ctx del turno se pasa como argumento.
 
@@ -168,5 +177,68 @@ def test_rechaza_separadores_en_user_id(use_case, users_root):
     # Caso edge: user_id no debería contener separadores en la práctica
     # (canales lo sanitizan), pero defensivo: si llega así, no romper.
     ctx = ChannelContext(channel_type="cli", user_id="../etc/passwd")
+
+    assert use_case._read_user_context(ctx) == ""
+
+
+def test_grupo_lee_por_chat_id(use_case, users_root):
+    """``is_group=True`` → busca ``{chat_id}.md``, ignora username/user_id."""
+    (users_root / "telegram").mkdir()
+    (users_root / "telegram" / "-100123.md").write_text("contexto del grupo", encoding="utf-8")
+
+    ctx = ChannelContext(
+        channel_type="telegram",
+        user_id="inaki",
+        chat_id="-100123",
+        is_group=True,
+        username="juan",
+    )
+
+    assert use_case._read_user_context(ctx) == "contexto del grupo"
+
+
+def test_grupo_no_cae_a_username_ni_user_id(use_case, users_root):
+    """Sin ``{chat_id}.md``, un grupo NO prueba username/user_id aunque existan.
+
+    Distinto del caso privado: ahí username->user_id es una cadena de fallback
+    válida porque ambos identifican a LA MISMA persona. En grupo, username es
+    el último emisor humano (heurística) y user_id es el id del agente — ninguno
+    de los dos es "el" grupo, así que no tiene sentido probarlos.
+    """
+    (users_root / "telegram").mkdir()
+    (users_root / "telegram" / "juan.md").write_text("contexto de juan", encoding="utf-8")
+    (users_root / "telegram" / "inaki.md").write_text("contexto del agente", encoding="utf-8")
+
+    ctx = ChannelContext(
+        channel_type="telegram",
+        user_id="inaki",
+        chat_id="-100123",
+        is_group=True,
+        username="juan",
+    )
+
+    assert use_case._read_user_context(ctx) == ""
+
+
+def test_grupo_common_md_sigue_aplicando(use_case, users_root):
+    """``_common.md`` se concatena igual en grupos, antes del archivo por chat_id."""
+    (users_root / "telegram").mkdir()
+    (users_root / "telegram" / "_common.md").write_text("no uses tablas markdown", encoding="utf-8")
+    (users_root / "telegram" / "-100123.md").write_text("contexto del grupo", encoding="utf-8")
+
+    ctx = ChannelContext(channel_type="telegram", user_id="inaki", chat_id="-100123", is_group=True)
+
+    assert use_case._read_user_context(ctx) == "no uses tablas markdown\n\ncontexto del grupo"
+
+
+@pytest.mark.parametrize(
+    "malicious_chat_id",
+    ["../etc", "a/b", "a\\b", ".."],
+)
+def test_grupo_rechaza_separadores_en_chat_id(use_case, users_root, malicious_chat_id):
+    """``chat_id`` con separadores de path se descarta — misma defensa que username."""
+    ctx = ChannelContext(
+        channel_type="telegram", user_id="inaki", chat_id=malicious_chat_id, is_group=True
+    )
 
     assert use_case._read_user_context(ctx) == ""

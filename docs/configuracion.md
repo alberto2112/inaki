@@ -142,9 +142,9 @@ config/global.yaml                 (1) system base config
     ↓ field-by-field merge
 config/global.secrets.yaml         (2) global secrets (shared api keys)
     ↓ field-by-field merge
-config/agents/{id}.yaml            (3) agent config (channels, model, prompt)
+agents/{id}.yaml                   (3) agent config (channels, model, prompt)
     ↓ field-by-field merge
-config/agents/{id}.secrets.yaml    (4) agent secrets (tokens, auth keys)
+agents/{id}.secrets.yaml           (4) agent secrets (tokens, auth keys)
     ↓
 Resolved and complete AgentConfig
 ```
@@ -166,9 +166,9 @@ The CLI always works.
 | `config/global.secrets.yaml` | ❌ no | Credentials registry (`providers.<name>.api_key`) |
 | `config/global.secrets.yaml.example` | ✅ yes | Reference of what secrets exist |
 | `config/tool_config.yaml` | ❌ no | Tool Config Protocol store (daemon-owned; `enc:` secrets inside). Not part of the 4-layer merge |
-| `config/agents/{id}.yaml` | ✅ yes | Agent config: id, name, description, system_prompt, overrides, channels |
-| `config/agents/{id}.secrets.yaml` | ❌ no | Agent secrets: tokens, auth_key |
-| `config/agents/{id}.secrets.yaml.example` | ✅ yes | Reference of agent secrets |
+| `agents/{id}.yaml` | ✅ yes | Agent config: id, name, description, system_prompt, overrides, channels |
+| `agents/{id}.secrets.yaml` | ❌ no | Agent secrets: tokens, auth_key |
+| `agents/{id}.secrets.yaml.example` | ✅ yes | Reference of agent secrets |
 | `config/global.example.yaml` | ✅ yes | Canonical reference with all documented parameters |
 
 `.gitignore` includes: `config/*.secrets.yaml` and `config/agents/*.secrets.yaml`
@@ -643,7 +643,7 @@ encrypted (`enc:`) values keep decrypting — no reconfiguration needed.
 
 ---
 
-## `config/agents/{id}.yaml` — complete structure
+## `agents/{id}.yaml` — complete structure
 
 ```yaml
 id: "general"                    # Unique agent identifier (= filename)
@@ -795,7 +795,7 @@ en el YAML del agente.
 ## `workspace` — path containment for file tools
 
 Each agent can declare a `workspace` to control which paths the file tools
-can access. It is configured in `config/agents/{id}.yaml`:
+can access. It is configured in `agents/{id}.yaml`:
 
 ```yaml
 workspace:
@@ -1037,7 +1037,7 @@ can use the `/ratelimit` command:
 
 The change applies to the entire bot (all chats it participates in) and persists **only in
 memory** — on daemon restart, values are read again from
-`~/.inaki/config/agents/{id}.yaml`. Useful for quickly stopping a runaway bot-to-bot loop
+`~/.inaki/agents/{id}.yaml`. Useful for quickly stopping a runaway bot-to-bot loop
 or temporarily raising the limit during an active conversation.
 
 ---
@@ -1088,7 +1088,7 @@ systemctl status systemd-timesyncd  # or chrony
 
 ---
 
-## `config/agents/{id}.secrets.yaml`
+## `agents/{id}.secrets.yaml`
 
 ```yaml
 channels:
@@ -1170,11 +1170,11 @@ scheduler:
 
 ## Adding a new agent
 
-1. Create `config/agents/miagente.yaml` with `id`, `name`, `description`, `system_prompt`
-2. Create `config/agents/miagente.secrets.yaml` with the required tokens
+1. Create `agents/miagente.yaml` with `id`, `name`, `description`, `system_prompt`
+2. Create `agents/miagente.secrets.yaml` with the required tokens
 3. Restart the daemon: `systemctl restart inaki`
 
-The `AgentRegistry` automatically scans `config/agents/*.yaml` on startup.
+The `AgentRegistry` automatically scans `agents/*.yaml` on startup.
 No manual registration or code restart is needed.
 
 ---
@@ -1388,7 +1388,7 @@ When `reconciliation.enabled: true`, a builtin task `reconcile_memory_{id}` is c
 
 By default the agent's own LLM is used with a hardcoded prompt. For higher quality or to avoid consuming the agent's rate limit, you can route reconciliation through a dedicated sub-agent:
 
-1. Copy `config/agents/sub-agents/memory_reconciler.example.yaml` to `config/agents/memory_reconciler.yaml` and adjust the LLM config.
+1. Copy `config/agents/sub-agents/memory_reconciler.example.yaml` to `~/.inaki/agents/sub-agents/memory_reconciler.yaml` and adjust the LLM config.
 2. Set `memories.reconciliation.agent_id: memory_reconciler` on each agent that should use it.
 
 ### DB migration

@@ -214,6 +214,7 @@ class TelegramGroupFlowMixin:
             channel_type="telegram",
             user_id=self._settings.id,
             chat_id=chat_id_str,
+            is_group=True,
             sender_name=last_sender.get("sender_name"),
             username=last_sender.get("username"),
             first_name=last_sender.get("first_name"),

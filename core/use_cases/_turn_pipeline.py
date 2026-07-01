@@ -15,7 +15,8 @@ Fases:
     modo del turno (user_input directo vs history-derived coalesced).
 
 También viven acá los helpers puros del turno (trailing batch, coalesce,
-secciones in-flight del system prompt, debug de foto).
+secciones in-flight del system prompt, debug de foto, wrapper de intermedios
+para persistencia).
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from core.domain.value_objects.agent_settings import RunAgentSettings
 from core.domain.value_objects.conversation_state import ConversationState
 from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
 from core.ports.outbound.embedding_port import IEmbeddingProvider
+from core.ports.outbound.intermediate_sink_port import IIntermediateSink
 from core.ports.outbound.skill_port import ISkillRepository
 from core.ports.outbound.tool_port import IToolExecutor
 
@@ -503,3 +505,25 @@ def write_debug_phase2(
         logger.debug("photo-debug Phase 2 escrito en %s", debug_path)
     except OSError as exc:
         logger.warning("No se pudo escribir photo-debug Phase 2: %s", exc)
+
+
+class RecordingIntermediateSink(IIntermediateSink):
+    """Envuelve un sink real y además acumula cada emisión, en orden.
+
+    ``_execute_turn`` usa ``messages`` después del tool loop para persistir en
+    history.db lo que el sink real ya entregó en vivo (Telegram, REST/CLI,
+    scheduler) — sin este wrapper esa narración se pierde del contexto del
+    propio agente aunque el usuario ya la haya visto. La acumulación ocurre
+    en vivo durante el loop, así que ``messages`` queda completo tanto si el
+    turno termina normal como si ``run_tool_loop`` corta por
+    ``ToolLoopMaxIterationsError`` — no hace falta propagar nada a través de
+    esa excepción.
+    """
+
+    def __init__(self, inner: IIntermediateSink) -> None:
+        self._inner = inner
+        self.messages: list[str] = []
+
+    async def emit(self, text: str) -> None:
+        self.messages.append(text)
+        await self._inner.emit(text)

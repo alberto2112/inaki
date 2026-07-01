@@ -12,6 +12,12 @@ Esta separación permite que los inbound adapters rendericen el mensaje
 final como siempre (con spinner, formateo, etc.) mientras los intermedios
 son text-only informativos.
 
+Persistencia: el sink solo ENTREGA — no le toca a ninguna implementación
+tocar ``IHistoryStore``. Es ``RunAgentUseCase._execute_turn`` quien envuelve
+el sink real con ``RecordingIntermediateSink`` (``core/use_cases/_turn_pipeline.py``)
+para acumular lo emitido y persistirlo en history.db junto con la respuesta
+final, bajo el mismo guard ``ephemeral``/``skip_persist``.
+
 Implementaciones:
 - ``NullIntermediateSink`` — descarta todo. Default para contextos no
   interactivos o cuando el inbound no soporta progreso incremental.

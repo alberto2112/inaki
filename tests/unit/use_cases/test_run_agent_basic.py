@@ -620,3 +620,127 @@ async def test_sin_skip_marker_si_persiste_response(use_case, mock_history):
 
     appended_roles = [call.args[1].role for call in mock_history.append.call_args_list]
     assert Role.ASSISTANT in appended_roles
+
+
+# ---------------------------------------------------------------------------
+# RecordingIntermediateSink: persistencia de los intermedios del tool loop
+# ---------------------------------------------------------------------------
+#
+# Antes del fix, el texto que el LLM emite junto con tool_calls (narración en
+# vivo — "ok, dejame revisar esto...") se entregaba al canal (Telegram,
+# REST/CLI, scheduler) pero jamás quedaba en history.db: solo la respuesta
+# final del turno se persistía. El usuario lo veía en el chat pero el propio
+# agente perdía ese contexto en el próximo turno.
+#
+# Estos tests mockean ``run_tool_loop`` (igual que los de skip_marker arriba)
+# con un side_effect que emite intermedios vía el sink recibido — así se
+# prueba el wiring de ``_execute_turn`` en aislamiento, sin repetir la
+# cobertura de la mecánica interna del loop real (eso ya vive en
+# test_tool_loop.py, que queda sin tocar por este cambio).
+
+
+class _RecordingSink:
+    """Sink de test que registra en orden todos los mensajes emitidos."""
+
+    def __init__(self) -> None:
+        self.emitted: list[str] = []
+
+    async def emit(self, text: str) -> None:
+        self.emitted.append(text)
+
+
+async def _tool_loop_con_intermedios(**kwargs):
+    """Reemplaza run_tool_loop: emite 2 intermedios por el sink recibido y
+    devuelve la respuesta final, simulando un turno con tool_calls."""
+    sink = kwargs["intermediate_sink"]
+    if sink is not None:
+        await sink.emit("intermedio 1")
+        await sink.emit("intermedio 2")
+    return "respuesta final"
+
+
+async def test_recording_intermediate_sink_acumula_y_reenvia_en_orden():
+    """Unidad: RecordingIntermediateSink guarda cada emit() en orden Y lo
+    reenvía al sink interno — no reemplaza la entrega, solo la observa."""
+    from core.use_cases._turn_pipeline import RecordingIntermediateSink
+
+    inner = _RecordingSink()
+    wrapper = RecordingIntermediateSink(inner)
+
+    await wrapper.emit("uno")
+    await wrapper.emit("dos")
+
+    assert wrapper.messages == ["uno", "dos"]
+    assert inner.emitted == ["uno", "dos"]
+
+
+async def test_intermedios_se_persisten_en_orden_antes_de_la_respuesta_final(
+    use_case, mock_history
+):
+    """Los bloques emitidos vía intermediate_sink durante el tool loop quedan en
+    history.db como Message(role=ASSISTANT), en el mismo orden en que se
+    entregaron al canal, ANTES de la respuesta final."""
+    real_sink = _RecordingSink()
+
+    with patch(
+        "core.use_cases.run_agent.run_tool_loop",
+        new=AsyncMock(side_effect=_tool_loop_con_intermedios),
+    ):
+        response = await use_case.execute("hacé algo largo", intermediate_sink=real_sink)
+
+    assert response == "respuesta final"
+    # El sink real sigue recibiendo cada emit() — la entrega en vivo no cambia.
+    assert real_sink.emitted == ["intermedio 1", "intermedio 2"]
+
+    appended = [call.args[1] for call in mock_history.append.call_args_list]
+    assert [m.content for m in appended] == [
+        "hacé algo largo",
+        "intermedio 1",
+        "intermedio 2",
+        "respuesta final",
+    ]
+    assert [m.role for m in appended] == [
+        Role.USER,
+        Role.ASSISTANT,
+        Role.ASSISTANT,
+        Role.ASSISTANT,
+    ]
+
+
+async def test_intermedios_no_se_persisten_en_modo_ephemeral(use_case, mock_history):
+    """ephemeral=True no debe dejar ni los intermedios ni la respuesta final —
+    la entrega en vivo sigue ocurriendo, solo cambia la persistencia."""
+    real_sink = _RecordingSink()
+
+    with patch(
+        "core.use_cases.run_agent.run_tool_loop",
+        new=AsyncMock(side_effect=_tool_loop_con_intermedios),
+    ):
+        await use_case.execute("hacé algo largo", intermediate_sink=real_sink, ephemeral=True)
+
+    assert real_sink.emitted == ["intermedio 1", "intermedio 2"]
+    mock_history.append.assert_not_called()
+
+
+async def test_intermedios_no_se_persisten_con_skip_marker(use_case, mock_history):
+    """Si la respuesta final activa skip_persist, tampoco quedan los intermedios
+    — mismo criterio que la respuesta final (evita ruido de tareas __SKIP__)."""
+    real_sink = _RecordingSink()
+
+    async def _tool_loop_skip(**kwargs):
+        sink = kwargs["intermediate_sink"]
+        if sink is not None:
+            await sink.emit("reviso el calendario...")
+        return "__SKIP__"
+
+    with patch(
+        "core.use_cases.run_agent.run_tool_loop",
+        new=AsyncMock(side_effect=_tool_loop_skip),
+    ):
+        await use_case.execute(
+            "pregunta al grupo", intermediate_sink=real_sink, skip_marker="__SKIP__"
+        )
+
+    appended_roles = [call.args[1].role for call in mock_history.append.call_args_list]
+    assert Role.ASSISTANT not in appended_roles
+    assert appended_roles.count(Role.USER) == 1

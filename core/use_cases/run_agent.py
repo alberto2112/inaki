@@ -45,6 +45,7 @@ from core.ports.outbound.tool_port import IToolExecutor
 from core.use_cases._tool_loop import run_tool_loop
 from core.use_cases._turn_pipeline import (
     INFLIGHT_CLARIFICATIONS_SECTION,
+    RecordingIntermediateSink,
     assemble_turn_messages,
     expand_includes,
     extract_trailing_user_batch,
@@ -546,6 +547,15 @@ class RunAgentUseCase:
             1 if user_msg is not None and not ephemeral else 0
         )
 
+        # Envuelve el sink real para acumular cada intermedio emitido en vivo
+        # (ver RecordingIntermediateSink): sin esto, la narración que el LLM
+        # manda al canal junto con tool_calls se entrega al usuario pero jamás
+        # queda en history.db — el próximo turno no la ve y el agente puede
+        # creer que no hizo el trabajo que ya narró. None cuando no hay sink
+        # (nada que grabar: nadie recibió nada).
+        recording_sink = (
+            RecordingIntermediateSink(intermediate_sink) if intermediate_sink is not None else None
+        )
         try:
             response = await run_tool_loop(
                 llm=self._llm,
@@ -556,7 +566,7 @@ class RunAgentUseCase:
                 max_iterations=self._settings.tool_call_max_iterations,
                 circuit_breaker_threshold=self._settings.circuit_breaker_threshold,
                 agent_id=self._settings.agent_id,
-                intermediate_sink=intermediate_sink,
+                intermediate_sink=recording_sink,
                 thinking_indicator=self._thinking_indicator,
                 request_delay_seconds=self._settings.request_delay_seconds,
                 # in-flight-message-injection: activamos drainage pasando el
@@ -577,6 +587,18 @@ class RunAgentUseCase:
         skip_persist = is_skip_response(response, skip_marker)
 
         if not ephemeral and not skip_persist:
+            # Persistimos los intermedios ANTES que la respuesta final: mismo
+            # orden en que el usuario los recibió en el canal. Mismo guard que
+            # la respuesta final (ephemeral/skip_persist) — un turno de prueba
+            # o que termina en __SKIP__ tampoco deja intermedios huérfanos.
+            if recording_sink is not None:
+                for block in recording_sink.messages:
+                    await self._history.append(
+                        agent_id,
+                        Message(role=Role.ASSISTANT, content=block),
+                        channel=channel,
+                        chat_id=chat_id,
+                    )
             if routing.state_dirty:
                 await self._history.save_state(
                     agent_id,

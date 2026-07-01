@@ -668,6 +668,48 @@ grupo, crear `~/.inaki/users/telegram/{chat_id}.md` (chat_id negativo en
 Telegram, obtenible con `/chatid` dentro del grupo — ver `telegram-group-auth`).
 Sin ese archivo, un grupo solo recibe `_common.md` (si existe).
 
+### `intermediate-persist`
+
+Los textos que el LLM emite junto con `tool_calls` durante el tool loop (narración
+en vivo — "ok, dejame revisar esto...") se entregaban al canal (Telegram en vivo,
+REST/CLI, scheduler) vía `IIntermediateSink.emit()` pero **jamás quedaban en
+history.db**: `_execute_turn` solo persistía la respuesta final del turno (la
+última llamada del LLM sin `tool_calls`). El usuario veía varios mensajes en el
+chat; el agente, en el próximo turno, solo tenía el último en su propio contexto
+— podía creer que no había hecho el trabajo que ya había narrado y repetir el
+loop completo. Reportado por el usuario 2026-07-01.
+
+Es la imagen especular de `background-delegation` (Defecto 2, aceptado como
+diseño): ahí el resultado de una delegación bg-N se persiste pero no se
+entrega crudo al usuario. Acá era al revés — se entregaba pero no se
+persistía — y a diferencia de ese caso, esto sí era un defecto: nadie decidió
+deliberadamente que la narración en vivo debiera perderse.
+
+**Fix**: `RunAgentUseCase._execute_turn` envuelve el `intermediate_sink` recibido
+con `RecordingIntermediateSink` (`core/use_cases/_turn_pipeline.py`) antes de
+pasarlo a `run_tool_loop`. El wrapper reenvía cada `emit()` al sink real (la
+entrega en vivo no cambia) y además lo acumula en `.messages`, en orden. Tras el
+loop, bajo el mismo guard `not ephemeral and not skip_persist` que ya gateaba la
+respuesta final, `_execute_turn` persiste cada intermedio acumulado como
+`Message(role=ASSISTANT)` — en orden, ANTES de la respuesta final.
+
+Cubre los tres canales con un solo cambio: el turno conversacional en vivo
+(`TelegramLiveIntermediateSink`), REST/CLI (`BufferingIntermediateSink`,
+`adapters/inbound/rest/admin/routers/chat.py`) y los turnos que dispara el
+scheduler — `agent_send`, resultados de delegación bg-N — porque
+`LLMDispatcherAdapter.dispatch` invoca el mismo `agent.run_agent.execute(...)`
+(`adapters/outbound/scheduler/dispatch_adapters.py:150`), no un one-shot.
+`RunAgentOneShotUseCase` (subagentes de delegación) queda afuera a propósito:
+no pasa `history_store`/`scope` a `run_tool_loop`, no tiene historial propio
+que resolver.
+
+**Sin migración de DB ni cambios de config.** No hay cambio de schema — son más
+filas `Role.ASSISTANT` de las que ya se escriben hoy. `_tool_loop.py` y
+`ToolLoopMaxIterationsError` quedan intactos: como el wrapper acumula en vivo
+durante el loop, `.messages` está completo tanto si el turno termina normal
+como si corta por `ToolLoopMaxIterationsError` — no hizo falta tocar el
+contrato de `run_tool_loop` ni propagar nada a través de la excepción.
+
 ## Git workflow
 
 - Never create a branch without asking me for the name first.

@@ -15,7 +15,7 @@ _VAR_RE = re.compile(
     # Las variantes específicas (CHANNEL.SENDER, CHANNEL.USERNAME, etc.) deben ir
     # ANTES de CHANNEL "pelado" en la alternancia: regex usa first-match wins y
     # CHANNEL solo capturaría "CHANNEL" dejando ".SENDER" colgando fuera del token.
-    r"|CHANNEL\.NAME|CHANNEL\.CHATID"
+    r"|CHANNEL\.NAME|CHANNEL\.CHATID|CHANNEL\.CONTEXTID"
     r"|CHANNEL\.SENDER|CHANNEL\.USERNAME|CHANNEL\.FIRST_NAME|CHANNEL\.LAST_NAME"
     r"|CHANNEL"
     r")(?:\[([A-Z]{2})\])?\}\}",
@@ -35,6 +35,7 @@ def _resolve_vars(
     workspace_root: str | None,
     channel: str | None = None,
     chat_id: str | None = None,
+    context_id: str | None = None,
     sender_name: str | None = None,
     sender_username: str | None = None,
     sender_first_name: str | None = None,
@@ -47,6 +48,11 @@ def _resolve_vars(
     adapter inyecta los valores correspondientes en ``ChannelContext``. Si el valor
     es ``None`` (canal sin sender claro, usuario sin username configurado, etc.) la
     variable queda literal en el prompt — mismo criterio que ``{{WORKSPACE}}``.
+
+    ``{{CHANNEL.CONTEXTID}}`` resuelve a la clave estable de la entidad de contexto
+    (``ChannelContext.context_id`` = ``chat_id or user_id``) — la misma que nombra el
+    fichero de memoria caliente. Queda literal sólo si no hay ``ChannelContext`` (turno
+    sin canal, ej. scheduler).
     """
     if not _VAR_RE.search(text):
         return text
@@ -76,6 +82,8 @@ def _resolve_vars(
             return channel if channel else m.group(0)
         if token == "CHANNEL.CHATID":
             return chat_id if chat_id else m.group(0)
+        if token == "CHANNEL.CONTEXTID":
+            return context_id if context_id else m.group(0)
         if token == "CHANNEL.SENDER":
             return sender_name if sender_name else m.group(0)
         if token == "CHANNEL.USERNAME":
@@ -114,6 +122,9 @@ class AgentContext(BaseModel):
     # Canal y chat_id del turno actual. Vacío/None → {{CHANNEL.*}} intacto (mismo criterio que WORKSPACE).
     channel: str | None = None
     chat_id: str | None = None
+    # Clave estable de la entidad de contexto (ChannelContext.context_id = chat_id or user_id).
+    # Nombra el fichero de memoria caliente; expuesta como {{CHANNEL.CONTEXTID}}. None → literal.
+    context_id: str | None = None
     # Identidad del remitente humano del turno (Telegram private chat, etc.). Cada campo
     # puede ser None de forma independiente: el adapter rellena lo que conoce y deja en
     # None lo que no aplica. En grupos quedan todos None — la identidad se embebe en el
@@ -171,6 +182,7 @@ class AgentContext(BaseModel):
             self.workspace_root,
             self.channel,
             self.chat_id,
+            context_id=self.context_id,
             sender_name=self.sender_name,
             sender_username=self.sender_username,
             sender_first_name=self.sender_first_name,

@@ -441,3 +441,45 @@ def test_channel_sender_no_interfiere_con_channel_name() -> None:
         "{{CHANNEL.NAME}}#{{CHANNEL.CHATID}} habla con {{CHANNEL.FIRST_NAME}}"
     )
     assert result == "telegram#42 habla con Juan"
+
+
+# ---- {{CHANNEL.CONTEXTID}} — clave estable de la entidad de contexto ----
+
+
+def test_channel_contextid_replaces_token() -> None:
+    ctx = AgentContext(agent_id="test", context_id="-100456")
+    result = ctx.build_system_prompt("Memoria en users/telegram/{{CHANNEL.CONTEXTID}}.md")
+    assert result == "Memoria en users/telegram/-100456.md"
+
+
+def test_channel_contextid_case_insensitive() -> None:
+    ctx = AgentContext(agent_id="test", context_id="local")
+    assert ctx.build_system_prompt("{{channel.contextid}}") == "local"
+
+
+def test_channel_contextid_passthrough_when_none() -> None:
+    """Sin ``context_id`` (turno sin canal, ej. scheduler) → queda literal."""
+    ctx = AgentContext(agent_id="test")
+    assert ctx.build_system_prompt("{{CHANNEL.CONTEXTID}}") == "{{CHANNEL.CONTEXTID}}"
+
+
+def test_channel_contextid_distinto_de_chatid() -> None:
+    """``{{CHANNEL.CONTEXTID}}`` y ``{{CHANNEL.CHATID}}`` son campos independientes."""
+    ctx = AgentContext(agent_id="test", chat_id="42", context_id="42")
+    result = ctx.build_system_prompt("chat={{CHANNEL.CHATID}} ctx={{CHANNEL.CONTEXTID}}")
+    assert result == "chat=42 ctx=42"
+
+
+def test_channel_contextid_no_interfiere_con_chatid() -> None:
+    """La regex no confunde CONTEXTID con CHATID pese al prefijo común ``CHANNEL.``."""
+    ctx = AgentContext(agent_id="test", channel="telegram", chat_id="42", context_id="-100")
+    result = ctx.build_system_prompt("{{CHANNEL.CHATID}} / {{CHANNEL.CONTEXTID}}")
+    assert result == "42 / -100"
+
+
+def test_channel_contextid_in_extra_sections() -> None:
+    ctx = AgentContext(agent_id="test", context_id="-100")
+    result = ctx.build_system_prompt(
+        BASE_PROMPT, extra_sections=["\nTu archivo: {{CHANNEL.CONTEXTID}}.md"]
+    )
+    assert "Tu archivo: -100.md" in result

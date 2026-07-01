@@ -211,3 +211,39 @@ def test_sender_fields_no_afectan_routing_key() -> None:
         first_name="Juan",
     )
     assert ctx.routing_key == "telegram:42"
+
+
+# ---------------------------------------------------------------------------
+# context_id — clave canónica de la entidad de contexto (chat_id or user_id)
+# ---------------------------------------------------------------------------
+
+
+def test_context_id_usa_chat_id_si_esta_presente() -> None:
+    ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100123")
+    assert ctx.context_id == "-100123"
+
+
+def test_context_id_cae_a_user_id_sin_chat_id() -> None:
+    """Sin ``chat_id`` (CLI/REST/daemon) la clave cae a ``user_id``."""
+    ctx = ChannelContext(channel_type="cli", user_id="local")
+    assert ctx.context_id == "local"
+
+
+def test_context_id_grupo_y_privado_resuelven_por_chat_id() -> None:
+    """Objetivo del diseño: privado y grupo usan la MISMA resolución (chat_id)."""
+    grupo = ChannelContext(channel_type="telegram", user_id="inaki", chat_id="-100")
+    privado = ChannelContext(channel_type="telegram", user_id="555", chat_id="555")
+    assert grupo.context_id == "-100"
+    assert privado.context_id == "555"
+
+
+def test_context_id_ignora_username() -> None:
+    """La clave es la conversación, no la persona: ``username`` no participa."""
+    ctx = ChannelContext(channel_type="telegram", user_id="99", chat_id="123", username="alberto")
+    assert ctx.context_id == "123"
+
+
+def test_context_id_nunca_vacio() -> None:
+    """``user_id`` nunca es vacío (validador) → ``context_id`` siempre resuelve."""
+    ctx = ChannelContext(channel_type="telegram", user_id="99")
+    assert ctx.context_id == "99"

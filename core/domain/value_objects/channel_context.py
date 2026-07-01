@@ -11,16 +11,12 @@ class ChannelContext(BaseModel, frozen=True):
     Atributos:
         channel_type: Tipo de canal, por ejemplo "telegram", "cli", "rest", "daemon".
         user_id: Identificador del usuario en ese canal, por ejemplo "123456", "local".
-            En chats grupales NO es un id de usuario real — ver ``is_group``.
+            En chats grupales NO es un id de usuario real (es el id del agente); la
+            identidad de la conversación es ``chat_id`` — ver ``context_id``.
         chat_id: Identificador del chat real del turno (en Telegram puede ser el ID
             del grupo o el privado del usuario; en grupos NO coincide con ``user_id``).
             ``None`` cuando el canal no distingue chat de usuario (CLI/REST/daemon)
             o cuando el caller no lo informó.
-        is_group: ``True`` cuando el turno ocurre en un chat grupal (no hay un único
-            usuario dueño de la conversación). ``RunAgentUseCase._read_user_context``
-            lo usa para resolver el archivo de contexto por ``chat_id`` (identidad
-            estable del grupo) en vez de por ``username``/``user_id`` (identidad de
-            una persona) — un grupo no tiene "el" usuario.
         sender_name: Nombre legible compuesto del remitente para inyectar en el system
             prompt (ej: ``"Juan Pérez (@juan_dev)"``). En grupos refleja el ÚLTIMO
             emisor humano del batch (heurística de ``group_flow.py``, NO la identidad
@@ -34,12 +30,14 @@ class ChannelContext(BaseModel, frozen=True):
         last_name: Apellido del remitente. ``None`` cuando el usuario no lo configuró
             o el canal no lo provee.
         routing_key: Clave compuesta ``"{channel_type}:{user_id}"`` para enrutamiento.
+        context_id: Identidad estable de la ENTIDAD de contexto (``chat_id or user_id``).
+            Clave del fichero de memoria caliente per-entidad; fuente ÚNICA para la
+            lectura (``_read_user_context``) y la escritura (variable ``{{CHANNEL.CONTEXTID}}``).
     """
 
     channel_type: str
     user_id: str
     chat_id: str | None = None
-    is_group: bool = False
     sender_name: str | None = None
     username: str | None = None
     first_name: str | None = None
@@ -74,6 +72,24 @@ class ChannelContext(BaseModel, frozen=True):
     def routing_key(self) -> str:
         """Clave de enrutamiento en formato ``channel_type:user_id``."""
         return f"{self.channel_type}:{self.user_id}"
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def context_id(self) -> str:
+        """Identidad estable de la ENTIDAD de contexto de esta conversación.
+
+        Fuente ÚNICA de la clave del fichero de memoria caliente
+        (``users/{channel_type}/{context_id}.md``): la usan por igual la LECTURA
+        (``RunAgentUseCase._read_user_context``) y la ESCRITURA (el LLM, vía la
+        variable ``{{CHANNEL.CONTEXTID}}`` que el operador pone en el system prompt).
+        Que ambos lados deriven de acá garantiza que el agente lea del mismo
+        archivo donde escribe — en privado y en grupo por igual.
+
+        Resuelve al ``chat_id`` (la conversación: privado o grupo) con fallback a
+        ``user_id`` para canales que no distinguen chat de usuario (CLI/REST/daemon).
+        Nunca vacío: el validador garantiza ``user_id`` no vacío.
+        """
+        return self.chat_id or self.user_id
 
 
 # ---------------------------------------------------------------------------

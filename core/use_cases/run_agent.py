@@ -180,31 +180,26 @@ class RunAgentUseCase:
         return (ctx.sender_name, ctx.username, ctx.first_name, ctx.last_name)
 
     def _read_user_context(self, ctx: ChannelContext | None) -> str:
-        """Lee el contexto per-entidad (usuario o grupo) para el turno actual.
+        """Lee el contexto per-entidad (memoria caliente) para el turno actual.
 
         Concatena dos capas (la primera que falte se omite):
 
           1. ``~/.inaki/users/{channel_type}/_common.md`` — contexto común a
              TODA entidad del canal (ej: formato de respuesta, "no uses
              tablas markdown en Telegram"). Se inyecta ANTES del archivo
-             específico. Prefijo ``_`` para no colisionar con un ``{key}.md``
-             que se llamara "common".
-          2. El primer archivo específico que exista. La key depende de
-             ``ctx.is_group``:
-             a. Grupo (``is_group=True``): SOLO ``{chat_id}.md`` — un grupo no
-                tiene "el" usuario, tiene un ``chat_id`` estable que lo
-                identifica (a diferencia de "quién habló último", que cambia
-                de turno a turno). Sin fallback a username/user_id: en un
-                turno grupal esos campos reflejan al último emisor humano del
-                batch (heurística de ``group_flow.py`` para resolver
-                ``{{CHANNEL.SENDER}}``), no la identidad del grupo.
-             b. Resto de canales: ``{username}.md`` con fallback a ``{user_id}.md``.
+             específico. Prefijo ``_`` para no colisionar con un ``{key}.md``.
+          2. ``~/.inaki/users/{channel_type}/{context_id}.md`` — el archivo de la
+             entidad de contexto. La key es ``ctx.context_id`` (``chat_id or
+             user_id``): MISMA resolución en privado y en grupo, y la MISMA que la
+             variable ``{{CHANNEL.CONTEXTID}}`` que el operador expone al LLM en el
+             system prompt — así el agente lee del mismo archivo donde escribe. Sin
+             fallback a ``username``: la clave es la conversación, no la persona (un
+             grupo no tiene "el" usuario — ver ``ChannelContext.context_id``).
 
-        Scope por canal: ``alberto`` en telegram ≠ ``alberto`` en cli — cada canal
-        tiene su propio directorio; mismo criterio para un ``chat_id`` de grupo.
-        El nombre se sanitiza: si contiene separadores de path o ``..`` se
-        descarta el lookup (defensa básica contra path traversal, aunque los
-        valores vienen del canal — paranoia barata).
+        Scope por canal: una misma ``context_id`` en telegram ≠ en cli — cada canal
+        tiene su propio directorio. El nombre se sanitiza: si contiene separadores
+        de path o ``..`` se descarta el lookup (defensa básica contra path traversal,
+        aunque los valores vienen del canal — paranoia barata).
 
         Sin ``ChannelContext`` (ej: scheduler triggers que no pasan por un adapter
         inbound) o ningún archivo presente → ``""``. Mismo criterio que el digest.
@@ -220,7 +215,7 @@ class RunAgentUseCase:
         except (FileNotFoundError, OSError):
             pass
 
-        candidates = (ctx.chat_id,) if ctx.is_group else (ctx.username, ctx.user_id)
+        candidates = (ctx.context_id,)
 
         entity_specific = ""
         for candidate in candidates:
@@ -495,6 +490,7 @@ class RunAgentUseCase:
             workspace_root=self._settings.workspace_root or None,
             channel=channel or None,
             chat_id=chat_id or None,
+            context_id=ctx.context_id if ctx else None,
             sender_name=sender_name,
             sender_username=sender_username,
             sender_first_name=sender_first_name,
@@ -725,6 +721,7 @@ class RunAgentUseCase:
             workspace_root=self._settings.workspace_root or None,
             channel=channel or None,
             chat_id=chat_id or None,
+            context_id=inspect_ctx.context_id if inspect_ctx else None,
             sender_name=sender_name,
             sender_username=sender_username,
             sender_first_name=sender_first_name,

@@ -114,8 +114,8 @@ def _run_daemon(config_dir: Path, agents_dir: Path, global_config, registry) -> 
     initial_container = AppContainer(global_config, registry, config_dir=config_dir)
 
     # Crea ~/.inaki/users/{channel}/ por cada canal configurado en cualquier agente.
-    # Lazy + idempotente: cero costo si ya existen. Habilita la convención per-user
-    # (ver docs/configuracion.md → "Per-user context files").
+    # Lazy + idempotente: cero costo si ya existen. Habilita la convención de
+    # contexto per-entidad (ver docs/configuracion.md → "Per-entity context files").
     from infrastructure.config import ensure_user_channel_dirs
 
     ensure_user_channel_dirs(get_inaki_home(), registry.list_all())

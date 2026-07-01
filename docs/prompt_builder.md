@@ -164,6 +164,7 @@ After concatenating all sections (base prompt, user context, memory digest, skil
 | `{{CHANNEL}}` | Channel name | Alias of `{{CHANNEL.NAME}}`. E.g., `telegram`, `cli`, `rest`. If `None`, left as-is. |
 | `{{CHANNEL.NAME}}` | Channel name | Same as `{{CHANNEL}}`. |
 | `{{CHANNEL.CHATID}}` | Chat ID within the channel | E.g., `123456789` (Telegram private), `-1001234567890` (Telegram group), `default` (CLI). If `None`, left as-is. |
+| `{{CHANNEL.CONTEXTID}}` | Context-entity key | Stable key of the conversation entity: `chat_id or user_id` (`ChannelContext.context_id`). It is the filename of the per-entity hot-memory file `~/.inaki/users/{channel}/{context_id}.md` — the **same** key `_read_user_context` reads, so the operator can tell the LLM its own memory path and have it read/write the exact file the agent will load next turn. Identical resolution in private and group. Never `None` when a `ChannelContext` exists (`user_id` is always set); only left literal on channel-less turns (e.g., scheduler triggers). |
 | `{{CHANNEL.SENDER}}` | Sender display name | Full name of the human who sent the message (e.g., `Alberto García`). Populated by the inbound adapter from `ChannelContext`. In Telegram, populated for **every** turn that has a human author: private chats, mention/reply in groups, voice/photo in groups, and **autonomous flushes in groups** (resolved to the most recent human author of the buffered batch). Stays `None` only when no human has spoken since the bot started (rare — typically only the first flush triggered exclusively by a broadcast). If `None`, left as-is. |
 | `{{CHANNEL.USERNAME}}` | Sender username | Telegram username without `@` (e.g., `alberto2112`). `None` if the user has no username set. Resolution scope identical to `{{CHANNEL.SENDER}}`. If `None`, left as-is. |
 | `{{CHANNEL.FIRST_NAME}}` | Sender first name | E.g., `Alberto`. `None` if not available. Resolution scope identical to `{{CHANNEL.SENDER}}`. If `None`, left as-is. |
@@ -191,6 +192,7 @@ Hoy es {{WEEKDAY[ES]}} {{DATE}} ({{TIME}}). Tu workspace es {{WORKSPACE}}.
 Zona configurada: {{TIMEZONE}}
 Canal: {{CHANNEL}} | Chat: {{CHANNEL.CHATID}}
 Usuario: {{CHANNEL.SENDER}} (@{{CHANNEL.USERNAME}})
+Tu memoria caliente vive en ~/.inaki/users/{{CHANNEL}}/{{CHANNEL.CONTEXTID}}.md
 ```
 
 ---

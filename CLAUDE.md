@@ -483,6 +483,11 @@ legacy. Tests existentes ya actualizados en `tests/unit/use_cases/test_delegatio
 
 ### `per-user-context-files`
 
+> **Superseded por `channel-contextid`**: la resolución por `{username}.md` →
+> `{user_id}.md` que describe esta nota se reemplazó por una clave única
+> `context_id` (`chat_id or user_id`), idéntica en privado y grupo — el `username`
+> ya NO nombra el archivo. Se conserva como registro histórico.
+
 El archivo global `~/.inaki/USER.md` se reemplaza por archivos per-user scopeados
 por canal. `RunAgentUseCase._read_user_context` ahora resuelve contra el
 `ChannelContext` del turno:
@@ -628,6 +633,11 @@ en grupos autorizados (`/chatid` mantiene su bypass de `allowed_chat_ids`).
 
 ### `group-context-by-chat-id`
 
+> **Superseded por `channel-contextid`**: el campo `is_group` y la dicotomía
+> `is_group ? chat_id : username→user_id` de esta nota se eliminaron. Todos los
+> canales (privado y grupo) resuelven ahora por `context_id` (`chat_id or user_id`).
+> Se conserva como registro histórico.
+
 `RunAgentUseCase._read_user_context` resolvía el archivo de contexto en chats
 grupales por **el último emisor humano que escribió antes del flush**
 (heurística "last sender wins" de `group_flow.py`, pensada originalmente solo
@@ -709,6 +719,45 @@ filas `Role.ASSISTANT` de las que ya se escriben hoy. `_tool_loop.py` y
 durante el loop, `.messages` está completo tanto si el turno termina normal
 como si corta por `ToolLoopMaxIterationsError` — no hizo falta tocar el
 contrato de `run_tool_loop` ni propagar nada a través de la excepción.
+
+### `channel-contextid`
+
+`RunAgentUseCase._read_user_context` resolvía el archivo de contexto per-entidad
+con una dicotomía: en grupos por `chat_id` (vía `is_group`), en el resto por
+`{username}.md`→`{user_id}.md` (ver `per-user-context-files` y
+`group-context-by-chat-id`, ambas superseded). El problema: ese archivo es una
+**memoria caliente que el LLM edita a voluntad** — el operador le indica el path en
+el system prompt con una variable `{{CHANNEL.*}}`. Y NINGUNA variable existente
+coincidía con la clave de LECTURA en todos los contextos: con `{{CHANNEL.USERNAME}}`
+divergía en grupos (usaba el último emisor), con `{{CHANNEL.CHATID}}` divergía en
+privado (leía por `username`→`user_id`). El LLM escribía en un path y el agente
+leía de otro.
+
+**Cambio**: una clave canónica única. `ChannelContext.context_id`
+(`@computed_field` = `chat_id or user_id`) es la fuente ÚNICA para la LECTURA
+(`_read_user_context` → `candidates = (ctx.context_id,)`) y la ESCRITURA (el LLM,
+vía la variable de prompt nueva `{{CHANNEL.CONTEXTID}}`). Misma resolución en
+privado y grupo:
+
+```
+~/.inaki/users/{channel_type}/_common.md       ← siempre, sin cambios
+~/.inaki/users/{channel_type}/{context_id}.md  ← único candidato (context_id = chat_id or user_id)
+```
+
+Se **eliminó el campo `is_group`** (quedó huérfano al sacar su único lector). El
+`username` sigue poblado pero SOLO alimenta `{{CHANNEL.USERNAME}}`, no el nombre del
+archivo. `context_id` nunca es vacío (el validador garantiza `user_id`), así que la
+variable siempre resuelve salvo en turnos sin `ChannelContext` (scheduler).
+
+**BREAKING de DATOS (sin auto-migración)**: los archivos privados nombrados por
+`@username` (`alberto.md`) dejan de leerse. Paso del operador: `mv
+~/.inaki/users/telegram/alberto.md ~/.inaki/users/telegram/<chat_id>.md` y cambiar
+la variable del system prompt a `{{CHANNEL.CONTEXTID}}`. En CLI/REST, `context_id`
+deriva de `channels.cli.user` (identidad estable) cuando el cliente no manda
+`chat_id`; sin ese config, del `session_id` efímero (sin archivo pre-escribible) —
+por eso el router usa `user_id = cli_user or session_id`. Sin cambios de DB ni de
+config. Ver `docs/configuracion.md` → "Per-entity context files" y
+`docs/prompt_builder.md` (tabla de variables).
 
 ## Git workflow
 

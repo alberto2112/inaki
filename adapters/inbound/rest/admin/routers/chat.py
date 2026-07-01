@@ -71,13 +71,16 @@ async def chat_turn(body: ChatTurnRequest, request: Request) -> ChatTurnResponse
     chat_id = body.chat_id if body.chat_id is not None else ""
     channel_type = body.channel if body.channel is not None else "cli"
 
-    # Username opcional desde la config del agente — habilita el lookup de
-    # ``~/.inaki/users/{channel_type}/{username}.md``.
+    # ``channels.{cli}.user`` da una identidad ESTABLE al turno CLI/REST: se usa como
+    # ``user_id`` (sin él, ``session_id`` es un UUID efímero por proceso). Así el
+    # ``context_id`` (= chat_id or user_id) resuelve al usuario configurado y el fichero
+    # de contexto ``~/.inaki/users/{channel_type}/{context_id}.md`` queda pre-escribible.
+    # También puebla ``{{CHANNEL.USERNAME}}``. Un ``chat_id`` explícito del cliente gana.
     cli_cfg = agent_container.agent_config.channels.get(channel_type, {})
     cli_user = cli_cfg.get("user") if isinstance(cli_cfg, dict) else None
     ctx = ChannelContext(
         channel_type=channel_type,
-        user_id=body.session_id,
+        user_id=cli_user or body.session_id,
         chat_id=chat_id or None,
         username=cli_user if cli_user else None,
     )

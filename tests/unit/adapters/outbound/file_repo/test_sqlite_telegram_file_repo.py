@@ -316,3 +316,64 @@ async def test_query_count_cero_devuelve_lista_vacia(repo: SqliteTelegramFileRep
         count=0,
     )
     assert out == []
+
+
+# ---------------------------------------------------------------------------
+# query_by_media_group
+# ---------------------------------------------------------------------------
+
+
+async def test_query_by_media_group_devuelve_todos_los_tipos_en_orden(
+    repo: SqliteTelegramFileRepo,
+):
+    """A diferencia de query_recent('album'), no filtra por tipo: documentos y
+    videos enviados juntos comparten media_group_id y son parte del álbum."""
+    base = datetime(2026, 5, 1, 10, 0, tzinfo=timezone.utc)
+    await repo.save(_record(file_id="P1", media_group_id="mg-1", received_at=base))
+    await repo.save(
+        _record(
+            file_id="D1",
+            content_type="file",
+            mime_type="application/pdf",
+            media_group_id="mg-1",
+            received_at=base + timedelta(seconds=1),
+        )
+    )
+    await repo.save(
+        _record(file_id="P2", media_group_id="mg-1", received_at=base + timedelta(seconds=2))
+    )
+    # Otro álbum y un suelto: no deben aparecer.
+    await repo.save(_record(file_id="OTRO", media_group_id="mg-2", received_at=base))
+    await repo.save(_record(file_id="SUELTO", received_at=base))
+
+    out = await repo.query_by_media_group(
+        agent_id="test",
+        channel="telegram",
+        chat_id="-100",
+        media_group_id="mg-1",
+    )
+
+    # Orden de recepción (received_at ASC), tipos mezclados.
+    assert [r.file_id for r in out] == ["P1", "D1", "P2"]
+    assert [r.content_type for r in out] == ["photo", "file", "photo"]
+
+
+async def test_query_by_media_group_aisla_por_agente_y_chat(repo: SqliteTelegramFileRepo):
+    await repo.save(_record(file_id="A", media_group_id="mg-1"))
+    await repo.save(_record(file_id="B", media_group_id="mg-1", chat_id="-999"))
+
+    out = await repo.query_by_media_group(
+        agent_id="test",
+        channel="telegram",
+        chat_id="-100",
+        media_group_id="mg-1",
+    )
+    assert [r.file_id for r in out] == ["A"]
+
+    out_vacio = await repo.query_by_media_group(
+        agent_id="otro-agente",
+        channel="telegram",
+        chat_id="-100",
+        media_group_id="mg-1",
+    )
+    assert out_vacio == []

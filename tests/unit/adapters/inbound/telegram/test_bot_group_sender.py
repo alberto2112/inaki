@@ -214,3 +214,48 @@ async def test_run_group_pipeline_sin_snapshot_deja_sender_none(
     assert ctx.username is None
     assert ctx.first_name is None
     assert ctx.last_name is None
+
+
+# ---------------------------------------------------------------------------
+# _handle_group_message preformatted (bloques de media)
+# ---------------------------------------------------------------------------
+
+
+async def test_handle_group_message_preformatted_persiste_el_bloque(
+    agent_cfg_autonomous, mock_container
+):
+    """Con ``preformatted=True`` (bloques de attachments de media.py) se persiste
+    el user_input con prefijo de sender — NO ``format_group_message``, que lee
+    ``message.text`` y para un media devolvería ``"juan said: "`` vacío (bug
+    histórico de álbumes/files en grupos)."""
+    bot = _build_bot(agent_cfg_autonomous, mock_container)
+    bot._bot_username = "inaki_bot"
+    bot._set_group_reaction = AsyncMock()
+    bot._schedule_group_flush = MagicMock()
+
+    update = _human_update(chat_id=-100123, username="juan", text=None)
+    bloque = "@album (2 items):\n@photo at /ws/1.jpg\n@photo at /ws/2.jpg"
+
+    await bot._handle_group_message(update, bloque, "supergroup", preformatted=True)
+
+    mock_container.run_agent.record_user_message.assert_awaited_once()
+    persistido = mock_container.run_agent.record_user_message.await_args.args[0]
+    assert persistido == f"juan sent:\n{bloque}"
+
+
+async def test_handle_group_message_texto_plano_sigue_usando_format_group_message(
+    agent_cfg_autonomous, mock_container
+):
+    """Sin ``preformatted`` el path legacy no cambia: el contenido persistido
+    se deriva de ``format_group_message`` (con contexto de reply)."""
+    bot = _build_bot(agent_cfg_autonomous, mock_container)
+    bot._bot_username = "inaki_bot"
+    bot._set_group_reaction = AsyncMock()
+    bot._schedule_group_flush = MagicMock()
+
+    update = _human_update(chat_id=-100123, username="juan", text="hola grupo")
+
+    await bot._handle_group_message(update, "hola grupo", "supergroup")
+
+    persistido = mock_container.run_agent.record_user_message.await_args.args[0]
+    assert persistido == "juan said: hola grupo"

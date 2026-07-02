@@ -1,11 +1,12 @@
-"""Tests del handler de voz de TelegramBot (task 3.3).
+"""Tests del handler de voz de TelegramBot.
 
 Cubre:
 - Usuario no autorizado → drop silencioso, sin invocar provider ni pipeline.
-- voice_enabled=False → drop silencioso incluso con allowed.
-- Audio demasiado grande → reply de error + reacción ❌, SIN llamar al provider.
-- Happy path: reacción 👂, transcripción, pipeline, reply final, reacción ✅.
-- TranscriptionError del provider → reply de error + reacción ❌, pipeline no corre.
+- voice_enabled=False → persiste el marcador @audio, sin transcribir ni turno.
+- Audio demasiado grande → marcador @audio + reply de error + reacción 👎, SIN provider.
+- Happy path: reacción 👀, transcripción, turno con bloque @audio + @transcription.
+- TranscriptionError del provider → marcador + reply de error + 👎, pipeline no corre.
+- Document con mime audio/* → _handle_silent_media delega al pipeline de voz.
 - Mensaje sin voice/audio/video_note (defensa) → no-op.
 
 Todos los tests instancian TelegramBot mockeando `Application` (mismo patrón
@@ -45,6 +46,8 @@ def _mk_agent_cfg(
         "voice_enabled": voice_enabled,
     }
     cfg.telegram = tg
+    # Workspace real bajo /tmp: _save_bytes_to_workspace escribe los bytes acá.
+    cfg.workspace_path = "/tmp/inaki-test-ws-voice"
     # Transcription config embebida: max_audio_mb + language.
     cfg.transcription = MagicMock()
     cfg.transcription.max_audio_mb = max_audio_mb
@@ -69,6 +72,10 @@ def mock_container(mock_transcription) -> MagicMock:
     container.run_agent = MagicMock()
     container.run_agent.execute = AsyncMock(return_value="Respuesta del agente")
     container.run_agent.record_user_message = AsyncMock(return_value=None)
+    # Sin repo ni downloader: la persistencia de file_id es no-op y los
+    # marcadores degradan a "pending" cuando no hay bytes en memoria.
+    container.telegram_file_repo = None
+    container.telegram_file_downloader = None
     # scope_registry para in-flight-message-injection — try_mark_busy=True
     # significa "scope libre", el camino normal corre execute() como antes.
     container.scope_registry = MagicMock()
@@ -93,14 +100,22 @@ def _mk_update(
     voice=None,
     audio=None,
     video_note=None,
+    document=None,
 ):
     update = MagicMock()
     update.effective_user.id = user_id
     update.effective_chat.id = chat_id
     msg = MagicMock()
+    # Stubs explícitos: MagicMock auto-genera atributos TRUTHY y
+    # _extract_file_metadata clasificaría el mensaje como foto.
+    msg.photo = []
     msg.voice = voice
     msg.audio = audio
+    msg.video = None
     msg.video_note = video_note
+    msg.document = document
+    msg.media_group_id = None
+    msg.caption = None
     msg.text = None
     msg.reply_text = AsyncMock()
     msg.set_reaction = AsyncMock()
@@ -110,6 +125,9 @@ def _mk_update(
 
 def _mk_voice(bytes_result: bytes = b"audio-data", file_size: int = 1024):
     voice = MagicMock()
+    voice.file_id = "AUD-1"
+    voice.file_unique_id = "AUD-uniq"
+    voice.file_name = None
     voice.mime_type = None
     voice.file_size = file_size
     f = MagicMock()
@@ -135,7 +153,12 @@ async def test_user_no_autorizado_drop_silencioso(agent_cfg, mock_container) -> 
     update.message.reply_text.assert_not_called()
 
 
-async def test_voice_enabled_false_drop_silencioso(agent_cfg_voice_off, mock_container) -> None:
+async def test_voice_enabled_false_persiste_marcador_sin_transcribir(
+    agent_cfg_voice_off, mock_container
+) -> None:
+    """Con voz deshabilitada NO se transcribe ni corre turno, pero el bloque
+    @audio queda en el historial (persistencia simétrica) — sin downloader el
+    marcador degrada a pending."""
     bot = _build_bot(agent_cfg_voice_off, mock_container)
     update = _mk_update(voice=_mk_voice())
     context = MagicMock()
@@ -144,6 +167,10 @@ async def test_voice_enabled_false_drop_silencioso(agent_cfg_voice_off, mock_con
 
     mock_container.transcription.transcribe.assert_not_called()
     mock_container.run_agent.execute.assert_not_called()
+    mock_container.run_agent.record_user_message.assert_awaited_once()
+    marker = mock_container.run_agent.record_user_message.await_args.args[0]
+    assert marker.startswith("@audio")
+    assert "pending (id: AUD-uniq)" in marker
 
 
 async def test_happy_path_transcribe_y_pipeline(agent_cfg, mock_container) -> None:
@@ -160,25 +187,23 @@ async def test_happy_path_transcribe_y_pipeline(agent_cfg, mock_container) -> No
     mock_container.transcription.transcribe.assert_awaited_once()
     call = mock_container.transcription.transcribe.await_args
     assert call.kwargs.get("audio", call.args[0] if call.args else None) == b"audio-bytes"
-    # Pipeline invocado con el texto transcrito.
+    # Turno invocado con el bloque @audio + @transcription (no el texto crudo).
     mock_container.run_agent.execute.assert_awaited_once()
-    pipe_call = mock_container.run_agent.execute.await_args
-    assert pipe_call.args[0] == "hola mundo"
+    user_input = mock_container.run_agent.execute.await_args.args[0]
+    assert user_input.startswith("@audio")
+    assert "AUD-uniq" in user_input  # el path local lleva el file_unique_id
+    assert "@transcription: hola mundo" in user_input
     # Reply final enviado.
     update.message.reply_text.assert_awaited()
     # En el happy path solo se reacciona con 👀 al recibir el audio.
-    # Las reacciones intermedias (🔊 transcribiendo) y final (✅ ok) se eliminaron:
-    # - 🔊 era redundante (pisaba al 👀 anterior).
-    # - ✅ era ruido — el usuario ve la respuesta del bot, no necesita un emoji ok.
     reactions_sent = [c.args[0] for c in update.message.set_reaction.await_args_list]
     assert reactions_sent == ["👀"]
 
 
 async def test_audio_en_grupo_se_prefija_con_sender(agent_cfg, mock_container) -> None:
-    """En grupos, la transcripción se inyecta al pipeline con formato
-    ``"{sender} (audio): {texto}"`` — mismo formato que `_format_history_prefix`
-    aplica a los broadcasts entrantes, así el bot originante y los demás bots ven
-    la misma estructura."""
+    """En grupos, el bloque se inyecta al pipeline con el prefijo
+    ``"{sender} (audio):"`` — mismo espíritu que `_format_history_prefix`
+    aplica a los broadcasts entrantes."""
     bot = _build_bot(agent_cfg, mock_container)
     voice = _mk_voice(bytes_result=b"audio-bytes", file_size=500)
     update = _mk_update(voice=voice)
@@ -190,13 +215,14 @@ async def test_audio_en_grupo_se_prefija_con_sender(agent_cfg, mock_container) -
 
     await bot._handle_voice_message(update, context)
 
-    pipe_call = mock_container.run_agent.execute.await_args
-    assert pipe_call.args[0] == "alberto (audio): cuánto es 5+5"
+    user_input = mock_container.run_agent.execute.await_args.args[0]
+    assert user_input.startswith("alberto (audio):\n@audio")
+    assert "@transcription: cuánto es 5+5" in user_input
 
 
 async def test_audio_en_privado_no_se_prefija(agent_cfg, mock_container) -> None:
-    """En privado, la transcripción se inyecta cruda — no hay otros remitentes
-    que requieran identificar al sender."""
+    """En privado el bloque va crudo — no hay otros remitentes que requieran
+    identificar al sender."""
     bot = _build_bot(agent_cfg, mock_container)
     voice = _mk_voice(bytes_result=b"audio-bytes", file_size=500)
     update = _mk_update(voice=voice)
@@ -208,8 +234,9 @@ async def test_audio_en_privado_no_se_prefija(agent_cfg, mock_container) -> None
 
     await bot._handle_voice_message(update, context)
 
-    pipe_call = mock_container.run_agent.execute.await_args
-    assert pipe_call.args[0] == "hola mundo"
+    user_input = mock_container.run_agent.execute.await_args.args[0]
+    assert user_input.startswith("@audio")
+    assert "@transcription: hola mundo" in user_input
 
 
 async def test_audio_demasiado_grande_no_llama_provider(agent_cfg, mock_container) -> None:
@@ -224,6 +251,10 @@ async def test_audio_demasiado_grande_no_llama_provider(agent_cfg, mock_containe
 
     mock_container.transcription.transcribe.assert_not_called()
     mock_container.run_agent.execute.assert_not_called()
+    # El bloque @audio igual queda en el historial (persistencia simétrica).
+    mock_container.run_agent.record_user_message.assert_awaited_once()
+    marker = mock_container.run_agent.record_user_message.await_args.args[0]
+    assert marker.startswith("@audio")
     # Debe haber respondido al usuario con el error.
     update.message.reply_text.assert_awaited()
     # 👎 es la reacción negativa válida en el whitelist de Telegram (❌ no lo era).
@@ -241,9 +272,13 @@ async def test_provider_raises_transcription_error(agent_cfg, mock_container) ->
 
     # Pipeline NO debe correr si la transcripción falla.
     mock_container.run_agent.execute.assert_not_called()
+    # Pero el bloque @audio queda en el historial (sin @transcription).
+    mock_container.run_agent.record_user_message.assert_awaited_once()
+    marker = mock_container.run_agent.record_user_message.await_args.args[0]
+    assert marker.startswith("@audio")
+    assert "@transcription" not in marker
     # Debe haber replied con el error.
     update.message.reply_text.assert_awaited()
-    # 👎 es la reacción negativa válida en el whitelist de Telegram (❌ no lo era).
     reactions_sent = [c.args[0] for c in update.message.set_reaction.await_args_list]
     assert "👎" in reactions_sent
 
@@ -271,6 +306,9 @@ async def test_video_note_se_procesa_igual_que_voice(agent_cfg, mock_container) 
 
     mock_container.transcription.transcribe.assert_awaited_once()
     mock_container.run_agent.execute.assert_awaited_once()
+    # video_note se clasifica como video → bloque @video.
+    user_input = mock_container.run_agent.execute.await_args.args[0]
+    assert user_input.startswith("@video")
 
 
 async def test_audio_file_se_procesa(agent_cfg, mock_container) -> None:
@@ -292,6 +330,29 @@ async def test_audio_file_se_procesa(agent_cfg, mock_container) -> None:
     if mime_value is None and len(call.args) >= 2:
         mime_value = call.args[1]
     assert mime_value == "audio/mpeg"
+
+
+async def test_document_con_mime_audio_rutea_al_pipeline_de_voz(agent_cfg, mock_container) -> None:
+    """Un mp3 adjuntado 'como archivo' llega como document con mime audio/* —
+    _handle_silent_media debe delegarlo al pipeline de voz, no tratarlo como
+    depósito de archivo genérico (bug del 'audio viejo')."""
+    bot = _build_bot(agent_cfg, mock_container)
+    doc = _mk_voice(bytes_result=b"mp3-bytes", file_size=400)
+    doc.mime_type = "audio/mpeg"
+    doc.file_name = "nota-de-voz.mp3"
+    update = _mk_update(document=doc)
+    update.message.chat.type = "private"
+    context = MagicMock()
+
+    mock_container.transcription.transcribe.return_value = "contenido del mp3"
+
+    await bot._handle_silent_media(update, context)
+
+    mock_container.transcription.transcribe.assert_awaited_once()
+    mock_container.run_agent.execute.assert_awaited_once()
+    user_input = mock_container.run_agent.execute.await_args.args[0]
+    assert user_input.startswith("@audio nota-de-voz.mp3")
+    assert "@transcription: contenido del mp3" in user_input
 
 
 async def test_reactions_false_no_envia_set_reaction(mock_container) -> None:
@@ -401,7 +462,7 @@ async def test_audio_demasiado_grande_loguea_warning_con_tamano(
     update = _mk_update(voice=voice)
     context = MagicMock()
 
-    with caplog.at_level(logging.WARNING, logger="adapters.inbound.telegram.bot"):
+    with caplog.at_level(logging.WARNING, logger="adapters.inbound.telegram.media"):
         await bot._handle_voice_message(update, context)
 
     warning_texts = [r.message for r in caplog.records if r.levelno == logging.WARNING]

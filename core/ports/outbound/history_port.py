@@ -40,8 +40,8 @@ class IHistoryStore(ABC):
         """Reemplaza el ``content`` de un mensaje existente del historial.
 
         Pensado para flujos donde un mensaje se persiste primero como placeholder
-        (p. ej. ``__PHOTO__`` con un ``history_id`` reservado para asociar metadata
-        de caras) y luego se enriquece con el contenido real una vez que el
+        (p. ej. el bloque ``@photo`` con un ``history_id`` reservado para asociar
+        metadata de caras) y luego se enriquece con el contenido real una vez que el
         procesamiento asíncrono termina. Mantiene el ``id``, el ``created_at`` y
         el orden cronológico intactos — solo cambia el texto.
 

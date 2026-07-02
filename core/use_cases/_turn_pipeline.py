@@ -167,6 +167,34 @@ INFLIGHT_CLARIFICATIONS_SECTION = (
 )
 
 
+# Texto que se inyecta como sección del system prompt para que el LLM sepa
+# leer los bloques de attachments (gramática de
+# ``core/domain/value_objects/attachment.py``). En INGLÉS por convención del
+# proyecto (system-prompts-language).
+ATTACHMENTS_SECTION = (
+    "## Incoming attachments\n\n"
+    "User messages may include attachment blocks: lines starting with `@`, "
+    "written by the system (not typed by the user) to describe media received "
+    "on this channel.\n\n"
+    "- `@photo|@audio|@video|@file [name] [(mime)] at <local_path>` — the "
+    "media was already downloaded to that absolute local path; act on it "
+    "directly with your file tools.\n"
+    "- `@album (N items):` — followed by one member line per item.\n"
+    "- `@caption: <text>` — the text the user attached to the media. Treat it "
+    "as the user's instruction for that media.\n"
+    "- `@transcription: <text>` — automatic transcription of the audio.\n"
+    "- `@analysis: <text>` — face recognition and/or scene description of the "
+    "photo.\n"
+    "- a line ending in `pending (id: X) — retrieve with "
+    "download_from_telegram` means the automatic download failed; call that "
+    "tool to fetch the file yourself.\n\n"
+    "The path in the most recent attachment block is the file the user JUST "
+    "sent — always prefer it over re-downloading or guessing among older "
+    "media. Never invent attachment paths: only use paths that appear in "
+    "these blocks or that a tool returned."
+)
+
+
 def render_in_flight_section(snap: list[BackgroundTaskView]) -> str:
     """Construye la sección del system prompt que lista delegaciones in-flight.
 

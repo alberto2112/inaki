@@ -41,6 +41,8 @@ def _mk_agent_cfg(*, allowed_user_ids: list[int] | None = None) -> MagicMock:
     }
     cfg.telegram = tg
     cfg.transcription = None
+    # Workspace real bajo /tmp: _save_bytes_to_workspace escribe los bytes acá.
+    cfg.workspace_path = "/tmp/inaki-test-ws-photo"
     cfg.delegation = MagicMock()
     cfg.delegation.enabled = False
     return cfg
@@ -82,6 +84,9 @@ def mock_container(mock_process_photo) -> MagicMock:
     container.scope_registry = MagicMock()
     container.scope_registry.try_mark_busy = AsyncMock(return_value=True)
     container.scope_registry.mark_idle = AsyncMock()
+    # Sin repo ni downloader: la persistencia de file_id es no-op.
+    container.telegram_file_repo = None
+    container.telegram_file_downloader = None
     return container
 
 
@@ -96,6 +101,8 @@ def _build_bot(agent_cfg, mock_container):
 
 def _mk_photo_size(*, bytes_result: bytes = b"jpeg-data", file_size: int = 9999):
     ps = MagicMock()
+    ps.file_id = "FOTO-1"
+    ps.file_unique_id = "FOTO-uniq"
     ps.file_size = file_size
     f = MagicMock()
     f.download_as_bytearray = AsyncMock(return_value=bytearray(bytes_result))
@@ -119,6 +126,13 @@ def _mk_update(
 
     msg = MagicMock()
     msg.photo = photos or [_mk_photo_size()]
+    # Stubs explícitos: MagicMock auto-genera atributos truthy y
+    # _extract_file_metadata clasificaría mal el mensaje.
+    msg.voice = None
+    msg.audio = None
+    msg.video = None
+    msg.video_note = None
+    msg.document = None
     msg.media_group_id = media_group_id
     msg.caption = caption
     msg.reply_text = AsyncMock()
@@ -150,19 +164,20 @@ async def test_album_dispara_pipeline_sin_procesar_como_foto(
 ) -> None:
     """Un álbum (media_group_id) NO se procesa como foto individual (sin
     process_photo ni record_photo_message), pero SÍ dispara el turno coalescido
-    con __ALBUM__ aunque no traiga caption — antes quedaba mudo."""
+    con @album cuando el debounce cierra — aunque no traiga caption."""
     import adapters.inbound.telegram.media as media_mod
 
-    monkeypatch.setattr(media_mod, "ALBUM_GATHER_DELAY_SEC", 0.0)
+    monkeypatch.setattr(media_mod, "ALBUM_DEBOUNCE_SEC", 0.0)
 
     bot = _build_bot(agent_cfg, mock_container)
-    mock_container.telegram_file_repo = None  # gather → ([], "")
     bot._run_pipeline = AsyncMock()
     bot._set_reaction = AsyncMock()
     update = _mk_update(media_group_id="abc-123")
     context = MagicMock()
 
     await bot._handle_photo_message(update, context)
+    # El handler solo agenda el flush (debounce) — esperarlo explícitamente.
+    await bot._album_buffers["abc-123"].task
 
     mock_container.process_photo.execute.assert_not_called()
     mock_container.run_agent.record_photo_message.assert_not_called()
@@ -170,7 +185,8 @@ async def test_album_dispara_pipeline_sin_procesar_como_foto(
     bot._run_pipeline.assert_awaited_once()
     args, kwargs = bot._run_pipeline.call_args
     user_input = args[1] if len(args) > 1 else kwargs.get("user_input")
-    assert user_input.startswith("__ALBUM__")
+    # Sin repo, el gather devuelve vacío → bloque degradado @album pending.
+    assert user_input.startswith("@album pending")
 
 
 async def test_feature_disabled_process_photo_none(agent_cfg) -> None:
@@ -238,9 +254,14 @@ async def test_happy_path_private_chat_pipeline_corrido(agent_cfg, mock_containe
 
     await bot._handle_photo_message(update, context)
 
-    mock_container.run_agent.record_photo_message.assert_awaited_once_with(
-        "__PHOTO__", channel="telegram", chat_id=str(update.effective_chat.id)
-    )
+    mock_container.run_agent.record_photo_message.assert_awaited_once()
+    record_call = mock_container.run_agent.record_photo_message.await_args
+    assert record_call.args[0].startswith("@photo at ")
+    assert "FOTO-uniq.jpg" in record_call.args[0]
+    assert record_call.kwargs == {
+        "channel": "telegram",
+        "chat_id": str(update.effective_chat.id),
+    }
     mock_container.process_photo.execute.assert_awaited_once()
     call_kwargs = mock_container.process_photo.execute.await_args.kwargs
     assert call_kwargs["history_id"] == 42
@@ -428,12 +449,11 @@ async def test_caption_se_adjunta_al_contexto_del_llm(agent_cfg, mock_container)
     # El contenido enriquecido se persiste vía update_message_content (segundo arg posicional).
     mock_container.run_agent.update_message_content.assert_awaited_once()
     enriched_content = mock_container.run_agent.update_message_content.await_args.args[1]
-    assert "ese es mi gato durmiendo" in enriched_content
-    assert "Descripción del usuario:" in enriched_content
+    assert "@caption: ese es mi gato durmiendo" in enriched_content
 
 
-async def test_sin_caption_no_agrega_seccion_descripcion(agent_cfg, mock_container) -> None:
-    """Sin caption el contenido enriquecido es solo el text_context del use case."""
+async def test_sin_caption_no_agrega_linea_caption(agent_cfg, mock_container) -> None:
+    """Sin caption el bloque enriquecido no lleva línea @caption."""
     bot = _build_bot(agent_cfg, mock_container)
     update = _mk_update(caption=None)
     context = MagicMock()
@@ -442,7 +462,8 @@ async def test_sin_caption_no_agrega_seccion_descripcion(agent_cfg, mock_contain
 
     mock_container.run_agent.update_message_content.assert_awaited_once()
     enriched_content = mock_container.run_agent.update_message_content.await_args.args[1]
-    assert "Descripción del usuario:" not in enriched_content
+    assert "@caption:" not in enriched_content
+    assert "@analysis:" in enriched_content
 
 
 async def test_privado_no_antepone_prefijo_sender(agent_cfg, mock_container) -> None:
@@ -460,7 +481,7 @@ async def test_privado_no_antepone_prefijo_sender(agent_cfg, mock_container) -> 
 
 
 async def test_grupo_antepone_prefijo_sender_foto(agent_cfg, mock_container) -> None:
-    """En grupo el contenido enriquecido arranca con `{sender} (foto): ` (mismo patrón que audio)."""
+    """En grupo el contenido enriquecido arranca con `{sender} (foto):` (mismo patrón que audio)."""
     bot = _build_bot(agent_cfg, mock_container)
     update = _mk_update(chat_type="group")
     update.message.from_user = MagicMock(username="alberto", first_name="Alberto")
@@ -469,13 +490,13 @@ async def test_grupo_antepone_prefijo_sender_foto(agent_cfg, mock_container) -> 
     await bot._handle_photo_message(update, context)
 
     enriched_content = mock_container.run_agent.update_message_content.await_args.args[1]
-    assert enriched_content.startswith("alberto (foto): ")
-    # El text_context del use case sigue formando el cuerpo del mensaje.
+    assert enriched_content.startswith("alberto (foto):")
+    # El text_context del use case sigue formando el cuerpo (línea @analysis).
     assert "una foto de prueba" in enriched_content
 
 
 async def test_grupo_con_caption_prefijo_envuelve_caption(agent_cfg, mock_container) -> None:
-    """En grupo con caption, el prefijo `{sender} (foto): ` envuelve text_context + caption."""
+    """En grupo con caption, el prefijo `{sender} (foto):` encabeza el bloque completo."""
     bot = _build_bot(agent_cfg, mock_container)
     update = _mk_update(chat_type="group", caption="ese es mi gato")
     update.message.from_user = MagicMock(username="alberto", first_name="Alberto")
@@ -484,9 +505,8 @@ async def test_grupo_con_caption_prefijo_envuelve_caption(agent_cfg, mock_contai
     await bot._handle_photo_message(update, context)
 
     enriched_content = mock_container.run_agent.update_message_content.await_args.args[1]
-    assert enriched_content.startswith("alberto (foto): ")
-    assert "ese es mi gato" in enriched_content
-    assert "Descripción del usuario:" in enriched_content
+    assert enriched_content.startswith("alberto (foto):")
+    assert "@caption: ese es mi gato" in enriched_content
 
 
 async def test_caption_incluido_en_historial(agent_cfg, mock_container) -> None:
@@ -520,7 +540,7 @@ async def test_bang_envia_directo_al_chat_sin_pipeline(agent_cfg, mock_container
 
 
 async def test_bang_guarda_respuesta_en_historial(agent_cfg, mock_container) -> None:
-    """Con '!', el texto se persiste con prefijo 'photo_transcription:' y el user con '__PHOTO__'."""
+    """Con '!', el texto se persiste con prefijo 'photo_transcription:' y el user con el bloque @photo."""
     mock_container.process_photo.execute.return_value = ProcessPhotoResult(
         text_context="Transcripción: hola mundo.",
         annotated_image=None,
@@ -532,10 +552,10 @@ async def test_bang_guarda_respuesta_en_historial(agent_cfg, mock_container) -> 
 
     await bot._handle_photo_message(update, context)
 
-    # Mensaje de usuario contiene __PHOTO__ y el prompt
+    # Mensaje de usuario: bloque @photo con el prompt "!" verbatim en @caption.
     user_content = mock_container.run_agent.record_photo_message.await_args.args[0]
-    assert "__PHOTO__" in user_content
-    assert "extraé el texto" in user_content
+    assert user_content.startswith("@photo")
+    assert "@caption: !extraé el texto" in user_content
 
     # Mensaje de asistente tiene prefijo photo_transcription:
     mock_container.run_agent.record_assistant_message.assert_awaited_once()
@@ -614,6 +634,7 @@ def _mk_agent_cfg_con_emit_photo(allowed_user_ids: list[int]) -> MagicMock:
         },
     }
     cfg.transcription = None
+    cfg.workspace_path = "/tmp/inaki-test-ws-photo"
     cfg.delegation = MagicMock()
     cfg.delegation.enabled = False
     return cfg
@@ -680,6 +701,8 @@ async def test_handle_photo_modo_bang_emite_user_input_photo_sin_assistant_respo
     container.run_agent.update_message_content = AsyncMock()
     container.run_agent.set_extra_system_sections = MagicMock()
     container.run_agent.set_photo_debug_path = MagicMock()
+    container.telegram_file_repo = None
+    container.telegram_file_downloader = None
 
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()

@@ -149,6 +149,28 @@ class SqliteTelegramFileRepo(IFileRecordRepo):
             until=until,
         )
 
+    async def query_by_media_group(
+        self,
+        *,
+        agent_id: str,
+        channel: str,
+        chat_id: str,
+        media_group_id: str,
+    ) -> list[TelegramFileRecord]:
+        await self.ensure_schema()
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """
+                SELECT * FROM telegram_files
+                WHERE agent_id=? AND channel=? AND chat_id=? AND media_group_id=?
+                ORDER BY received_at ASC
+                """,
+                (agent_id, channel, chat_id, media_group_id),
+            )
+            rows = await cursor.fetchall()
+        return [_row_to_record(row) for row in rows]
+
     async def _query_simple(
         self,
         *,

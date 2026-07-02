@@ -1,12 +1,20 @@
 """Pipeline de media entrante del TelegramBot: fotos, álbumes, voz, video y documentos.
 
 Mixin de ``TelegramBot``. Incluye la persistencia de file_id en
-``telegram_files.db`` y la pre-descarga al workspace."""
+``telegram_files.db`` y la pre-descarga al workspace.
+
+Principio rector — **persistencia simétrica**: TODO media que llega deja un
+bloque de attachments en ``history.db`` (gramática de
+``core/domain/value_objects/attachment.py``), traiga o no caption, dispare o
+no un turno. Sin esto el agente convive con un contexto lleno de agujeros: el
+usuario "le mandó algo" que el LLM no puede ver ni referenciar.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -21,6 +29,11 @@ from adapters.inbound.telegram.message_mapper import (
 )
 from adapters.inbound.turn_dispatch import INFLIGHT_ACK
 from core.domain.errors import TranscriptionError
+from core.domain.value_objects.attachment import (
+    IncomingAttachment,
+    format_album,
+    format_attachment,
+)
 from core.domain.value_objects.telegram_file import FileContentType, TelegramFileRecord
 
 
@@ -32,16 +45,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Ventana de espera para reunir todas las fotos de un álbum antes de disparar
-# el pipeline. Telegram entrega los miembros de un álbum como mensajes
-# separados en sucesión rápida (100-500ms entre cada uno). El handler que
-# recibe el caption duerme esta cantidad para que los demás miembros lleguen
-# y se persistan, y luego junta TODOS los paths para el LLM.
-ALBUM_GATHER_DELAY_SEC = 2.0
+# Debounce de álbumes: cada miembro del media_group que llega REINICIA este
+# timer; el álbum se cierra cuando pasa esta ventana sin miembros nuevos.
+# Telegram entrega los miembros como mensajes separados en sucesión rápida
+# (100-500ms entre cada uno), pero con álbumes grandes o red lenta un miembro
+# puede tardar más — la ventana FIJA anterior (2s desde el PRIMER miembro)
+# perdía los tardíos (bug real: álbum de 8 persistía 7).
+ALBUM_DEBOUNCE_SEC = 1.5
 
-# Máximo de media_group_id recordados para el dedup de álbumes (evita re-disparar
-# el turno por cada una de las N fotos del mismo álbum). Acotado para no crecer
-# indefinidamente — uso doméstico, los álbumes son efímeros.
+# Máximo de media_group_id recordados como ya-flusheados (evita re-disparar el
+# turno si un miembro llega DESPUÉS del cierre del álbum). Acotado para no
+# crecer indefinidamente — uso doméstico, los álbumes son efímeros.
 _ALBUM_DEDUP_MAX = 256
 
 
@@ -64,6 +78,16 @@ def _extension_for(content_type: str, mime_type: str | None) -> str:
     return _DEFAULT_EXT_BY_TYPE.get(content_type, ".bin")
 
 
+@dataclass
+class _AlbumBuffer:
+    """Estado in-memory de un álbum en curso (media_group_id sin cerrar)."""
+
+    update: Update
+    chat_type: str
+    caption: str = ""
+    task: asyncio.Task | None = None
+
+
 class TelegramMediaMixin:
     """Handlers de media + helpers de persistencia/descarga de files."""
 
@@ -77,7 +101,8 @@ class TelegramMediaMixin:
     _handle_group_message: Callable[..., Coroutine[Any, Any, None]]
     _schedule_group_flush: Callable[[str, str], None]
     _emit_event: Callable[..., Coroutine[Any, Any, None]]
-    _albums_seen: dict[str, None]
+    _album_buffers: dict[str, _AlbumBuffer]
+    _albums_flushed: dict[str, None]
 
     async def _handle_photo_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -85,15 +110,17 @@ class TelegramMediaMixin:
         """Handler para mensajes con foto (``filters.PHOTO``).
 
         Flujo:
-        1. Album guard: si ``media_group_id`` está seteado, descarta silenciosamente
-           (sin respuesta, sin tokens, sin escritura en DB).
+        1. Album: si ``media_group_id`` está seteado, persiste el file_id y
+           entra al debounce (``_debounce_album``) — el turno se dispara UNA
+           vez cuando el álbum se cierra.
         2. Feature check: si ``process_photo`` no está disponible, responde con
            aviso de que la visión no está habilitada.
-        3. Descarga la foto de mayor resolución.
-        4. Persiste el mensaje "[foto recibida]" en el historial → obtiene history_id.
-        5. Llama a ``ProcessPhotoUseCase.execute()`` → texto contextual + imagen anotada.
-        6. Si hay imagen anotada, la envía con ``reply_photo``.
-        7. Llama a ``_run_pipeline`` con el texto contextual como user_input.
+        3. Guarda los bytes al workspace (mismo cache-key que la tool
+           ``download_from_telegram``) para tener el path local del bloque.
+        4. Persiste el bloque ``@photo`` en el historial → obtiene history_id.
+        5. Llama a ``ProcessPhotoUseCase.execute()`` → análisis + imagen anotada.
+        6. Enriquece el bloque con ``@analysis`` vía ``update_message_content``.
+        7. Llama a ``_run_pipeline`` en modo history-derived.
         """
         user = update.effective_user
         chat = update.effective_chat
@@ -107,51 +134,19 @@ class TelegramMediaMixin:
             )
             return
 
-        # Álbumes: persisten file_id (sin face/scene) y disparan el pipeline UNA
-        # vez con __ALBUM__, traiga o no caption. Telegram entrega el álbum como
-        # N mensajes; usamos dedup por media_group_id para que solo el PRIMERO
-        # dispare el turno coalescido y los demás solo persistan. Antes, un álbum
-        # sin caption quedaba mudo y el bot "no se enteraba" — ahora siempre avisa.
+        # Álbumes: persisten file_id (sin face/scene) y entran al debounce.
+        # Telegram entrega el álbum como N mensajes; el flush corre cuando
+        # pasa ALBUM_DEBOUNCE_SEC sin miembros nuevos.
         if message.media_group_id is not None:
             media_group_id = str(message.media_group_id)
             await self._persist_incoming_file(update)
-            # Caption de ESTE mensaje, como fallback si el gather no lo recupera
-            # de los records (p.ej. el primer miembro que dispara antes de que el
-            # resto del álbum persista su caption).
             caption_msg = (getattr(message, "caption", None) or "").strip()
-
-            # Dedup atómico (sin await entre el check y el add → seguro con
-            # concurrent_updates(True)): solo el primer miembro continúa.
-            if media_group_id in self._albums_seen:
+            if media_group_id in self._albums_flushed:
+                # Miembro tardío: el álbum ya cerró y su turno ya corrió.
+                # Persistencia simétrica igual — rastro @photo sin re-turno.
+                await self._record_straggler(update, str(chat.id))
                 return
-            self._albums_seen[media_group_id] = None
-            if len(self._albums_seen) > _ALBUM_DEDUP_MAX:
-                del self._albums_seen[next(iter(self._albums_seen))]
-
-            # Race condition de Telegram: las demás fotos del álbum aún no han
-            # llegado en este momento. Esperamos un poco para que se persistan
-            # y después juntamos TODAS las del media_group_id (y el caption, venga
-            # en la foto que venga) desde la DB.
-            await asyncio.sleep(ALBUM_GATHER_DELAY_SEC)
-
-            chat_id_str = str(chat.id)
-            paths_album, caption_db = await self._gather_album_paths(
-                media_group_id=media_group_id, chat_id=chat_id_str
-            )
-            caption = caption_db or caption_msg
-            if paths_album:
-                paths_str = "\n".join(f"- {p}" for p in paths_album)
-                ubicacion_album = f" ({len(paths_album)} photos):\n{paths_str}"
-            else:
-                ubicacion_album = ""
-
-            user_input = f"__ALBUM__{ubicacion_album}\n\n{caption}".rstrip()
-            chat_type_album = chat.type
-            if chat_type_album in _TIPOS_GRUPO:
-                await self._handle_group_message(update, user_input, chat_type_album)
-            else:
-                await self._set_reaction(update, "👀")
-                await self._run_pipeline(update, user_input, chat_type=chat_type_album)
+            self._debounce_album(media_group_id, update, chat.type, caption_msg)
             return
 
         chat_type = chat.type
@@ -184,6 +179,18 @@ class TelegramMediaMixin:
 
         await self._set_reaction(update, "👀")
 
+        # Los bytes ya están en memoria → al workspace sin segunda descarga.
+        # Mismo dest (key = file_unique_id) que usaría download_from_telegram.
+        photo_size = message.photo[-1]
+        local_path = self._save_bytes_to_workspace(
+            file_unique_id=photo_size.file_unique_id, ext=".jpg", data=image_bytes
+        )
+        att = IncomingAttachment(
+            type="photo",
+            path=str(local_path) if local_path is not None else None,
+            file_ref=photo_size.file_unique_id,
+        )
+
         # In-flight protection: en privados, si ya hay un turno corriendo sobre
         # este scope, tomamos un camino alternativo (record_user_message + ACK)
         # para no disparar un execute() paralelo. En grupos, el buffer-flush ya
@@ -200,14 +207,10 @@ class TelegramMediaMixin:
             slot_acquired = await self._ports.scope_registry.try_mark_busy(scope)
 
         try:
-            # Persistir en el historial y obtener el history_id.
-            # Si el usuario adjuntó una descripción, la incluimos en el registro.
-            if scene_prompt:
-                history_content = f"__PHOTO__ !{scene_prompt}"
-            elif caption:
-                history_content = f"__PHOTO__ {caption}"
-            else:
-                history_content = "__PHOTO__"
+            # Persistir el bloque @photo en el historial y obtener el history_id.
+            # El caption del usuario (o el prompt "!" verbatim) viaja como @caption.
+            placeholder_caption = f"!{scene_prompt}" if scene_prompt else caption
+            history_content = format_attachment(att, caption=placeholder_caption)
             history_id = await self._ports.run_agent.record_photo_message(
                 history_content,
                 channel="telegram",
@@ -241,6 +244,8 @@ class TelegramMediaMixin:
             # Si el use case pide saltar el agente (photos.enabled=False en runtime),
             # responder con aviso solo en privado. En grupos return silencioso para no
             # ensuciar el chat — los bots sin la feature simplemente no participan.
+            # El bloque @photo ya quedó persistido arriba: el depósito deja rastro
+            # aunque la visión esté apagada.
             if result.should_skip_run_agent:
                 if chat_type not in _TIPOS_GRUPO:
                     await message.reply_text(
@@ -271,16 +276,13 @@ class TelegramMediaMixin:
                     )
                 return
 
-            # Construir el contenido enriquecido (faces + scene + caption + prefijo grupal).
-            # En grupos antepone el prefijo "{sender} (foto): ..." para mantener simetría con
-            # los audios (`{sender} (audio): ...`) y con `_format_history_prefix` aplicado a
-            # los broadcasts entrantes — así originante y receptores ven la misma estructura.
-            enriched_content = result.text_context
-            if caption:
-                enriched_content = f"{result.text_context}\n\nDescripción del usuario: {caption}"
+            # Bloque enriquecido: mismo @photo + @analysis (faces + scene) + @caption.
+            # En grupos antepone el prefijo "{sender} (foto):" para mantener simetría
+            # con los audios y con `_format_history_prefix` de los broadcasts entrantes.
+            enriched_content = format_attachment(att, analysis=result.text_context, caption=caption)
             if chat_type in _TIPOS_GRUPO:
                 sender = extract_sender_name(message)
-                enriched_content = f"{sender} (foto): {enriched_content}"
+                enriched_content = f"{sender} (foto):\n{enriched_content}"
 
             # CAMINO IN-FLIGHT (privado, slot ocupado): persistir el enriched como un
             # mensaje user NUEVO (no update_message_content) para que el drain del turno
@@ -294,8 +296,8 @@ class TelegramMediaMixin:
                 await message.reply_text(INFLIGHT_ACK)
                 return
 
-            # CAMINO NORMAL: enriquecer el placeholder __PHOTO__ persistido al inicio
-            # con el text_context final. Esto evita un segundo mensaje role=user
+            # CAMINO NORMAL: enriquecer el bloque @photo persistido al inicio con
+            # el @analysis final. Esto evita un segundo mensaje role=user
             # consecutivo en el historial. El history_id no cambia → face_ref sigue
             # válido y el orden cronológico se preserva.
             await self._ports.run_agent.update_message_content(history_id, enriched_content)
@@ -354,37 +356,126 @@ class TelegramMediaMixin:
         if getattr(message, "video_note", None):
             return "video", message.video_note, "video/mp4"
         if getattr(message, "document", None):
-            return "file", message.document, getattr(message.document, "mime_type", None)
+            document = message.document
+            mime = getattr(document, "mime_type", None)
+            # Un audio adjuntado "como archivo" ES un audio: Telegram clasifica
+            # según cómo lo mandó el cliente, no según el contenido.
+            if mime and mime.startswith("audio/"):
+                return "audio", document, mime
+            return "file", document, mime
         return None
 
-    async def _gather_album_paths(
+    def _debounce_album(
+        self, media_group_id: str, update: Update, chat_type: str, caption: str
+    ) -> None:
+        """Registra un miembro del álbum y reinicia el timer de cierre.
+
+        El flush (``_flush_album_later``) corre cuando pasa
+        ``ALBUM_DEBOUNCE_SEC`` sin miembros nuevos. Sin await entre el get y el
+        set del buffer → seguro con ``concurrent_updates(True)`` (mismo loop).
+        """
+        buf = self._album_buffers.get(media_group_id)
+        if buf is None:
+            buf = _AlbumBuffer(update=update, chat_type=chat_type)
+            self._album_buffers[media_group_id] = buf
+        # Telegram suele poner el caption en UNA sola foto del álbum (no
+        # siempre la primera) — el primer no-vacío gana como fallback del
+        # que se recupere de los records al flushear.
+        if caption and not buf.caption:
+            buf.caption = caption
+        if buf.task is not None and not buf.task.done():
+            buf.task.cancel()
+        buf.task = asyncio.create_task(self._flush_album_later(media_group_id))
+
+    async def _flush_album_later(self, media_group_id: str) -> None:
+        """Cierra el álbum tras la ventana de silencio y dispara el turno.
+
+        Corre como task suelto (fuera del ciclo de handlers de PTB) → los
+        errores se capturan acá y se loguean; no hay error handler upstream.
+        """
+        await asyncio.sleep(ALBUM_DEBOUNCE_SEC)
+        buf = self._album_buffers.pop(media_group_id, None)
+        if buf is None:
+            return
+        self._albums_flushed[media_group_id] = None
+        if len(self._albums_flushed) > _ALBUM_DEDUP_MAX:
+            del self._albums_flushed[next(iter(self._albums_flushed))]
+
+        try:
+            update = buf.update
+            chat = update.effective_chat
+            if chat is None:
+                return
+            chat_id_str = str(chat.id)
+            members, caption_db = await self._gather_album_members(
+                media_group_id=media_group_id, chat_id=chat_id_str
+            )
+            caption = caption_db or buf.caption
+            user_input = format_album(members, caption=caption)
+
+            if buf.chat_type in _TIPOS_GRUPO:
+                await self._handle_group_message(
+                    update, user_input, buf.chat_type, preformatted=True
+                )
+            else:
+                await self._set_reaction(update, "👀")
+                await self._run_pipeline(update, user_input, chat_type=buf.chat_type)
+        except Exception:
+            logger.exception(
+                "Error flusheando álbum (agent=%s, media_group_id=%s)",
+                self._settings.id,
+                media_group_id,
+            )
+
+    async def _record_straggler(self, update: Update, chat_id: str) -> None:
+        """Persiste el bloque @ de un miembro de álbum llegado DESPUÉS del flush.
+
+        El turno del álbum ya corrió — re-dispararlo duplicaría trabajo. Pero el
+        archivo NO puede desaparecer del contexto: rastro sin turno (el mismo
+        principio que el depósito de archivos sin caption).
+        """
+        message = update.message
+        meta = self._extract_file_metadata(message) if message is not None else None
+        if meta is None:
+            return
+        content_type, payload, mime_type = meta
+        local_path = await self._pre_download_media(
+            file_id=payload.file_id,
+            file_unique_id=payload.file_unique_id,
+            content_type=content_type,
+            mime_type=mime_type,
+        )
+        att = IncomingAttachment(
+            type=content_type,
+            path=str(local_path) if local_path is not None else None,
+            mime=mime_type if content_type != "photo" else None,
+            file_ref=payload.file_unique_id,
+        )
+        await self._ports.run_agent.record_user_message(
+            format_attachment(att), channel="telegram", chat_id=chat_id
+        )
+
+    async def _gather_album_members(
         self, *, media_group_id: str, chat_id: str
-    ) -> tuple[list["Path"], str]:
-        """Junta y pre-descarga TODAS las fotos de un media_group_id, con su caption.
+    ) -> tuple[list[IncomingAttachment], str]:
+        """Junta y pre-descarga TODOS los miembros de un media_group_id, con su caption.
 
-        Llamar DESPUÉS de esperar la ventana ``ALBUM_GATHER_DELAY_SEC`` para
-        que las demás fotos del álbum hayan sido persistidas por sus handlers.
-
-        Devuelve ``(paths, caption)``: los paths absolutos en orden de recepción
-        (received_at ASC) y el primer caption no-vacío entre los miembros
-        (Telegram suele ponerlo en una sola foto del álbum, no siempre la
-        primera). Best-effort: si el repo o el downloader no están, devuelve
-        ``([], "")``.
+        Llamar DESPUÉS de que el debounce venza — para entonces todos los
+        miembros persistieron su record. Devuelve ``(members, caption)``: los
+        attachments en orden de recepción (received_at ASC) y el primer caption
+        no-vacío entre los miembros. Best-effort: si el repo o el downloader no
+        están, devuelve ``([], "")`` y el formatter degrada a ``@album pending``.
         """
         repo = self._ports.telegram_file_repo
         if repo is None:
             return [], ""
 
         try:
-            # 100 cubre cualquier álbum razonable (Telegram limita a 10
-            # miembros por álbum; dejamos margen para múltiples álbumes
-            # recientes y filtramos por media_group_id).
-            records = await repo.query_recent(
+            records = await repo.query_by_media_group(
                 agent_id=self._settings.id,
                 channel="telegram",
                 chat_id=chat_id,
-                content_type="album",
-                count=100,
+                media_group_id=media_group_id,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -395,22 +486,53 @@ class TelegramMediaMixin:
             )
             return [], ""
 
-        paths: list[Path] = []
+        members: list[IncomingAttachment] = []
         caption = ""
         for record in records:
-            if record.media_group_id != media_group_id:
-                continue
             if not caption and record.caption:
                 caption = record.caption.strip()
             local_path = await self._pre_download_media(
                 file_id=record.file_id,
                 file_unique_id=record.file_unique_id,
-                content_type="photo",
+                content_type=record.content_type,
                 mime_type=record.mime_type,
             )
-            if local_path is not None:
-                paths.append(local_path)
-        return paths, caption
+            members.append(
+                IncomingAttachment(
+                    type=record.content_type,
+                    path=str(local_path) if local_path is not None else None,
+                    mime=record.mime_type if record.content_type != "photo" else None,
+                    file_ref=record.file_unique_id,
+                )
+            )
+        return members, caption
+
+    def _save_bytes_to_workspace(
+        self, *, file_unique_id: str, ext: str, data: bytes
+    ) -> "Path | None":
+        """Escribe bytes YA descargados al cache del workspace (idempotente).
+
+        Mismo dest que ``_pre_download_media``/``download_from_telegram``
+        (cache key = ``file_unique_id``) pero sin segunda descarga: los bytes
+        ya están en memoria (fotos y audios se bajan completos para procesar).
+        Best-effort: ante error loguea y devuelve ``None`` (bloque degradado).
+        """
+        workspace = Path(self._settings.workspace_path).expanduser().resolve()
+        dest = workspace / "telegram" / f"{file_unique_id}{ext}"
+        if dest.exists():
+            return dest
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(data)
+            return dest
+        except OSError as exc:
+            logger.warning(
+                "No pude guardar media al workspace (agent=%s, file_unique_id=%s): %s",
+                self._settings.id,
+                file_unique_id,
+                exc,
+            )
+            return None
 
     async def _pre_download_media(
         self,
@@ -515,12 +637,14 @@ class TelegramMediaMixin:
     ) -> None:
         """Handler para video/document.
 
-        - Persiste el ``file_id`` SIEMPRE en ``telegram_files.db``.
-        - Si el media trae caption, lo trata como un mensaje del usuario:
-          inyecta ``__FILE__/__VIDEO__ <name>\\n\\n<caption>`` y dispara el
-          pipeline (privado o grupo según corresponda).
-        - Sin caption: queda persistido para que el LLM lo recupere después
-          con ``download_from_telegram``, pero NO genera respuesta.
+        - Documento con mime ``audio/*`` → delega al pipeline de voz (un mp3
+          adjuntado "como archivo" es un audio y debe transcribirse).
+        - Con ``media_group_id`` → mismo debounce de álbum que las fotos
+          (Telegram agrupa también documentos/videos enviados juntos).
+        - Con caption → dispara el turno con el bloque ``@file``/``@video``.
+        - Sin caption → persiste el bloque en el historial SIN turno: depósito
+          CON rastro (antes era invisible — el agente no se enteraba de que
+          llegó un archivo, bug del "audio viejo").
         """
         user = update.effective_user
         if user is None:
@@ -528,21 +652,37 @@ class TelegramMediaMixin:
         if not self._is_authorized(update):
             return
 
-        await self._persist_incoming_file(update)
-
         message = update.message
         if message is None:
             return
-        caption = (getattr(message, "caption", None) or "").strip()
-        if not caption:
-            return  # silencioso: archivo "depositado" sin instrucción
 
         meta = self._extract_file_metadata(message)
         if meta is None:
             return
         content_type, payload, mime_type = meta
-        prefix = "__VIDEO__" if content_type == "video" else "__FILE__"
-        filename = getattr(payload, "file_name", None) or "<unnamed>"
+
+        # Audio disfrazado de documento → pipeline de voz completo (persiste
+        # su propio record y su bloque @audio, con o sin transcripción).
+        if content_type == "audio":
+            await self._handle_voice_message(update, context)
+            return
+
+        await self._persist_incoming_file(update)
+
+        chat = update.effective_chat
+        chat_id_str = str(chat.id) if chat is not None else ""
+        chat_type = message.chat.type if message.chat else "private"
+        caption = (getattr(message, "caption", None) or "").strip()
+
+        # Archivos enviados juntos comparten media_group_id — mismo mecanismo
+        # de coalescencia que los álbumes de fotos.
+        if getattr(message, "media_group_id", None) is not None:
+            media_group_id = str(message.media_group_id)
+            if media_group_id in self._albums_flushed:
+                await self._record_straggler(update, chat_id_str)
+                return
+            self._debounce_album(media_group_id, update, chat_type, caption)
+            return
 
         # Pre-descargar al workspace para entregar un path concreto al LLM —
         # evita depender del RAG de tools y de que el LLM elija
@@ -553,12 +693,28 @@ class TelegramMediaMixin:
             content_type=content_type,
             mime_type=mime_type,
         )
-        ubicacion = f" at {local_path}" if local_path is not None else ""
-        user_input = f"{prefix} {filename}{ubicacion}\n\n{caption}"
+        att = IncomingAttachment(
+            type=content_type,
+            name=getattr(payload, "file_name", None),
+            mime=mime_type,
+            path=str(local_path) if local_path is not None else None,
+            file_ref=payload.file_unique_id,
+        )
 
-        chat_type = message.chat.type if message.chat else "private"
+        if not caption:
+            # Depósito sin instrucción: rastro en el historial, sin turno ni
+            # tokens. El próximo turno del usuario ve el bloque en su contexto.
+            block = format_attachment(att)
+            if chat_type in _TIPOS_GRUPO:
+                block = f"{extract_sender_name(message)} sent:\n{block}"
+            await self._ports.run_agent.record_user_message(
+                block, channel="telegram", chat_id=chat_id_str
+            )
+            return
+
+        user_input = format_attachment(att, caption=caption)
         if chat_type in _TIPOS_GRUPO:
-            await self._handle_group_message(update, user_input, chat_type)
+            await self._handle_group_message(update, user_input, chat_type, preformatted=True)
         else:
             await self._set_reaction(update, "👀")
             await self._run_pipeline(update, user_input, chat_type=chat_type)
@@ -566,10 +722,17 @@ class TelegramMediaMixin:
     async def _handle_voice_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """Handler único para `voice`, `audio` y `video_note`.
+        """Handler único para ``voice``, ``audio``, ``video_note`` y document-audio.
 
-        Flujo: allow → voice_enabled → 🔊 → descarga+mime → size-check →
-        transcribir → reinyectar el texto en el mismo pipeline que `_handle_message`.
+        Flujo: allow → persist file_id → voice_enabled → descarga+mime →
+        size-check → transcribir → turno con el bloque ``@audio`` +
+        ``@transcription``.
+
+        Persistencia simétrica: TODAS las salidas tempranas (voz deshabilitada,
+        audio muy grande, transcripción fallida o vacía) dejan igualmente el
+        bloque ``@audio`` en el historial — sin esto el agente no tiene forma
+        de saber qué archivo le mandaron (bug del "audio viejo": el LLM
+        adivinaba con download_from_telegram y traía otro).
         """
         user = update.effective_user
         message = update.message
@@ -587,20 +750,61 @@ class TelegramMediaMixin:
         # apagada o el audio sea demasiado grande para procesar.
         await self._persist_incoming_file(update)
 
+        meta = self._extract_file_metadata(message)
+        if meta is None:
+            return
+        content_type, payload, mime_type = meta
+
+        chat = update.effective_chat
+        chat_id_str = str(chat.id) if chat is not None else ""
+        chat_type = message.chat.type if message.chat else "private"
+
+        async def _persistir_marcador(local_path: Path | None) -> None:
+            """Deja el bloque @ en el historial sin disparar turno (salidas tempranas)."""
+            att = IncomingAttachment(
+                type=content_type,
+                name=getattr(payload, "file_name", None),
+                mime=mime_type,
+                path=str(local_path) if local_path is not None else None,
+                file_ref=payload.file_unique_id,
+            )
+            block = format_attachment(att)
+            if chat_type in _TIPOS_GRUPO:
+                block = f"{extract_sender_name(message)} sent:\n{block}"
+            await self._ports.run_agent.record_user_message(
+                block, channel="telegram", chat_id=chat_id_str
+            )
+
         if not self._voice_enabled:
-            # Transcripción deshabilitada: ya persistimos, salimos sin reply.
+            # Transcripción deshabilitada: depósito con rastro, sin reply.
+            await _persistir_marcador(
+                await self._pre_download_media(
+                    file_id=payload.file_id,
+                    file_unique_id=payload.file_unique_id,
+                    content_type=content_type,
+                    mime_type=mime_type,
+                )
+            )
             return
 
-        payload = await extract_audio_payload(message)
-        if payload is None:
+        audio_payload = await extract_audio_payload(message)
+        if audio_payload is None:
             return  # Defensa: ningún audio presente (no debería ocurrir por los filters).
-        audio_bytes, mime, file_size = payload
+        audio_bytes, mime, file_size = audio_payload
+
+        # Los bytes ya están en memoria → al workspace sin segunda descarga.
+        local_path = self._save_bytes_to_workspace(
+            file_unique_id=payload.file_unique_id,
+            ext=_extension_for(content_type, mime),
+            data=audio_bytes,
+        )
 
         # Size-check: preferimos file_size de Telegram (antes de procesar),
         # con fallback al tamaño real descargado.
         transcription_cfg = self._settings.transcription
         transcription_provider = self._ports.transcription
         if transcription_cfg is None or transcription_provider is None:
+            await _persistir_marcador(local_path)
             return
         max_mb = transcription_cfg.max_audio_mb
         max_bytes = max_mb * 1024 * 1024
@@ -612,6 +816,7 @@ class TelegramMediaMixin:
                 effective_size,
                 max_bytes,
             )
+            await _persistir_marcador(local_path)
             await self._set_reaction(update, "👎")
             await message.reply_text(
                 f"El audio es demasiado grande ({effective_size // (1024 * 1024)} MB). "
@@ -631,21 +836,23 @@ class TelegramMediaMixin:
             )
         except TranscriptionError as exc:
             logger.warning("Transcripción fallida para agente '%s': %s", self._settings.id, exc)
+            await _persistir_marcador(local_path)
             await message.reply_text(f"No pude transcribir el audio: {exc}")
             await self._set_reaction(update, "👎")
             return
 
         if not transcribed or not transcribed.strip():
+            await _persistir_marcador(local_path)
             await message.reply_text("La transcripción vino vacía.")
             await self._set_reaction(update, "👎")
             return
 
-        chat = update.effective_chat
-        chat_type = message.chat.type if message.chat else "private"
         sender = extract_sender_name(message)
 
         # Emitir el evento user_input_voice si el flag está activo. Solo aplica
         # a chats grupales — en privado no hay otros agentes que reciban el evento.
+        # El content del broadcast sigue siendo la transcripción cruda (wire
+        # format sin cambios — los otros bots aplican su propio prefijo).
         if chat_type in _TIPOS_GRUPO and chat is not None:
             asyncio.ensure_future(
                 self._emit_event(
@@ -656,12 +863,18 @@ class TelegramMediaMixin:
                 )
             )
 
-        # En grupos, el bot originante persiste el audio con el mismo formato que
-        # `_format_history_prefix` aplica a los broadcasts entrantes — así los
-        # demás bots y este ven la misma estructura `{sender} (audio): {texto}`.
-        # En privado se pasa la transcripción cruda (no hay otros remitentes).
+        att = IncomingAttachment(
+            type=content_type,
+            name=getattr(payload, "file_name", None),
+            mime=mime,
+            path=str(local_path) if local_path is not None else None,
+            file_ref=payload.file_unique_id,
+        )
+        block = format_attachment(att, transcription=transcribed)
+        # En grupos, el bot originante antepone el sender — misma estructura
+        # que `_format_history_prefix` aplica a los broadcasts entrantes.
         if chat_type in _TIPOS_GRUPO:
-            user_input = f"{sender} (audio): {transcribed}"
+            user_input = f"{sender} (audio):\n{block}"
         else:
-            user_input = transcribed
+            user_input = block
         await self._run_pipeline(update, user_input, chat_type=chat_type)

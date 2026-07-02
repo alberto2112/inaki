@@ -35,7 +35,7 @@ from core.ports.outbound.broadcast_port import BroadcastEmitter, BroadcastReceiv
 from adapters.inbound.telegram.broadcast import TelegramBroadcastMixin
 from adapters.inbound.telegram.commands import TelegramCommandsMixin
 from adapters.inbound.telegram.group_flow import TelegramGroupFlowMixin
-from adapters.inbound.telegram.media import TelegramMediaMixin
+from adapters.inbound.telegram.media import TelegramMediaMixin, _AlbumBuffer
 from adapters.inbound.telegram.ports import TelegramBotPorts, TelegramBotSettings
 
 logger = logging.getLogger(__name__)
@@ -179,10 +179,12 @@ class TelegramBot(
         # tanto refleja "la última persona que habló en este chat".
         self._last_group_sender: dict[str, dict[str, str | None]] = {}
 
-        # Dedup de álbumes ya procesados (media_group_id). Telegram entrega un
-        # álbum como N mensajes (uno por foto); solo el primero dispara el turno
-        # coalescido, los demás solo persisten. Acotado para no crecer sin fin.
-        self._albums_seen: dict[str, None] = {}
+        # Álbumes en curso (media_group_id → buffer con timer de debounce).
+        # Telegram entrega un álbum como N mensajes; cada miembro reinicia el
+        # timer y el flush corre cuando pasa ALBUM_DEBOUNCE_SEC sin nuevos.
+        self._album_buffers: dict[str, _AlbumBuffer] = {}
+        # Álbumes ya flusheados (dedup para miembros tardíos). Acotado.
+        self._albums_flushed: dict[str, None] = {}
 
         if not self._token:
             raise ValueError(f"Agente '{settings.id}': channels.telegram.token no configurado")

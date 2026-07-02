@@ -41,17 +41,23 @@ def telegram_update_to_input(update: Update) -> str | None:
 
 
 async def extract_audio_payload(message) -> tuple[bytes, str, int] | None:
-    """Detecta voice/audio/video_note en un Message y devuelve (bytes, mime, size).
+    """Detecta voice/audio/video_note (o document con mime audio) y devuelve (bytes, mime, size).
 
-    Retorna ``None`` si el mensaje no contiene ninguno de los tres tipos.
-    Prioridad: voice > audio > video_note (los tres nunca coinciden en Telegram,
-    pero la prioridad es explícita por defensa).
+    Retorna ``None`` si el mensaje no contiene ninguno de los tipos.
+    Prioridad: voice > audio > video_note > document-audio (los cuatro nunca
+    coinciden en Telegram, pero la prioridad es explícita por defensa).
 
     Defaults de mime cuando el payload no lo informa:
     - voice → ``audio/ogg`` (Telegram usa OGG/Opus).
     - audio → ``audio/mpeg``.
     - video_note → ``video/mp4`` (Telegram garantiza MP4).
+
+    El branch de document cubre el caso "mp3 adjuntado como archivo": Telegram
+    clasifica el media según CÓMO lo mandó el cliente, no por su contenido —
+    un audio enviado con el selector de archivos llega como ``document`` con
+    ``mime_type=audio/*`` y debe transcribirse igual que un ``audio`` nativo.
     """
+    document = getattr(message, "document", None)
     if message.voice:
         payload = message.voice
         mime = getattr(payload, "mime_type", None) or "audio/ogg"
@@ -61,6 +67,11 @@ async def extract_audio_payload(message) -> tuple[bytes, str, int] | None:
     elif message.video_note:
         payload = message.video_note
         mime = "video/mp4"
+    elif document is not None and str(getattr(document, "mime_type", "") or "").startswith(
+        "audio/"
+    ):
+        payload = document
+        mime = document.mime_type
     else:
         return None
 

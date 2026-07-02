@@ -47,7 +47,7 @@ Un **canal** (Telegram, y mañana Slack, etc.) es un **inbound adapter THIN**: s
 traduce su I/O nativo a un turno. **NO implementa pasarelas de CLIs ni lógica de
 capacidades.** Ejemplo concreto: "mandar un documento y que entre al RAG" NO tiene
 una sola línea de código en Telegram — el canal ya entrega el path del archivo al
-LLM (`media.py` inyecta `__FILE__ <name> at <path>`) y el LLM llama la tool
+LLM (`media.py` inyecta el bloque `@file <name> ... at <path>`) y el LLM llama la tool
 `knowledge_admin`. Un canal nuevo hereda la capacidad GRATIS con solo entregar el
 input al pipeline.
 
@@ -152,6 +152,61 @@ Secrets are YAML-only (no env vars). `*.secrets.yaml` files are gitignored.
 - **`message_face_metadata` side-table** — En `history.db`. Key por `history.id`. `ON DELETE CASCADE` limpia metadata cuando se borra el historial.
 
 ## Migration Notes
+
+### `attachment-grammar`
+
+Los 4 dialectos ad-hoc de media en `history.db` (`__PHOTO__ <caption>`,
+`__ALBUM__ (N photos):`, `__FILE__/__VIDEO__ <name> at <path>`, y el audio que
+persistía la transcripción plana SIN marcador) se reemplazan por **una gramática
+unificada de attachments** definida UNA vez en
+`core/domain/value_objects/attachment.py` (`IncomingAttachment` +
+`format_attachment`/`format_album`) y explicada al LLM por la sección estática
+`ATTACHMENTS_SECTION` (`_turn_pipeline.py`, siempre inyectada, como la de
+in-flight):
+
+```
+@photo at /abs/path.jpg                       ← línea principal: tipo + path local
+@audio voz.ogg (audio/ogg) at /abs/path.ogg
+@file informe.pdf (application/pdf) at /abs/path.pdf
+@album (8 items):                             ← + una línea @<tipo> por miembro
+@transcription: ... / @analysis: ... / @caption: ...   ← auxiliares, orden fijo
+@audio pending (id: X) — retrieve with download_from_telegram  ← modo degradado
+```
+
+El token accionable es el **path local** (pre-descarga obligatoria para todos los
+tipos; los bytes ya en memoria — fotos, audios — se escriben directo al cache del
+workspace vía `_save_bytes_to_workspace`, sin segunda descarga). El
+`telegram_file_id` NUNCA va al historial: es transporte y vive en
+`telegram_files.db`. `file_unique_id` = basename del path.
+
+**Principio nuevo — persistencia simétrica**: TODO media deja su bloque en
+`history.db`, con o sin caption, dispare o no turno. Cierra tres agujeros reales:
+(1) documento sin caption era 100% invisible para el LLM (bug del "audio viejo":
+mp3 enviado como document → `_handle_silent_media` silencioso → el LLM adivinaba
+con `download_from_telegram(content_type=audio)` y traía OTRO audio); (2) las
+salidas tempranas de voz (disabled/too-large/transcripción fallida) no dejaban
+rastro; (3) en grupos, `_handle_group_message` DESCARTABA el `user_input`
+pre-formateado del media y persistía `format_group_message(update.message)` →
+`"marta said: "` vacío (fix: param `preformatted=True`). Decisión del usuario:
+depósito sin caption = persistir SIN disparar turno (cero tokens; el bloque queda
+visible para el próximo turno).
+
+**Otros cambios**: (a) document con mime `audio/*` rutea al pipeline de voz
+(`_extract_file_metadata` y `extract_audio_payload` lo tratan como audio); (b) la
+ventana FIJA de álbum (`ALBUM_GATHER_DELAY_SEC=2s` desde el PRIMER miembro, bug
+7-de-8-fotos) se reemplaza por **debounce por `media_group_id`**
+(`ALBUM_DEBOUNCE_SEC=1.5s` desde el ÚLTIMO; cada miembro resetea el timer), y se
+generaliza a documentos/videos enviados juntos (Telegram también les pone
+`media_group_id`); un miembro tardío post-flush persiste su bloque sin re-turno
+(`_record_straggler`); (c) port nuevo `IFileRecordRepo.query_by_media_group`
+(todos los tipos, `received_at ASC`); (d) la description de
+`download_from_telegram` ahora dice "usá el path del bloque; llamame solo ante
+`pending` o para media viejo".
+
+**Sin migración de DB ni cambios de config.** Las filas viejas con prefijos
+`__X__` conviven con las nuevas (el LLM ve historia mixta unos días — aceptable).
+NUNCA volver a inventar un formato de persistencia por tipo de media o por canal:
+la gramática se extiende en `attachment.py` o no se extiende.
 
 ### `groups-vs-broadcast`
 

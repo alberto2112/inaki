@@ -44,6 +44,7 @@ from core.ports.outbound.skill_port import ISkillRepository
 from core.ports.outbound.tool_port import IToolExecutor
 from core.use_cases._tool_loop import run_tool_loop
 from core.use_cases._turn_pipeline import (
+    ATTACHMENTS_SECTION,
     INFLIGHT_CLARIFICATIONS_SECTION,
     RecordingIntermediateSink,
     assemble_turn_messages,
@@ -275,7 +276,8 @@ class RunAgentUseCase:
         """Persiste un mensaje `role=user` y devuelve el history_id de la fila insertada.
 
         Usado por el handler de fotos de Telegram para obtener el ``history_id``
-        necesario en ``ProcessPhotoUseCase.execute()``.
+        necesario en ``ProcessPhotoUseCase.execute()``. El contenido es el bloque
+        ``@photo`` de la gramática de attachments (``attachment.py``).
         """
         msg = Message(role=Role.USER, content=content)
         row_id = await self._history.append(
@@ -290,9 +292,9 @@ class RunAgentUseCase:
     ) -> bool:
         """Reemplaza el contenido de un mensaje persistido manteniendo su ``id`` y ``created_at``.
 
-        Usado por el handler de fotos para enriquecer el placeholder ``__PHOTO__`` con
-        el ``text_context`` final del descriptor de escena, evitando un segundo mensaje
-        ``role=user`` consecutivo en el historial.
+        Usado por el handler de fotos para enriquecer el bloque ``@photo`` con
+        la línea ``@analysis`` final del descriptor de escena, evitando un segundo
+        mensaje ``role=user`` consecutivo en el historial.
         """
         return await self._history.update_content(self._settings.agent_id, message_id, new_content)
 
@@ -423,6 +425,11 @@ class RunAgentUseCase:
         # Siempre presente: si nunca aparece un mensaje mid-loop, el LLM
         # ignora la guidance sin costo. ~100 palabras.
         extra_sections_snapshot.append(INFLIGHT_CLARIFICATIONS_SECTION)
+
+        # Sección estática con la gramática de attachments (@photo/@audio/...).
+        # Mismo criterio que la de in-flight: siempre presente, costo fijo bajo,
+        # y sin ella el LLM no sabría que el path local del bloque es accionable.
+        extra_sections_snapshot.append(ATTACHMENTS_SECTION)
 
         # Aislar historial por (channel, chat_id) salvo que merge_chats esté activo.
         # Sin filtro, el LLM recibiría mensajes de otros chats del mismo agente

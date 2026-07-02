@@ -67,11 +67,12 @@ class DownloadFromTelegramTool(ITool):
         "Without 'since' the tool returns the latest 'count' files unfiltered. "
         "Files are cached by Telegram's stable 'file_unique_id': repeated "
         "downloads of the same file are no-ops. "
-        "WHEN TO USE: when the user message arrives prefixed with one of "
-        "'__FILE__ <name>', '__VIDEO__ <name>', or '__ALBUM__', it means the "
-        "user attached that media to their message — call this tool with the "
-        "matching content_type and count=1 (or more for albums) to get the "
-        "local path before doing anything else with the file."
+        "WHEN TO USE: incoming media normally arrives as an attachment block "
+        "(lines starting with '@photo'/'@audio'/'@video'/'@file'/'@album') "
+        "that ALREADY includes the local path — use that path directly, no "
+        "tool call needed. Call this tool only when a block says 'pending' "
+        "(the automatic download failed) or when you need OLDER media that "
+        "has no block in the recent conversation."
     )
     parameters_schema = {
         "type": "object",

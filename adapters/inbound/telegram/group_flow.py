@@ -17,6 +17,7 @@ from adapters.inbound.telegram.message_mapper import (
     _safe_optional_str,
     compose_sender_identity,
     dirigido_a,
+    extract_sender_name,
     format_group_message,
     hay_destinatario_explicito,
     send_html_or_plain,
@@ -55,7 +56,9 @@ class TelegramGroupFlowMixin:
     _set_group_reaction: Callable[..., Coroutine[Any, Any, None]]
     _emit_event: Callable[..., Coroutine[Any, Any, None]]
 
-    async def _handle_group_message(self, update: Update, user_input: str, chat_type: str) -> None:
+    async def _handle_group_message(
+        self, update: Update, user_input: str, chat_type: str, *, preformatted: bool = False
+    ) -> None:
         """Maneja mensajes de chats grupales según el behavior configurado.
 
         Flujo:
@@ -68,6 +71,15 @@ class TelegramGroupFlowMixin:
         5. Programar un flush task si no hay uno corriendo. Mensajes que lleguen
            dentro de la ventana de delay se acumulan en el historial y se procesan
            todos juntos en un único turno cuando el delay vence.
+
+        Args:
+            preformatted: ``True`` cuando ``user_input`` ya viene formateado por
+                el caller (bloques de attachments de media.py). Se persiste tal
+                cual con el prefijo del sender. Con ``False`` (texto plano), el
+                contenido se deriva de ``update.message`` vía
+                ``format_group_message`` — que lee ``message.text`` y devolvería
+                vacío para un media (bug histórico: los álbumes en grupo
+                quedaban como ``"marta said: "``).
         """
         chat = update.effective_chat
         if chat is None:
@@ -103,7 +115,10 @@ class TelegramGroupFlowMixin:
             if not dirigido_a(update.message, self._bot_username):
                 return
 
-        contenido_grupo = format_group_message(update.message)
+        if preformatted:
+            contenido_grupo = f"{extract_sender_name(update.message)} sent:\n{user_input}"
+        else:
+            contenido_grupo = format_group_message(update.message)
         await self._ports.run_agent.record_user_message(
             contenido_grupo,
             channel="telegram",

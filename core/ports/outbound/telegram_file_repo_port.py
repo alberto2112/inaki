@@ -56,3 +56,20 @@ class IFileRecordRepo(ABC):
           asume UTC y compara contra ``received_at`` directamente.
         - Orden: ``received_at DESC``.
         """
+
+    @abstractmethod
+    async def query_by_media_group(
+        self,
+        *,
+        agent_id: str,
+        channel: str,
+        chat_id: str,
+        media_group_id: str,
+    ) -> list[TelegramFileRecord]:
+        """Devuelve TODOS los miembros de un ``media_group_id``, cualquier tipo.
+
+        A diferencia de ``query_recent(content_type='album')`` (solo fotos),
+        este método no filtra por tipo: Telegram agrupa también documentos y
+        videos enviados juntos bajo un mismo ``media_group_id``. Orden:
+        ``received_at ASC`` (orden de recepción, el que espera el usuario).
+        """

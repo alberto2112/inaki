@@ -391,20 +391,33 @@ class TelegramMediaMixin:
         de arrancar un turno paralelo ciego. El flush lo drena y libera el slot.
         En grupos NO se toma el slot — la coalescencia la maneja el buffer de
         grupo (``_schedule_group_flush``).
+
+        CONCURRENCIA (``concurrent_updates(True)``): el buffer se guarda en el
+        dict ANTES de cualquier ``await`` — así dos miembros del mismo álbum que
+        entran casi a la vez NO crean dos buffers (el segundo ve el del primero).
+        Solo el CREADOR (``is_new``) adquiere el slot, y lo hace DESPUÉS de haber
+        guardado el buffer. Sin esto, el ``await try_mark_busy`` entre el get y el
+        set hacía que el perdedor sobrescribiera al ganador y el flush no liberara
+        el slot (leak → fotos de álbum posteriores dejaban de reaccionar).
         """
         buf = self._album_buffers.get(media_group_id)
+        is_new = buf is None
         if buf is None:
             buf = _AlbumBuffer(update=update, chat_type=chat_type)
-            chat = update.effective_chat
-            if chat_type not in _TIPOS_GRUPO and chat is not None:
-                scope = (self._ports.run_agent.get_agent_info().id, "telegram", str(chat.id))
-                buf.slot_held = await self._ports.scope_registry.try_mark_busy(scope)
+            # Guardar SINCRÓNICAMENTE (sin await antes) para cerrar la ventana de
+            # carrera: a partir de acá, un miembro concurrente ve este buffer.
             self._album_buffers[media_group_id] = buf
         # Telegram suele poner el caption en UNA sola foto del álbum (no
         # siempre la primera) — el primer no-vacío gana como fallback del
         # que se recupere de los records al flushear.
         if caption and not buf.caption:
             buf.caption = caption
+        # Solo el creador adquiere el slot (privado), ya con el buffer guardado.
+        if is_new and chat_type not in _TIPOS_GRUPO:
+            chat = update.effective_chat
+            if chat is not None:
+                scope = (self._ports.run_agent.get_agent_info().id, "telegram", str(chat.id))
+                buf.slot_held = await self._ports.scope_registry.try_mark_busy(scope)
         if buf.task is not None and not buf.task.done():
             buf.task.cancel()
         buf.task = asyncio.create_task(self._flush_album_later(media_group_id))

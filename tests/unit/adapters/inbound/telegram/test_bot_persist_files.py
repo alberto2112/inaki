@@ -375,6 +375,68 @@ async def test_album_de_documentos_coalesce_como_fotos(monkeypatch, tmp_path):
     assert "@file (application/pdf) at" in block
 
 
+class _YieldingScopeRegistry:
+    """Registry que CEDE el control dentro de try_mark_busy (await sleep(0)).
+
+    Fuerza el interleaving que un ``asyncio.Lock`` sin contención NO produce
+    (fast-path sin suspensión): así el test expone de verdad la carrera del
+    ``await`` entre el get y el set del buffer de álbum. Con el fix (buffer
+    guardado ANTES del await), el segundo miembro ve el buffer del primero y no
+    crea uno nuevo; sin el fix, ambos crean buffer y el slot queda colgado.
+    """
+
+    def __init__(self) -> None:
+        self.busy: set = set()
+
+    async def try_mark_busy(self, scope) -> bool:
+        await asyncio.sleep(0)  # punto de cesión — expone races get/set
+        if scope in self.busy:
+            return False
+        self.busy.add(scope)
+        return True
+
+    async def mark_idle(self, scope) -> None:
+        await asyncio.sleep(0)
+        self.busy.discard(scope)
+
+
+async def test_album_concurrente_no_filtra_el_slot(monkeypatch):
+    """Dos miembros del MISMO álbum entrando concurrentemente (concurrent_updates)
+    NO deben crear dos buffers ni filtrar el slot: se adquiere UNA vez y el flush
+    lo libera. Con el bug (await entre get y set) el perdedor sobrescribía al
+    ganador y el flush no liberaba → slot colgado → fotos de álbum posteriores
+    dejaban de reaccionar. Usa un registry que cede control para forzar la carrera.
+    """
+    import adapters.inbound.telegram.media as media_mod
+
+    monkeypatch.setattr(media_mod, "ALBUM_DEBOUNCE_SEC", 0.02)
+
+    bot, container, repo = _make_bot()
+    repo.query_by_media_group.return_value = []
+    registry = _YieldingScopeRegistry()
+    container.scope_registry = registry
+    bot._run_pipeline = AsyncMock()
+    bot._set_reaction = AsyncMock()
+
+    # Dos fotos del mismo media_group_id, concurrentes.
+    u1 = _photo_update(media_group_id="grupo-conc", chat_id=-100)
+    u2 = _photo_update(media_group_id="grupo-conc", chat_id=-100)
+    u2.message.photo[0].file_unique_id = "FOTO-uniq-2"
+
+    await asyncio.gather(
+        bot._handle_photo_message(u1, MagicMock()),
+        bot._handle_photo_message(u2, MagicMock()),
+    )
+    await _await_album_flush(bot, "grupo-conc")
+
+    # Un solo buffer se creó y su flush corrió una vez.
+    bot._run_pipeline.assert_awaited_once()
+    # El slot quedó LIBRE tras el flush (no filtrado): si estuviera colgado,
+    # ``busy`` retendría el scope.
+    scope = ("test-agent", "telegram", "-100")
+    assert scope not in registry.busy
+
+
 async def test_texto_durante_album_no_arranca_turno_ciego(monkeypatch):
     """Bug reportado: el usuario manda un álbum y enseguida 'ahí están'. Con el
     álbum sosteniendo el slot del scope, ese texto cae al camino in-flight

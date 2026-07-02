@@ -195,6 +195,7 @@ class TelegramBot(
         self._app.add_handler(CommandHandler("reconcile", self._cmd_reconcile))
         self._app.add_handler(CommandHandler("clear", self._cmd_clear))
         self._app.add_handler(CommandHandler("clear_all", self._cmd_clear_all))
+        self._app.add_handler(CommandHandler("new", self._cmd_new))
         self._app.add_handler(CommandHandler("help", self._cmd_help))
         self._app.add_handler(CommandHandler("scheduler", self._cmd_scheduler))
         self._app.add_handler(CommandHandler("chatid", self._cmd_chatid))

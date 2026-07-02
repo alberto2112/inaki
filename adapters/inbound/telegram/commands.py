@@ -89,6 +89,7 @@ class TelegramCommandsMixin:
             "/reconcile — Reconsiderar y consolidar recuerdos relacionados\n"
             "/clear — Limpiar historial de ESTE chat (privado o grupo)\n"
             "/clear_all — Limpiar TODO el historial del agente (todos los chats)\n"
+            "/new — Consolidar memoria y limpiar este chat (alias de /consolidate + /clear)\n"
             "/scheduler list — Listar tareas programadas\n"
             "/scheduler show <id> — Detalle de una tarea\n"
             "/scheduler enable <id> — Habilitar una tarea\n"
@@ -179,6 +180,53 @@ class TelegramCommandsMixin:
         except Exception as exc:
             logger.exception("Error en /clear_all Telegram para '%s'", self._settings.id)
             await message.reply_text(f"Error: {exc}")
+
+    async def _cmd_new(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Alias de ``/consolidate`` + ``/clear``: consolida la memoria y LUEGO limpia
+        el historial de ESTE chat, para arrancar una conversación limpia sin perder
+        lo aprendido.
+
+        El orden es deliberado: consolidar EXTRAE los recuerdos del historial, así que
+        hay que hacerlo ANTES de borrarlo. Si la consolidación falla, se ABORTA el clear
+        (no se toca el historial) para no perder datos silenciosamente.
+        """
+        user = update.effective_user
+        chat = update.effective_chat
+        message = update.message
+        if user is None or chat is None or message is None:
+            return
+        if not self._is_allowed(user.id):
+            return
+        chat_id = str(chat.id)
+
+        # Fase 1 — consolidar: extrae recuerdos del historial antes de borrarlo.
+        uc = self._ports.consolidate_memory
+        if uc is not None:
+            await message.reply_text("Consolidando memoria...")
+            try:
+                result = await uc.execute()
+                await message.reply_text(result)
+            except Exception as exc:
+                logger.exception("Error consolidando en /new para '%s'", self._settings.id)
+                await message.reply_text(
+                    f"Error consolidando: {exc}\nNo limpio el historial para no perder datos."
+                )
+                return
+
+        # Fase 2 — limpiar el historial del chat actual (solo si la fase 1 no falló).
+        try:
+            await self._ports.run_agent.clear_history(
+                channel="telegram",
+                chat_id=chat_id,
+            )
+            await message.reply_text("Historial de este chat limpiado. Arrancamos de cero.")
+        except Exception as exc:
+            logger.exception(
+                "Error limpiando en /new para '%s' (chat_id=%s)",
+                self._settings.id,
+                chat_id,
+            )
+            await message.reply_text(f"Error limpiando: {exc}")
 
     async def _cmd_reload(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Reinicia el daemon: cierra todos los channels, recarga config y vuelve a levantar.
@@ -435,6 +483,7 @@ class TelegramCommandsMixin:
             BotCommand("help", "Lista de comandos disponibles"),
             BotCommand("clear", "Limpiar historial de este chat"),
             BotCommand("clear_all", "Limpiar todo el historial del agente"),
+            BotCommand("new", "Consolidar memoria y empezar de cero en este chat"),
             BotCommand("consolidate", "Extraer recuerdos del historial"),
             BotCommand("reconcile", "Reconsiderar recuerdos relacionados"),
             BotCommand("scheduler", "Gestionar tareas programadas (list/show/enable/disable)"),

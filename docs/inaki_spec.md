@@ -62,6 +62,7 @@ inaki/                                  ← repository root
 │   │   │   ├── agent_context.py       # AgentContext → build_system_prompt()
 │   │   │   ├── agent_info.py          # AgentInfoDTO
 │   │   │   ├── agent_settings.py      # Settings VOs per use case (Run/OneShot/Memory/Photos)
+│   │   │   ├── attachment.py          # IncomingAttachment + @-attachment grammar (single source)
 │   │   │   ├── channel_context.py     # ChannelContext + ContextVar per-turn
 │   │   │   ├── chat_turn_result.py    # ChatTurnResult
 │   │   │   ├── conversation_state.py  # ConversationState
@@ -70,7 +71,7 @@ inaki/                                  ← repository root
 │   │   │   ├── embedding.py           # Embedding(vector, model)
 │   │   │   ├── knowledge_chunk.py     # KnowledgeChunk (RAG)
 │   │   │   ├── llm_response.py        # LLMResponse (text + tool_calls)
-│   │   │   └── telegram_file.py       # TelegramFile (id, mime_type, bytes)
+│   │   │   └── telegram_file.py       # TelegramFileRecord (transport metadata, file_id)
 │   │   ├── services/
 │   │   │   ├── scheduler_service.py   # SchedulerService (cron loop)
 │   │   │   ├── knowledge_orchestrator.py  # Multi-source RAG
@@ -706,7 +707,7 @@ Warning: `schema_meta.embedding_dim` is validated at startup. Mismatch → `Embe
 
 ### Voice transcription
 
-Enabled with `channels.telegram.voice_enabled: true` (default). Uses `ITranscriptionProvider` (Groq Whisper). The provider is dynamically discovered just like LLM and embedding.
+Enabled with `channels.telegram.voice_enabled: true` (default). Uses `ITranscriptionProvider` (Groq Whisper). The provider is dynamically discovered just like LLM and embedding. Documents with `audio/*` mime route here too. The turn's user message is an attachment block (`@audio ... at <local_path>` + `@transcription: <text>`); early exits (disabled, too large, failed transcription) still persist the `@audio` block — see the `attachment-grammar` migration note in `CLAUDE.md`.
 
 ### Knowledge Sources (RAG over documents)
 

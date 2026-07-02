@@ -2,7 +2,7 @@
 
 Cubre:
 - Usuario no autorizado → drop silencioso.
-- Album (media_group_id) → dispara turno coalescido __ALBUM__, sin procesarlo como foto individual.
+- Album (media_group_id) → debounce + turno coalescido @album, sin procesarlo como foto individual.
 - Feature disabled (process_photo=None) → reply de aviso, no use case.
 - Happy path private: reacción 👁, use case ejecutado, pipeline corrido.
 - Resultado con imagen anotada → reply_photo llamado.
@@ -268,7 +268,7 @@ async def test_happy_path_private_chat_pipeline_corrido(agent_cfg, mock_containe
     assert call_kwargs["chat_type"] == "private"
 
     # El placeholder debe haberse enriquecido vía update_message_content (Opción C):
-    # el text_context reemplaza al __PHOTO__ en el row 42, y luego el pipeline corre
+    # el @analysis enriquece el bloque @photo en el row 42, y luego el pipeline corre
     # en modo history-derived (sin user_input explícito).
     mock_container.run_agent.update_message_content.assert_awaited_once()
     update_args = mock_container.run_agent.update_message_content.await_args.args

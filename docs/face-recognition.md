@@ -9,14 +9,15 @@ Telegram photo
      │
      ▼
 _handle_photo_message (TelegramBot)
-     │  album guard (media_group_id → drop)
+     │  album branch (media_group_id → debounce + @album turn, no face/scene)
      │  auth check
      │
      ▼
 extract_photo_payload → bytes JPEG (highest resolution)
+     │  saved to <workspace>/telegram/<file_unique_id>.jpg
      │
      ▼
-record_photo_message → history_id (row in history.db)
+record_photo_message("@photo at <path> ...") → history_id (row in history.db)
      │
      ▼
 ProcessPhotoUseCase.execute(image_bytes, history_id, ...)
@@ -40,7 +41,10 @@ ProcessPhotoUseCase.execute(image_bytes, history_id, ...)
 ProcessPhotoResult(text_context, annotated_image, should_skip_run_agent)
      │
      ▼
-RunAgentUseCase.execute(text_context)   ← normal LLM pipeline
+update_message_content(history_id, "@photo ... + @analysis: <text_context>")
+     │
+     ▼
+RunAgentUseCase.execute(user_input=None)   ← history-derived turn (normal LLM pipeline)
 ```
 
 ## Databases

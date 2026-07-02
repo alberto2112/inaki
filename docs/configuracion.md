@@ -878,16 +878,22 @@ from `providers.groq` in the registry.
 channels:
   telegram:
     voice_enabled: true   # default — accepts voice/audio/video_note
-    # voice_enabled: false — silent drop, the bot ignores audio files
+    # voice_enabled: false — no transcription/turn; the file_id and an
+    # `@audio` attachment block are still persisted (symmetric persistence)
 ```
 
-**Voice handler flow:**
+**Voice handler flow** (also applies to documents with `audio/*` mime — an mp3
+attached "as a file" routes here):
 
 1. Authorized user (`allowed_user_ids`) — otherwise, silent drop.
-2. `voice_enabled: true` — otherwise, silent drop.
-3. Size ≤ `max_audio_mb` — otherwise, ❌ reaction + reply with the size.
-4. 👂 reaction at start.
-5. Transcription → same pipeline as a text message (HTML reply + ✅/❌).
+2. `file_id` persisted in `telegram_files.db` ALWAYS (before any feature check).
+3. `voice_enabled: true` — otherwise, persist the `@audio` block in history
+   (no turn) and stop.
+4. Size ≤ `max_audio_mb` — otherwise, `@audio` block + 👎 reaction + reply.
+5. 👀 reaction, transcription → turn whose user message is the attachment
+   block `@audio ... at <local_path>` + `@transcription: <text>` (same
+   pipeline as a text message afterwards). Failed/empty transcription also
+   leaves the `@audio` block.
 
 **Common startup errors:**
 
@@ -900,8 +906,10 @@ channels:
 
 > ⚠ **Privacy:** the audio is sent to the external provider (currently: Groq). For
 > sensitive content set `voice_enabled: false` on that agent or wait for a
-> local provider to become available. The app does NOT persist the audio; the transcribed
-> text does remain in chat_history and can feed into memory.
+> local provider to become available. The audio file IS cached on disk at
+> `<workspace>/telegram/<file_unique_id>.<ext>` (so the LLM can act on it via
+> its local path), and the transcribed text remains in chat_history and can
+> feed into memory.
 
 ---
 

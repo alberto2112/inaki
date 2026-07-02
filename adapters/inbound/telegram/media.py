@@ -26,6 +26,7 @@ from adapters.inbound.telegram.message_mapper import (
     extract_audio_payload,
     extract_photo_payload,
     extract_sender_name,
+    send_html_or_plain,
 )
 from adapters.inbound.turn_dispatch import INFLIGHT_ACK
 from core.domain.errors import TranscriptionError
@@ -86,6 +87,12 @@ class _AlbumBuffer:
     chat_type: str
     caption: str = ""
     task: asyncio.Task | None = None
+    # True si este álbum (privado) tomó el slot del scope al crearse. El flush
+    # lo libera al terminar. Sin esto, un texto que llega mientras el álbum
+    # está en debounce+descargas arrancaba un turno ciego en paralelo (race
+    # real: el usuario mandó las fotos y "ahí están", y el bot respondió que no
+    # le llegaba nada porque su turno arrancó ANTES de que existiera el @album).
+    slot_held: bool = False
 
 
 class TelegramMediaMixin:
@@ -146,7 +153,7 @@ class TelegramMediaMixin:
                 # Persistencia simétrica igual — rastro @photo sin re-turno.
                 await self._record_straggler(update, str(chat.id))
                 return
-            self._debounce_album(media_group_id, update, chat.type, caption_msg)
+            await self._debounce_album(media_group_id, update, chat.type, caption_msg)
             return
 
         chat_type = chat.type
@@ -255,9 +262,14 @@ class TelegramMediaMixin:
 
             # Modo transcripción/extracción ("!"): el resultado del descriptor va directo
             # al chat y se guarda como mensaje del asistente para que el usuario pueda iterar.
+            # Usa send_html_or_plain (parte en fragmentos + fallback a texto plano):
+            # una descripción larga ("describilo como un fotógrafo profesional") supera
+            # los 4096 chars de Telegram y reply_text crudo reventaba con BadRequest.
             if scene_prompt and result.text_context:
                 direct_text = result.text_context
-                await message.reply_text(direct_text)
+                await send_html_or_plain(
+                    lambda text, pm: message.reply_text(text, parse_mode=pm), direct_text
+                )
                 await self._ports.run_agent.record_assistant_message(
                     f"photo_transcription: {direct_text}",
                     channel="telegram",
@@ -365,18 +377,28 @@ class TelegramMediaMixin:
             return "file", document, mime
         return None
 
-    def _debounce_album(
+    async def _debounce_album(
         self, media_group_id: str, update: Update, chat_type: str, caption: str
     ) -> None:
         """Registra un miembro del álbum y reinicia el timer de cierre.
 
         El flush (``_flush_album_later``) corre cuando pasa
-        ``ALBUM_DEBOUNCE_SEC`` sin miembros nuevos. Sin await entre el get y el
-        set del buffer → seguro con ``concurrent_updates(True)`` (mismo loop).
+        ``ALBUM_DEBOUNCE_SEC`` sin miembros nuevos.
+
+        Al crear el buffer (primer miembro), un álbum PRIVADO toma el slot del
+        scope: mientras el álbum se junta y descarga, cualquier mensaje del
+        usuario cae al camino in-flight (``record_user_message`` + ACK) en vez
+        de arrancar un turno paralelo ciego. El flush lo drena y libera el slot.
+        En grupos NO se toma el slot — la coalescencia la maneja el buffer de
+        grupo (``_schedule_group_flush``).
         """
         buf = self._album_buffers.get(media_group_id)
         if buf is None:
             buf = _AlbumBuffer(update=update, chat_type=chat_type)
+            chat = update.effective_chat
+            if chat_type not in _TIPOS_GRUPO and chat is not None:
+                scope = (self._ports.run_agent.get_agent_info().id, "telegram", str(chat.id))
+                buf.slot_held = await self._ports.scope_registry.try_mark_busy(scope)
             self._album_buffers[media_group_id] = buf
         # Telegram suele poner el caption en UNA sola foto del álbum (no
         # siempre la primera) — el primer no-vacío gana como fallback del
@@ -387,11 +409,27 @@ class TelegramMediaMixin:
             buf.task.cancel()
         buf.task = asyncio.create_task(self._flush_album_later(media_group_id))
 
+    def _scope_for(self, update: Update) -> tuple[str, str, str] | None:
+        """Scope ``(agent_id, 'telegram', chat_id)`` del update, o ``None`` sin chat."""
+        chat = update.effective_chat
+        if chat is None:
+            return None
+        return (self._ports.run_agent.get_agent_info().id, "telegram", str(chat.id))
+
     async def _flush_album_later(self, media_group_id: str) -> None:
         """Cierra el álbum tras la ventana de silencio y dispara el turno.
 
         Corre como task suelto (fuera del ciclo de handlers de PTB) → los
         errores se capturan acá y se loguean; no hay error handler upstream.
+
+        Persistencia + turno según el tier:
+        - Grupo: delega a ``_handle_group_message`` (buffer de grupo).
+        - Privado con slot tomado: persiste el bloque ``@album`` y corre un
+          turno history-derived (``_run_pipeline(update, None)``) que ve el
+          ``@album`` + cualquier mensaje recordado in-flight mientras juntábamos
+          el álbum. Libera el slot en ``finally``.
+        - Privado sin slot (había un turno corriendo al crear el álbum): solo
+          persiste el ``@album`` — ese turno en curso lo drena. No dispara otro.
         """
         await asyncio.sleep(ALBUM_DEBOUNCE_SEC)
         buf = self._album_buffers.pop(media_group_id, None)
@@ -401,8 +439,9 @@ class TelegramMediaMixin:
         if len(self._albums_flushed) > _ALBUM_DEDUP_MAX:
             del self._albums_flushed[next(iter(self._albums_flushed))]
 
+        update = buf.update
+        scope = self._scope_for(update) if buf.slot_held else None
         try:
-            update = buf.update
             chat = update.effective_chat
             if chat is None:
                 return
@@ -417,15 +456,31 @@ class TelegramMediaMixin:
                 await self._handle_group_message(
                     update, user_input, buf.chat_type, preformatted=True
                 )
-            else:
+            elif buf.slot_held:
+                # Tenemos el slot: persistir el @album y correr un turno
+                # history-derived. La query se deriva del trailing batch
+                # (@album + lo recordado in-flight). No re-adquiere el slot
+                # (user_input=None ⇒ _run_pipeline salta dispatch_inbound_turn).
+                await self._ports.run_agent.record_user_message(
+                    user_input, channel="telegram", chat_id=chat_id_str
+                )
                 await self._set_reaction(update, "👀")
-                await self._run_pipeline(update, user_input, chat_type=buf.chat_type)
+                await self._run_pipeline(update, None, chat_type=buf.chat_type)
+            else:
+                # Había un turno corriendo cuando llegó el álbum: solo dejamos el
+                # bloque persistido para que ese turno lo drene entre iteraciones.
+                await self._ports.run_agent.record_user_message(
+                    user_input, channel="telegram", chat_id=chat_id_str
+                )
         except Exception:
             logger.exception(
                 "Error flusheando álbum (agent=%s, media_group_id=%s)",
                 self._settings.id,
                 media_group_id,
             )
+        finally:
+            if scope is not None:
+                await self._ports.scope_registry.mark_idle(scope)
 
     async def _record_straggler(self, update: Update, chat_id: str) -> None:
         """Persiste el bloque @ de un miembro de álbum llegado DESPUÉS del flush.
@@ -681,7 +736,7 @@ class TelegramMediaMixin:
             if media_group_id in self._albums_flushed:
                 await self._record_straggler(update, chat_id_str)
                 return
-            self._debounce_album(media_group_id, update, chat_type, caption)
+            await self._debounce_album(media_group_id, update, chat_type, caption)
             return
 
         # Pre-descargar al workspace para entregar un path concreto al LLM —

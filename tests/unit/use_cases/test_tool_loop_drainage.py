@@ -14,6 +14,8 @@ import json
 
 from unittest.mock import AsyncMock
 
+import pytest
+
 from core.domain.entities.message import Message, Role
 from core.domain.errors import ToolLoopMaxIterationsError
 from core.domain.value_objects.conversation_state import ConversationState
@@ -197,6 +199,55 @@ async def test_counter_resets_when_drain_returns_messages():
     assert result == "ok hecho"
     # 3 llamadas demuestra que con max=2 el reset permitió la tercera.
     assert call_count == 3
+
+
+async def test_reset_cap_acota_el_turno_ante_pushes_infinitos():
+    """Un usuario que empuja un mensaje en CADA iteración no puede alargar el
+    turno indefinidamente: tras ``_MAX_INFLIGHT_ITER_RESETS`` resets, el
+    contador avanza y el loop termina (bug reportado: 6 pokes → ~8.5 min).
+
+    Con max_iterations=1 y cap=3: el drain resetea 3 veces (llamadas 1-3) y en
+    la 4ª ya no resetea → el loop corta y lanza ToolLoopMaxIterationsError.
+    """
+    from core.use_cases._tool_loop import _MAX_INFLIGHT_ITER_RESETS
+
+    initial_msg = Message(role=Role.USER, content="tarea")
+    history = _FakeHistoryStore(initial=[initial_msg])
+
+    call_count = 0
+
+    async def llm_complete(messages, system_prompt, tools=None):  # noqa: ARG001
+        nonlocal call_count
+        call_count += 1
+        # El usuario empuja un mensaje nuevo en cada llamada → checkpoint B
+        # siempre drena algo. Con texto no vacío evitamos la llamada fallback.
+        history.messages.append(Message(role=Role.USER, content=f"poke {call_count}"))
+        return LLMResponse(
+            text_blocks=["sigo trabajando"],
+            tool_calls=[{"function": {"name": "search", "arguments": "{}"}}],
+            raw="",
+        )
+
+    llm = AsyncMock()
+    llm.complete = AsyncMock(side_effect=llm_complete)
+    llm.thinking_active = False
+
+    with pytest.raises(ToolLoopMaxIterationsError):
+        await run_tool_loop(
+            llm=llm,
+            tools=_make_tools(),
+            messages=[initial_msg],
+            system_prompt="x",
+            tool_schemas=[],
+            max_iterations=1,
+            circuit_breaker_threshold=99,  # sin circuit breaker (tool success)
+            agent_id="agent1",
+            history_store=history,
+            scope=_SCOPE,
+        )
+
+    # Exactamente cap+1 llamadas: cap resets + la que ya no resetea y corta.
+    assert call_count == _MAX_INFLIGHT_ITER_RESETS + 1
 
 
 async def test_empty_drain_does_not_reset_counter():

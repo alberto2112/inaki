@@ -163,8 +163,9 @@ async def test_album_dispara_pipeline_sin_procesar_como_foto(
     agent_cfg, mock_container, monkeypatch
 ) -> None:
     """Un álbum (media_group_id) NO se procesa como foto individual (sin
-    process_photo ni record_photo_message), pero SÍ dispara el turno coalescido
-    con @album cuando el debounce cierra — aunque no traiga caption."""
+    process_photo ni record_photo_message). Con el slot tomado, el flush
+    persiste el @album vía record_user_message y corre un turno history-derived
+    (``_run_pipeline(update, None)``) — aunque no traiga caption."""
     import adapters.inbound.telegram.media as media_mod
 
     monkeypatch.setattr(media_mod, "ALBUM_DEBOUNCE_SEC", 0.0)
@@ -182,11 +183,17 @@ async def test_album_dispara_pipeline_sin_procesar_como_foto(
     mock_container.process_photo.execute.assert_not_called()
     mock_container.run_agent.record_photo_message.assert_not_called()
     update.message.reply_photo.assert_not_called()
+    # El álbum tomó el slot (privado) y lo liberó al terminar.
+    mock_container.scope_registry.try_mark_busy.assert_awaited()
+    mock_container.scope_registry.mark_idle.assert_awaited()
+    # El @album se persiste como user message; el turno corre history-derived.
+    mock_container.run_agent.record_user_message.assert_awaited_once()
+    persisted = mock_container.run_agent.record_user_message.await_args.args[0]
+    assert persisted.startswith("@album pending")  # sin repo → gather vacío
     bot._run_pipeline.assert_awaited_once()
     args, kwargs = bot._run_pipeline.call_args
     user_input = args[1] if len(args) > 1 else kwargs.get("user_input")
-    # Sin repo, el gather devuelve vacío → bloque degradado @album pending.
-    assert user_input.startswith("@album pending")
+    assert user_input is None  # history-derived, no re-adquiere el slot
 
 
 async def test_feature_disabled_process_photo_none(agent_cfg) -> None:
@@ -523,7 +530,9 @@ async def test_caption_incluido_en_historial(agent_cfg, mock_container) -> None:
 
 
 async def test_bang_envia_directo_al_chat_sin_pipeline(agent_cfg, mock_container) -> None:
-    """Caption con '!' → resultado del descriptor directo al chat, pipeline NO invocado."""
+    """Caption con '!' → resultado del descriptor directo al chat vía
+    send_html_or_plain (parte + fallback HTML: una descripción larga superaría
+    los 4096 chars y reply_text crudo reventaba), pipeline NO invocado."""
     mock_container.process_photo.execute.return_value = ProcessPhotoResult(
         text_context="Texto extraído de la imagen.",
         annotated_image=None,
@@ -536,7 +545,31 @@ async def test_bang_envia_directo_al_chat_sin_pipeline(agent_cfg, mock_container
     await bot._handle_photo_message(update, context)
 
     mock_container.run_agent.execute.assert_not_awaited()
-    update.message.reply_text.assert_awaited_once_with("Texto extraído de la imagen.")
+    # send_html_or_plain renderiza a HTML y pasa parse_mode; el texto llega íntegro.
+    update.message.reply_text.assert_awaited_once()
+    call = update.message.reply_text.await_args
+    assert "Texto extraído de la imagen." in call.args[0]
+
+
+async def test_bang_texto_largo_se_parte_en_fragmentos(agent_cfg, mock_container) -> None:
+    """Una descripción '! como fotógrafo profesional' > 4096 chars debe partirse
+    en varios reply_text en vez de reventar con BadRequest (bug real reportado)."""
+    descripcion_larga = "Una foto espectacular. " * 300  # ~6900 chars
+    mock_container.process_photo.execute.return_value = ProcessPhotoResult(
+        text_context=descripcion_larga,
+        annotated_image=None,
+        should_skip_run_agent=False,
+    )
+    bot = _build_bot(agent_cfg, mock_container)
+    update = _mk_update(caption="!describí como un fotógrafo profesional")
+    context = MagicMock()
+
+    await bot._handle_photo_message(update, context)
+
+    # Más de un reply_text (se partió) y ningún fragmento supera el límite de Telegram.
+    assert update.message.reply_text.await_count >= 2
+    for call in update.message.reply_text.await_args_list:
+        assert len(call.args[0]) <= 4096
 
 
 async def test_bang_guarda_respuesta_en_historial(agent_cfg, mock_container) -> None:

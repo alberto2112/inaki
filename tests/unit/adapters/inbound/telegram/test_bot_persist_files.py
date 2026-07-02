@@ -44,6 +44,14 @@ def _make_bot(*, has_repo: bool = True, voice_enabled: bool = True, tmp_path=Non
     container.telegram_file_repo = repo
     # Por defecto sin downloader → no se pre-descarga (bloques degradan a pending).
     container.telegram_file_downloader = None
+    # scope_registry: los álbumes privados toman el slot al crearse (Fix del race
+    # álbum-vs-texto). Por default el slot está libre (try_mark_busy=True).
+    agent_info = MagicMock()
+    agent_info.id = "test-agent"
+    container.run_agent.get_agent_info = MagicMock(return_value=agent_info)
+    container.scope_registry = MagicMock()
+    container.scope_registry.try_mark_busy = AsyncMock(return_value=True)
+    container.scope_registry.mark_idle = AsyncMock()
 
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
@@ -137,6 +145,16 @@ async def _await_album_flush(bot: TelegramBot, media_group_id: str) -> None:
     await asyncio.sleep(0)
 
 
+def _flushed_album_block(container) -> str:
+    """El bloque @album que el flush persistió vía record_user_message.
+
+    Con el álbum privado sosteniendo el slot (Fix del race álbum-vs-texto), el
+    flush persiste el @album como user message y corre el turno history-derived
+    (``_run_pipeline(update, None)``) en vez de pasar el @album como user_input.
+    """
+    return container.run_agent.record_user_message.await_args.args[0]
+
+
 # ---------------------------------------------------------------------------
 # Album: debounce + flush único
 # ---------------------------------------------------------------------------
@@ -164,9 +182,12 @@ async def test_album_persiste_file_id_sin_procesar_como_foto(monkeypatch):
     assert record.media_group_id == "grupo-1"
     assert record.history_id is None
     # NO se procesa como foto individual (sin record_photo_message), pero SÍ
-    # dispara el turno de álbum coalescido.
+    # dispara el turno de álbum coalescido — history-derived con el slot tomado.
     container.run_agent.record_photo_message.assert_not_awaited()
+    container.scope_registry.try_mark_busy.assert_awaited()
+    container.scope_registry.mark_idle.assert_awaited()
     bot._run_pipeline.assert_awaited_once()
+    assert bot._run_pipeline.call_args.args[1] is None
 
 
 async def test_album_con_caption_dispara_pipeline_en_privado(monkeypatch):
@@ -187,10 +208,9 @@ async def test_album_con_caption_dispara_pipeline_en_privado(monkeypatch):
 
     repo.save.assert_awaited_once()
     bot._run_pipeline.assert_awaited_once()
-    args, kwargs = bot._run_pipeline.call_args
-    user_input = args[1] if len(args) > 1 else kwargs.get("user_input")
-    assert user_input.startswith("@album")
-    assert "@caption: mandá esto a juan" in user_input
+    block = _flushed_album_block(container)
+    assert block.startswith("@album")
+    assert "@caption: mandá esto a juan" in block
 
 
 async def test_album_sin_caption_igual_dispara_pipeline(monkeypatch):
@@ -212,9 +232,7 @@ async def test_album_sin_caption_igual_dispara_pipeline(monkeypatch):
 
     repo.save.assert_awaited_once()
     bot._run_pipeline.assert_awaited_once()
-    args, kwargs = bot._run_pipeline.call_args
-    user_input = args[1] if len(args) > 1 else kwargs.get("user_input")
-    assert user_input.startswith("@album")
+    assert _flushed_album_block(container).startswith("@album")
 
 
 async def test_album_debounce_un_solo_flush_para_n_miembros(monkeypatch):
@@ -239,6 +257,9 @@ async def test_album_debounce_un_solo_flush_para_n_miembros(monkeypatch):
     # Las 3 fotos se persisten, pero solo 1 flush dispara el pipeline.
     assert repo.save.await_count == 3
     bot._run_pipeline.assert_awaited_once()
+    # El slot se toma UNA sola vez (al crear el buffer, no por cada miembro).
+    assert container.scope_registry.try_mark_busy.await_count == 1
+    container.scope_registry.mark_idle.assert_awaited_once()
 
 
 async def test_album_miembro_tardio_post_flush_persiste_rastro_sin_returno(monkeypatch):
@@ -258,6 +279,9 @@ async def test_album_miembro_tardio_post_flush_persiste_rastro_sin_returno(monke
     await _await_album_flush(bot, "grupo-tardio")
     bot._run_pipeline.assert_awaited_once()
 
+    # El flush ya persistió el @album vía record_user_message (1ra llamada).
+    assert container.run_agent.record_user_message.await_args.args[0].startswith("@album")
+
     # Miembro tardío del MISMO álbum, llega tras el flush.
     tardio = _photo_update(media_group_id="grupo-tardio")
     await bot._handle_photo_message(tardio, MagicMock())
@@ -265,7 +289,7 @@ async def test_album_miembro_tardio_post_flush_persiste_rastro_sin_returno(monke
     # Se persiste el file_id (2 saves) y el rastro @photo, sin segundo turno.
     assert repo.save.await_count == 2
     bot._run_pipeline.assert_awaited_once()
-    container.run_agent.record_user_message.assert_awaited_once()
+    # La ÚLTIMA persistencia es el straggler @photo (además del @album del flush).
     marker = container.run_agent.record_user_message.await_args.args[0]
     assert marker.startswith("@photo")
 
@@ -307,13 +331,12 @@ async def test_album_recopila_todos_los_miembros_del_repo(monkeypatch, tmp_path)
         media_group_id="mgrupo-X",
     )
     bot._run_pipeline.assert_awaited_once()
-    args, kwargs = bot._run_pipeline.call_args
-    user_input = args[1] if len(args) > 1 else kwargs.get("user_input")
-    assert user_input.startswith("@album (3 items):")
+    block = _flushed_album_block(container)
+    assert block.startswith("@album (3 items):")
     for i in range(3):
-        assert f"uniq-{i}.jpg" in user_input
+        assert f"uniq-{i}.jpg" in block
     # El caption viene del record del repo (Telegram lo pone en UNA foto).
-    assert "@caption: mandá el álbum" in user_input
+    assert "@caption: mandá el álbum" in block
 
 
 async def test_album_de_documentos_coalesce_como_fotos(monkeypatch, tmp_path):
@@ -347,10 +370,61 @@ async def test_album_de_documentos_coalesce_como_fotos(monkeypatch, tmp_path):
     await _await_album_flush(bot, "docs-1")
 
     bot._run_pipeline.assert_awaited_once()
-    args, kwargs = bot._run_pipeline.call_args
-    user_input = args[1] if len(args) > 1 else kwargs.get("user_input")
-    assert user_input.startswith("@album (2 items):")
-    assert "@file (application/pdf) at" in user_input
+    block = _flushed_album_block(container)
+    assert block.startswith("@album (2 items):")
+    assert "@file (application/pdf) at" in block
+
+
+async def test_texto_durante_album_no_arranca_turno_ciego(monkeypatch):
+    """Bug reportado: el usuario manda un álbum y enseguida 'ahí están'. Con el
+    álbum sosteniendo el slot del scope, ese texto cae al camino in-flight
+    (record_user_message + ACK) en vez de arrancar un turno CIEGO que responde
+    'no me llegó nada' porque corre antes de que exista el bloque @album.
+    """
+    import adapters.inbound.telegram.media as media_mod
+    from adapters.outbound.scope_registry_adapter import InMemoryScopeRegistryAdapter
+
+    # Debounce largo: el álbum NO flushea durante el test — queremos observar el
+    # estado con el slot AÚN tomado cuando llega el texto.
+    monkeypatch.setattr(media_mod, "ALBUM_DEBOUNCE_SEC", 30.0)
+
+    bot, container, repo = _make_bot()
+    repo.query_by_media_group.return_value = []
+    # Registry REAL (no el mock que siempre devuelve True): modela busy/idle.
+    container.scope_registry = InMemoryScopeRegistryAdapter()
+    bot._set_reaction = AsyncMock()
+
+    # 1) Llega el álbum → toma el slot (privado), agenda el flush (no dispara).
+    album_update = _photo_update(media_group_id="grupo-race", chat_id=-100)
+    await bot._handle_photo_message(album_update, MagicMock())
+    assert bot._album_buffers["grupo-race"].slot_held is True
+
+    # 2) Llega el texto "ahí están" sobre el MISMO chat.
+    text_update = MagicMock()
+    text_update.effective_user.id = 42
+    text_update.effective_chat.id = -100
+    text_update.effective_chat.type = "private"
+    tmsg = text_update.message
+    tmsg.text = "ahí están"
+    tmsg.chat.type = "private"
+    tmsg.chat.id = -100
+    tmsg.location = None
+    tmsg.reply_text = AsyncMock()
+    tmsg.set_reaction = AsyncMock()
+
+    await bot._handle_message(text_update, MagicMock())
+
+    # El texto NO arrancó un turno (execute no se llamó) — cayó a in-flight.
+    container.run_agent.execute.assert_not_awaited()
+    recorded = [c.args[0] for c in container.run_agent.record_user_message.await_args_list]
+    assert "ahí están" in recorded
+    # Y el usuario recibió el ACK, no una respuesta ciega.
+    tmsg.reply_text.assert_awaited_once()
+
+    # Cleanup: cancelar el flush pendiente (debounce de 30s).
+    buf = bot._album_buffers.get("grupo-race")
+    if buf is not None and buf.task is not None:
+        buf.task.cancel()
 
 
 # ---------------------------------------------------------------------------

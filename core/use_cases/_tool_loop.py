@@ -36,6 +36,16 @@ from core.ports.outbound.tool_port import IToolExecutor
 logger = logging.getLogger(__name__)
 
 
+# Tope de veces que un drain in-flight puede resetear el contador de iteraciones
+# en un mismo turno. Sin tope, un usuario impaciente que manda N mensajes
+# ("hola?", "seguís ahí?") mientras el turno corre le regala N × max_iterations
+# de runway al loop → turnos de minutos que parecen colgados (reporte real:
+# 6 mensajes → ~30 iteraciones → 8.5 min en una Pi). Tras este tope, los
+# mensajes drenados se siguen incorporando pero el contador avanza normal, así
+# el turno termina en tiempo acotado. Ver `in-flight-message-injection`.
+_MAX_INFLIGHT_ITER_RESETS = 3
+
+
 async def _drain_new_user_messages(
     history_store: IHistoryStore | None,
     scope: Scope | None,
@@ -147,6 +157,9 @@ async def run_tool_loop(
         else sum(1 for m in messages if m.role == Role.USER)
     )
     already_drained = 0
+    # Cuántas veces ya reseteamos el contador por un drain in-flight. Acotado por
+    # _MAX_INFLIGHT_ITER_RESETS para que el turno no viva indefinidamente.
+    inflight_resets = 0
 
     # Indicador "Thinking..." una sola vez por turno cuando el provider activa
     # thinking mode y el operador lo habilitó via ``channels.thinking_indicator``.
@@ -174,13 +187,23 @@ async def run_tool_loop(
         if drained:
             working_messages.extend(drained)
             already_drained += len(drained)
-            logger.info(
-                "[in-flight] drain checkpoint=A count=%d agent_id=%s iter_reset_from=%d",
-                len(drained),
-                agent_id,
-                iteration,
-            )
-            iteration = 0
+            if inflight_resets < _MAX_INFLIGHT_ITER_RESETS:
+                logger.info(
+                    "[in-flight] drain checkpoint=A count=%d agent_id=%s iter_reset_from=%d",
+                    len(drained),
+                    agent_id,
+                    iteration,
+                )
+                iteration = 0
+                inflight_resets += 1
+            else:
+                logger.warning(
+                    "[in-flight] drain checkpoint=A count=%d agent_id=%s — reset cap "
+                    "(%d) alcanzado, NO reseteo el contador para acotar el turno",
+                    len(drained),
+                    agent_id,
+                    _MAX_INFLIGHT_ITER_RESETS,
+                )
 
         if made_llm_call and request_delay_seconds > 0:
             await asyncio.sleep(request_delay_seconds)
@@ -283,14 +306,23 @@ async def run_tool_loop(
         if drained:
             working_messages.extend(drained)
             already_drained += len(drained)
-            logger.info(
-                "[in-flight] drain checkpoint=B count=%d agent_id=%s iter_reset_from=%d",
+            if inflight_resets < _MAX_INFLIGHT_ITER_RESETS:
+                logger.info(
+                    "[in-flight] drain checkpoint=B count=%d agent_id=%s iter_reset_from=%d",
+                    len(drained),
+                    agent_id,
+                    iteration,
+                )
+                iteration = 0
+                inflight_resets += 1
+                continue  # no incrementar: ya reseteamos, arrancamos iteración 1
+            logger.warning(
+                "[in-flight] drain checkpoint=B count=%d agent_id=%s — reset cap "
+                "(%d) alcanzado, dejo avanzar el contador para acotar el turno",
                 len(drained),
                 agent_id,
-                iteration,
+                _MAX_INFLIGHT_ITER_RESETS,
             )
-            iteration = 0
-            continue  # no incrementar: ya reseteamos, arrancamos iteración 1
 
         iteration += 1
 

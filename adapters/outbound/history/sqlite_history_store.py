@@ -2,12 +2,14 @@
 SQLiteHistoryStore — historial de conversación persistido en SQLite.
 
 Un registro por mensaje: tabla `history` en data/history.db.
-Solo se persisten mensajes user y assistant — nunca tool calls.
+Se persisten mensajes user y assistant siempre; los mensajes tool (par
+assistant+tool_calls ↔ tool_results) solo cuando el agente activa
+`chat_history.persist_tool_calls` (ver nota de migración `persist-tool-calls`).
 
 Schema:
   history     — una fila por mensaje con flag `infused` (0=pendiente, 1=procesado).
-                Incluye columnas `channel` y `chat_id` para soportar múltiples
-                canales y grupos dentro del mismo agente.
+                Incluye columnas `channel` y `chat_id` para múltiples canales/grupos,
+                y `tool_calls`/`tool_call_id` (NULL salvo en el rastro de tool calls).
   agent_state — una fila por agente con el estado conversacional (sticky TTLs)
                 serializado en JSON.
 """
@@ -46,16 +48,25 @@ class HistoryStoreSettings:
 
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS history (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    agent_id   TEXT    NOT NULL,
-    role       TEXT    NOT NULL,
-    content    TEXT    NOT NULL,
-    created_at TEXT    NOT NULL,
-    infused    INTEGER NOT NULL DEFAULT 0,
-    channel    TEXT    NOT NULL DEFAULT '',
-    chat_id    TEXT    NOT NULL DEFAULT ''
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id     TEXT    NOT NULL,
+    role         TEXT    NOT NULL,
+    content      TEXT    NOT NULL,
+    created_at   TEXT    NOT NULL,
+    infused      INTEGER NOT NULL DEFAULT 0,
+    channel      TEXT    NOT NULL DEFAULT '',
+    chat_id      TEXT    NOT NULL DEFAULT '',
+    tool_calls   TEXT,
+    tool_call_id TEXT
 );
 """
+
+# Roles que SÍ se persisten. TOOL entra con persist-tool-calls; el resto
+# (SYSTEM, TOOL_RESULT) nunca toca la DB.
+_PERSISTED_ROLES = (Role.USER, Role.ASSISTANT, Role.TOOL)
+
+# Lista de columnas de los SELECT de mensajes (incluye las de persist-tool-calls).
+_COLS = "role, content, created_at, channel, chat_id, tool_calls, tool_call_id"
 
 # Índice principal: consultas filtradas por agente + canal + chat + posición.
 _CREATE_INDEX = """
@@ -117,6 +128,35 @@ def _build_where_filters(
     return " AND ".join(condiciones), tuple(params)
 
 
+def _drop_orphan_tool_messages(messages: list[Message]) -> list[Message]:
+    """Descarta mensajes ``role=tool`` huérfanos — los que quedaron sin su
+    mensaje ``assistant``+tool_calls dentro de la ventana cargada.
+
+    Es la garantía de correctitud del feature persist-tool-calls: cuando ``load``
+    recorta a los últimos ``max_messages`` (o cuando ``trim`` borra por scope), un
+    tool result puede quedar sin el assistant que lo originó. Mandarlo así al
+    provider dispara un 400 (OpenAI y Anthropic exigen que cada ``tool_call_id``
+    tenga su assistant emparejado). Escaneo lineal: un ``role=tool`` solo es
+    válido si venimos "dentro de un grupo" abierto por un assistant con
+    tool_calls; un USER o un ASSISTANT sin tool_calls cierra el grupo. Cubre
+    huérfanos al inicio Y en el medio de la ventana.
+
+    No-op cuando no hay mensajes ``role=tool`` (persist-tool-calls desactivado).
+    """
+    result: list[Message] = []
+    in_group = False
+    for m in messages:
+        if m.role == Role.TOOL:
+            if in_group:
+                result.append(m)
+            # else: huérfano (su assistant quedó fuera de la ventana) → se descarta.
+            continue
+        # Un assistant con tool_calls abre grupo; cualquier otro mensaje lo cierra.
+        in_group = m.role == Role.ASSISTANT and bool(m.tool_calls)
+        result.append(m)
+    return result
+
+
 class SQLiteHistoryStore(IHistoryStore):
     def __init__(self, cfg: HistoryStoreSettings) -> None:
         self._db_path = cfg.db_filename
@@ -131,11 +171,28 @@ class SQLiteHistoryStore(IHistoryStore):
 
     async def _ensure_schema(self, conn: aiosqlite.Connection) -> None:
         await conn.execute(_CREATE_TABLE)
+        await self._ensure_history_columns(conn)
         await conn.execute(_CREATE_INDEX)
         await conn.execute(_CREATE_INFUSED_INDEX)
         await conn.execute(_CREATE_CHANNEL_CHAT_INDEX)
         await self._ensure_agent_state_schema(conn)
         await conn.commit()
+
+    async def _ensure_history_columns(self, conn: aiosqlite.Connection) -> None:
+        """Migra en caliente la tabla ``history`` agregando las columnas del feature
+        persist-tool-calls (``tool_calls``, ``tool_call_id``) si faltan.
+
+        Idempotente: detecta las columnas existentes vía ``PRAGMA table_info`` y
+        solo aplica el ``ALTER TABLE ADD COLUMN`` de las que falten. Las DBs
+        creadas por ``_CREATE_TABLE`` ya las traen; solo las viejas necesitan el
+        ALTER. Las filas preexistentes quedan con ``NULL`` (mensajes de texto).
+        """
+        rows = await conn.execute_fetchall("PRAGMA table_info(history)")
+        existing = {r["name"] for r in rows}
+        for column in ("tool_calls", "tool_call_id"):
+            if column not in existing:
+                await conn.execute(f"ALTER TABLE history ADD COLUMN {column} TEXT")
+                logger.info("Migración history: columna '%s' agregada (persist-tool-calls)", column)
 
     async def _ensure_agent_state_schema(self, conn: aiosqlite.Connection) -> None:
         """Crea o migra la tabla agent_state al schema scoped por (channel, chat_id).
@@ -177,20 +234,34 @@ class SQLiteHistoryStore(IHistoryStore):
         channel: str = "",
         chat_id: str = "",
     ) -> int | None:
-        if message.role not in (Role.USER, Role.ASSISTANT):
+        if message.role not in _PERSISTED_ROLES:
             return None
 
         if message.timestamp is None:
             message.timestamp = datetime.now(timezone.utc)
 
         ts = message.timestamp.isoformat()
+        # tool_calls viaja como JSON; NULL cuando el mensaje no lleva (texto normal).
+        tool_calls_json = (
+            json.dumps(message.tool_calls, ensure_ascii=False) if message.tool_calls else None
+        )
 
         async with self._conn() as conn:
             await self._ensure_schema(conn)
             cursor = await conn.execute(
-                "INSERT INTO history (agent_id, role, content, created_at, channel, chat_id) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (agent_id, message.role.value, message.content, ts, channel, chat_id),
+                "INSERT INTO history "
+                "(agent_id, role, content, created_at, channel, chat_id, tool_calls, tool_call_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    agent_id,
+                    message.role.value,
+                    message.content,
+                    ts,
+                    channel,
+                    chat_id,
+                    tool_calls_json,
+                    message.tool_call_id,
+                ),
             )
             await conn.commit()
             return cursor.lastrowid
@@ -222,30 +293,26 @@ class SQLiteHistoryStore(IHistoryStore):
             if self._max_n > 0:
                 rows = list(
                     await conn.execute_fetchall(
-                        f"SELECT role, content, created_at, channel, chat_id FROM history "
-                        f"WHERE {filtros} "
-                        f"ORDER BY id DESC LIMIT ?",
+                        f"SELECT {_COLS} FROM history WHERE {filtros} ORDER BY id DESC LIMIT ?",
                         (*params, self._max_n),
                     )
                 )
-                return [self._row_to_message(r) for r in reversed(rows)]
+                msgs = [self._row_to_message(r) for r in reversed(rows)]
             else:
                 rows = list(
                     await conn.execute_fetchall(
-                        f"SELECT role, content, created_at, channel, chat_id FROM history "
-                        f"WHERE {filtros} "
-                        f"ORDER BY id ASC",
+                        f"SELECT {_COLS} FROM history WHERE {filtros} ORDER BY id ASC",
                         params,
                     )
                 )
-                return [self._row_to_message(r) for r in rows]
+                msgs = [self._row_to_message(r) for r in rows]
+        return _drop_orphan_tool_messages(msgs)
 
     async def load_full(self, agent_id: str) -> list[Message]:
         async with self._conn() as conn:
             await self._ensure_schema(conn)
             rows = await conn.execute_fetchall(
-                "SELECT role, content, created_at, channel, chat_id FROM history "
-                "WHERE agent_id = ? ORDER BY id ASC",
+                f"SELECT {_COLS} FROM history WHERE agent_id = ? ORDER BY id ASC",
                 (agent_id,),
             )
         return [self._row_to_message(r) for r in rows]
@@ -274,14 +341,18 @@ class SQLiteHistoryStore(IHistoryStore):
         if role:
             condiciones.append("role = ?")
             params.append(role)
+        else:
+            # Sin filtro de rol explícito ocultamos el plumbing de tool calls
+            # (mensajes role=tool de persist-tool-calls): una búsqueda de texto es
+            # para la conversación humana, no para el rastro de herramientas.
+            condiciones.append("role != ?")
+            params.append(Role.TOOL.value)
 
         where = " AND ".join(condiciones)
         async with self._conn() as conn:
             await self._ensure_schema(conn)
             rows = await conn.execute_fetchall(
-                f"SELECT role, content, created_at, channel, chat_id FROM history "
-                f"WHERE {where} "
-                f"ORDER BY id DESC LIMIT ?",
+                f"SELECT {_COLS} FROM history WHERE {where} ORDER BY id DESC LIMIT ?",
                 (*params, max(1, limit)),
             )
         # DESC en el SQL → más recientes primero (lo que se quiere en una búsqueda).
@@ -292,10 +363,7 @@ class SQLiteHistoryStore(IHistoryStore):
         agent_id: str,
         channels: list[str] | None = None,
     ) -> list[Message]:
-        base_sql = (
-            "SELECT role, content, created_at, channel, chat_id "
-            "FROM history WHERE agent_id = ? AND infused = 0"
-        )
+        base_sql = f"SELECT {_COLS} FROM history WHERE agent_id = ? AND infused = 0"
         params: list = [agent_id]
 
         # Filtro opcional por canal: solo si la lista tiene al menos un elemento.
@@ -495,10 +563,29 @@ class SQLiteHistoryStore(IHistoryStore):
             chat_id = row["chat_id"]
         except (KeyError, IndexError):
             chat_id = None
+        # Columnas de persist-tool-calls: NULL en filas viejas / mensajes de texto.
+        # Defensivo contra SELECTs internos que no las pidan (mismo criterio que
+        # channel/chat_id). ``tool_calls`` se deserializa de JSON a list[dict].
+        try:
+            tool_calls_raw = row["tool_calls"]
+        except (KeyError, IndexError):
+            tool_calls_raw = None
+        try:
+            tool_call_id = row["tool_call_id"]
+        except (KeyError, IndexError):
+            tool_call_id = None
+        tool_calls = None
+        if tool_calls_raw:
+            try:
+                tool_calls = json.loads(tool_calls_raw)
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("tool_calls corrupto en history (role=%s) — ignorado", row["role"])
         return Message(
             role=Role(row["role"]),
             content=row["content"],
             timestamp=datetime.fromisoformat(row["created_at"]),
             channel=channel,
             chat_id=chat_id,
+            tool_calls=tool_calls,
+            tool_call_id=tool_call_id,
         )

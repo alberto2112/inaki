@@ -166,6 +166,8 @@ def build_run_agent_settings(cfg: AgentConfig) -> RunAgentSettings:
         circuit_breaker_threshold=cfg.tools.circuit_breaker_threshold,
         request_delay_seconds=cfg.llm.request_delay_seconds,
         timestamp_channels=timestamp_channels,
+        persist_tool_calls=cfg.chat_history.persist_tool_calls,
+        persist_tool_result_max_chars=cfg.chat_history.persist_tool_result_max_chars,
         memory=build_memory_settings(cfg.memories),
     )
 
@@ -1458,9 +1460,7 @@ class AppContainer:
         # queue — comparten el dict de locks-por-scope (REQ-BGD-6).
         self._llm_dispatcher = LLMDispatcherAdapter(self.agents)
 
-        def _resolve_one_shot(
-            caller_id: str, target_id: str
-        ) -> RunAgentOneShotUseCase | None:
+        def _resolve_one_shot(caller_id: str, target_id: str) -> RunAgentOneShotUseCase | None:
             # Construye la instancia EFÍMERA del hijo contra el CALLER (hereda su config
             # vía inherit). Reemplaza el lookup del one-shot pre-built del sub (que corría
             # contra global). El path async ya carga `caller_agent_id` en cada BackgroundTask.

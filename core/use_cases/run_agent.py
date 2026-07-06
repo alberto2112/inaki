@@ -9,10 +9,13 @@ Flujo completo:
   5. Construir AgentContext y system prompt dinámico
   6. Llamar al LLM con historial + tools disponibles
   7. Si el LLM devuelve tool calls → ejecutar tools, añadir resultados, rellamar LLM
-  8. Persistir solo los mensajes user/assistant en historial
+  8. Persistir los mensajes user/assistant en historial (y, si el agente activa
+     ``chat_history.persist_tool_calls``, también el rastro de tool calls)
   9. Devolver respuesta final
 
-El historial que se guarda en fichero NO incluye mensajes de tipo tool ni tool_result.
+Por default el historial persistido NO incluye mensajes de tipo tool: solo se
+guardan con ``persist_tool_calls`` activo (ver nota de migración
+``persist-tool-calls`` en CLAUDE.md), y solo para el agente principal.
 """
 
 from __future__ import annotations
@@ -559,6 +562,11 @@ class RunAgentUseCase:
         recording_sink = (
             RecordingIntermediateSink(intermediate_sink) if intermediate_sink is not None else None
         )
+        # persist-tool-calls: acumulador del rastro de tool calls (assistant+tool_calls
+        # ↔ tool results). Lista viva solo cuando el flag está activo — None deja el
+        # loop en modo legacy (no acumula). Somos dueños de la lista, así que queda
+        # completa aun si el turno corta por ToolLoopMaxIterationsError.
+        tool_trace: list[Message] | None = [] if self._settings.persist_tool_calls else None
         try:
             response = await run_tool_loop(
                 llm=self._llm,
@@ -578,6 +586,7 @@ class RunAgentUseCase:
                 history_store=self._history,
                 scope=(agent_id, channel, chat_id),
                 initial_db_user_count=initial_db_user_count,
+                tool_trace=tool_trace,
             )
         except ToolLoopMaxIterationsError as e:
             response = e.last_response or (
@@ -594,7 +603,19 @@ class RunAgentUseCase:
             # orden en que el usuario los recibió en el canal. Mismo guard que
             # la respuesta final (ephemeral/skip_persist) — un turno de prueba
             # o que termina en __SKIP__ tampoco deja intermedios huérfanos.
-            if recording_sink is not None:
+            if tool_trace is not None:
+                # persist-tool-calls activo: el rastro estructurado (assistant+tool_calls
+                # ↔ tool results) YA lleva la narración en el content del assistant, así
+                # que persistimos ESTE trace y NO además recording_sink.messages (sería
+                # duplicar la misma narración). Los tool results se truncan al persistir.
+                for msg in tool_trace:
+                    await self._history.append(
+                        agent_id,
+                        self._truncate_tool_result(msg),
+                        channel=channel,
+                        chat_id=chat_id,
+                    )
+            elif recording_sink is not None:
                 for block in recording_sink.messages:
                     await self._history.append(
                         agent_id,
@@ -621,9 +642,31 @@ class RunAgentUseCase:
 
         return response
 
+    def _truncate_tool_result(self, message: Message) -> Message:
+        """Trunca el ``content`` de un tool result al persistirlo (persist-tool-calls).
+
+        Los mensajes que no son ``role=tool`` se devuelven intactos (el assistant
+        con tool_calls no se recorta: su narración es valiosa). El turno en curso
+        ya vio el result completo; solo la copia persistida se acota, para no
+        inflar el contexto de turnos futuros con volcados grandes (web_search, RAG).
+        ``persist_tool_result_max_chars <= 0`` desactiva la truncación.
+        """
+        max_chars = self._settings.persist_tool_result_max_chars
+        if message.role != Role.TOOL or max_chars <= 0 or len(message.content) <= max_chars:
+            return message
+        truncated = message.content[:max_chars] + "\n…[truncado]"
+        return message.model_copy(update={"content": truncated})
+
     async def get_history(self) -> list[Message]:
-        """Devuelve el historial activo del agente (sin archivados ni infused)."""
-        return await self._history.load(self._settings.agent_id)
+        """Devuelve el historial activo del agente (sin archivados ni infused).
+
+        Oculta el plumbing de tool calls (mensajes ``role=tool`` de
+        persist-tool-calls): esta vista es para consumo humano (REST/CLI), el
+        rastro de herramientas solo interesa al LLM. Los mensajes ``assistant``
+        con tool_calls sí se muestran — su narración es conversación legítima.
+        """
+        history = await self._history.load(self._settings.agent_id)
+        return [m for m in history if m.role != Role.TOOL]
 
     async def clear_history(
         self,

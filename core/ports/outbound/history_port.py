@@ -17,7 +17,9 @@ class IHistoryStore(ABC):
 
         Args:
             agent_id: Identificador del agente propietario del historial.
-            message: Mensaje a persistir (solo ``Role.USER`` y ``Role.ASSISTANT``).
+            message: Mensaje a persistir. Se aceptan ``Role.USER``, ``Role.ASSISTANT``
+                y ``Role.TOOL`` (este último para el rastro de tool calls del feature
+                persist-tool-calls); cualquier otro rol se ignora y retorna ``None``.
             channel: Canal de origen del mensaje (ej: ``"telegram"``, ``"cli"``).
                      Cadena vacía cuando el canal no aplica o no es relevante.
             chat_id: Identificador del chat dentro del canal (ej: ID de grupo Telegram).

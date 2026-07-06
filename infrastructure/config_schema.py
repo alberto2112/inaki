@@ -385,6 +385,22 @@ class ChatHistoryConfig(_ConfigBaseModel):
     merge_chats: bool = False  # False = aislar historial por (channel, chat_id);
     # True = compartir todo el historial del agente entre canales/chats
 
+    persist_tool_calls: bool = False
+    """Persistir el par assistant+tool_calls ↔ tool_results en el historial.
+
+    Default ``False`` (comportamiento legacy: el rastro de herramientas vive solo
+    en el tool loop del turno y se descarta). Con ``True``, el agente principal
+    recupera memoria episódica de sus propias acciones entre turnos (ej. no
+    olvida en qué path escribió con ``write_file``). Solo afecta al agente
+    principal; los subagentes one-shot quedan afuera por diseño. Ver la nota de
+    migración ``persist-tool-calls`` en ``CLAUDE.md``."""
+
+    persist_tool_result_max_chars: int = 2000
+    """Truncación (en chars) de cada tool result al persistirlo con
+    ``persist_tool_calls``. Acota el costo de contexto y disco cuando una tool
+    devuelve un volcado grande (web_search, RAG). ``0`` = sin truncar. El turno
+    en curso siempre ve el result completo; solo la copia persistida se recorta."""
+
 
 class ChannelsGlobalConfig(_ConfigBaseModel):
     """Flags transversales de presentación al usuario en cualquier canal.

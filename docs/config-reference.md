@@ -113,6 +113,8 @@
 | `db_filename` | `str` | `'data/history.db'` |  |  |
 | `max_messages` | `int` | `0` |  |  |
 | `merge_chats` | `bool` | `False` |  |  |
+| `persist_tool_calls` | `bool` | `False` |  | Persistir el par assistant+tool_calls ↔ tool_results en el historial. |
+| `persist_tool_result_max_chars` | `int` | `2000` |  | Truncación (en chars) de cada tool result al persistirlo con |
 
 ### `ChannelsGlobalConfig`
 

@@ -153,6 +153,69 @@ Secrets are YAML-only (no env vars). `*.secrets.yaml` files are gitignored.
 
 ## Migration Notes
 
+### `persist-tool-calls`
+
+Por diseño histórico, el rastro de tool calls de un turno (el mensaje
+`assistant` con `tool_calls` + los `tool` results) vivía SOLO en el
+`working_messages` del tool loop y se **descartaba** al terminar — a `history.db`
+llegaban únicamente `user`/`assistant` de texto. Consecuencia real reportada por
+el usuario: el agente escribía una investigación con `write_file`, y un par de
+turnos después **no tenía registro de en qué path la guardó** → recomenzaba de
+cero. Se generaliza: el agente era amnésico de TODA su actividad con
+herramientas entre turnos (web_search, read_file, RAG, etc.).
+
+**Fix**: flag **global** `chat_history.persist_tool_calls` (default `False`).
+Con `True`, el agente principal persiste el par protocolar completo
+(assistant+tool_calls ↔ tool results) y recupera **memoria episódica de sus
+acciones**. Descartado el enfoque original (persistir la cadena de pensamiento):
+el problema no era el reasoning sino el tool result perdido. `thinking` queda
+FUERA (Anthropic exige `signature` para reconstruirlo del historial y el dominio
+no la modela).
+
+**Por qué global y no per-tool**: el protocolo (OpenAI y Anthropic) exige que
+cada `tool_call_id` de un `assistant` tenga su `tool` result emparejado, o el
+provider tira **400**. La unidad atómica es el GRUPO (assistant+tool_calls +
+TODOS sus results): no se puede persistir uno y descartar otro. Un flag per-tool
+rompería el pairing en batches mixtos. El costo se acota con truncación, no con
+selección per-tool.
+
+**Componentes**:
+- `chat_history.persist_tool_calls: bool` y `persist_tool_result_max_chars: int`
+  (default 2000; `0` = sin truncar) → `RunAgentSettings` (VO del use case, NO del
+  store: decidir/truncar es semántica del turno) vía `build_run_agent_settings`.
+- `history.db`: columnas nuevas `tool_calls TEXT` (JSON), `tool_call_id TEXT`.
+  Migración **en caliente** idempotente (`_ensure_history_columns`, ALTER TABLE
+  ADD COLUMN vía `PRAGMA table_info`, patrón de `_ensure_agent_state_schema`).
+  **Sin borrar la DB**: filas viejas quedan con `NULL` (mensajes de texto).
+- `append` acepta `Role.TOOL` (además de USER/ASSISTANT); `SYSTEM`/`TOOL_RESULT`
+  siguen ignorados.
+- **Windowing group-aware** (`_drop_orphan_tool_messages`, aplicado en `load`):
+  cuando la ventana `max_messages` (o un `trim`) deja un `tool` result sin su
+  `assistant`, ese huérfano se descarta ANTES de mandarlo al provider — es LA
+  garantía contra el 400. Escaneo lineal que cubre huérfanos al inicio y en el
+  medio. No-op cuando no hay mensajes `tool` (flag off). `trim` no se tocó: si
+  deja un huérfano, `load` lo filtra.
+- `search` oculta `role=tool` salvo que se pida `role="tool"` explícito; y
+  `RunAgentUseCase.get_history` (vista humana REST/CLI) filtra los `tool`.
+- **Tool loop**: `run_tool_loop` recibe un acumulador opcional `tool_trace`
+  (mismo patrón que `RecordingIntermediateSink`); el caller (`RunAgentUseCase`)
+  es dueño de la lista y la persiste tras el loop (queda completa aun si corta
+  por `ToolLoopMaxIterationsError`). El one-shot (subagentes) pasa `None` → sin
+  persistencia, por eso el feature es **solo del agente principal, gratis**.
+
+**Reconciliación con `intermediate-persist`**: el mensaje assistant+tool_calls YA
+lleva la narración en su `content`, así que con el flag ON se persiste el
+`tool_trace` y NO además `recording_sink.messages` (evita duplicar la narración);
+con el flag OFF, comportamiento legacy intacto (narración como texto plano).
+
+**Truncación**: `persist_tool_result_max_chars` recorta SOLO la copia persistida
+del tool result (marcador `…[truncado]`); el turno en curso siempre ve el output
+completo. Acota contexto de turnos futuros y disco (web_search/RAG dumps).
+
+**Sin cambios de config obligatorios.** Default `False` → comportamiento idéntico
+al actual. Backward-compat total. NUNCA volver al enfoque per-tool ni persistir
+`thinking` sin resolver antes el problema de la `signature` de Anthropic.
+
 ### `attachment-grammar`
 
 Los 4 dialectos ad-hoc de media en `history.db` (`__PHOTO__ <caption>`,

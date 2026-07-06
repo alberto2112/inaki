@@ -311,6 +311,18 @@ chat_history:
   db_filename: "data/history.db"  # SQLite history file (relative to ~/.inaki/)
                                  # separate from inaki.db (which uses sqlite-vec)
   max_messages: 21               # Last N messages injected into the LLM (0 = no limit)
+  persist_tool_calls: false      # Persist the tool-call trace (assistant+tool_calls ↔
+                                 # tool results) in history. Default false = legacy
+                                 # (the trace lives only in the turn's tool loop and is
+                                 # discarded). true = the MAIN agent gains episodic memory
+                                 # of its own actions across turns (e.g. it no longer
+                                 # forgets which path it wrote to with write_file).
+                                 # Sub-agents (one-shot delegation) are excluded by design.
+                                 # See CLAUDE.md → Migration Notes → persist-tool-calls.
+  persist_tool_result_max_chars: 2000  # Truncation (chars) of each tool result when
+                                 # persisted with persist_tool_calls. Caps context/disk
+                                 # cost for large dumps (web_search, RAG). 0 = no truncation.
+                                 # The in-flight turn always sees the full result.
 
 scheduler:
   enabled: true                  # Starts the SchedulerService in daemon mode

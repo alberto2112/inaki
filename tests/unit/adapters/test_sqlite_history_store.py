@@ -58,10 +58,11 @@ async def test_append_without_timestamp_assigns_utc_now(history_store):
 
 
 # SC-03
-async def test_append_ignores_non_user_assistant_roles(history_store):
-    await history_store.append("agent1", Message(role=Role.SYSTEM, content="system msg"))
-    await history_store.append("agent1", Message(role=Role.TOOL, content="tool output"))
-    await history_store.append("agent1", Message(role=Role.TOOL_RESULT, content="result"))
+async def test_append_ignores_system_and_tool_result_roles(history_store):
+    # SYSTEM y TOOL_RESULT NUNCA se persisten. TOOL sí (persist-tool-calls), pero
+    # se cubre en tests dedicados más abajo. Un id None confirma que no se insertó.
+    assert await history_store.append("agent1", Message(role=Role.SYSTEM, content="sys")) is None
+    assert await history_store.append("agent1", Message(role=Role.TOOL_RESULT, content="r")) is None
 
     messages = await history_store.load("agent1")
     assert messages == []
@@ -546,21 +547,29 @@ async def test_load_state_with_corrupt_json_returns_empty(history_store):
 async def _seed_search_corpus(store: SQLiteHistoryStore) -> None:
     """Siembra mensajes de dos agentes y dos chats para los tests de search."""
     await store.append(
-        "agent1", Message(role=Role.USER, content="Cuánto cuesta el dólar hoy"),
-        channel="telegram", chat_id="100",
+        "agent1",
+        Message(role=Role.USER, content="Cuánto cuesta el dólar hoy"),
+        channel="telegram",
+        chat_id="100",
     )
     await store.append(
-        "agent1", Message(role=Role.ASSISTANT, content="El dólar está a 1000 pesos"),
-        channel="telegram", chat_id="100",
+        "agent1",
+        Message(role=Role.ASSISTANT, content="El dólar está a 1000 pesos"),
+        channel="telegram",
+        chat_id="100",
     )
     await store.append(
-        "agent1", Message(role=Role.USER, content="Y el euro a cuánto está"),
-        channel="telegram", chat_id="200",
+        "agent1",
+        Message(role=Role.USER, content="Y el euro a cuánto está"),
+        channel="telegram",
+        chat_id="200",
     )
     # Otro agente, mismo chat_id 100 — NO debe filtrarse al buscar agent1.
     await store.append(
-        "agent2", Message(role=Role.USER, content="dólar secreto de otro agente"),
-        channel="telegram", chat_id="100",
+        "agent2",
+        Message(role=Role.USER, content="dólar secreto de otro agente"),
+        channel="telegram",
+        chat_id="100",
     )
 
 
@@ -616,3 +625,121 @@ async def test_search_escapa_comodines_like(history_store):
     await history_store.append("agent1", Message(role=Role.USER, content="texto sin signos"))
     res = await history_store.search("agent1", query="50%")
     assert [m.content for m in res] == ["subió 50% ayer"]
+
+
+# ── persist-tool-calls ────────────────────────────────────────────────────────
+
+_TC = [{"id": "call_1", "type": "function", "function": {"name": "write_file", "arguments": "{}"}}]
+
+
+async def _seed_tool_group(store, agent="agent1", **scope):
+    """Persiste un grupo completo: user → assistant+tool_calls → tool result."""
+    await store.append(agent, Message(role=Role.USER, content="guardá esto"), **scope)
+    await store.append(
+        agent,
+        Message(role=Role.ASSISTANT, content="ok, escribo", tool_calls=_TC),
+        **scope,
+    )
+    await store.append(
+        agent,
+        Message(role=Role.TOOL, content='{"path": "/x/research.md"}', tool_call_id="call_1"),
+        **scope,
+    )
+
+
+async def test_tool_group_persiste_y_reconstruye(history_store):
+    """El par assistant+tool_calls ↔ tool result se persiste y se reconstruye igual."""
+    await _seed_tool_group(history_store)
+    await history_store.append("agent1", Message(role=Role.ASSISTANT, content="listo, quedó en /x"))
+
+    msgs = await history_store.load("agent1")
+    assert [m.role for m in msgs] == [Role.USER, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT]
+    assistant_tc = msgs[1]
+    assert assistant_tc.tool_calls == _TC
+    tool_msg = msgs[2]
+    assert tool_msg.role == Role.TOOL
+    assert tool_msg.tool_call_id == "call_1"
+    assert "/x/research.md" in tool_msg.content
+
+
+async def test_load_descarta_tool_huerfano_al_recortar_ventana(tmp_path):
+    """Con max_messages chico, un tool result cuyo assistant quedó fuera de la
+    ventana se descarta (previene el 400 por pairing roto)."""
+    cfg = HistoryStoreSettings(db_filename=str(tmp_path / "h.db"), max_messages=2)
+    store = SQLiteHistoryStore(cfg)
+    await _seed_tool_group(store)  # user(1), assistant+tc(2), tool(3)
+    await store.append("agent1", Message(role=Role.ASSISTANT, content="final"))  # (4)
+
+    # Ventana = últimos 2 por id → [tool(3), assistant_final(4)]; el tool es huérfano.
+    msgs = await store.load("agent1")
+    assert [m.role for m in msgs] == [Role.ASSISTANT]
+    assert msgs[0].content == "final"
+
+
+async def test_search_oculta_tool_por_default_pero_lo_incluye_con_rol(history_store):
+    await _seed_tool_group(history_store)
+    # Sin rol explícito: el plumbing de tools no aparece.
+    default = await history_store.search("agent1")
+    assert all(m.role != Role.TOOL for m in default)
+    # Pidiendo role='tool' explícito: sí aparece.
+    solo_tools = await history_store.search("agent1", role="tool")
+    assert solo_tools and all(m.role == Role.TOOL for m in solo_tools)
+
+
+async def test_migracion_agrega_columnas_a_db_legacy(tmp_path):
+    """Una DB con el schema viejo (sin tool_calls/tool_call_id) se migra en caliente
+    al abrirla, sin perder las filas existentes."""
+    import aiosqlite
+
+    db_path = str(tmp_path / "legacy.db")
+    async with aiosqlite.connect(db_path) as conn:
+        await conn.execute(
+            "CREATE TABLE history (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id TEXT NOT NULL, "
+            "role TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL, "
+            "infused INTEGER NOT NULL DEFAULT 0, channel TEXT NOT NULL DEFAULT '', "
+            "chat_id TEXT NOT NULL DEFAULT '')"
+        )
+        await conn.execute(
+            "INSERT INTO history (agent_id, role, content, created_at) VALUES (?, ?, ?, ?)",
+            ("agent1", "user", "mensaje viejo", "2026-01-01T00:00:00+00:00"),
+        )
+        await conn.commit()
+
+    store = SQLiteHistoryStore(HistoryStoreSettings(db_filename=db_path))
+    # La fila vieja sigue accesible (tool_calls/tool_call_id = None).
+    msgs = await store.load("agent1")
+    assert [m.content for m in msgs] == ["mensaje viejo"]
+    assert msgs[0].tool_calls is None
+    # Y ahora se puede persistir un grupo de tools sobre la DB migrada.
+    await _seed_tool_group(store)
+    msgs2 = await store.load("agent1")
+    assert any(m.role == Role.TOOL for m in msgs2)
+
+
+def test_drop_orphan_tool_messages_unit():
+    """Unit directo del walk-filter: huérfanos al inicio y en el medio se caen;
+    los grupos completos quedan intactos."""
+    from adapters.outbound.history.sqlite_history_store import _drop_orphan_tool_messages
+
+    def tool(txt):
+        return Message(role=Role.TOOL, content=txt, tool_call_id="c")
+
+    def a_tc(txt):
+        return Message(role=Role.ASSISTANT, content=txt, tool_calls=_TC)
+
+    def user(txt):
+        return Message(role=Role.USER, content=txt)
+
+    def a(txt):
+        return Message(role=Role.ASSISTANT, content=txt)
+
+    seq = [
+        tool("huérfano-inicio"),  # sin assistant previo → cae
+        user("u1"),
+        a_tc("abre grupo"),
+        tool("r1"),  # válido
+        a("final"),  # cierra grupo
+        tool("huérfano-medio"),  # grupo cerrado → cae
+    ]
+    out = _drop_orphan_tool_messages(seq)
+    assert [m.content for m in out] == ["u1", "abre grupo", "r1", "final"]

@@ -94,6 +94,7 @@ async def run_tool_loop(
     history_store: IHistoryStore | None = None,
     scope: Scope | None = None,
     initial_db_user_count: int | None = None,
+    tool_trace: list[Message] | None = None,
 ) -> str:
     """
     Ejecuta el loop LLM + tool-dispatch hasta obtener respuesta final o
@@ -128,6 +129,15 @@ async def run_tool_loop(
             drain re-introduce mensajes que ya están dentro del bloque coalesced,
             produciendo duplicación visible al LLM. Default ``None`` →
             fallback al conteo desde ``messages`` (correcto cuando no hay coalesce).
+        tool_trace: Acumulador opcional (feature persist-tool-calls). Si se provee
+            una lista, el loop le appendea —en orden— cada mensaje ``assistant``
+            con tool_calls y cada mensaje ``tool`` (resultado o circuit-open) que
+            genera durante el turno. El caller (``RunAgentUseCase``) es dueño de la
+            lista y la persiste tras el loop, así que queda completa aun si el turno
+            corta por ``ToolLoopMaxIterationsError`` (mismo patrón que
+            ``RecordingIntermediateSink``). Default ``None`` → no se acumula nada
+            (subagentes one-shot y modo legacy). NO incluye los mensajes ``user``
+            drenados in-flight (esos ya están persistidos por el inbound adapter).
 
     Returns:
         El texto de respuesta final del LLM (sin tool calls).
@@ -229,14 +239,15 @@ async def run_tool_loop(
         for block in response.text_blocks:
             if block.strip():
                 await sink.emit(block)
-        working_messages.append(
-            Message(
-                role=Role.ASSISTANT,
-                content=response.text,
-                tool_calls=response.tool_calls,
-                thinking=response.thinking,
-            )
+        assistant_msg = Message(
+            role=Role.ASSISTANT,
+            content=response.text,
+            tool_calls=response.tool_calls,
+            thinking=response.thinking,
         )
+        working_messages.append(assistant_msg)
+        if tool_trace is not None:
+            tool_trace.append(assistant_msg)
 
         for tc in response.tool_calls:
             tc_id = tc.get("id", "")
@@ -249,28 +260,30 @@ async def run_tool_loop(
 
             if tool_name in tripped:
                 logger.warning("Circuit breaker abierto para '%s' — llamada bloqueada", tool_name)
-                working_messages.append(
-                    Message(
-                        role=Role.TOOL,
-                        content=(
-                            f"CIRCUIT OPEN — esta tool ya falló "
-                            f"{circuit_breaker_threshold} vez/veces en este turno. "
-                            "NO la vuelvas a llamar. Respondé al usuario con lo que "
-                            "sabés, o pedile ayuda para resolver el bloqueo."
-                        ),
-                        tool_call_id=tc_id,
-                    )
+                circuit_msg = Message(
+                    role=Role.TOOL,
+                    content=(
+                        f"CIRCUIT OPEN — esta tool ya falló "
+                        f"{circuit_breaker_threshold} vez/veces en este turno. "
+                        "NO la vuelvas a llamar. Respondé al usuario con lo que "
+                        "sabés, o pedile ayuda para resolver el bloqueo."
+                    ),
+                    tool_call_id=tc_id,
                 )
+                working_messages.append(circuit_msg)
+                if tool_trace is not None:
+                    tool_trace.append(circuit_msg)
                 continue
 
             result = await tools.execute(tool_name, **kwargs)
-            working_messages.append(
-                Message(
-                    role=Role.TOOL,
-                    content=result.output,
-                    tool_call_id=tc_id,
-                )
+            result_msg = Message(
+                role=Role.TOOL,
+                content=result.output,
+                tool_call_id=tc_id,
             )
+            working_messages.append(result_msg)
+            if tool_trace is not None:
+                tool_trace.append(result_msg)
             logger.info(
                 "Tool '%s' ejecutada: success=%s, kwargs=%.200s, output=%.200s",
                 tool_name,

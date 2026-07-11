@@ -1397,6 +1397,7 @@ class AppContainer:
         # desincronizado del orden real de ejecución.
         self._init_shared_state(config_dir)
         self._build_agent_containers()
+        self._build_channel_router()
         self._build_background_delegation_queue()
         self._wire_all_delegation()
         self._build_consolidation()
@@ -1450,6 +1451,30 @@ class AppContainer:
             except Exception as exc:
                 logger.error("Error creando container para agente '%s': %s", agent_cfg.id, exc)
 
+    def _build_channel_router(self) -> None:
+        # Router de canales — construido ANTES que la cola de background-delegation
+        # porque lo comparten dos consumidores: el scheduler (channel_send /
+        # agent_send) y la cola (entrega de la respuesta del padre a un [bg-N],
+        # FIX bg-result-delivery). Solo necesita config + el resolver lazy de
+        # bots (los bots de Telegram se registran después, al arrancar el daemon
+        # — el sink los resuelve en tiempo de envío, no acá).
+        scheduler_cfg = self.global_config.scheduler
+        telegram_sink = TelegramSink(get_telegram_bot=self._get_telegram_bot)
+        sink_factory = SinkFactory(get_telegram_bot=self._get_telegram_bot)
+        # Los sinks nativos son los canales conversacionales vivos: un mensaje
+        # que resuelve a uno de estos llegó a una conversación real y se persiste
+        # en historial; uno que cae al fallback (archivo) no.
+        self._native_sinks: dict[str, IOutboundSink] = {"telegram": telegram_sink}
+        self._channel_router = ChannelRouter(
+            native_sinks=self._native_sinks,
+            fallback_config=ChannelFallbackSettings(
+                default=scheduler_cfg.channel_fallback.default,
+                overrides=dict(scheduler_cfg.channel_fallback.overrides),
+            ),
+            sink_factory=sink_factory.from_target,
+            hardcoded_fallback=f"file://{scheduler_cfg.fallback_log_filename}",
+        )
+
     def _build_background_delegation_queue(self) -> None:
         # Dispatcher + cola de background-delegation.
         # Se construyen AHORA porque la cola necesita el dispatcher (para inyectar
@@ -1476,6 +1501,8 @@ class AppContainer:
             max_iterations_per_sub=self.global_config.delegation.max_iterations_per_sub,
             timeout_seconds=self.global_config.delegation.timeout_seconds,
             max_concurrent=3,
+            result_sender=self._channel_router,
+            conversational_channels=set(self._native_sinks),
         )
 
     def _wire_all_delegation(self) -> None:
@@ -1544,33 +1571,20 @@ class AppContainer:
         self._scheduler_reconciler = SchedulerReconciler(
             self.scheduler_repo, self.global_config.user.timezone
         )
-        telegram_sink = TelegramSink(get_telegram_bot=self._get_telegram_bot)
-        sink_factory = SinkFactory(get_telegram_bot=self._get_telegram_bot)
-        # Los sinks nativos son los canales conversacionales vivos: un channel_send
-        # que resuelve a uno de estos llegó a una conversación real y se persiste en
-        # historial; uno que cae al fallback (archivo) no.
-        native_sinks: dict[str, IOutboundSink] = {"telegram": telegram_sink}
-        channel_router = ChannelRouter(
-            native_sinks=native_sinks,
-            fallback_config=ChannelFallbackSettings(
-                default=scheduler_cfg.channel_fallback.default,
-                overrides=dict(scheduler_cfg.channel_fallback.overrides),
-            ),
-            sink_factory=sink_factory.from_target,
-            hardcoded_fallback=f"file://{scheduler_cfg.fallback_log_filename}",
-        )
-        # Reusamos la instancia ya construida en _build_background_delegation_queue para que la cola de
-        # background-delegation y el scheduler compartan el dict de locks-por-scope
-        # (REQ-BGD-6). Sin esto, race entre un bg-result y un scheduled trigger
-        # sobre el mismo scope volvería a estar mal serializada.
+        # Reusamos las instancias ya construidas en _build_channel_router y
+        # _build_background_delegation_queue: el router es compartido por el
+        # scheduler y la cola de background-delegation, y el dispatcher único
+        # garantiza que ambos compartan el dict de locks-por-scope (REQ-BGD-6).
+        # Sin esto, race entre un bg-result y un scheduled trigger sobre el
+        # mismo scope volvería a estar mal serializada.
         dispatch_ports = SchedulerDispatchPorts(
-            channel_sender=channel_router,
+            channel_sender=self._channel_router,
             llm_dispatcher=self._llm_dispatcher,
             consolidator=ConsolidationDispatchAdapter(self.consolidate_all_agents),
             reconciler=ReconcileDispatchAdapter(self._enabled_reconcilers),
             http_caller=HttpCallerAdapter(),
             shell_executor=ShellExecAdapter(),
-            history_recorder=ChannelHistoryRecorderAdapter(self.agents, set(native_sinks)),
+            history_recorder=ChannelHistoryRecorderAdapter(self.agents, set(self._native_sinks)),
         )
         self.scheduler_service = SchedulerService(
             repo=self.scheduler_repo,

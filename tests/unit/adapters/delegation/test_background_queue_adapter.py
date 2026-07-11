@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 from adapters.outbound.delegation.background_queue_adapter import (
     BackgroundDelegationQueueAdapter,
 )
+from core.domain.skip_marker import SKIP_MARKER
 
 
 # ---------------------------------------------------------------------------
@@ -30,6 +31,8 @@ def _build_adapter(
     max_concurrent: int = 3,
     timeout_seconds: int = 30,
     max_iterations: int = 5,
+    result_sender: MagicMock | None = None,
+    conversational_channels: frozenset[str] = frozenset(),
 ) -> tuple[BackgroundDelegationQueueAdapter, MagicMock]:
     """Construye un adapter con dispatcher mockeado.
 
@@ -50,8 +53,18 @@ def _build_adapter(
         max_iterations_per_sub=max_iterations,
         timeout_seconds=timeout_seconds,
         max_concurrent=max_concurrent,
+        result_sender=result_sender,
+        conversational_channels=conversational_channels,
     )
     return adapter, dispatcher
+
+
+def _build_sender(*, sink: object | None = None) -> MagicMock:
+    """Sender mock que satisface ``IChannelSender`` estructuralmente."""
+    sender = MagicMock()
+    sender.send_message = AsyncMock()
+    sender.build_intermediate_sink = MagicMock(return_value=sink)
+    return sender
 
 
 # ---------------------------------------------------------------------------
@@ -369,8 +382,10 @@ class TestHappyPathDispatch:
         dispatcher.dispatch.assert_awaited_once_with(
             agent_id="inaki",
             prompt=f"[{task_id}] Saldo $5.420",
+            intermediate_sink=None,  # sin sender → sin live sink
             channel="telegram",
             chat_id="42",
+            skip_marker=SKIP_MARKER,
         )
 
     async def test_dispatch_propaga_channel_y_chat_id_originales(self) -> None:
@@ -560,4 +575,131 @@ class TestErrorPath:
         await asyncio.sleep(0.05)
         await adapter.stop()
 
+        assert task_id not in adapter._tasks
+
+
+# ---------------------------------------------------------------------------
+# 2.6 — FIX bg-result-delivery: la respuesta del padre llega al canal
+# ---------------------------------------------------------------------------
+
+
+async def _enqueue_and_run(
+    adapter: BackgroundDelegationQueueAdapter,
+    *,
+    channel: str = "telegram",
+    chat_id: str = "42",
+) -> str:
+    """Encola una task, deja correr el consumer y detiene el adapter."""
+    await adapter.start()
+    task_id = await adapter.enqueue(
+        caller_agent_id="inaki",
+        target_agent_id="r",
+        prompt="investigá X",
+        system_prompt=None,
+        channel=channel,
+        chat_id=chat_id,
+    )
+    await asyncio.sleep(0.05)
+    await adapter.stop()
+    return task_id
+
+
+class TestResultDelivery:
+    async def test_respuesta_del_padre_se_envia_al_canal_original(self) -> None:
+        """FIX bg-result-delivery: el return del dispatch (la respuesta digerida
+        del padre) se entrega al ``channel:chat_id`` original — antes se
+        descartaba y el usuario nunca veía el anuncio."""
+        sender = _build_sender()
+        adapter, dispatcher = _build_adapter(
+            one_shot_for={"r": _one_shot_returning("hallazgos crudos")},
+            result_sender=sender,
+            conversational_channels=frozenset({"telegram"}),
+        )
+        dispatcher.dispatch.return_value = "Listo: el informe quedó en estudios/informe.md"
+
+        task_id = await _enqueue_and_run(adapter)
+
+        sender.send_message.assert_awaited_once_with(
+            "telegram:42", "Listo: el informe quedó en estudios/informe.md"
+        )
+        assert task_id not in adapter._tasks
+
+    async def test_skip_response_no_se_envia(self) -> None:
+        """El padre puede optar por silencio deliberado: una respuesta __SKIP__
+        (aun con preámbulo, detección tolerante) no se entrega al canal."""
+        sender = _build_sender()
+        adapter, dispatcher = _build_adapter(
+            one_shot_for={"r": _one_shot_returning("ok")},
+            result_sender=sender,
+            conversational_channels=frozenset({"telegram"}),
+        )
+        dispatcher.dispatch.return_value = "Entendido, no aviso. __SKIP__"
+
+        task_id = await _enqueue_and_run(adapter)
+
+        sender.send_message.assert_not_called()
+        assert task_id not in adapter._tasks  # el turno SÍ se dispatchó y purgó
+
+    async def test_respuesta_vacia_no_se_envia(self) -> None:
+        sender = _build_sender()
+        adapter, dispatcher = _build_adapter(
+            one_shot_for={"r": _one_shot_returning("ok")},
+            result_sender=sender,
+            conversational_channels=frozenset({"telegram"}),
+        )
+        dispatcher.dispatch.return_value = "   "
+
+        await _enqueue_and_run(adapter)
+
+        sender.send_message.assert_not_called()
+
+    async def test_canal_no_conversacional_no_envia(self) -> None:
+        """Scope de origen CLI/REST (canal fuera de los sinks nativos): el
+        dispatch corre igual (historial) pero no hay entrega a canal."""
+        sender = _build_sender()
+        adapter, dispatcher = _build_adapter(
+            one_shot_for={"r": _one_shot_returning("ok")},
+            result_sender=sender,
+            conversational_channels=frozenset({"telegram"}),
+        )
+        dispatcher.dispatch.return_value = "respuesta"
+
+        await _enqueue_and_run(adapter, channel="cli", chat_id="local")
+
+        dispatcher.dispatch.assert_awaited_once()
+        sender.send_message.assert_not_called()
+        sender.build_intermediate_sink.assert_not_called()
+
+    async def test_live_sink_se_pasa_al_dispatch_en_canal_conversacional(self) -> None:
+        """La narración intermedia del turno fluye en vivo por el sink del
+        sender (mismo patrón que agent_send en el scheduler)."""
+        sink_sentinel = object()
+        sender = _build_sender(sink=sink_sentinel)
+        adapter, dispatcher = _build_adapter(
+            one_shot_for={"r": _one_shot_returning("ok")},
+            result_sender=sender,
+            conversational_channels=frozenset({"telegram"}),
+        )
+
+        await _enqueue_and_run(adapter)
+
+        sender.build_intermediate_sink.assert_called_once_with("telegram:42")
+        assert dispatcher.dispatch.await_args.kwargs["intermediate_sink"] is sink_sentinel
+
+    async def test_fallo_del_send_no_bloquea_la_purga(self) -> None:
+        """La entrega es best-effort: si el send falla, la respuesta ya quedó en
+        el historial — la task se purga igual (reintentar re-correría el turno
+        del LLM y duplicaría historial)."""
+        sender = _build_sender()
+        sender.send_message.side_effect = RuntimeError("telegram down")
+        adapter, dispatcher = _build_adapter(
+            one_shot_for={"r": _one_shot_returning("ok")},
+            result_sender=sender,
+            conversational_channels=frozenset({"telegram"}),
+        )
+        dispatcher.dispatch.return_value = "respuesta"
+
+        task_id = await _enqueue_and_run(adapter)
+
+        dispatcher.dispatch.assert_awaited_once()  # sin reintento del turno
         assert task_id not in adapter._tasks

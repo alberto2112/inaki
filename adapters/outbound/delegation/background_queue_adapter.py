@@ -9,6 +9,16 @@ original via ``ILLMDispatcher.dispatch`` con el marker ``[bg-N] ...``
 éxito (con reintentos); si no se pudo entregar, queda visible en el snapshot
 para no perderse en silencio.
 
+FIX bg-result-delivery: el dispatch corre un turno completo del agente padre,
+pero su valor de retorno (la respuesta digerida del padre) se DESCARTABA — se
+persistía en el historial y jamás llegaba al canal, así que el usuario esperaba
+un anuncio que nunca veía. Ahora, cuando el scope original es un canal
+conversacional vivo (``conversational_channels``), la respuesta se entrega vía
+``result_sender`` al mismo ``channel:chat_id``, la narración intermedia fluye
+en vivo por un ``IIntermediateSink`` del sender (mismo patrón que ``agent_send``
+en el scheduler), y el turno recibe ``skip_marker`` para que el LLM pueda optar
+por silencio deliberado respondiendo ``__SKIP__``.
+
 El adapter es 100% in-memory (REQ-BGD-8): no persiste estado; en restart del
 daemon las tasks in-flight se pierden.
 """
@@ -23,9 +33,11 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from core.domain.entities.background_task import BackgroundTask, BackgroundTaskView
+from core.domain.skip_marker import SKIP_MARKER, is_skip_response
 
 if TYPE_CHECKING:
     from core.ports.outbound.llm_dispatcher_port import ILLMDispatcher
+    from core.ports.outbound.scheduler_dispatch_port import IChannelSender
     from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 
 logger = logging.getLogger(__name__)
@@ -48,11 +60,17 @@ class BackgroundDelegationQueueAdapter:
         max_iterations_per_sub: int,
         timeout_seconds: int,
         max_concurrent: int = 3,
+        result_sender: "IChannelSender | None" = None,
+        conversational_channels: set[str] | frozenset[str] = frozenset(),
     ) -> None:
         self._dispatcher = dispatcher
         self._one_shot_resolver = one_shot_resolver
         self._max_iter = max_iterations_per_sub
         self._timeout = timeout_seconds
+        # Sin sender no hay entrega al canal (modo headless: tests / instancias
+        # sin canales conversacionales). Producción siempre inyecta el router.
+        self._result_sender = result_sender
+        self._conversational = conversational_channels
         self._tasks: dict[str, BackgroundTask] = {}
         self._queue: asyncio.Queue[BackgroundTask] = asyncio.Queue()
         self._semaphore = asyncio.Semaphore(max_concurrent)
@@ -176,23 +194,37 @@ class BackgroundDelegationQueueAdapter:
                 )
 
     async def _dispatch_result(self, task: BackgroundTask, content: str) -> bool:
-        """Inyecta ``content`` en el scope original con reintentos.
+        """Inyecta ``content`` en el scope original con reintentos y entrega la
+        respuesta del padre al canal (FIX bg-result-delivery).
 
         Devuelve ``True`` si algún intento tuvo éxito, ``False`` si todos
         fallaron. El dispatch corre un turno completo del agente padre (llamada
         al LLM), así que la mayoría de los fallos son transitorios (red, timeout
         del provider) — un puñado de reintentos con backoff corto los cubre sin
         sobreingeniar.
+
+        El ``skip_marker`` le permite al padre optar por silencio deliberado
+        (``__SKIP__``): en ese caso ``execute()`` ya descartó la persistencia y
+        acá no se envía nada. El ``live_sink`` propaga la narración intermedia
+        del turno (texto junto a tool_calls) al canal en vivo, igual que hace el
+        scheduler en ``agent_send``.
         """
+        target = self._conversational_target(task)
+        live_sink = (
+            self._result_sender.build_intermediate_sink(target)
+            if self._result_sender is not None and target is not None
+            else None
+        )
         for intento in range(1, _DISPATCH_ATTEMPTS + 1):
             try:
-                await self._dispatcher.dispatch(
+                response = await self._dispatcher.dispatch(
                     agent_id=task.caller_agent_id,
                     prompt=content,
+                    intermediate_sink=live_sink,
                     channel=task.channel,
                     chat_id=task.chat_id,
+                    skip_marker=SKIP_MARKER,
                 )
-                return True
             except Exception as dispatch_exc:  # noqa: BLE001
                 logger.warning(
                     "background-delegation %s: dispatch intento %d/%d falló: %s",
@@ -203,4 +235,44 @@ class BackgroundDelegationQueueAdapter:
                 )
                 if intento < _DISPATCH_ATTEMPTS:
                     await asyncio.sleep(_DISPATCH_RETRY_DELAY * intento)
+                continue
+            await self._deliver_response(task, target, response)
+            return True
         return False
+
+    def _conversational_target(self, task: BackgroundTask) -> str | None:
+        """Target ``channel:chat_id`` si el scope original es un canal
+        conversacional vivo; ``None`` si no (CLI/REST sin canal, tests)."""
+        if task.channel in self._conversational and task.chat_id:
+            return f"{task.channel}:{task.chat_id}"
+        return None
+
+    async def _deliver_response(
+        self, task: BackgroundTask, target: str | None, response: str
+    ) -> None:
+        """Entrega la respuesta del padre al canal original, best-effort.
+
+        Un fallo acá NO marca el dispatch como fallido: reintentar re-correría
+        el turno completo del LLM y duplicaría el historial. La respuesta ya
+        está persistida — se loguea el error y el usuario la tiene en el
+        historial aunque no le haya llegado el mensaje.
+        """
+        if self._result_sender is None or target is None:
+            return
+        if not response.strip() or is_skip_response(response):
+            logger.info(
+                "background-delegation %s: el agente optó por silencio — no se envía nada a %s",
+                task.id,
+                target,
+            )
+            return
+        try:
+            await self._result_sender.send_message(target, response)
+        except Exception as send_exc:  # noqa: BLE001
+            logger.error(
+                "background-delegation %s: la respuesta quedó en el historial pero "
+                "no pudo entregarse a %s: %s",
+                task.id,
+                target,
+                send_exc,
+            )

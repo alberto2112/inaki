@@ -575,6 +575,27 @@ como un mensaje `Role.USER` con prefijo `[bg-N] ...`. El agente padre tiene una
 sección del system prompt (en inglés) que le explica cómo procesar esos
 mensajes — sin saludo, sin preámbulo.
 
+**FIX bg-result-delivery (2026-07-12)**: el turno que procesa el `[bg-N]` era
+*headless* — `_dispatch_result` descartaba el return del `dispatch()` (la
+respuesta digerida del padre) y no pasaba `intermediate_sink`. La respuesta
+quedaba en `history.db` pero JAMÁS llegaba al canal: el usuario esperaba un
+anuncio que no veía mientras el agente creía habérselo dado. Lo "aceptado como
+diseño" (Defecto 2, ver `intermediate-persist`) era no entregar el JSON CRUDO
+del sub — nunca tragarse también el digest del padre. Ahora la cola recibe
+`result_sender` (el `ChannelRouter` vía el port `IChannelSender`) +
+`conversational_channels` (= sinks nativos): si el scope original es un canal
+vivo, la respuesta se envía a `channel:chat_id`, la narración intermedia fluye
+en vivo por `build_intermediate_sink`, y el turno recibe `skip_marker=__SKIP__`
+(la sección in-flight del prompt ahora explica que la respuesta llega al
+usuario y que puede optar por silencio deliberado). La entrega es best-effort:
+un fallo del send NO reintenta el dispatch — re-correría el turno completo del
+LLM y duplicaría historial; se loguea y la respuesta queda en el historial. El
+`ChannelRouter` se construye en `AppContainer._build_channel_router()` ANTES de
+la cola (antes nacía dentro de `_build_scheduler`, demasiado tarde). Origen no
+conversacional (CLI/REST sin canal vivo) o respuesta vacía → comportamiento
+anterior (solo historial). NUNCA volver a descartar el return del dispatch: es
+la única vía por la que el anuncio de un bg-result llega al usuario.
+
 **Sin migración de DB ni cambios de config**. El feature es 100% in-memory: si
 el daemon reinicia con tasks in-flight, se pierden silenciosamente (decisión
 explícita para uso doméstico Pi 5 — sin retries ni persistencia).

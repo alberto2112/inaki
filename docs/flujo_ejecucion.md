@@ -58,14 +58,18 @@ inaki (cli.py → app)
 │   │                           for each container where agent_config.memories.consolidation.enabled}
 │   ├── ConsolidateAllAgentsUseCase(enabled_agents, delay_seconds)
 │   │
+│   ├── _build_channel_router() — ChannelRouter(native_sinks, fallback_cfg)
+│   │       built BEFORE the queue; shared by the queue AND the scheduler
 │   ├── LLMDispatcherAdapter(agents) — SINGLE shared instance (lock-per-scope)
-│   ├── BackgroundDelegationQueueAdapter(dispatcher, semaphore=3)
+│   ├── BackgroundDelegationQueueAdapter(dispatcher, semaphore=3,
+│   │       result_sender=ChannelRouter, conversational_channels=native_sinks)
+│   │       → delivers the parent's [bg-N] response back to the origin channel
 │   │
 │   └── Scheduler wiring:
 │       ├── SQLiteSchedulerRepo(scheduler_cfg.db_filename)
 │       ├── ScheduleTaskUseCase(repo, on_mutation)
 │       ├── SchedulerDispatchPorts(
-│       │       channel_router=ChannelRouter(native_sinks, fallback_cfg),
+│       │       channel_sender=ChannelRouter (same instance),
 │       │       llm_dispatcher=LLMDispatcherAdapter (same instance),
 │       │       consolidator=ConsolidationDispatchAdapter(consolidate_all_agents),
 │       │       http_caller=HttpCallerAdapter())

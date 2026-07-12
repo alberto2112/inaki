@@ -928,3 +928,74 @@ async def test_async_falla_grasiosamente_si_enqueue_lanza() -> None:
     assert dr.status == "failed"
     assert dr.reason == "enqueue_failed"
     assert "cola rota" in (dr.details or "")
+
+
+# ---------------------------------------------------------------------------
+# Schema per-instancia — enum de targets + error auto-reparador
+# ---------------------------------------------------------------------------
+
+
+def _make_tool_with_targets(allowed: list[str]) -> DelegateTool:
+    return DelegateTool(
+        allowed_targets=allowed,
+        build_child=MagicMock(),
+        max_iterations_per_sub=_MAX_ITERATIONS,
+        timeout_seconds=_TIMEOUT_SECONDS,
+        caller_agent_id="caller",
+        caller_container=MagicMock(),
+        queue=MagicMock(),
+    )
+
+
+def test_schema_declara_enum_con_los_targets_permitidos():
+    """El LLM no tiene otra fuente para saber qué agent_ids existen: el schema
+    per-instancia declara `enum` + la lista en la description. Caso real: sin
+    esto el modelo inventó 'research-analyst' y abandonó la delegación."""
+    tool = _make_tool_with_targets(["deep_research", "coder"])
+
+    agent_id_schema = tool.parameters_schema["properties"]["agent_id"]
+    assert agent_id_schema["enum"] == ["coder", "deep_research"]
+    assert "coder, deep_research" in agent_id_schema["description"]
+
+
+def test_schema_de_clase_no_se_contamina_entre_instancias():
+    """El schema especializado es del la instancia — la clase (y otras
+    instancias con otra allow-list) no deben verse afectadas."""
+    tool_a = _make_tool_with_targets(["deep_research"])
+    tool_b = _make_tool_with_targets(["coder"])
+
+    assert "enum" not in DelegateTool.parameters_schema["properties"]["agent_id"]
+    assert tool_a.parameters_schema["properties"]["agent_id"]["enum"] == ["deep_research"]
+    assert tool_b.parameters_schema["properties"]["agent_id"]["enum"] == ["coder"]
+
+
+def test_schema_sin_allowlist_queda_generico():
+    """allowed_targets vacío = sin restricción → schema de clase intacto, sin enum."""
+    tool = _make_tool_with_targets([])
+
+    assert "enum" not in tool.parameters_schema["properties"]["agent_id"]
+
+
+async def test_error_target_not_allowed_lista_los_targets_validos():
+    """El error es auto-reparador: le dice al LLM qué targets SÍ existen para
+    que el reintento inmediato acierte, en vez de un dead-end que lo hace
+    abandonar la delegación."""
+    tool = _make_tool_with_targets(["deep_research"])
+
+    result = await tool.execute(wait=True, agent_id="research-analyst", task="investigar")
+
+    dr = DelegationResult.model_validate_json(result.output)
+    assert dr.reason == "target_not_allowed"
+    assert "deep_research" in dr.summary
+    assert "Retry" in dr.summary
+
+
+async def test_error_target_not_allowed_async_tambien_lista_targets():
+    """Mismo mensaje auto-reparador en el path async (wait=False, default)."""
+    tool = _make_tool_with_targets(["deep_research"])
+
+    result = await tool.execute(wait=False, agent_id="fantasma", task="investigar")
+
+    dr = DelegationResult.model_validate_json(result.output)
+    assert dr.reason == "target_not_allowed"
+    assert "deep_research" in dr.summary

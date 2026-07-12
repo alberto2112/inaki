@@ -990,3 +990,107 @@ def test_ephemeral_child_distinct_instances_per_call(tmp_path) -> None:
     b = caller.build_ephemeral_child(_sub_definition_raw())
 
     assert a is not b, "cada delegación construye una instancia efímera independiente"
+
+
+# ---------------------------------------------------------------------------
+# Discovery desde el registry crudo (fix post subagent-inheritance)
+# ---------------------------------------------------------------------------
+
+
+def test_discovery_section_from_raw_without_container(tmp_path) -> None:
+    """Regresión de producción: el sub-agente NO tiene container pre-built
+    (su delta no resuelve standalone) pero SÍ delta crudo en el registry —
+    la delegación efímera funciona, así que el discovery DEBE listarlo.
+    Antes se salteaba y la sección quedaba vacía → el LLM inventaba ids."""
+    global_cfg = _make_global_config()
+
+    parent_cfg = _make_agent_config(
+        agent_id="parent",
+        delegation_enabled=True,
+        allowed_targets=["deep_research"],
+    )
+    parent = _build_minimal_container(parent_cfg, global_cfg, tmp_path)
+
+    raw = {
+        "id": "deep_research",
+        "name": "Deep Research Agent",
+        "description": "Autonomous sub-agent\nfor in-depth research.",
+    }
+
+    parent.wire_delegation(
+        lambda _tid: None,  # sin containers — el raw debe bastar
+        sub_agent_ids=["deep_research"],
+        get_sub_agent_raw=lambda tid: raw if tid == "deep_research" else None,
+    )
+
+    parent.run_agent.set_extra_system_sections.assert_called_once()  # type: ignore[attr-defined]
+    section = parent.run_agent.set_extra_system_sections.call_args[0][0][0]  # type: ignore[attr-defined]
+
+    assert "deep_research" in section
+    assert "Deep Research Agent" in section
+    # description multilinea colapsada a una línea
+    assert "Autonomous sub-agent for in-depth research." in section
+    # sin tools.allowed → hereda el toolkit del caller
+    assert "inherits this agent's full toolkit" in section
+
+
+def test_discovery_section_raw_with_tools_allowed(tmp_path) -> None:
+    """El delta con `tools.allowed` lista el subset — NO las tools del
+    container pre-built del sub (mentira post-herencia: el efímero opera
+    con las tools del CALLER acotadas por la allow-list)."""
+    global_cfg = _make_global_config()
+
+    parent_cfg = _make_agent_config(
+        agent_id="parent",
+        delegation_enabled=True,
+        allowed_targets=["researcher"],
+    )
+    parent = _build_minimal_container(parent_cfg, global_cfg, tmp_path)
+
+    raw = {
+        "id": "researcher",
+        "name": "Researcher",
+        "description": "Web research.",
+        "tools": {"allowed": ["web_search", "write_file"]},
+    }
+
+    parent.wire_delegation(
+        lambda _tid: None,
+        sub_agent_ids=["researcher"],
+        get_sub_agent_raw=lambda _tid: raw,
+    )
+
+    section = parent.run_agent.set_extra_system_sections.call_args[0][0][0]  # type: ignore[attr-defined]
+    assert "web_search, write_file (subset of this agent's toolkit)" in section
+
+
+def test_discovery_section_raw_tiene_prioridad_sobre_container(tmp_path) -> None:
+    """Cuando existen ambos, gana el raw: es la fuente veraz post-refactor
+    (el container pre-built corre contra global y su lista de tools no es la
+    que el hijo efímero va a tener)."""
+    global_cfg = _make_global_config()
+
+    parent_cfg = _make_agent_config(
+        agent_id="parent",
+        delegation_enabled=True,
+        allowed_targets=["agent-b"],
+    )
+    parent = _build_minimal_container(parent_cfg, global_cfg, tmp_path)
+
+    agent_b = _build_target_container(
+        agent_id="agent-b",
+        description="Container-side description.",
+        tool_names=["container_tool"],
+        global_config=global_cfg,
+    )
+    raw = {"id": "agent-b", "name": "Agent B", "description": "Raw-side description."}
+
+    parent.wire_delegation(
+        lambda _tid: agent_b,
+        sub_agent_ids=["agent-b"],
+        get_sub_agent_raw=lambda _tid: raw,
+    )
+
+    section = parent.run_agent.set_extra_system_sections.call_args[0][0][0]  # type: ignore[attr-defined]
+    assert "Raw-side description." in section
+    assert "container_tool" not in section

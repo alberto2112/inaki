@@ -23,6 +23,7 @@ devolvería result_parse_error en cada llamada.
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 from typing import TYPE_CHECKING, Callable, Protocol
 
@@ -48,6 +49,7 @@ class DelegationCaller(Protocol):
     """Container llamador: el contexto del turno en curso para resolver el scope."""
 
     def get_channel_context(self) -> ChannelContext | None: ...
+
 
 # ---------------------------------------------------------------------------
 # Result-format footer — task 6.2
@@ -170,6 +172,22 @@ class DelegateTool(ITool):
         self._caller_container = caller_container
         self._queue = queue
 
+        # El schema de `agent_id` se especializa POR INSTANCIA con la allow-list
+        # del caller: `enum` + lista en la description. Sin esto el LLM no tiene
+        # forma de saber qué targets existen e inventa ids plausibles
+        # ('research-analyst') que mueren en target_not_allowed — caso real que
+        # hizo abandonar la delegación y re-hacer el trabajo a mano. El atributo
+        # de instancia shadowea el de clase; con allow-list vacía (= todos los
+        # targets válidos) el schema queda genérico como antes.
+        if allowed_targets:
+            schema = copy.deepcopy(type(self).parameters_schema)
+            schema["properties"]["agent_id"]["enum"] = sorted(allowed_targets)
+            schema["properties"]["agent_id"]["description"] = (
+                "ID of the target agent to delegate the task to. "
+                f"Must be one of: {', '.join(sorted(allowed_targets))}."
+            )
+            self.parameters_schema = schema
+
     async def execute(  # type: ignore[override]
         self,
         agent_id: str,
@@ -244,7 +262,11 @@ class DelegateTool(ITool):
             )
             result = DelegationResult(
                 status="failed",
-                summary=f"Agent '{agent_id}' is not in the allowed delegation targets.",
+                summary=(
+                    f"Agent '{agent_id}' is not in the allowed delegation targets. "
+                    f"Valid targets: {', '.join(sorted(self._allowed_targets))}. "
+                    "Retry with one of those."
+                ),
                 reason="target_not_allowed",
             )
             return self._build_tool_result(result)
@@ -403,7 +425,11 @@ class DelegateTool(ITool):
             )
             result = DelegationResult(
                 status="failed",
-                summary=f"Agent '{agent_id}' is not in the allowed delegation targets.",
+                summary=(
+                    f"Agent '{agent_id}' is not in the allowed delegation targets. "
+                    f"Valid targets: {', '.join(sorted(self._allowed_targets))}. "
+                    "Retry with one of those."
+                ),
                 reason="target_not_allowed",
             )
             return self._build_tool_result(result)

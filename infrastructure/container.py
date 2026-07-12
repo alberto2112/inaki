@@ -821,7 +821,9 @@ class AgentContainer:
         # - The section is PARENT-SIDE ONLY. RunAgentOneShotUseCase (child path)
         #   is NEVER passed extra_sections — it has no _extra_system_sections attr.
         # -----------------------------------------------------------------------
-        discovery_section = self._build_discovery_section(get_agent_container, targets)
+        discovery_section = self._build_discovery_section(
+            get_agent_container, targets, get_sub_agent_raw=get_sub_agent_raw
+        )
         if discovery_section:
             self.run_agent.set_extra_system_sections([discovery_section])
             logger.debug(
@@ -1158,13 +1160,22 @@ class AgentContainer:
         self,
         get_agent_container: Callable[[str], "AgentContainer | None"],
         sub_agent_ids: list[str] | None = None,
+        get_sub_agent_raw: Callable[[str], dict | None] | None = None,
     ) -> str:
         """
         Build a human-readable section listing available delegation targets.
 
+        Fuente PRIMARIA: el delta crudo del registry (``get_sub_agent_raw``) — es
+        la verdad post-refactor `subagent-inheritance`: el hijo efímero opera con
+        las tools del CALLER (acotadas por su ``tools.allowed``), así que la lista
+        de tools del container pre-built del sub sería mentira; y el container
+        puede ni existir (si su delta no resuelve standalone contra global, la
+        delegación efímera funciona igual). Fallback: el container (tests
+        parciales sin registry). Un target sin raw NI container se saltea.
+
         Returns an empty string when:
         - sub_agent_ids is empty (sin sub-agentes)
-        - todos los IDs resuelven a None (containers no encontrados)
+        - ningún ID resuelve (ni raw ni container)
 
         Format:
 
@@ -1190,20 +1201,33 @@ class AgentContainer:
 
         lines: list[str] = []
         for target_id in target_ids:
-            target_container = get_agent_container(target_id)
-            if target_container is None:
-                logger.debug(
-                    "AgentContainer '%s': target '%s' not found in registry — skipping in discovery",
-                    self.agent_config.id,
-                    target_id,
+            raw = get_sub_agent_raw(target_id) if get_sub_agent_raw is not None else None
+            if raw is not None:
+                name = raw.get("name") or target_id
+                # El YAML suele declarar description multilinea (`|`) — colapsar
+                # a una línea para el bullet.
+                description = " ".join(str(raw.get("description") or "").split())
+                allowed = (raw.get("tools") or {}).get("allowed") or None
+                tool_list = (
+                    ", ".join(allowed) + " (subset of this agent's toolkit)"
+                    if allowed
+                    else "inherits this agent's full toolkit"
                 )
-                continue
-
-            name = target_container.agent_config.name
-            description = target_container.agent_config.description
-            # Collect tool names from the target's registry (all registered tools)
-            tool_names = list(target_container._tools._tools.keys())
-            tool_list = ", ".join(tool_names) if tool_names else "(no tools)"
+            else:
+                target_container = get_agent_container(target_id)
+                if target_container is None:
+                    logger.debug(
+                        "AgentContainer '%s': target '%s' not found in registry — "
+                        "skipping in discovery",
+                        self.agent_config.id,
+                        target_id,
+                    )
+                    continue
+                name = target_container.agent_config.name
+                description = target_container.agent_config.description
+                # Collect tool names from the target's registry (all registered tools)
+                tool_names = list(target_container._tools._tools.keys())
+                tool_list = ", ".join(tool_names) if tool_names else "(no tools)"
 
             lines.append(f"- **{target_id}** ({name}) — {description}.")
             lines.append(f"  Tools: {tool_list}")

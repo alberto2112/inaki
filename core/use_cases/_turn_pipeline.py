@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -590,3 +591,27 @@ class RecordingIntermediateSink(IIntermediateSink):
     async def emit(self, text: str) -> None:
         self.messages.append(text)
         await self._inner.emit(text)
+
+
+class PersistingIntermediateSink(IIntermediateSink):
+    """Envuelve un sink real y persiste cada emisión EN CALIENTE.
+
+    Variante incremental de ``RecordingIntermediateSink`` (feature
+    ``incremental-persist``): en vez de acumular para un batch post-loop, cada
+    bloque de narración se persiste en el momento en que el usuario lo recibe.
+    Solo para turnos que NO pueden terminar en ``__SKIP__`` (``skip_marker is
+    None``, decidido al INICIO del turno) — un turno skip-capaz sigue usando el
+    batch legacy porque su persistencia depende del desenlace.
+    """
+
+    def __init__(
+        self,
+        inner: IIntermediateSink,
+        persist: "Callable[[str], Awaitable[None]]",
+    ) -> None:
+        self._inner = inner
+        self._persist = persist
+
+    async def emit(self, text: str) -> None:
+        await self._inner.emit(text)
+        await self._persist(text)

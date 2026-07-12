@@ -193,6 +193,7 @@ class TelegramBot(
         self._app.add_handler(CommandHandler("start", self._cmd_start))
         self._app.add_handler(CommandHandler("consolidate", self._cmd_consolidate))
         self._app.add_handler(CommandHandler("reconcile", self._cmd_reconcile))
+        self._app.add_handler(CommandHandler("stop", self._cmd_stop))
         self._app.add_handler(CommandHandler("clear", self._cmd_clear))
         self._app.add_handler(CommandHandler("clear_all", self._cmd_clear_all))
         self._app.add_handler(CommandHandler("new", self._cmd_new))

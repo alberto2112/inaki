@@ -108,3 +108,60 @@ async def test_acquire_release_cycle(
     await registry.mark_idle(scope)
     assert await registry.try_mark_busy(scope) is True  # libre de nuevo
     await registry.mark_idle(scope)
+
+
+# ---------------------------------------------------------------------------
+# Kill-switch (/stop) — request_cancel / is_cancel_requested
+# ---------------------------------------------------------------------------
+
+
+async def test_request_cancel_sobre_scope_busy_registra_el_flag(
+    registry: InMemoryScopeRegistryAdapter,
+    scope: Scope,
+) -> None:
+    await registry.try_mark_busy(scope)
+
+    assert await registry.request_cancel(scope) is True
+    assert await registry.is_cancel_requested(scope) is True
+
+
+async def test_request_cancel_sobre_scope_libre_es_rechazado(
+    registry: InMemoryScopeRegistryAdapter,
+    scope: Scope,
+) -> None:
+    """Sin turno corriendo no hay nada que cancelar: el flag NO se registra
+    (un flag sin turno envenenaría al próximo)."""
+    assert await registry.request_cancel(scope) is False
+    assert await registry.is_cancel_requested(scope) is False
+
+
+async def test_mark_idle_limpia_la_cancelacion_pendiente(
+    registry: InMemoryScopeRegistryAdapter,
+    scope: Scope,
+) -> None:
+    """Un /stop que llegó tarde (el turno cerró antes de honrarlo) no debe
+    envenenar el próximo turno del scope."""
+    await registry.try_mark_busy(scope)
+    await registry.request_cancel(scope)
+
+    await registry.mark_idle(scope)
+
+    assert await registry.is_cancel_requested(scope) is False
+    # El próximo turno arranca limpio.
+    assert await registry.try_mark_busy(scope) is True
+    assert await registry.is_cancel_requested(scope) is False
+    await registry.mark_idle(scope)
+
+
+async def test_cancel_de_un_scope_no_afecta_a_otro(
+    registry: InMemoryScopeRegistryAdapter,
+    scope: Scope,
+) -> None:
+    otro: Scope = ("agent1", "telegram", "chat2")
+    await registry.try_mark_busy(scope)
+    await registry.try_mark_busy(otro)
+
+    await registry.request_cancel(scope)
+
+    assert await registry.is_cancel_requested(scope) is True
+    assert await registry.is_cancel_requested(otro) is False

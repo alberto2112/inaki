@@ -335,6 +335,7 @@ class AgentContainer:
             settings=build_run_agent_settings(cfg),
             knowledge_orchestrator=self._knowledge_orchestrator,
             thinking_indicator=global_config.channels.thinking_indicator,
+            scope_registry=self.scope_registry,
         )
 
         # Every agent gets a one-shot use case unconditionally so it can always

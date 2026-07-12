@@ -129,31 +129,64 @@ def _build_where_filters(
 
 
 def _drop_orphan_tool_messages(messages: list[Message]) -> list[Message]:
-    """Descarta mensajes ``role=tool`` huérfanos — los que quedaron sin su
-    mensaje ``assistant``+tool_calls dentro de la ventana cargada.
+    """Normaliza los grupos protocolares assistant+tool_calls ↔ tool results
+    de la ventana cargada para que el provider nunca reciba un grupo roto (400).
 
-    Es la garantía de correctitud del feature persist-tool-calls: cuando ``load``
-    recorta a los últimos ``max_messages`` (o cuando ``trim`` borra por scope), un
-    tool result puede quedar sin el assistant que lo originó. Mandarlo así al
-    provider dispara un 400 (OpenAI y Anthropic exigen que cada ``tool_call_id``
-    tenga su assistant emparejado). Escaneo lineal: un ``role=tool`` solo es
-    válido si venimos "dentro de un grupo" abierto por un assistant con
-    tool_calls; un USER o un ASSISTANT sin tool_calls cierra el grupo. Cubre
-    huérfanos al inicio Y en el medio de la ventana.
+    Tres garantías (OpenAI y Anthropic exigen que cada ``tool_call_id`` del
+    assistant tenga su tool result emparejado, contiguo y completo):
 
-    No-op cuando no hay mensajes ``role=tool`` (persist-tool-calls desactivado).
+    1. **Tool huérfano** (su assistant quedó fuera de la ventana ``max_messages``
+       o lo borró un ``trim``) → se descarta.
+    2. **Grupo incompleto** (assistant con tool_calls cuyos results FALTAN —
+       típico: crash del daemon a mitad de un batch con persistencia
+       incremental) → se descarta el assistant Y sus results parciales.
+    3. **Users intercalados dentro de un grupo** (in-flight injection: el
+       inbound adapter persistió un mensaje del usuario mientras las tools del
+       batch corrían) → se REUBICAN inmediatamente después del grupo completo.
+       Coincide con lo que el LLM vio en vivo (el drain los presenta tras el
+       batch) y respeta la contigüidad que exigen los providers.
+
+    Escaneo lineal por grupos. Sin mensajes ``role=tool`` ni assistants con
+    tool_calls, devuelve la lista tal cual (flag persist-tool-calls apagado).
     """
     result: list[Message] = []
-    in_group = False
-    for m in messages:
-        if m.role == Role.TOOL:
-            if in_group:
+    i = 0
+    n = len(messages)
+    while i < n:
+        m = messages[i]
+        if m.role == Role.ASSISTANT and m.tool_calls:
+            expected = {tc.get("id", "") for tc in m.tool_calls}
+            group_tools: list[Message] = []
+            deferred: list[Message] = []  # users intercalados dentro del grupo
+            j = i + 1
+            while j < n and expected:
+                nxt = messages[j]
+                if nxt.role == Role.TOOL and nxt.tool_call_id in expected:
+                    group_tools.append(nxt)
+                    expected.discard(nxt.tool_call_id)
+                    j += 1
+                    continue
+                if nxt.role == Role.USER:
+                    deferred.append(nxt)
+                    j += 1
+                    continue
+                break  # otro assistant o un tool ajeno → el grupo quedó trunco
+            if expected:
+                # Grupo incompleto: drop assistant + results parciales; los
+                # users intercalados se conservan (son del usuario, no del grupo).
+                result.extend(deferred)
+            else:
                 result.append(m)
-            # else: huérfano (su assistant quedó fuera de la ventana) → se descarta.
+                result.extend(group_tools)
+                result.extend(deferred)
+            i = j
             continue
-        # Un assistant con tool_calls abre grupo; cualquier otro mensaje lo cierra.
-        in_group = m.role == Role.ASSISTANT and bool(m.tool_calls)
+        if m.role == Role.TOOL:
+            # Huérfano top-level (su assistant quedó fuera de la ventana).
+            i += 1
+            continue
         result.append(m)
+        i += 1
     return result
 
 

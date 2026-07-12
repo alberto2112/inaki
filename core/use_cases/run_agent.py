@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+
 from core.domain.entities.message import Message, Role
 from core.domain.entities.skill import Skill
 from core.domain.errors import ToolLoopMaxIterationsError
@@ -43,12 +45,14 @@ from core.ports.outbound.history_port import IHistoryStore
 from core.ports.outbound.intermediate_sink_port import IIntermediateSink
 from core.ports.outbound.llm_port import ILLMProvider
 from core.ports.outbound.memory_port import IMemoryRepository
+from core.ports.outbound.scope_registry_port import IScopeRegistry
 from core.ports.outbound.skill_port import ISkillRepository
 from core.ports.outbound.tool_port import IToolExecutor
 from core.use_cases._tool_loop import run_tool_loop
 from core.use_cases._turn_pipeline import (
     ATTACHMENTS_SECTION,
     INFLIGHT_CLARIFICATIONS_SECTION,
+    PersistingIntermediateSink,
     RecordingIntermediateSink,
     assemble_turn_messages,
     expand_includes,
@@ -100,6 +104,7 @@ class RunAgentUseCase:
         knowledge_orchestrator: KnowledgeOrchestrator | None = None,
         background_queue: IBackgroundDelegationQueue | None = None,
         thinking_indicator: bool = False,
+        scope_registry: IScopeRegistry | None = None,
     ) -> None:
         self._llm = llm
         self._memory = memory
@@ -118,6 +123,10 @@ class RunAgentUseCase:
         # Cuando está set, execute() inyecta una sección con el snapshot de
         # delegaciones in-flight en cada turno (REQ-BGD-7).
         self._background_queue = background_queue
+        # IScopeRegistry — kill-switch (/stop): el tool loop consulta el flag de
+        # cancelación del scope en sus checkpoints. None → sin kill-switch
+        # (tests que construyen el use case directo).
+        self._scope_registry = scope_registry
         # Extra sections injected by wire_delegation (task 6.1).
         # Empty by default — non-breaking when delegation is disabled.
         self._extra_system_sections: list[str] = []
@@ -560,20 +569,62 @@ class RunAgentUseCase:
                 agent_id, channel=channel, chat_id=chat_id
             )
 
-        # Envuelve el sink real para acumular cada intermedio emitido en vivo
-        # (ver RecordingIntermediateSink): sin esto, la narración que el LLM
-        # manda al canal junto con tool_calls se entrega al usuario pero jamás
-        # queda en history.db — el próximo turno no la ve y el agente puede
-        # creer que no hizo el trabajo que ya narró. None cuando no hay sink
-        # (nada que grabar: nadie recibió nada).
-        recording_sink = (
-            RecordingIntermediateSink(intermediate_sink) if intermediate_sink is not None else None
-        )
-        # persist-tool-calls: acumulador del rastro de tool calls (assistant+tool_calls
-        # ↔ tool results). Lista viva solo cuando el flag está activo — None deja el
-        # loop en modo legacy (no acumula). Somos dueños de la lista, así que queda
-        # completa aun si el turno corta por ToolLoopMaxIterationsError.
-        tool_trace: list[Message] | None = [] if self._settings.persist_tool_calls else None
+        # incremental-persist: la persistencia del rastro del turno (narración +
+        # tool calls) puede ocurrir EN CALIENTE, mensaje a mensaje, o en batch al
+        # final. La decisión se toma AL INICIO por capacidad de skip: un turno
+        # con skip_marker puede terminar en __SKIP__ (autónomo: grupos,
+        # scheduler, bg-results) y su persistencia depende del desenlace → batch
+        # legacy. Un turno conversacional (skip_marker=None) JAMÁS skipea →
+        # persistir en caliente: el historial refleja el turno en vivo, un
+        # crash/restart del daemon no borra minutos de trabajo ya narrado, y
+        # los mensajes in-flight del usuario quedan intercalados en su orden
+        # real (la normalización de grupos del store los reubica al cargar).
+        incremental = not ephemeral and skip_marker is None
+
+        # Narración en vivo (texto que acompaña tool_calls): con el flag
+        # persist-tool-calls activo viaja dentro del content del assistant del
+        # trace (persistir el sink ADEMÁS duplicaría); sin flag, el sink es la
+        # única fuente — incremental persiste cada emit, legacy acumula para el
+        # batch post-loop. None cuando no hay sink (nadie recibió nada).
+        recording_sink: RecordingIntermediateSink | None = None
+        loop_sink: IIntermediateSink | None = intermediate_sink
+        if intermediate_sink is not None and not self._settings.persist_tool_calls:
+            if incremental:
+
+                async def _persist_narration(block: str) -> None:
+                    await self._history.append(
+                        agent_id,
+                        Message(role=Role.ASSISTANT, content=block),
+                        channel=channel,
+                        chat_id=chat_id,
+                    )
+
+                loop_sink = PersistingIntermediateSink(intermediate_sink, _persist_narration)
+            else:
+                recording_sink = RecordingIntermediateSink(intermediate_sink)
+                loop_sink = recording_sink
+
+        # persist-tool-calls: rastro protocolar (assistant+tool_calls ↔ tool
+        # results). Incremental → callback que persiste cada mensaje al
+        # generarse (truncado); legacy → acumulador que el post-loop persiste
+        # en batch. Somos dueños de la lista, así que queda completa aun si el
+        # turno corta por ToolLoopMaxIterationsError.
+        tool_trace: list[Message] | None = None
+        persist_trace: Callable[[Message], Awaitable[None]] | None = None
+        if self._settings.persist_tool_calls:
+            if incremental:
+
+                async def _persist_trace_msg(msg: Message) -> None:
+                    await self._history.append(
+                        agent_id,
+                        self._truncate_tool_result(msg),
+                        channel=channel,
+                        chat_id=chat_id,
+                    )
+
+                persist_trace = _persist_trace_msg
+            else:
+                tool_trace = []
         try:
             response = await run_tool_loop(
                 llm=self._llm,
@@ -584,7 +635,7 @@ class RunAgentUseCase:
                 max_iterations=self._settings.tool_call_max_iterations,
                 circuit_breaker_threshold=self._settings.circuit_breaker_threshold,
                 agent_id=self._settings.agent_id,
-                intermediate_sink=recording_sink,
+                intermediate_sink=loop_sink,
                 thinking_indicator=self._thinking_indicator,
                 request_delay_seconds=self._settings.request_delay_seconds,
                 # in-flight-message-injection: activamos drainage pasando el
@@ -601,6 +652,12 @@ class RunAgentUseCase:
                 # El one-shot (subagentes) tampoco lo pasa: su sandbox
                 # (tools.allowed + exclusión de delegate) debe valer.
                 page_in_schemas=(self._tools.get_schemas() if tools_override is None else None),
+                # kill-switch (/stop): el loop chequea la cancelación del scope
+                # en cada checkpoint y aborta mecánicamente con un wrap-up.
+                scope_registry=self._scope_registry,
+                # incremental-persist: callback en caliente (solo turnos que no
+                # pueden skipear); None → el batch post-loop sigue a cargo.
+                persist_message=persist_trace,
             )
         except ToolLoopMaxIterationsError as e:
             response = e.last_response or (

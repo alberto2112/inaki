@@ -53,10 +53,31 @@ class IScopeRegistry(ABC):
 
     @abstractmethod
     async def mark_idle(self, scope: Scope) -> None:
-        """Libera el scope.
+        """Libera el scope y descarta cualquier cancelación pendiente.
 
         Idempotente: si el scope no estaba marcado, es no-op silencioso.
         Pensado para llamarse desde ``finally`` aunque ``try_mark_busy``
-        no se haya tomado (defensa en profundidad).
+        no se haya tomado (defensa en profundidad). Limpiar el flag de
+        cancelación acá garantiza que un ``/stop`` que llegó tarde no
+        envenene el próximo turno del scope.
         """
+        ...
+
+    @abstractmethod
+    async def request_cancel(self, scope: Scope) -> bool:
+        """Solicita cancelar el turno en curso del scope (kill-switch).
+
+        Retorna ``True`` si el scope estaba ocupado y la solicitud quedó
+        registrada; ``False`` si no había turno corriendo (no se registra
+        nada — un flag sin turno envenenaría al próximo). El tool loop
+        consulta el flag en sus checkpoints y aborta MECÁNICAMENTE: la
+        cancelación no depende de que el LLM interprete nada — es la
+        diferencia entre pedirle al chofer que frene y pisar el freno.
+        """
+        ...
+
+    @abstractmethod
+    async def is_cancel_requested(self, scope: Scope) -> bool:
+        """``True`` si hay una cancelación pendiente para el scope. Solo lectura;
+        el flag lo limpia ``mark_idle`` al cerrar el turno."""
         ...

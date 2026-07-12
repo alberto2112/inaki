@@ -85,6 +85,7 @@ class TelegramCommandsMixin:
         if not self._is_allowed(user.id):
             return
         await message.reply_text(
+            "/stop — Detener la tarea en curso de ESTE chat (kill-switch)\n"
             "/consolidate — Extraer recuerdos del historial\n"
             "/reconcile — Reconsiderar y consolidar recuerdos relacionados\n"
             "/clear — Limpiar historial de ESTE chat (privado o grupo)\n"
@@ -135,6 +136,27 @@ class TelegramCommandsMixin:
             await message.reply_text(result)
         except Exception as exc:
             await message.reply_text(f"Error: {exc}")
+
+    async def _cmd_stop(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Kill-switch: aborta MECÁNICAMENTE el turno en curso de este chat.
+
+        A diferencia de escribir "para" (que se inyecta al turno y depende de
+        que el LLM lo obedezca), esto marca el flag de cancelación del scope:
+        el tool loop lo chequea en cada checkpoint y antes de cada tool, corta,
+        y responde con un resumen de dónde quedó el trabajo.
+        """
+        user = update.effective_user
+        chat = update.effective_chat
+        message = update.message
+        if user is None or chat is None or message is None:
+            return
+        if not self._is_allowed(user.id):
+            return
+        scope = (self._settings.id, "telegram", str(chat.id))
+        if await self._ports.scope_registry.request_cancel(scope):
+            await message.reply_text("🛑 Parando la tarea en curso — te resumo en un momento.")
+        else:
+            await message.reply_text("No hay ninguna tarea corriendo en este chat.")
 
     async def _cmd_clear(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Borra el historial SOLO del chat actual (privado o grupo).
@@ -481,6 +503,7 @@ class TelegramCommandsMixin:
         commands = [
             BotCommand("start", "Presentación del agente"),
             BotCommand("help", "Lista de comandos disponibles"),
+            BotCommand("stop", "Detener la tarea en curso de este chat (kill-switch)"),
             BotCommand("clear", "Limpiar historial de este chat"),
             BotCommand("clear_all", "Limpiar todo el historial del agente"),
             BotCommand("new", "Consolidar memoria y empezar de cero en este chat"),
@@ -488,7 +511,9 @@ class TelegramCommandsMixin:
             BotCommand("reconcile", "Reconsiderar recuerdos relacionados"),
             BotCommand("scheduler", "Gestionar tareas programadas (list/show/enable/disable)"),
             BotCommand("chatid", "Obtener el ID del chat actual (útil para configurar grupos)"),
-            BotCommand("ratelimit", "Ver/ajustar el rate limiter de grupos (autonomous) en runtime"),
+            BotCommand(
+                "ratelimit", "Ver/ajustar el rate limiter de grupos (autonomous) en runtime"
+            ),
             BotCommand(
                 "reload", "Reiniciar el daemon (cierra y vuelve a levantar todos los canales)"
             ),

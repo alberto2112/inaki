@@ -678,6 +678,65 @@ nulo y simplifica.
 o `..`, ese candidato se descarta. Paranoia barata — los valores vienen del
 canal, pero no costaba nada chequear.
 
+### `turn-kill-switch`
+
+Comando `/stop` de Telegram: aborta **mecánicamente** el turno en curso del
+chat. Escribir "para" depende de que el LLM lea el mensaje drenado y obedezca
+(compliance probabilística); `/stop` es el pedal de freno: marca un flag de
+cancelación en el `IScopeRegistry` (`request_cancel(scope)` — solo si el scope
+está busy; `mark_idle` lo limpia SIEMPRE para que un /stop tardío no envenene
+el próximo turno) y `run_tool_loop` lo chequea en el checkpoint A y **antes de
+cada tool del batch**. Al detectar la cancelación: las tools restantes del
+batch reciben un resultado sintético (`_CANCELLED_TOOL_RESULT` — preserva el
+pairing protocolar assistant↔results, sin esto el provider tira 400), el loop
+corta, y una última llamada SIN tools con la instrucción `_CANCEL_WRAPUP_INSTRUCTION`
+(user sintético, solo en working_messages, jamás persistido) produce el resumen
+de dónde quedó el trabajo. Si esa llamada falla, cierre fijo ("🛑 Tarea
+detenida..."). Wiring: `RunAgentUseCase` recibe `scope_registry` del container
+y lo pasa al loop; los one-shot NO lo reciben (sin kill-switch en subagentes).
+El comando es admin-only (`_is_allowed`) como el resto de los slash commands.
+
+**Sin migración de DB ni cambios de config.**
+
+### `incremental-persist`
+
+La persistencia del rastro del turno (narración + tool calls) ahora es **en
+caliente, mensaje a mensaje**, para los turnos que NO pueden terminar en
+`__SKIP__` — y la decisión se toma AL INICIO del turno: `incremental = not
+ephemeral and skip_marker is None`. Un turno conversacional (Telegram privado,
+CLI/REST) jamás skipea → cada assistant+tool_calls, tool result y bloque de
+narración se persiste al generarse. Un turno skip-capaz (grupos autonomous,
+scheduler `agent_send`, bg-results) conserva el batch post-loop legacy porque
+su persistencia depende del desenlace (`__SKIP__` = no persistir nada — la
+semántica original de skip queda INTACTA donde cumple su función: evitar que
+los turnos-ruido autónomos contaminen el historial).
+
+Qué gana: (1) un crash/restart del daemon a mitad de un research de minutos ya
+no evapora el rastro completo (caso real: restart-loop de anacleto vía
+update.sh); (2) `history.db` es observable en vivo durante el turno; (3) los
+mensajes in-flight del usuario quedan intercalados en su orden real de llegada.
+
+**Componentes**: `run_tool_loop` acepta `persist_message` (callback por mensaje
+del trace — assistant+tool_calls, results, circuit-open, cancelados); con flag
+`persist_tool_calls` OFF la narración se persiste vía `PersistingIntermediateSink`
+(`_turn_pipeline.py`, hermano incremental de `RecordingIntermediateSink`). El
+mapeo decisión→mecanismo vive en `RunAgentUseCase._execute_turn`; el guard
+post-loop `not ephemeral and not skip_persist` queda SOLO para los turnos batch.
+
+**Normalización de grupos protocolares** (`_drop_orphan_tool_messages`,
+reescrita): además de los tool results huérfanos (ventana/trim), ahora cubre
+los dos casos que la persistencia incremental vuelve cotidianos — (a) **grupo
+incompleto** (assistant+tool_calls cuyos results faltan: crash a mitad de
+batch) → se descarta el grupo entero; (b) **users intercalados dentro de un
+grupo** (in-flight injection persistió mientras las tools corrían) → se
+reubican inmediatamente después del grupo completo (coincide con lo que el LLM
+vio en vivo y respeta la contigüidad que exigen los providers). El matching es
+por `tool_call_id` (antes solo posicional). NUNCA persistir un grupo confiando
+en que "el load lo arregla" sin esta normalización.
+
+**Sin migración de DB ni cambios de config.** Filas idénticas a las del batch,
+solo cambia CUÁNDO se escriben.
+
 ### `in-flight-message-injection`
 
 Mensajes nuevos del usuario sobre un scope `(agent_id, channel, chat_id)` que ya
@@ -833,6 +892,11 @@ Telegram, obtenible con `/chatid` dentro del grupo — ver `telegram-group-auth`
 Sin ese archivo, un grupo solo recibe `_common.md` (si existe).
 
 ### `intermediate-persist`
+
+> **Actualizado por `incremental-persist` (2026-07-12)**: el mecanismo de
+> acumular-y-persistir-al-final que describe esta nota quedó SOLO para los
+> turnos skip-capaces (skip_marker seteado). Los turnos conversacionales
+> persisten la narración EN CALIENTE vía `PersistingIntermediateSink`.
 
 Los textos que el LLM emite junto con `tool_calls` durante el tool loop (narración
 en vivo — "ok, dejame revisar esto...") se entregaban al canal (Telegram en vivo,

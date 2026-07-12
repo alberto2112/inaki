@@ -31,6 +31,10 @@ class InMemoryScopeRegistryAdapter(IScopeRegistry):
     def __init__(self) -> None:
         # Scopes actualmente ocupados (con execute() en curso).
         self._busy: set[Scope] = set()
+        # Scopes con cancelación pendiente (kill-switch /stop). Siempre un
+        # subconjunto de _busy: request_cancel exige turno en curso y
+        # mark_idle limpia ambos sets.
+        self._cancel: set[Scope] = set()
         # Lock único: protege las transiciones de ``_busy``. Para uso doméstico
         # con baja concurrencia, no compensa la complejidad de un lock-por-scope.
         self._lock = asyncio.Lock()
@@ -50,6 +54,9 @@ class InMemoryScopeRegistryAdapter(IScopeRegistry):
             # idempotente requerido por el contrato del port.
             had_it = scope in self._busy
             self._busy.discard(scope)
+            # Un turno que cierra descarta cualquier cancelación pendiente:
+            # un /stop tardío no debe envenenar el próximo turno del scope.
+            self._cancel.discard(scope)
             if had_it:
                 logger.info("[scope-registry] released scope=%s", scope)
             else:
@@ -59,3 +66,16 @@ class InMemoryScopeRegistryAdapter(IScopeRegistry):
                     "[scope-registry] mark_idle no-op (was not busy) scope=%s",
                     scope,
                 )
+
+    async def request_cancel(self, scope: Scope) -> bool:
+        async with self._lock:
+            if scope not in self._busy:
+                logger.info("[scope-registry] cancel rechazado (scope libre) scope=%s", scope)
+                return False
+            self._cancel.add(scope)
+            logger.info("[scope-registry] cancel solicitado scope=%s", scope)
+            return True
+
+    async def is_cancel_requested(self, scope: Scope) -> bool:
+        async with self._lock:
+            return scope in self._cancel

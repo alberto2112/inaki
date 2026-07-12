@@ -716,33 +716,74 @@ async def test_migracion_agrega_columnas_a_db_legacy(tmp_path):
     assert any(m.role == Role.TOOL for m in msgs2)
 
 
+def _tool(txt, tc_id="call_1"):
+    return Message(role=Role.TOOL, content=txt, tool_call_id=tc_id)
+
+
+def _a_tc(txt, tool_calls=None):
+    return Message(role=Role.ASSISTANT, content=txt, tool_calls=tool_calls or _TC)
+
+
+def _user(txt):
+    return Message(role=Role.USER, content=txt)
+
+
+def _a(txt):
+    return Message(role=Role.ASSISTANT, content=txt)
+
+
 def test_drop_orphan_tool_messages_unit():
     """Unit directo del walk-filter: huérfanos al inicio y en el medio se caen;
     los grupos completos quedan intactos."""
     from adapters.outbound.history.sqlite_history_store import _drop_orphan_tool_messages
 
-    def tool(txt):
-        return Message(role=Role.TOOL, content=txt, tool_call_id="c")
-
-    def a_tc(txt):
-        return Message(role=Role.ASSISTANT, content=txt, tool_calls=_TC)
-
-    def user(txt):
-        return Message(role=Role.USER, content=txt)
-
-    def a(txt):
-        return Message(role=Role.ASSISTANT, content=txt)
-
     seq = [
-        tool("huérfano-inicio"),  # sin assistant previo → cae
-        user("u1"),
-        a_tc("abre grupo"),
-        tool("r1"),  # válido
-        a("final"),  # cierra grupo
-        tool("huérfano-medio"),  # grupo cerrado → cae
+        _tool("huérfano-inicio"),  # sin assistant previo → cae
+        _user("u1"),
+        _a_tc("abre grupo"),
+        _tool("r1"),  # válido (matchea call_1)
+        _a("final"),  # cierra grupo
+        _tool("huérfano-medio"),  # grupo cerrado → cae
     ]
     out = _drop_orphan_tool_messages(seq)
     assert [m.content for m in out] == ["u1", "abre grupo", "r1", "final"]
+
+
+def test_drop_orphan_grupo_incompleto_se_descarta_entero():
+    """Crash a mitad de batch con persistencia incremental: el assistant con
+    tool_calls quedó SIN sus results (o con parciales). Mandarlo así al
+    provider = 400 → se descarta el grupo entero."""
+    from adapters.outbound.history.sqlite_history_store import _drop_orphan_tool_messages
+
+    dos_calls = [
+        {"id": "call_1", "type": "function", "function": {"name": "a", "arguments": "{}"}},
+        {"id": "call_2", "type": "function", "function": {"name": "b", "arguments": "{}"}},
+    ]
+    seq = [
+        _user("u1"),
+        _a_tc("grupo trunco", tool_calls=dos_calls),
+        _tool("solo el primero", tc_id="call_1"),  # falta call_2 → grupo roto
+        _user("u2"),
+    ]
+    out = _drop_orphan_tool_messages(seq)
+    assert [m.content for m in out] == ["u1", "u2"]
+
+
+def test_drop_orphan_user_intercalado_se_reubica_tras_el_grupo():
+    """In-flight injection: un mensaje del usuario persistido MIENTRAS corrían
+    las tools del batch queda intercalado dentro del grupo en la DB. Debe
+    reubicarse DESPUÉS del grupo completo (contigüidad protocolar) — no cerrar
+    el grupo y hacer caer results legítimos."""
+    from adapters.outbound.history.sqlite_history_store import _drop_orphan_tool_messages
+
+    seq = [
+        _a_tc("abre grupo"),
+        _user("para"),  # in-flight, aterrizó entre el assistant y su result
+        _tool("r1"),
+        _a("final"),
+    ]
+    out = _drop_orphan_tool_messages(seq)
+    assert [m.content for m in out] == ["abre grupo", "r1", "para", "final"]
 
 
 # ---------------------------------------------------------------------------

@@ -392,14 +392,14 @@ class ILLMProvider(ABC):
 
 ```python
 class IHistoryStore(ABC):
-    async def append(self, agent_id: str, message: Message, channel: str, chat_id: str) -> None: ...
-    async def load(self, agent_id: str, channel: str, chat_id: str, limit: int) -> list[Message]: ...
+    async def append(self, agent_id: str, message: Message, channel: str, chat_id: str) -> int | None: ...
+    async def load(self, agent_id: str, channel: str, chat_id: str) -> list[Message]: ...
     async def clear(self, agent_id: str, channel: str, chat_id: str) -> None: ...
-    async def record_user_message(self, agent_id: str, message: Message, channel: str, chat_id: str) -> None: ...
-    async def drain_pending(self, agent_id: str, channel: str, chat_id: str) -> list[Message]: ...
+    async def last_row_id(self, agent_id: str, channel: str, chat_id: str) -> int: ...
+    async def load_user_messages_since(self, agent_id: str, after_id: int, channel: str, chat_id: str) -> tuple[int, list[Message]]: ...
 ```
 
-History is stored in **SQLite** (`history.db`). It is scoped by `(agent_id, channel, chat_id)`. `record_user_message` + `drain_pending` support in-flight message injection.
+History is stored in **SQLite** (`history.db`). It is scoped by `(agent_id, channel, chat_id)`. `last_row_id` + `load_user_messages_since` are the in-flight drainage primitives: monotonic rowid cursor, immune to the `max_messages` window (`record_user_message` lives on `RunAgentUseCase` and persists via `append`).
 
 ### `IScopeRegistry`
 
@@ -471,7 +471,7 @@ no `self`) and `_execute_turn` chains them:
 LLM-tools loop until `tool_call_max_iterations` (default 5) is exhausted or the LLM stops calling tools:
 
 - **Circuit breaker:** if the same tool fails `circuit_breaker_threshold` consecutive times, the loop is cut.
-- **In-flight injection:** between iterations (checkpoints A: before `llm.complete`, B: after the tool_calls batch), pending user messages are drained via `history_store.drain_pending()`. If messages are found, the iteration counter resets to 0.
+- **In-flight injection:** between iterations (checkpoints A: before `llm.complete`, B: after the tool_calls batch), new user messages are drained via `history_store.load_user_messages_since(cursor)` — a monotonic rowid cursor, immune to the `max_messages` window. If messages are found, the iteration counter resets to 0.
 - Backward-compatible: `history_store=None` disables injection (legacy mode).
 
 ### `ConsolidateMemoryUseCase`
@@ -627,6 +627,8 @@ else:
 ```
 
 The tool loop drains those messages between iterations and incorporates them into the LLM context. When drained messages are received, the iteration counter resets. The circuit breaker does **not** reset (tool failures keep accumulating).
+
+**Drainage is cursor-based (FIX 2026-07-12).** The loop tracks the last `history.db` rowid the turn already has in context (baseline = the id returned by the user-message `append`, or `last_row_id` of the scope) and drains `role=user` rows with a greater id via `IHistoryStore.load_user_messages_since`. The original design *counted* user messages over `load()` — which applies the `max_messages` window: with a full window, every new message evicts an old row from the edge, so the count may not grow and the drain went **blind** (real bug: a user's "para" mid-turn never reached the LLM). Counting also broke under `merge_chats` (unscoped baseline vs scoped drain) and needed a coalesce workaround. The monotonic rowid cursor is immune to all three.
 
 The routing is centralized in `dispatch_inbound_turn()` (`adapters/inbound/turn_dispatch.py`) with a single shared ACK constant — Telegram private chats and the admin chat endpoint go through it. The Telegram photo handler is the deliberate exception: it acquires the slot **before** the heavy photo processing and decides the path at the end, so it only shares the ACK constant.
 

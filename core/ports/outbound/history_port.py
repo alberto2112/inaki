@@ -82,6 +82,41 @@ class IHistoryStore(ABC):
         ...
 
     @abstractmethod
+    async def last_row_id(
+        self,
+        agent_id: str,
+        channel: str = "",
+        chat_id: str = "",
+    ) -> int:
+        """ID de la última fila persistida en el scope (0 si no hay ninguna).
+
+        Baseline del cursor de drainage (in-flight-message-injection): el tool
+        loop drena las filas ``role=user`` con id MAYOR a este valor. A
+        diferencia de contar mensajes sobre ``load()`` (que aplica la ventana
+        ``max_messages`` — el conteo dentro de una ventana deslizante LLENA no
+        crece cuando entra un mensaje nuevo y expulsa otro), el rowid es
+        monotónico e inmune a la ventana.
+        """
+        ...
+
+    @abstractmethod
+    async def load_user_messages_since(
+        self,
+        agent_id: str,
+        after_id: int,
+        channel: str = "",
+        chat_id: str = "",
+    ) -> tuple[int, list[Message]]:
+        """Mensajes ``role=user`` del scope con id > ``after_id``, en orden.
+
+        Primitiva del drainage in-flight: devuelve ``(nuevo_cursor, mensajes)``
+        donde ``nuevo_cursor`` es el id de la última fila devuelta — o
+        ``after_id`` intacto si no hay filas nuevas. Consulta por rowid, NUNCA
+        sobre la ventana ``max_messages`` (ver ``last_row_id``).
+        """
+        ...
+
+    @abstractmethod
     async def search(
         self,
         agent_id: str,

@@ -185,9 +185,11 @@ def _build_container(
         skills=AsyncMock(list_all=AsyncMock(return_value=[]), retrieve=AsyncMock(return_value=[])),
         history=AsyncMock(
             load=AsyncMock(return_value=[]),
-            append=AsyncMock(),
+            append=AsyncMock(return_value=1),
             load_state=AsyncMock(return_value=ConversationState()),
             save_state=AsyncMock(),
+            last_row_id=AsyncMock(return_value=1),
+            load_user_messages_since=AsyncMock(return_value=(1, [])),
         ),
         tools=container._tools,
         settings=build_run_agent_settings(agent_config),

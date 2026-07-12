@@ -317,6 +317,49 @@ class SQLiteHistoryStore(IHistoryStore):
             )
         return [self._row_to_message(r) for r in rows]
 
+    async def last_row_id(
+        self,
+        agent_id: str,
+        channel: str = "",
+        chat_id: str = "",
+    ) -> int:
+        filtros, params = _build_where_filters(agent_id, channel=channel, chat_id=chat_id)
+        async with self._conn() as conn:
+            await self._ensure_schema(conn)
+            rows = list(
+                await conn.execute_fetchall(
+                    f"SELECT COALESCE(MAX(id), 0) FROM history WHERE {filtros}",
+                    params,
+                )
+            )
+        return int(rows[0][0])
+
+    async def load_user_messages_since(
+        self,
+        agent_id: str,
+        after_id: int,
+        channel: str = "",
+        chat_id: str = "",
+    ) -> tuple[int, list[Message]]:
+        # Consulta por rowid monotónico — NUNCA sobre la ventana max_messages:
+        # el conteo de users dentro de una ventana deslizante LLENA no crece
+        # cuando un mensaje nuevo expulsa a otro del borde, y eso hacía
+        # invisible el drainage in-flight en conversaciones largas (bug del
+        # "para" ignorado, 2026-07-12).
+        filtros, params = _build_where_filters(agent_id, channel=channel, chat_id=chat_id)
+        async with self._conn() as conn:
+            await self._ensure_schema(conn)
+            rows = list(
+                await conn.execute_fetchall(
+                    f"SELECT id, {_COLS} FROM history WHERE {filtros} "
+                    "AND role = 'user' AND id > ? ORDER BY id ASC",
+                    (*params, after_id),
+                )
+            )
+        if not rows:
+            return after_id, []
+        return int(rows[-1]["id"]), [self._row_to_message(r) for r in rows]
+
     async def search(
         self,
         agent_id: str,

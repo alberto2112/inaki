@@ -35,7 +35,8 @@ class _FakeHistoryStore(IHistoryStore):
     """Stub mínimo para tests del drainage.
 
     El test muta directamente ``self.messages`` para simular que un inbound
-    adapter persistió un mensaje nuevo mientras el tool loop corre.
+    adapter persistió un mensaje nuevo mientras el tool loop corre. El rowid
+    sintético de cada mensaje es su índice + 1 (lista append-only).
     """
 
     def __init__(self, initial: list[Message] | None = None) -> None:
@@ -48,6 +49,30 @@ class _FakeHistoryStore(IHistoryStore):
         chat_id: str | None = None,
     ) -> list[Message]:
         return list(self.messages)
+
+    async def last_row_id(
+        self,
+        agent_id: str,
+        channel: str = "",
+        chat_id: str = "",
+    ) -> int:
+        return len(self.messages)
+
+    async def load_user_messages_since(
+        self,
+        agent_id: str,
+        after_id: int,
+        channel: str = "",
+        chat_id: str = "",
+    ) -> tuple[int, list[Message]]:
+        nuevos = [
+            (idx + 1, m)
+            for idx, m in enumerate(self.messages)
+            if idx + 1 > after_id and m.role == Role.USER
+        ]
+        if not nuevos:
+            return after_id, []
+        return nuevos[-1][0], [m for _, m in nuevos]
 
     # Métodos no usados por el tool loop — stubs para satisfacer el ABC.
     async def append(self, *args, **kwargs) -> int | None:  # noqa: ARG002
@@ -384,17 +409,11 @@ async def test_drained_messages_are_not_re_drained():
     assert user_contents.count("ya estaba") == 1
 
 
-async def test_initial_db_user_count_respeta_coalesce():
-    """Cuando ``messages`` viene coalesced, ``initial_db_user_count`` evita el drain
-    falso de mensajes que ya están dentro del bloque coalesced.
-
-    Escenario history-derived (modo flush de grupo):
-    - DB tiene 3 user-msgs consecutivos [u1, u2, u3].
-    - `coalesce_consecutive_same_role` los une en `[user("u1\\nu2\\nu3")]`.
-    - SIN initial_db_user_count: el loop cuenta 1 user_msg en messages,
-      pero la DB tiene 3 → drain reinyecta [u2, u3] como duplicados visibles
-      al LLM ("historial clonado").
-    - CON initial_db_user_count=3: drain compara 3 vs 3 → no drena nada.
+async def test_cursor_respeta_coalesce_sin_duplicar():
+    """Escenario history-derived (flush de grupo) con coalesce: la DB tiene 3
+    user-msgs [u1, u2, u3] fusionados en un solo bloque para el LLM. Con el
+    cursor por rowid (bootstrap = MAX(id) = 3), NINGUNO se re-drena — el viejo
+    conteo sobre messages coalesced reinyectaba u2/u3 como "historial clonado".
     """
     u1 = Message(role=Role.USER, content="u1")
     u2 = Message(role=Role.USER, content="u2")
@@ -423,15 +442,14 @@ async def test_initial_db_user_count_respeta_coalesce():
         agent_id="agent1",
         history_store=history,
         scope=_SCOPE,
-        initial_db_user_count=3,  # el caller (execute()) cuenta sobre history crudo
     )
 
     # El LLM solo debería ver el bloque coalesced — sin re-inyecciones de u2/u3.
     assert seen_user_msgs == ["u1\nu2\nu3"]
 
 
-async def test_initial_db_user_count_permite_drenar_nuevo_msg_post_coalesce():
-    """Con coalesce + baseline correcto, los mensajes GENUINAMENTE nuevos siguen drenándose."""
+async def test_cursor_drena_nuevo_msg_post_coalesce():
+    """Con coalesce + cursor, los mensajes GENUINAMENTE nuevos siguen drenándose."""
     u1 = Message(role=Role.USER, content="u1")
     u2 = Message(role=Role.USER, content="u2")
     history = _FakeHistoryStore(initial=[u1, u2])
@@ -466,12 +484,72 @@ async def test_initial_db_user_count_permite_drenar_nuevo_msg_post_coalesce():
         agent_id="agent1",
         history_store=history,
         scope=_SCOPE,
-        initial_db_user_count=2,
+        history_cursor=2,  # el caller pasa el baseline exacto (2 filas en DB)
     )
 
     assert result == "entendido, cancelado"
     # iter 2 ve el bloque coalesced ORIGINAL + el nuevo drenado, sin duplicar u1/u2.
     assert seen_messages_iter_2 == ["u1\nu2", "cancela todo"]
+
+
+async def test_cursor_inmune_a_ventana_max_messages_llena():
+    """Regresión del bug "para" (2026-07-12): con la ventana `max_messages`
+    LLENA, un mensaje user nuevo expulsa una fila user vieja del borde y el
+    CONTEO de users sobre load() no crece → el drain viejo quedaba ciego y el
+    mensaje jamás llegaba al LLM. El cursor por rowid lo ve SIEMPRE.
+
+    Simulación: el fake ventanea load() a las últimas 4 filas. La fila que sale
+    al entrar "para" es role=user → user-count constante. El drain por cursor
+    debe drenar "para" igual.
+    """
+
+    class _WindowedFake(_FakeHistoryStore):
+        _WINDOW = 4
+
+        async def load(self, agent_id, channel=None, chat_id=None):  # noqa: ARG002
+            return list(self.messages[-self._WINDOW :])
+
+    # Ventana llena: [u_old, a1, u_prev, a2] — el próximo append expulsa u_old.
+    history = _WindowedFake(
+        initial=[
+            Message(role=Role.USER, content="u_old"),
+            Message(role=Role.ASSISTANT, content="a1"),
+            Message(role=Role.USER, content="u_prev"),
+            Message(role=Role.ASSISTANT, content="a2"),
+        ]
+    )
+
+    call_count = 0
+    seen_para = False
+
+    async def llm_complete(messages, system_prompt, tools=None):  # noqa: ARG001
+        nonlocal call_count, seen_para
+        call_count += 1
+        if call_count == 1:
+            history.messages.append(Message(role=Role.USER, content="para"))
+            return _tool_call_response()
+        seen_para = any(m.content == "para" for m in messages if m.role == Role.USER)
+        return LLMResponse.of_text("ok, paro")
+
+    llm = AsyncMock()
+    llm.complete = AsyncMock(side_effect=llm_complete)
+    llm.thinking_active = False
+
+    result = await run_tool_loop(
+        llm=llm,
+        tools=_make_tools(),
+        messages=list(history.messages),
+        system_prompt="x",
+        tool_schemas=[],
+        max_iterations=5,
+        circuit_breaker_threshold=3,
+        agent_id="agent1",
+        history_store=history,
+        scope=_SCOPE,
+    )
+
+    assert result == "ok, paro"
+    assert seen_para, "el 'para' debía llegar al LLM aunque la ventana no crezca"
 
 
 async def test_drain_at_checkpoint_b_after_tools():

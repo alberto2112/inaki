@@ -705,6 +705,22 @@ tools siguen acumulando).
 - `_tool_loop.py` recibe params opcionales `history_store` y `scope`; con
   `None` el comportamiento es legacy (backward-compat 100%).
 
+**FIX drainage-por-cursor (2026-07-12)**: el drain original CONTABA los mensajes
+`role=user` sobre `load()` — que aplica la ventana `chat_history.max_messages`.
+Con la ventana LLENA (toda conversación madura), cada mensaje nuevo expulsa una
+fila vieja del borde: si la expulsada era `user`, el conteo no crece y el drain
+quedaba CIEGO — el "para" del usuario jamás llegaba al LLM (bug real cazado con
+journalctl vacío de `[in-flight]`: no era el modelo desobedeciendo, el mensaje
+nunca se inyectó). También rompía con `merge_chats` (baseline sin scope vs drain
+scoped) y necesitaba el workaround `initial_db_user_count` para el coalesce.
+Reemplazo: **cursor por rowid monotónico** — `IHistoryStore.last_row_id` +
+`load_user_messages_since(after_id)` (filas `role=user` con id > cursor, query
+por índice, sin ventana). El baseline es el id que devuelve el `append` del
+user_msg (o `MAX(id)` del scope en los flujos history-derived/ephemeral); el
+loop lo bootstrapea solo si el caller no lo pasa. `initial_db_user_count` se
+eliminó — el coalesce ya no necesita workaround (el cursor no cuenta nada).
+NUNCA volver a un drain por conteo sobre una vista ventaneada.
+
 **Routing en inbound adapters** (`bot.py:_run_pipeline`, `chat.py:chat_turn`,
 `agents.py:chat`):
 ```
@@ -741,10 +757,9 @@ sería re-chequear `try_mark_busy` después del persist y disparar un turno
 history-derived si el scope se liberó en el ínterin.
 
 **Costo I/O**: cada iteración del tool loop hace 2 queries adicionales a SQLite
-(checkpoints A y B). Para Pi 5 con SQLite local, overhead despreciable (~10-20ms
-por turno vs varios segundos del turno completo). Si en el futuro la perf
-importara, agregar `IHistoryStore.load_since(after_id)` para leer solo el delta
-en vez de toda la historia del scope.
+(checkpoints A y B). Con el drainage por cursor son deltas por índice
+(`WHERE id > ?`), aún más baratas que el load completo original — overhead
+despreciable en la Pi 5.
 
 ### `telegram-group-auth`
 

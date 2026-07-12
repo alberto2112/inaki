@@ -93,6 +93,9 @@ def mock_history() -> AsyncMock:
     history.clear.return_value = None
     history.load_state.return_value = ConversationState()
     history.save_state.return_value = None
+    # Cursor de drainage in-flight: sin filas nuevas por default.
+    history.last_row_id.return_value = 0
+    history.load_user_messages_since.return_value = (0, [])
     return history
 
 

@@ -743,3 +743,64 @@ def test_drop_orphan_tool_messages_unit():
     ]
     out = _drop_orphan_tool_messages(seq)
     assert [m.content for m in out] == ["u1", "abre grupo", "r1", "final"]
+
+
+# ---------------------------------------------------------------------------
+# Cursor de drainage in-flight — last_row_id + load_user_messages_since
+# ---------------------------------------------------------------------------
+
+
+async def test_last_row_id_vacio_es_cero(history_store):
+    assert await history_store.last_row_id("agent1") == 0
+
+
+async def test_last_row_id_scoped(history_store):
+    await history_store.append(
+        "agent1", Message(role=Role.USER, content="a"), channel="telegram", chat_id="1"
+    )
+    await history_store.append(
+        "agent1", Message(role=Role.USER, content="b"), channel="telegram", chat_id="2"
+    )
+
+    id_scope_1 = await history_store.last_row_id("agent1", channel="telegram", chat_id="1")
+    id_scope_2 = await history_store.last_row_id("agent1", channel="telegram", chat_id="2")
+
+    assert 0 < id_scope_1 < id_scope_2
+
+
+async def test_load_user_messages_since_devuelve_solo_users_posteriores(history_store):
+    await history_store.append("agent1", Message(role=Role.USER, content="viejo"))
+    cursor = await history_store.last_row_id("agent1")
+    await history_store.append("agent1", Message(role=Role.ASSISTANT, content="resp"))
+    await history_store.append("agent1", Message(role=Role.USER, content="para"))
+
+    nuevo_cursor, msgs = await history_store.load_user_messages_since("agent1", cursor)
+
+    assert [m.content for m in msgs] == ["para"]  # el assistant NO se drena
+    assert nuevo_cursor > cursor
+    # Idempotencia: con el cursor avanzado, no hay nada nuevo.
+    cursor_2, msgs_2 = await history_store.load_user_messages_since("agent1", nuevo_cursor)
+    assert msgs_2 == [] and cursor_2 == nuevo_cursor
+
+
+async def test_load_user_messages_since_inmune_a_ventana_llena(history_store_limited):
+    """Regresión del bug "para" (2026-07-12): con max_messages=3 y la ventana
+    LLENA de mensajes user, un user nuevo expulsa otro user del borde y el
+    conteo de users sobre load() NO crece — el drain por conteo quedaba ciego.
+    El cursor por rowid ve el mensaje nuevo siempre."""
+    for texto in ["u1", "u2", "u3"]:
+        await history_store_limited.append("agent1", Message(role=Role.USER, content=texto))
+
+    ventana_antes = await history_store_limited.load("agent1")
+    users_antes = sum(1 for m in ventana_antes if m.role == Role.USER)
+    cursor = await history_store_limited.last_row_id("agent1")
+
+    # Llega "para": la ventana expulsa u1 → el conteo de users NO cambia.
+    await history_store_limited.append("agent1", Message(role=Role.USER, content="para"))
+    ventana_despues = await history_store_limited.load("agent1")
+    users_despues = sum(1 for m in ventana_despues if m.role == Role.USER)
+    assert users_despues == users_antes  # ← la ceguera del diseño por conteo
+
+    # El cursor lo ve igual.
+    _, msgs = await history_store_limited.load_user_messages_since("agent1", cursor)
+    assert [m.content for m in msgs] == ["para"]

@@ -49,33 +49,29 @@ _MAX_INFLIGHT_ITER_RESETS = 3
 async def _drain_new_user_messages(
     history_store: IHistoryStore | None,
     scope: Scope | None,
-    initial_user_count: int,
-    already_drained: int,
-) -> list[Message]:
-    """Devuelve mensajes ``role=user`` aparecidos en history.db tras iniciar el loop.
+    cursor: int | None,
+) -> tuple[int | None, list[Message]]:
+    """Devuelve mensajes ``role=user`` aparecidos en history.db tras el cursor.
 
-    Calcula la diferencia entre los user-messages que había en history al arrancar
-    el turno (``initial_user_count``), los que ya drené en checkpoints previos
-    (``already_drained``), y los que hay AHORA en history. La diferencia son los
-    nuevos — los devuelve en orden (los últimos N user-messages de history).
+    Cursor por rowid monotónico (``load_user_messages_since``): toda fila
+    ``role=user`` con id > ``cursor`` es nueva, sin importar la ventana
+    ``max_messages`` del store. El diseño anterior CONTABA users sobre
+    ``load()`` (ventaneado): con la ventana llena, cada mensaje nuevo expulsa
+    uno viejo del borde y el conteo puede no crecer — el drain quedaba ciego en
+    conversaciones largas y un "para" del usuario jamás llegaba al LLM (bug
+    real, 2026-07-12). También rompía con ``merge_chats`` (baseline sin scope
+    vs drain scoped). El cursor elimina la clase entera de errores.
 
-    Si ``history_store`` o ``scope`` son ``None``, el loop corre en modo legacy
-    (sin in-flight injection) — devuelve lista vacía sin tocar la DB.
-
-    Es seguro contra el caso "history no creció": si por algún motivo
-    ``fresh_count <= initial + already_drained``, devuelve ``[]``.
+    Si ``history_store``, ``scope`` o ``cursor`` son ``None``, el loop corre en
+    modo legacy (sin in-flight injection) — devuelve ``(cursor, [])`` sin tocar
+    la DB.
     """
-    if history_store is None or scope is None:
-        return []
-    fresh = await history_store.load(*scope)
-    fresh_user_count = sum(1 for m in fresh if m.role == Role.USER)
-    new_count = fresh_user_count - initial_user_count - already_drained
-    if new_count <= 0:
-        return []
-    # history.db es append-only durante el turno, así que los nuevos son los
-    # últimos N mensajes role=user de la lista cargada.
-    user_messages = [m for m in fresh if m.role == Role.USER]
-    return user_messages[-new_count:]
+    if history_store is None or scope is None or cursor is None:
+        return cursor, []
+    agent_id, channel, chat_id = scope
+    return await history_store.load_user_messages_since(
+        agent_id, cursor, channel=channel, chat_id=chat_id
+    )
 
 
 async def run_tool_loop(
@@ -93,7 +89,7 @@ async def run_tool_loop(
     request_delay_seconds: float = 0.0,
     history_store: IHistoryStore | None = None,
     scope: Scope | None = None,
-    initial_db_user_count: int | None = None,
+    history_cursor: int | None = None,
     tool_trace: list[Message] | None = None,
     page_in_schemas: list[dict] | None = None,
 ) -> str:
@@ -115,21 +111,21 @@ async def run_tool_loop(
             provider para no saturar su rate limiter cuando el modelo hace varias
             tool calls seguidas. Default ``0.0`` → sin throttle (comportamiento
             legacy). El valor de producción llega desde ``config.llm.request_delay_seconds``.
-        history_store: Si se provee junto con ``scope``, el loop drena mensajes
-            ``role=user`` aparecidos en history.db entre iteraciones (feature
-            ``in-flight-message-injection``). Cuando hay drain no-vacío, el
-            contador de iteraciones se resetea a 0. Default ``None`` →
-            comportamiento legacy (loop ciego al historial externo).
+        history_store: Si se provee junto con ``scope`` y ``history_cursor``, el
+            loop drena mensajes ``role=user`` aparecidos en history.db entre
+            iteraciones (feature ``in-flight-message-injection``). Cuando hay
+            drain no-vacío, el contador de iteraciones se resetea a 0. Default
+            ``None`` → comportamiento legacy (loop ciego al historial externo).
         scope: Tupla ``(agent_id, channel, chat_id)`` del turno. Requerido junto
             con ``history_store`` para activar la drainage. Default ``None``.
-        initial_db_user_count: Cantidad de mensajes ``role=user`` que YA están
-            en history.db al inicio del turno. Si se provee, se usa como baseline
-            del drain en vez de contar desde ``messages``. Esto es necesario
-            cuando ``messages`` viene coalesced (``coalesce_consecutive_same_role``)
-            y su conteo NO refleja la realidad de la DB — sin este parámetro, el
-            drain re-introduce mensajes que ya están dentro del bloque coalesced,
-            produciendo duplicación visible al LLM. Default ``None`` →
-            fallback al conteo desde ``messages`` (correcto cuando no hay coalesce).
+        history_cursor: Rowid de la última fila de history.db que el turno YA
+            tiene en su contexto (típicamente el id del user message recién
+            persistido). El drain devuelve solo filas ``role=user`` con id
+            mayor — inmune a la ventana ``max_messages`` y al coalesce (el
+            diseño anterior contaba users sobre ``load()`` ventaneado y quedaba
+            ciego con la ventana llena). Default ``None`` → el loop bootstrapea
+            el cursor con ``last_row_id`` del scope al arrancar (drainage sigue
+            activa si hay ``history_store`` + ``scope``).
         tool_trace: Acumulador opcional (feature persist-tool-calls). Si se provee
             una lista, el loop le appendea —en orden— cada mensaje ``assistant``
             con tool_calls y cada mensaje ``tool`` (resultado o circuit-open) que
@@ -179,20 +175,15 @@ async def run_tool_loop(
         else None
     )
 
-    # Baseline para detectar mensajes role=user que aparezcan en history.db
-    # mientras este loop está corriendo (in-flight-message-injection). Si el
-    # caller no pasó history_store/scope, estas variables existen pero el
-    # helper _drain_new_user_messages no las usa (devuelve [] inmediato).
-    #
-    # `initial_db_user_count` permite al caller pasar el conteo real de la DB
-    # cuando `messages` está coalesced (modo history-derived). Fallback al
-    # conteo desde messages para callers legacy (run_agent_one_shot).
-    initial_user_count = (
-        initial_db_user_count
-        if initial_db_user_count is not None
-        else sum(1 for m in messages if m.role == Role.USER)
-    )
-    already_drained = 0
+    # Cursor de drainage (in-flight-message-injection): toda fila role=user de
+    # history.db con id > cursor se inyecta al loop en los checkpoints. El
+    # caller idealmente lo pasa apuntando a la última fila que el turno ya
+    # tiene en contexto (el id del user_msg recién persistido — baseline
+    # exacto); si no, se bootstrapea acá con MAX(id) del scope: nada anterior
+    # al arranque del loop es "nuevo".
+    cursor = history_cursor
+    if cursor is None and history_store is not None and scope is not None:
+        cursor = await history_store.last_row_id(scope[0], channel=scope[1], chat_id=scope[2])
     # Cuántas veces ya reseteamos el contador por un drain in-flight. Acotado por
     # _MAX_INFLIGHT_ITER_RESETS para que el turno no viva indefinidamente.
     inflight_resets = 0
@@ -217,12 +208,9 @@ async def run_tool_loop(
         # role=user que el inbound adapter haya persistido en history mientras
         # estábamos ejecutando tools en la iteración previa se incorpora ahora
         # a working_messages y el LLM lo ve en la próxima llamada.
-        drained = await _drain_new_user_messages(
-            history_store, scope, initial_user_count, already_drained
-        )
+        cursor, drained = await _drain_new_user_messages(history_store, scope, cursor)
         if drained:
             working_messages.extend(drained)
-            already_drained += len(drained)
             if inflight_resets < _MAX_INFLIGHT_ITER_RESETS:
                 logger.info(
                     "[in-flight] drain checkpoint=A count=%d agent_id=%s iter_reset_from=%d",
@@ -358,12 +346,9 @@ async def run_tool_loop(
         # individuales). Eso violaría el contrato de los providers: la API de
         # OpenAI/DeepSeek requiere que todos los tool_result de un mismo
         # assistant(tool_calls) lleguen juntos antes del próximo mensaje.
-        drained = await _drain_new_user_messages(
-            history_store, scope, initial_user_count, already_drained
-        )
+        cursor, drained = await _drain_new_user_messages(history_store, scope, cursor)
         if drained:
             working_messages.extend(drained)
-            already_drained += len(drained)
             if inflight_resets < _MAX_INFLIGHT_ITER_RESETS:
                 logger.info(
                     "[in-flight] drain checkpoint=B count=%d agent_id=%s iter_reset_from=%d",

@@ -539,19 +539,26 @@ class RunAgentUseCase:
         # usuario se perdiera silenciosamente. En el flujo history-derived
         # (user_input=None) el mensaje ya fue persistido vía record_user_message,
         # así que no hay double-persist.
+        # Baseline del drain del tool loop: el rowid de la última fila del scope
+        # que este turno YA tiene en contexto. Preferimos el id que devuelve el
+        # append del user_msg (exacto); en los flujos sin append (history-derived
+        # — record_user_message ya persistió — y ephemeral) cae a MAX(id) del
+        # scope. Reemplaza el conteo de users sobre load(): la ventana
+        # max_messages hacía el conteo ciego cuando estaba llena (un mensaje
+        # nuevo expulsa otro del borde y el total no crece) — el "para" del
+        # usuario jamás llegaba al LLM. El cursor por rowid es inmune a la
+        # ventana y al coalesce. Race residual aceptado (uso doméstico): un
+        # mensaje que aterrice entre el load del historial y esta línea queda
+        # fuera del turno actual, pero aparece en el próximo.
+        history_cursor: int | None = None
         if not ephemeral and user_msg is not None:
-            await self._history.append(agent_id, user_msg, channel=channel, chat_id=chat_id)
-
-        # Baseline del drain del tool loop. Contamos sobre `history` (crudo,
-        # pre-coalesce) + 1 si vamos a persistir user_msg ANTES del loop. Sin
-        # esto, en el flujo history-derived el `messages` coalesced reporta
-        # menos user-msgs que la DB y el drain en checkpoint A reinyecta
-        # mensajes que ya están dentro del bloque coalesced → duplicación
-        # visible al LLM como "historial clonado" (regresión introducida al
-        # combinar in-flight-injection con el coalesce del buffer de grupos).
-        initial_db_user_count = sum(1 for m in history if m.role == Role.USER) + (
-            1 if user_msg is not None and not ephemeral else 0
-        )
+            history_cursor = await self._history.append(
+                agent_id, user_msg, channel=channel, chat_id=chat_id
+            )
+        if history_cursor is None:
+            history_cursor = await self._history.last_row_id(
+                agent_id, channel=channel, chat_id=chat_id
+            )
 
         # Envuelve el sink real para acumular cada intermedio emitido en vivo
         # (ver RecordingIntermediateSink): sin esto, la narración que el LLM
@@ -585,7 +592,7 @@ class RunAgentUseCase:
                 # entre iteraciones y drenará mensajes role=user nuevos.
                 history_store=self._history,
                 scope=(agent_id, channel, chat_id),
-                initial_db_user_count=initial_db_user_count,
+                history_cursor=history_cursor,
                 tool_trace=tool_trace,
                 # tool-page-in: el agente principal puede paginar cualquier tool
                 # de su registry si el LLM la llama sin que el routing la haya

@@ -141,6 +141,7 @@
 | `tool_call_max_iterations` | `int` | `5` |  |  |
 | `circuit_breaker_threshold` | `int` | `2` |  |  |
 | `sticky_ttl` | `int` | `3` |  |  |
+| `pinned` | `list[str]` | _(default factory)_ |  | Tools SIEMPRE visibles para el LLM, por fuera del semantic routing. |
 | `allowed` | `list[str] \| None` | `null` |  | Allow-list de nombres de tools. ``None`` (default) = sin restricción. |
 
 ### `SemanticRoutingConfig`

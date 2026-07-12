@@ -587,6 +587,13 @@ class RunAgentUseCase:
                 scope=(agent_id, channel, chat_id),
                 initial_db_user_count=initial_db_user_count,
                 tool_trace=tool_trace,
+                # tool-page-in: el agente principal puede paginar cualquier tool
+                # de su registry si el LLM la llama sin que el routing la haya
+                # hecho visible. Con `tools_override` (scheduler) se desactiva —
+                # el override es autoridad del caller, igual que en el pinning.
+                # El one-shot (subagentes) tampoco lo pasa: su sandbox
+                # (tools.allowed + exclusión de delegate) debe valer.
+                page_in_schemas=(self._tools.get_schemas() if tools_override is None else None),
             )
         except ToolLoopMaxIterationsError as e:
             response = e.last_response or (

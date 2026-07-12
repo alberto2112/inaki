@@ -162,6 +162,7 @@ def build_run_agent_settings(cfg: AgentConfig) -> RunAgentSettings:
         tools_top_k=cfg.tools.semantic_routing_top_k,
         tools_min_score=cfg.tools.semantic_routing_min_score,
         tools_sticky_ttl=cfg.tools.sticky_ttl,
+        tools_pinned=frozenset(cfg.tools.pinned),
         tool_call_max_iterations=cfg.tools.tool_call_max_iterations,
         circuit_breaker_threshold=cfg.tools.circuit_breaker_threshold,
         request_delay_seconds=cfg.llm.request_delay_seconds,

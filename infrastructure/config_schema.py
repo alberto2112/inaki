@@ -475,6 +475,19 @@ class ToolsConfig(_ConfigBaseModel):
     tool_call_max_iterations: int = 5
     circuit_breaker_threshold: int = 2
     sticky_ttl: int = 3  # Turnos que una tool seleccionada sobrevive; 0 = disabled
+    pinned: list[str] = Field(default_factory=lambda: ["delegate"])
+    """Tools SIEMPRE visibles para el LLM, por fuera del semantic routing.
+
+    Los schemas de estos nombres se unionan al resultado del routing en cada
+    turno sin contar contra ``semantic_routing_top_k``. Es para tools de
+    ORQUESTACIÓN que el LLM selecciona por razonamiento (``delegate``): una tool
+    así debe estar VISIBLE para poder ser razonada — el routing por embedding
+    solo la traería si las palabras del USUARIO la matchean (caso real: el LLM
+    quería delegar y alucinó un binario porque `delegate` no estaba en su set).
+    Nombres inexistentes en el registry se ignoran. No aplica cuando el caller
+    fuerza ``tools_override`` (triggers del scheduler) ni en el flujo one-shot
+    de delegación (sin routing). Lista vacía = sin pinning."""
+
     allowed: list[str] | None = None
     """Allow-list de nombres de tools. ``None`` (default) = sin restricción.
 

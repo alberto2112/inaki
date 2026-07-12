@@ -275,6 +275,27 @@ class RoutingOutcome:
     routing_bypass: bool
 
 
+def _union_pinned_schemas(
+    tool_schemas: list[dict],
+    all_schemas: list[dict],
+    pinned: frozenset[str],
+) -> list[dict]:
+    """Suma los schemas de las tools pinneadas que falten en la selección.
+
+    Preserva el orden de la selección del routing y appendea las pinneadas en
+    orden alfabético (determinismo). Nombres pinneados que no existen en el
+    registry se ignoran en silencio (típico: un sub-agente sin `delegate`).
+    Los lookups usan ``.get()`` porque la fase no impone la forma OpenAI del
+    schema — callers de test pasan dicts sueltos.
+    """
+    visible = {sch.get("function", {}).get("name", "") for sch in tool_schemas}
+    by_name = {
+        name: sch for sch in all_schemas if (name := sch.get("function", {}).get("name", ""))
+    }
+    extra = [by_name[n] for n in sorted(pinned) if n in by_name and n not in visible]
+    return tool_schemas + extra if extra else tool_schemas
+
+
 async def run_semantic_routing(
     *,
     query: str,
@@ -368,6 +389,16 @@ async def run_semantic_routing(
             schemas_by_name = {sch["function"]["name"]: sch for sch in all_schemas}
             tool_schemas = [schemas_by_name[n] for n in active_names if n in schemas_by_name]
             state_dirty = True
+
+    # Tools pinneadas — SIEMPRE visibles, por fuera del routing y del sticky.
+    # Cubre los tres caminos (routing activo, bypass e inactivo — este último
+    # ya las incluye, la unión es no-op) sin contar contra top_k ni consumir
+    # TTL. Un `tools_override` explícito (scheduler) NO se toca: es autoridad
+    # del caller. Razón de fondo: una tool que el LLM selecciona "por
+    # razonamiento" (delegate) tiene que estar visible para poder ser razonada
+    # — el embedding de la query solo la traería si el USUARIO habla de ella.
+    if tools_override is None and settings.tools_pinned:
+        tool_schemas = _union_pinned_schemas(tool_schemas, all_schemas, settings.tools_pinned)
 
     return RoutingOutcome(
         retrieved_skills=retrieved_skills,

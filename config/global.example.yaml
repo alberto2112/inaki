@@ -278,6 +278,11 @@ tools:
   semantic_routing_top_k: 5
   semantic_routing_min_score: 0.0
   sticky_ttl: 3
+  # Tools SIEMPRE visibles para el LLM (se unionan al resultado del routing sin
+  # contar contra top_k). Para tools de orquestación que el LLM elige por
+  # razonamiento — el routing solo las traería si el USUARIO habla de ellas.
+  # [] = sin pinning. Ver docs/semantic-routing.md → "Pinned Tools & Page-in".
+  pinned: [delegate]
   tool_call_max_iterations: 5
   circuit_breaker_threshold: 2
 

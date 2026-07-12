@@ -779,3 +779,122 @@ async def test_throttle_disabled_by_default_no_sleep():
         )
 
     sleep_mock.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# tool-page-in — el LLM llama una tool fuera del set visible pero registrada
+# ---------------------------------------------------------------------------
+
+
+def _openai_schema(name: str) -> dict:
+    return {"type": "function", "function": {"name": name, "description": f"{name} desc"}}
+
+
+async def test_page_in_agrega_schema_para_iteraciones_siguientes():
+    """El LLM llama `delegate` (no visible); el schema entra al set y la
+    siguiente llamada al LLM lo ve — el fallo de página se resuelve."""
+    llm = _make_llm(
+        _tool_call_response("delegate", {"agent_id": "deep_research", "task": "x"}),
+        "Respuesta final",
+    )
+    tools = _make_tools(tool_name="delegate")
+    visible = [_openai_schema("web_search")]
+    catalog = [_openai_schema("web_search"), _openai_schema("delegate")]
+
+    await run_tool_loop(
+        llm=llm,
+        tools=tools,
+        messages=_base_messages(),
+        system_prompt="Prompt",
+        tool_schemas=visible,
+        max_iterations=5,
+        circuit_breaker_threshold=3,
+        agent_id="agent",
+        page_in_schemas=catalog,
+    )
+
+    # La ejecución de la tool procedió normalmente...
+    tools.execute.assert_awaited_once()
+    # ...y la SEGUNDA llamada al LLM ya vio el schema paginado.
+    second_call_tools = llm.complete.await_args_list[1].kwargs["tools"]
+    names = [sch["function"]["name"] for sch in second_call_tools]
+    assert names == ["web_search", "delegate"]
+
+
+async def test_page_in_no_muta_la_lista_del_caller():
+    """El loop trabaja sobre una copia: la lista de schemas del caller (que
+    puede ser la del RoutingOutcome) queda intacta tras un page-in."""
+    llm = _make_llm(
+        _tool_call_response("delegate", {"agent_id": "r", "task": "x"}),
+        "Respuesta final",
+    )
+    tools = _make_tools(tool_name="delegate")
+    visible = [_openai_schema("web_search")]
+    catalog = [_openai_schema("web_search"), _openai_schema("delegate")]
+
+    await run_tool_loop(
+        llm=llm,
+        tools=tools,
+        messages=_base_messages(),
+        system_prompt="Prompt",
+        tool_schemas=visible,
+        max_iterations=5,
+        circuit_breaker_threshold=3,
+        agent_id="agent",
+        page_in_schemas=catalog,
+    )
+
+    assert [sch["function"]["name"] for sch in visible] == ["web_search"]
+
+
+async def test_page_in_deshabilitado_sin_catalogo():
+    """Sin `page_in_schemas` (one-shot / legacy) el set visible no cambia
+    aunque el LLM llame una tool desconocida."""
+    llm = _make_llm(
+        _tool_call_response("delegate", {"agent_id": "r", "task": "x"}),
+        "Respuesta final",
+    )
+    tools = _make_tools(tool_name="delegate")
+    visible = [_openai_schema("web_search")]
+
+    await run_tool_loop(
+        llm=llm,
+        tools=tools,
+        messages=_base_messages(),
+        system_prompt="Prompt",
+        tool_schemas=visible,
+        max_iterations=5,
+        circuit_breaker_threshold=3,
+        agent_id="agent",
+    )
+
+    second_call_tools = llm.complete.await_args_list[1].kwargs["tools"]
+    assert [sch["function"]["name"] for sch in second_call_tools] == ["web_search"]
+
+
+async def test_page_in_ignora_tool_inexistente_en_catalogo():
+    """Una tool que no existe ni en el catálogo no se pagina: el set visible
+    queda igual y la ejecución sigue su curso normal (el registry devuelve
+    su error de 'tool no registrada')."""
+    llm = _make_llm(
+        _tool_call_response("fantasma"),
+        "Respuesta final",
+    )
+    tools = _make_tools(tool_name="fantasma")
+    visible = [_openai_schema("web_search")]
+    catalog = [_openai_schema("web_search"), _openai_schema("delegate")]
+
+    await run_tool_loop(
+        llm=llm,
+        tools=tools,
+        messages=_base_messages(),
+        system_prompt="Prompt",
+        tool_schemas=visible,
+        max_iterations=5,
+        circuit_breaker_threshold=3,
+        agent_id="agent",
+        page_in_schemas=catalog,
+    )
+
+    second_call_tools = llm.complete.await_args_list[1].kwargs["tools"]
+    assert [sch["function"]["name"] for sch in second_call_tools] == ["web_search"]

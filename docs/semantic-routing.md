@@ -115,6 +115,51 @@ top_k names → schemas for those tools
 
 ---
 
+## Pinned Tools & Page-in
+
+The embedding query is the **user's message** — the LLM's own intent never feeds
+the retrieval. That created a blind spot: a tool the LLM selects *by reasoning*
+(e.g. deciding mid-turn to delegate work) was only visible if the USER's words
+happened to match its description. Real incident: the LLM announced "voy a
+delegar esta investigación", but `delegate` wasn't in its visible set, so it
+hallucinated a `delegate` binary on disk. Two complementary mechanisms close
+the gap:
+
+### `tools.pinned` — always-visible orchestration tools
+
+Schemas listed in `tools.pinned` (default `["delegate"]`) are **unioned to the
+routing result on every turn**, without counting against `semantic_routing_top_k`
+and without consuming sticky TTL (the union is per-turn, never persisted as
+state). It applies on all three routing paths (active, short-input bypass,
+inactive — where it's a no-op since everything is already visible). Pinned names
+missing from the registry are silently ignored (typical: a sub-agent without
+`delegate`). It does NOT apply when the caller forces `tools_override`
+(scheduler triggers) — an explicit override is the caller's authority.
+
+The axis for pinning is **orchestration vs domain**, not builtin vs extension:
+`delegate` shapes *how* the agent works and must always be reasonable-about;
+face tools or `download_from_telegram` are builtin but domain-specific — ideal
+candidates FOR routing. Pinning all builtins would defeat the routing entirely
+(~25 schemas per turn) and degrade tool-choice quality on small models.
+
+### Tool page-in — the safety net for everything else
+
+If the LLM calls a tool that is **not in its visible set but exists in the
+registry**, the tool loop resolves it like a page fault: execution proceeds (the
+executor always knew every registered tool) and the tool's schema is added to
+the visible set for the remaining iterations of the turn, so subsequent calls
+see the full argument contract. Implemented in `run_tool_loop` via the
+`page_in_schemas` parameter (the full catalog), which only `RunAgentUseCase`
+passes. One-shot sub-agents do NOT get page-in on purpose: their visible set is
+a sandbox (`tools.allowed` + the `delegate` exclusion) that page-in would
+escape. Same for `tools_override` turns.
+
+Together: routing keeps the per-turn menu small (token budget + selection
+quality), pinning guarantees orchestration tools are always on the menu, and
+page-in turns the routing from a wall into a cache for every other tool.
+
+---
+
 ## Cosine Similarity
 
 Implemented in `core/domain/services/similarity.py`:
@@ -209,6 +254,7 @@ put(hash, provider, dim, embedding)
 | `semantic_routing_min_tools` | `10` | Minimum tools to activate routing |
 | `semantic_routing_top_k` | `5` | How many tools the retrieve returns |
 | `semantic_routing_min_score` | `0.0` | Minimum cosine similarity score (0.0-1.0). Tools below this are discarded BEFORE applying top_k. 0.0 = no filter |
+| `pinned` | `["delegate"]` | Tools ALWAYS visible to the LLM, unioned to the routing result without counting against `top_k`. See "Pinned tools & page-in" below |
 | `tool_call_max_iterations` | `5` | Maximum tool loop iterations |
 | `circuit_breaker_threshold` | `2` | Consecutive failures before cutting off |
 

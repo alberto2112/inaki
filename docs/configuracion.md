@@ -290,6 +290,14 @@ tools:
   semantic_routing_top_k: 5       # Max number of tools selected by routing
   semantic_routing_min_score: 0.0 # Minimum cosine similarity score (0.0-1.0)
                                   # to include a tool. 0.0 = no filter.
+  pinned: [delegate]              # Tools ALWAYS visible to the LLM: their schemas are
+                                  # unioned to the routing result each turn without
+                                  # counting against top_k. For ORCHESTRATION tools the
+                                  # LLM selects by reasoning (delegate) — the embedding
+                                  # query is the USER's message, so routing alone would
+                                  # only surface them when the user talks about them.
+                                  # Unknown names are ignored; [] disables pinning.
+                                  # See docs/semantic-routing.md → "Pinned Tools & Page-in".
   tool_call_max_iterations: 5     # Max tool-loop iterations per turn
   circuit_breaker_threshold: 2    # Consecutive failures before cutting the loop
   # allowed: [read_file]          # Opt-in (default: absent/null = no restriction). ONLY

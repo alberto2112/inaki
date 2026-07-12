@@ -131,6 +131,10 @@ class RunAgentSettings(BaseModel, frozen=True):
     tools_top_k: int = 5
     tools_min_score: float = 0.0
     tools_sticky_ttl: int = 3
+    # Tools siempre visibles: sus schemas se unionan al resultado del routing sin
+    # contar contra top_k. Para tools de orquestación que el LLM selecciona por
+    # razonamiento (delegate) — deben estar VISIBLES para poder ser razonadas.
+    tools_pinned: frozenset[str] = frozenset({"delegate"})
     tool_call_max_iterations: int = 5
     circuit_breaker_threshold: int = 2
     request_delay_seconds: float = 2.0

@@ -95,6 +95,7 @@ async def run_tool_loop(
     scope: Scope | None = None,
     initial_db_user_count: int | None = None,
     tool_trace: list[Message] | None = None,
+    page_in_schemas: list[dict] | None = None,
 ) -> str:
     """
     Ejecuta el loop LLM + tool-dispatch hasta obtener respuesta final o
@@ -138,6 +139,18 @@ async def run_tool_loop(
             ``RecordingIntermediateSink``). Default ``None`` → no se acumula nada
             (subagentes one-shot y modo legacy). NO incluye los mensajes ``user``
             drenados in-flight (esos ya están persistidos por el inbound adapter).
+        page_in_schemas: Catálogo COMPLETO de schemas para el page-in de tools
+            (feature ``tool-page-in``). Si el LLM llama una tool que no está en
+            ``tool_schemas`` (el set visible que dejó el semantic routing) pero
+            SÍ existe en este catálogo, su schema se agrega al set visible para
+            las iteraciones siguientes — como un fallo de página que se resuelve
+            trayendo la página a memoria. La ejecución en sí ya funcionaba (el
+            executor conoce todas las tools registradas); lo que faltaba era que
+            el LLM viera el contrato de argumentos en las llamadas posteriores.
+            Default ``None`` → deshabilitado. Los subagentes one-shot NO lo
+            pasan a propósito: su set visible está acotado por ``tools.allowed``
+            (REQ-OS-5) y la exclusión de ``delegate`` (REQ-DG-9) — el page-in
+            los dejaría escapar del sandbox.
 
     Returns:
         El texto de respuesta final del LLM (sin tool calls).
@@ -152,6 +165,19 @@ async def run_tool_loop(
     failure_counts: dict[str, int] = {}
     tripped: set[str] = set()
     last_text: str = ""
+
+    # tool-page-in: copia propia del set visible (no mutar la lista del caller)
+    # + índice del catálogo completo para resolver fallos de página. Con
+    # ``page_in_schemas=None`` el feature queda inerte (one-shot, legacy).
+    # Los lookups usan .get() porque el loop no impone la forma OpenAI del
+    # schema — callers de test pasan dicts sueltos.
+    tool_schemas = list(tool_schemas)
+    visible_names = {sch.get("function", {}).get("name", "") for sch in tool_schemas}
+    page_in_by_name: dict[str, dict] | None = (
+        {name: sch for sch in page_in_schemas if (name := sch.get("function", {}).get("name", ""))}
+        if page_in_schemas is not None
+        else None
+    )
 
     # Baseline para detectar mensajes role=user que aparezcan en history.db
     # mientras este loop está corriendo (in-flight-message-injection). Si el
@@ -274,6 +300,25 @@ async def run_tool_loop(
                 if tool_trace is not None:
                     tool_trace.append(circuit_msg)
                 continue
+
+            # tool-page-in: el LLM llamó una tool que existe en el registry pero
+            # el routing no la había hecho visible (caso real: el LLM decide
+            # delegar a mitad del turno). La ejecución de abajo funciona igual
+            # (el executor conoce todas las tools); acá agregamos su schema al
+            # set visible para que las próximas llamadas al LLM vean el contrato
+            # de argumentos completo.
+            if (
+                page_in_by_name is not None
+                and tool_name not in visible_names
+                and tool_name in page_in_by_name
+            ):
+                tool_schemas.append(page_in_by_name[tool_name])
+                visible_names.add(tool_name)
+                logger.info(
+                    "[page-in] tool '%s' agregada al set visible (agent=%s)",
+                    tool_name,
+                    agent_id,
+                )
 
             result = await tools.execute(tool_name, **kwargs)
             result_msg = Message(

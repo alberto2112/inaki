@@ -245,7 +245,14 @@ CREATE TABLE history (
 );
 ```
 
-Only rows with `role = "user"` or `"assistant"` are persisted. Tool messages are ephemeral.
+`user` and `assistant` rows are always persisted. `tool` rows (the assistant+tool_calls
+↔ tool result trace) are persisted only when `chat_history.persist_tool_calls` is on — see
+`persist-tool-calls` and `incremental-persist` in CLAUDE.md. For conversational turns
+(those that can never end in `__SKIP__`) the trace is written **incrementally**, message by
+message as it is produced, so a daemon crash mid-turn does not lose work already narrated;
+skip-capable turns (autonomous groups, scheduler, bg-results) keep the post-loop batch. The
+schema also carries `channel`, `chat_id`, `tool_calls`, and `tool_call_id` columns not shown
+in the simplified DDL above.
 
 **Note on `archived`:** this column is legacy. In previous versions it was
 used for a soft-delete (archive → clear). The new flow uses `trim` (pure DELETE

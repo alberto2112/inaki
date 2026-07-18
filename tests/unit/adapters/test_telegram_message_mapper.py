@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import httpx
 import pytest
 from telegram.constants import ParseMode
-from telegram.error import BadRequest
+from telegram.error import BadRequest, TimedOut
 
 from adapters.inbound.telegram.message_mapper import (
+    _envio_no_llego,
     format_response,
     send_html_or_plain,
     split_message,
@@ -229,6 +231,88 @@ async def test_send_html_or_plain_reraise_si_no_es_error_de_parseo():
         await send_html_or_plain(send, "hola")
 
     assert len(llamadas) == 1  # NO hubo segundo intento
+
+
+# ---------------------------------------------------------------------------
+# _envio_no_llego + reintento seguro ante timeouts de red (no duplicar mensajes)
+# ---------------------------------------------------------------------------
+
+
+def _timed_out_from(causa: BaseException) -> TimedOut:
+    """TimedOut con ``__cause__`` = causa, como lo arma ptb con ``raise ... from err``."""
+    exc = TimedOut()
+    exc.__cause__ = causa
+    return exc
+
+
+def test_envio_no_llego_true_para_connect_y_pool():
+    """Conexión no establecida / request no salió del pool → el mensaje NO llegó."""
+    assert _envio_no_llego(_timed_out_from(httpx.ConnectTimeout("x"))) is True
+    assert _envio_no_llego(_timed_out_from(httpx.PoolTimeout("x"))) is True
+    assert _envio_no_llego(_timed_out_from(httpx.ConnectError("x"))) is True
+
+
+def test_envio_no_llego_false_para_read_y_write():
+    """ReadTimeout/WriteTimeout: el request PUDO entregarse → reintentar duplicaría."""
+    assert _envio_no_llego(_timed_out_from(httpx.ReadTimeout("x"))) is False
+    assert _envio_no_llego(_timed_out_from(httpx.WriteTimeout("x"))) is False
+
+
+def test_envio_no_llego_detecta_pool_por_mensaje_sin_cause():
+    """Defensa: ptb marca el PoolTimeout con este texto aunque se pierda __cause__."""
+    exc = TimedOut(
+        message="Pool timeout: All connections in the connection pool are occupied. "
+        "Request was *not* sent to Telegram. Consider adjusting the connection pool size."
+    )
+    assert _envio_no_llego(exc) is True
+
+
+async def test_send_reintenta_ante_timeout_seguro_y_entrega(monkeypatch):
+    """Dos ConnectTimeout y al 3er intento entrega: 3 llamadas, sin excepción."""
+    monkeypatch.setattr("adapters.inbound.telegram.message_mapper._SEND_RETRY_BASE_DELAY", 0.0)
+    intentos = 0
+
+    async def send(text: str, pm: ParseMode | None) -> None:
+        nonlocal intentos
+        intentos += 1
+        if intentos < 3:
+            raise _timed_out_from(httpx.ConnectTimeout("boom"))
+
+    await send_html_or_plain(send, "hola")
+
+    assert intentos == 3
+
+
+async def test_send_agota_reintentos_y_propaga(monkeypatch):
+    """Timeout seguro persistente: reintenta 3 veces y luego re-lanza el TimedOut."""
+    monkeypatch.setattr("adapters.inbound.telegram.message_mapper._SEND_RETRY_BASE_DELAY", 0.0)
+    intentos = 0
+
+    async def send(text: str, pm: ParseMode | None) -> None:
+        nonlocal intentos
+        intentos += 1
+        raise _timed_out_from(httpx.ConnectTimeout("boom"))
+
+    with pytest.raises(TimedOut):
+        await send_html_or_plain(send, "hola")
+
+    assert intentos == 3
+
+
+async def test_send_no_reintenta_ante_read_timeout(monkeypatch):
+    """ReadTimeout (posible entrega): un solo intento, sin reintento (no duplicar)."""
+    monkeypatch.setattr("adapters.inbound.telegram.message_mapper._SEND_RETRY_BASE_DELAY", 0.0)
+    intentos = 0
+
+    async def send(text: str, pm: ParseMode | None) -> None:
+        nonlocal intentos
+        intentos += 1
+        raise _timed_out_from(httpx.ReadTimeout("boom"))
+
+    with pytest.raises(TimedOut):
+        await send_html_or_plain(send, "hola")
+
+    assert intentos == 1
 
 
 # ---------------------------------------------------------------------------

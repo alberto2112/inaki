@@ -76,7 +76,7 @@ def _build_bot(agent_cfg, container, receiver=None, emitter=None, rate_limiter=N
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
         mock_app.bot.send_message = AsyncMock()
-        mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.build.return_value = mock_app
+        mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.connect_timeout.return_value.read_timeout.return_value.write_timeout.return_value.pool_timeout.return_value.build.return_value = mock_app
         from adapters.inbound.telegram.bot import TelegramBot
 
         return TelegramBot(

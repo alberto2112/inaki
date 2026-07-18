@@ -12,6 +12,7 @@ import random
 from typing import TYPE_CHECKING, Any
 
 from telegram import Update
+from telegram.error import BadRequest, NetworkError
 
 from adapters.inbound.telegram.message_mapper import (
     _safe_optional_str,
@@ -274,6 +275,21 @@ class TelegramGroupFlowMixin:
             )
 
         except Exception as exc:
+            # Blip de red transitorio entregando la respuesta (TimedOut /
+            # ConnectTimeout, ya con reintento seguro agotado en send_html_or_plain).
+            # La respuesta YA está persistida en history.db: mandar "Error: Timed out"
+            # al grupo ensucia el chat sobre contenido que SÍ se guardó. Mismo criterio
+            # que el pipeline privado (bot.py) y el error handler global. ``BadRequest``
+            # hereda de ``NetworkError`` pero es un request malformado (bug nuestro) →
+            # cae al manejo de error real de abajo.
+            if isinstance(exc, NetworkError) and not isinstance(exc, BadRequest):
+                logger.warning(
+                    "Telegram '%s': error de red entregando la respuesta al grupo "
+                    "(ya persistida en history.db), se ignora: %s",
+                    self._settings.id,
+                    exc,
+                )
+                return
             logger.exception(
                 "Error procesando flush de grupo (agent=%s, chat_id=%s)",
                 self._settings.id,

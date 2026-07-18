@@ -189,7 +189,22 @@ class TelegramBot(
         if not self._token:
             raise ValueError(f"Agente '{settings.id}': channels.telegram.token no configurado")
 
-        self._app = Application.builder().token(self._token).concurrent_updates(True).build()
+        # Timeouts de red por encima de los defaults de python-telegram-bot (5s
+        # connect/read/write, 1s pool). En una Pi 5 sobre red doméstica esos 5s
+        # son apretados y disparan ``TimedOut`` varias veces al día. Subirlos ataca
+        # la causa raíz: que el timeout casi no ocurra. El reintento seguro de
+        # ``message_mapper`` cubre lo que igual falle. (No tocamos los get_updates_*:
+        # el long-polling tiene su propia cadencia.)
+        self._app = (
+            Application.builder()
+            .token(self._token)
+            .concurrent_updates(True)
+            .connect_timeout(10.0)
+            .read_timeout(20.0)
+            .write_timeout(20.0)
+            .pool_timeout(5.0)
+            .build()
+        )
         self._app.add_handler(CommandHandler("start", self._cmd_start))
         self._app.add_handler(CommandHandler("consolidate", self._cmd_consolidate))
         self._app.add_handler(CommandHandler("reconcile", self._cmd_reconcile))

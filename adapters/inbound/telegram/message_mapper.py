@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from html import escape as _html_escape
 from typing import Any
 
+import httpx
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 from telegram import Update
 from telegram.constants import ParseMode
-from telegram.error import BadRequest
+from telegram.error import BadRequest, NetworkError, TimedOut
 
 logger = logging.getLogger(__name__)
 
@@ -403,18 +405,73 @@ async def send_html_or_plain(
         await _send_fragmento(send, fragmento)
 
 
+# Reintentos de red al ENTREGAR un mensaje. Solo se reintenta cuando tenemos
+# CERTEZA de que el request no llegó a Telegram (ver ``_envio_no_llego``): un
+# ReadTimeout/WriteTimeout pudo haberse entregado y reintentar duplicaría el
+# mensaje en el chat — Telegram no tiene idempotency keys para ``sendMessage``.
+_SEND_RETRY_ATTEMPTS = 3
+_SEND_RETRY_BASE_DELAY = 0.5
+
+
+def _envio_no_llego(exc: NetworkError) -> bool:
+    """``True`` si el fallo garantiza que el mensaje NUNCA llegó a Telegram.
+
+    Casos seguros de reintentar: la conexión no se estableció (``ConnectTimeout`` /
+    ``ConnectError``) o el request ni salió del pool (``PoolTimeout`` —
+    python-telegram-bot lo marca explícitamente como "not sent to Telegram"). Un
+    ``ReadTimeout`` / ``WriteTimeout`` significa que el request PUDO haberse
+    entregado y su respuesta HTTP tardó → NO se reintenta, para no duplicar el
+    mensaje. La discriminación se hace por ``__cause__`` (la excepción ``httpx``
+    original que ptb preserva con ``raise TimedOut from err``).
+    """
+    causa = exc.__cause__
+    if isinstance(causa, (httpx.PoolTimeout, httpx.ConnectTimeout, httpx.ConnectError)):
+        return True
+    # Defensa por si ``__cause__`` se perdiera: ptb marca el PoolTimeout con el
+    # texto "Request was *not* sent to Telegram" (los asteriscos rompen "not sent",
+    # por eso matcheamos el fragmento contiguo "sent to Telegram", exclusivo de ese caso).
+    return "sent to Telegram" in str(exc)
+
+
+async def _send_con_reintento(make_send: Callable[[], Awaitable[Any]]) -> Any:
+    """Ejecuta ``make_send()`` reintentando SOLO fallos de red donde el mensaje no llegó.
+
+    ``BadRequest`` (HTML mal formado, chat inexistente) se re-lanza sin reintentar:
+    reintentar un request malformado es inútil y su fallback a texto plano lo
+    maneja ``_send_fragmento``. Backoff lineal (0.5s, 1s) entre intentos.
+    """
+    for intento in range(1, _SEND_RETRY_ATTEMPTS + 1):
+        try:
+            return await make_send()
+        except BadRequest:
+            raise
+        except (TimedOut, NetworkError) as exc:
+            if intento == _SEND_RETRY_ATTEMPTS or not _envio_no_llego(exc):
+                raise
+            delay = _SEND_RETRY_BASE_DELAY * intento
+            logger.warning(
+                "Telegram: envío falló (intento %d/%d, el mensaje no llegó), "
+                "reintento en %.1fs: %s",
+                intento,
+                _SEND_RETRY_ATTEMPTS,
+                delay,
+                exc,
+            )
+            await asyncio.sleep(delay)
+
+
 async def _send_fragmento(
     send: Callable[[str, ParseMode | None], Awaitable[Any]],
     fragmento: str,
 ) -> None:
     """Envía UN fragmento: HTML primero, fallback a texto plano ante error de parseo."""
     try:
-        await send(format_response(fragmento), ParseMode.HTML)
+        await _send_con_reintento(lambda: send(format_response(fragmento), ParseMode.HTML))
     except BadRequest as exc:
         if not _es_error_de_parseo(exc):
             raise
         logger.warning("Telegram rechazó el HTML; reintento en texto plano: %s", exc)
-        await send(fragmento, None)
+        await _send_con_reintento(lambda: send(fragmento, None))
 
 
 def _escape(text: str) -> str:

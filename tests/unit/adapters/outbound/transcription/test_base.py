@@ -1,16 +1,23 @@
-"""Tests de BaseTranscriptionProvider (task 2.3).
+"""Tests de BaseTranscriptionProvider.
 
 Contrato:
 - Hereda de ITranscriptionProvider (ABC).
+- Es concreta para la familia OpenAI-compatible: implementa `transcribe` una
+  sola vez; los providers concretos solo declaran `_DEFAULT_BASE_URL` y
+  `_PROVIDER_LABEL`.
+- Valida credenciales cuando `REQUIRES_CREDENTIALS` está activo.
 - Provee helpers compartidos: `_format_response_log` y `_build_multipart`.
-- No se puede instanciar si no se implementa `transcribe`.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from adapters.outbound.transcription.base import BaseTranscriptionProvider
+from adapters.outbound.transcription.base import (
+    BaseTranscriptionProvider,
+    ResolvedTranscriptionConfig,
+)
+from core.domain.errors import TranscriptionError
 from core.ports.outbound.transcription_port import ITranscriptionProvider
 
 
@@ -18,11 +25,12 @@ def test_base_hereda_de_port() -> None:
     assert issubclass(BaseTranscriptionProvider, ITranscriptionProvider)
 
 
-def test_no_se_puede_instanciar_sin_transcribe() -> None:
-    # Pasamos cfg=None ignorando el type: el TypeError esperado viene del
-    # @abstractmethod `transcribe`, no de la signature del __init__.
-    with pytest.raises(TypeError):
-        BaseTranscriptionProvider(None)  # type: ignore[abstract,arg-type]
+def test_valida_api_key_cuando_requiere_credenciales() -> None:
+    # La base es concreta (OpenAI-compatible): instanciable, pero exige creds.
+    cfg = ResolvedTranscriptionConfig(provider="openai", model="whisper-1", api_key=None)
+    with pytest.raises(TranscriptionError) as exc_info:
+        BaseTranscriptionProvider(cfg)
+    assert "api_key" in str(exc_info.value).lower()
 
 
 def test_format_response_log_incluye_provider_y_length() -> None:

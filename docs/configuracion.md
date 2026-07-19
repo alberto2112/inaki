@@ -886,11 +886,36 @@ transcription:
   model: "whisper-large-v3-turbo"
   language: "es"                        # ISO-639-1; null = autodetect
   timeout_seconds: 60
-  max_audio_mb: 25                      # Groq limit; larger audio files are rejected without calling the provider
+  max_audio_mb: 25                      # larger audio files are rejected without calling the provider
 ```
 
+**Available providers** (auto-discovered from `adapters/outbound/transcription/`
+via the module-level `PROVIDER_NAME` constant — no manual registration):
+
+| `provider` | Default `base_url` | Typical `model` |
+|------------|--------------------|-----------------|
+| `groq`     | `https://api.groq.com/openai/v1` | `whisper-large-v3-turbo` |
+| `openai`   | `https://api.openai.com/v1`      | `whisper-1` |
+
+Both speak the same OpenAI `/audio/transcriptions` dialect (Groq cloned OpenAI's
+API), so a single base adapter (`BaseTranscriptionProvider`) serves both — each
+concrete provider only declares its default `base_url` and label. To use OpenAI:
+
+```yaml
+transcription:
+  provider: "openai"                   # references providers.openai
+  model: "whisper-1"
+```
+
+> **Note:** the transcription registry is independent from the LLM and embedding
+> registries. A provider being available as an LLM (e.g. `openrouter`, `deepseek`)
+> does NOT make it available for transcription — only services that actually expose
+> the audio API (today: `groq`, `openai`) live here. OpenRouter, for instance, only
+> routes `/chat/completions` and has no transcription endpoint.
+
 Credentials (`api_key`, `base_url`) do NOT go in this block — they are resolved
-from `providers.groq` in the registry.
+from `providers.<provider>` in the registry (e.g. `providers.groq` or
+`providers.openai`).
 
 **Feature flag on the agent:**
 
@@ -924,7 +949,8 @@ attached "as a file" routes here):
   `transcription.provider` → `ConfigError` at startup (fail-fast, before
   instantiating adapters).
 
-> ⚠ **Privacy:** the audio is sent to the external provider (currently: Groq). For
+> ⚠ **Privacy:** the audio is sent to the external provider configured in
+> `transcription.provider` (Groq or OpenAI). For
 > sensitive content set `voice_enabled: false` on that agent or wait for a
 > local provider to become available. The audio file IS cached on disk at
 > `<workspace>/telegram/<file_unique_id>.<ext>` (so the LLM can act on it via

@@ -1,20 +1,31 @@
-"""BaseTranscriptionProvider — helpers compartidos para providers de transcripción.
+"""BaseTranscriptionProvider — lógica compartida de la familia OpenAI-compatible.
 
-Espeja el rol de `BaseLLMProvider` y `BaseEmbeddingProvider`:
-- Hereda del port abstracto (`ITranscriptionProvider`).
-- Aporta helpers estáticos reutilizables por los providers concretos
-  (`_format_response_log`, `_build_multipart`).
-- Deja `transcribe` abstracto para obligar al concrete provider a implementarlo.
+Espeja el rol de `OpenAICompatibleProvider` en los LLM: los servicios de
+transcripción realistas hoy (OpenAI Whisper y Groq, que clonó su API) hablan el
+MISMO dialecto — ``POST {base_url}/audio/transcriptions`` multipart con
+``response_format=text``. Por eso el `transcribe` vive UNA sola vez acá y cada
+provider concreto se reduce a declarar sus dos ClassVars:
+
+- ``PROVIDER_NAME`` (a nivel módulo, para el auto-discovery de la factory).
+- ``_DEFAULT_BASE_URL`` — endpoint por default del servicio.
+- ``_PROVIDER_LABEL`` — etiqueta para logs y mensajes de error.
+
+Si algún día aparece un servicio que NO sea OpenAI-compatible (otro wire format),
+recién ahí se introduce una clase intermedia — no antes.
 """
 
 from __future__ import annotations
 
-from abc import abstractmethod
-from typing import Any
+import logging
+from typing import Any, ClassVar
 
+import httpx
 from pydantic import BaseModel
 
+from core.domain.errors import TranscriptionError, TranscriptionFileTooLargeError
 from core.ports.outbound.transcription_port import ITranscriptionProvider
+
+logger = logging.getLogger(__name__)
 
 
 class ResolvedTranscriptionConfig(BaseModel):
@@ -49,18 +60,26 @@ _MIME_EXT: dict[str, str] = {
 
 
 class BaseTranscriptionProvider(ITranscriptionProvider):
-    """Clase base para todos los proveedores de transcripción.
+    """Base concreta para proveedores de transcripción OpenAI-compatible.
 
     ``REQUIRES_CREDENTIALS`` indica si la factory debe exigir una entrada en
-    ``providers:`` al resolver las creds.
+    ``providers:`` al resolver las creds. Las subclases solo overridean los
+    ClassVars ``_DEFAULT_BASE_URL`` y ``_PROVIDER_LABEL``.
     """
 
     REQUIRES_CREDENTIALS: bool = True
+    _DEFAULT_BASE_URL: ClassVar[str] = ""
+    _PROVIDER_LABEL: ClassVar[str] = "Transcription"
 
     def __init__(self, cfg: ResolvedTranscriptionConfig) -> None:
-        """Signature común para la factory (`adapter_type(resolved)`).
-        Las subclases override este __init__ para su setup específico."""
+        if self.REQUIRES_CREDENTIALS and not cfg.api_key:
+            raise TranscriptionError(
+                f"{self._PROVIDER_LABEL} transcription requiere api_key en "
+                f"providers.{cfg.provider}.api_key"
+            )
         self._cfg = cfg
+        self._base_url = cfg.base_url or self._DEFAULT_BASE_URL
+        self._headers = {"Authorization": f"Bearer {cfg.api_key}"}
 
     @staticmethod
     def _format_response_log(provider: str, text: str) -> str:
@@ -89,10 +108,45 @@ class BaseTranscriptionProvider(ITranscriptionProvider):
             data["language"] = language
         return files, data
 
-    @abstractmethod
     async def transcribe(
         self,
         audio: bytes,
         mime: str,
         language: str | None = None,
-    ) -> str: ...
+    ) -> str:
+        limit_bytes = self._cfg.max_audio_mb * 1024 * 1024
+        if len(audio) > limit_bytes:
+            raise TranscriptionFileTooLargeError(size_bytes=len(audio), limit_bytes=limit_bytes)
+
+        lang = language or self._cfg.language
+        files, data = self._build_multipart(
+            audio=audio,
+            mime=mime,
+            model=self._cfg.model,
+            language=lang,
+        )
+        data["response_format"] = "text"
+
+        try:
+            async with httpx.AsyncClient(timeout=self._cfg.timeout_seconds) as client:
+                resp = await client.post(
+                    f"{self._base_url}/audio/transcriptions",
+                    headers=self._headers,
+                    files=files,
+                    data=data,
+                )
+                resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            body = exc.response.text
+            raise TranscriptionError(
+                f"{self._PROVIDER_LABEL} {exc.response.status_code}: {body}"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise TranscriptionError(f"{self._PROVIDER_LABEL} HTTP error: {exc}") from exc
+
+        text = resp.text
+        if not text or not text.strip():
+            raise TranscriptionError(f"{self._PROVIDER_LABEL} devolvió una transcripción vacía")
+
+        logger.info("%s", self._format_response_log(self._PROVIDER_LABEL, text))
+        return text

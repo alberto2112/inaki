@@ -50,6 +50,9 @@ def _agent_cfg(agent_id: str, bot_username: str) -> MagicMock:
     cfg.telegram = {
         "token": "fake-token",
         "allowed_user_ids": [],
+        # El grupo de los broadcasts debe estar autorizado, o el guard de
+        # ``_on_broadcast_received`` los descarta (ver ``telegram-group-auth``).
+        "allowed_chat_ids": [int(CHAT_ID)],
         "reactions": False,
         "groups": {
             "behavior": "autonomous",

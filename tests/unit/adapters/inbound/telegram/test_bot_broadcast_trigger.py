@@ -39,6 +39,10 @@ def agent_cfg_autonomous() -> MagicMock:
     cfg.telegram = {
         "token": "dummy-token",
         "allowed_user_ids": [],
+        # El chat de los broadcasts de prueba (-100123) debe estar autorizado,
+        # o el guard de ``_on_broadcast_received`` los descarta (ver
+        # ``telegram-group-auth``: allowed_chat_ids vacío = ignora todo broadcast).
+        "allowed_chat_ids": [-100123],
         "reactions": False,
         "groups": {
             "behavior": "autonomous",
@@ -424,3 +428,70 @@ async def test_on_broadcast_assistant_response_mantiene_prefijo_legacy(
         await bot._pending_tasks["-100123"]
     except (asyncio.CancelledError, BaseException):
         pass
+
+
+# ---------------------------------------------------------------------------
+# _on_broadcast_received — guard de autorización por chat (allowed_chat_ids)
+# ---------------------------------------------------------------------------
+
+
+async def test_on_broadcast_chat_no_autorizado_no_persiste_ni_flushea(
+    agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter, mock_rate_limiter
+):
+    """Un broadcast de un chat FUERA de allowed_chat_ids se ignora por completo.
+
+    Caso del bug: anacleto (cliente broadcast) recibía eventos de grupos donde ya
+    no es miembro y los persistía + agendaba flush, generando respuestas que
+    Telegram rechaza (Forbidden) pero ensucian el historial. El guard reusa la
+    misma matriz que ``_is_authorized`` (allowed_chat_ids) — el broadcast llega
+    por TCP sin Update, así que sin este guard nunca pasaría por la autorización.
+    """
+    bot = _build_bot(
+        agent_cfg_autonomous,
+        mock_container,
+        receiver=mock_receiver,
+        emitter=mock_emitter,
+        rate_limiter=mock_rate_limiter,
+    )
+    # -999 NO está en allowed_chat_ids ([-100123]).
+    msg = _msg("respuesta en un grupo donde ya no estoy", chat_id="-999")
+    await bot._on_broadcast_received(msg)
+
+    mock_container.run_agent.record_user_message.assert_not_awaited()
+    assert bot._pending_tasks == {}
+    # Ni siquiera consumió el rate limiter — cortó antes de todo.
+    mock_rate_limiter.check_and_increment.assert_not_called()
+
+
+async def test_on_broadcast_allowed_chat_ids_vacio_ignora_todo(
+    mock_container, mock_receiver, mock_emitter, mock_rate_limiter
+):
+    """allowed_chat_ids vacío = no responde en grupos = ignora todo broadcast.
+
+    Coherente con la regla de ``telegram-group-auth`` para el path nativo.
+    """
+    cfg = MagicMock()
+    cfg.id = "inaki"
+    cfg.name = "Inaki"
+    cfg.description = "Asistente"
+    cfg.telegram = {
+        "token": "dummy-token",
+        "allowed_user_ids": [],
+        "allowed_chat_ids": [],  # sin grupos autorizados
+        "groups": {
+            "behavior": "autonomous",
+            "bot_username": "inaki_bot",
+            "rate_limiter": 5,
+        },
+    }
+    bot = _build_bot(
+        cfg,
+        mock_container,
+        receiver=mock_receiver,
+        emitter=mock_emitter,
+        rate_limiter=mock_rate_limiter,
+    )
+    await bot._on_broadcast_received(_msg("cualquier cosa", chat_id="-100123"))
+
+    mock_container.run_agent.record_user_message.assert_not_awaited()
+    assert bot._pending_tasks == {}

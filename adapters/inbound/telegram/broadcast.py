@@ -48,6 +48,7 @@ class TelegramBroadcastMixin:
     _settings: TelegramBotSettings
     _ports: TelegramBotPorts
     _behavior: str
+    _allowed_chat_ids: list[str]
     _broadcast_emitter: BroadcastEmitter | None
     _broadcast_receiver: BroadcastReceiver | None
     _emit_flags: dict[str, bool]
@@ -165,6 +166,24 @@ class TelegramBroadcastMixin:
         Silencioso y defensivo: cualquier excepción queda aquí.
         """
         try:
+            # Autorización del scope — MISMA matriz que ``_is_authorized`` para los
+            # updates nativos de Telegram (ver ``telegram-group-auth``). Un broadcast
+            # llega por TCP sin ``Update``, así que jamás pasa por ``_is_authorized``:
+            # sin este guard, el bot persiste y agenda flush para grupos donde ya no
+            # es miembro (respuestas que dan ``Forbidden`` pero ensucian el historial).
+            # ``allowed_chat_ids`` es la única fuente de verdad de "dónde vive el bot":
+            # NO se duplica en la config de broadcast (broadcast = transporte puro,
+            # ver ``groups-vs-broadcast``). Lista vacía → no responde en grupos →
+            # ignora todo broadcast, coherente con la regla del path nativo.
+            if str(msg.chat_id) not in self._allowed_chat_ids:
+                logger.info(
+                    "broadcast.trigger.skip.unauthorized_chat agent=%s from=%s chat_id=%s",
+                    self._settings.id,
+                    msg.agent_id,
+                    msg.chat_id,
+                )
+                return
+
             preview = msg.content[:200].replace("\n", " ")
             logger.info(
                 "broadcast.trigger.eval agent=%s from=%s chat_id=%s preview=%r",

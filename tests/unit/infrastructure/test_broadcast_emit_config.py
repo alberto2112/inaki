@@ -12,7 +12,11 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from infrastructure.config import BroadcastConfig, BroadcastEmitConfig
+from infrastructure.config import (
+    BroadcastConfig,
+    BroadcastEmitConfig,
+    BroadcastServerConfig,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -30,7 +34,7 @@ def test_emit_config_defaults_solo_assistant_response_true():
 
 def test_broadcast_config_sin_emit_usa_defaults():
     """Un BroadcastConfig sin bloque ``emit`` instancia un BroadcastEmitConfig default."""
-    cfg = BroadcastConfig(port=9000, auth="x" * 16)
+    cfg = BroadcastConfig(server=BroadcastServerConfig(port=9000), auth="x" * 16)
     assert isinstance(cfg.emit, BroadcastEmitConfig)
     assert cfg.emit.assistant_response is True
     assert cfg.emit.user_input_voice is False
@@ -53,7 +57,7 @@ def test_emit_config_activa_user_input_voice_y_photo_explicitos():
 def test_broadcast_config_con_emit_explicito():
     """``broadcast.emit`` configurado explícitamente sobreescribe los defaults."""
     cfg = BroadcastConfig(
-        port=9000,
+        server=BroadcastServerConfig(port=9000),
         auth="x" * 16,
         emit=BroadcastEmitConfig(user_input_voice=True),
     )

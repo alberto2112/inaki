@@ -110,7 +110,11 @@ def test_subseccion_ausente_no_genera_ruido():
     assert not any("broadcast" in k for k in sin)
 
     con = _secrets(
-        {"id": "a", "name": "N", "channels": {"telegram": {"token": "T", "broadcast": {"port": 9}}}}
+        {
+            "id": "a",
+            "name": "N",
+            "channels": {"telegram": {"token": "T", "broadcast": {"server": {"port": 6499}}}},
+        }
     )
     assert con["channels.telegram.broadcast.auth"] is False
 

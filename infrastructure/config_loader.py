@@ -246,6 +246,7 @@ def ensure_user_config(config_dir: Path, agents_dir: Path) -> None:
 
     migrate_tool_config_to_own_file(config_dir)
     migrate_telegram_group_fields(config_dir)
+    migrate_telegram_broadcast_topology(config_dir)
 
 
 def migrate_tool_config_to_own_file(config_dir: Path) -> None:
@@ -401,6 +402,115 @@ def _move_group_fields_broadcast_to_groups(doc: dict) -> bool:
         del telegram["broadcast"]
 
     return True
+
+
+def migrate_telegram_broadcast_topology(config_dir: Path) -> None:
+    """Migración one-shot: reestructura ``channels.telegram.broadcast`` del formato
+    implícito (``port`` = server, ``remote`` = client, ``auth`` duplicado por rol)
+    al formato de rol explícito (bloques ``server``/``client`` + ``auth`` único).
+
+    Mapeo:
+    - ``broadcast.port: N``            → ``broadcast.server.port: N``
+    - ``broadcast.remote.host "ip:p"`` → ``broadcast.client.host`` + ``client.port``
+    - ``broadcast.remote.auth``        → ``broadcast.auth`` (si no estaba ya)
+
+    Procesa ``global.yaml``, ``global.secrets.yaml`` y todos los YAML bajo
+    ``agents/`` — cada campo puede vivir en cualquier capa del merge de 4 niveles
+    (caso típico: el ``auth`` del client vive solo en el secrets como
+    ``remote: {auth: ...}`` sin ``host``). Idempotente: bloques ya en formato
+    nuevo no se tocan. Debe correr DESPUÉS de ``migrate_telegram_group_fields``
+    (que saca los campos de comportamiento del bloque). Preserva comentarios
+    (ruamel).
+    """
+    from ruamel.yaml import YAML
+
+    yaml_rt = YAML()
+    yaml_rt.preserve_quotes = True
+
+    archivos = [config_dir / "global.yaml", config_dir / "global.secrets.yaml"]
+    agents_dir = config_dir / "agents"
+    if agents_dir.is_dir():
+        archivos.extend(sorted(agents_dir.glob("*.yaml")))
+
+    for path in archivos:
+        if not path.exists():
+            continue
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                doc = yaml_rt.load(f)
+        except OSError as exc:
+            logger.error("Migración broadcast: no se pudo leer %s (%s)", path, exc)
+            continue
+        if not isinstance(doc, dict) or not _restructure_broadcast_topology(doc):
+            continue
+        try:
+            with path.open("w", encoding="utf-8") as f:
+                yaml_rt.dump(doc, f)
+        except OSError as exc:
+            logger.error("Migración broadcast: no se pudo escribir %s (%s)", path, exc)
+            continue
+        logger.info("Migración broadcast: topología port/remote → server/client en %s", path)
+
+
+def _restructure_broadcast_topology(doc: dict) -> bool:
+    """Reestructura ``telegram.broadcast`` de un doc ruamel ya cargado al formato
+    de rol explícito. Devuelve ``True`` si hubo cambios (in-place sobre ``doc``)."""
+    channels = doc.get("channels")
+    if not isinstance(channels, dict):
+        return False
+    telegram = channels.get("telegram")
+    if not isinstance(telegram, dict):
+        return False
+    broadcast = telegram.get("broadcast")
+    if not isinstance(broadcast, dict):
+        return False
+
+    cambios = False
+
+    # port (server viejo) → server.port. El formato nuevo gana ante conflicto.
+    if "port" in broadcast:
+        port = broadcast.pop("port")
+        server = broadcast.get("server")
+        if not isinstance(server, dict):
+            broadcast["server"] = {"port": port}
+        elif "port" not in server:
+            server["port"] = port
+        cambios = True
+
+    # remote (client viejo) → client.host/client.port + auth unificado arriba.
+    remote = broadcast.get("remote")
+    if isinstance(remote, dict):
+        host_raw = remote.get("host")
+        if isinstance(host_raw, str) and host_raw:
+            client = broadcast.get("client")
+            if not isinstance(client, dict):
+                client = {}
+                broadcast["client"] = client
+            partes = host_raw.rsplit(":", 1)
+            if len(partes) == 2 and partes[1].isdigit():
+                client.setdefault("host", partes[0])
+                client.setdefault("port", int(partes[1]))
+            else:
+                # Sin puerto parseable: dejamos el host crudo — la validación del
+                # schema (client.port requerido) lo va a gritar al cargar, que es
+                # preferible al skip silencioso del wiring viejo.
+                logger.warning(
+                    "Migración broadcast: remote.host=%r sin formato 'ip:port' — "
+                    "se migra solo el host; completá 'client.port' a mano",
+                    host_raw,
+                )
+                client.setdefault("host", host_raw)
+        r_auth = remote.get("auth")
+        if r_auth is not None and "auth" not in broadcast:
+            broadcast["auth"] = r_auth
+        del broadcast["remote"]
+        cambios = True
+
+    # Un broadcast que quedó vacío tras la reestructura no es un transporte.
+    if cambios and not broadcast:
+        del telegram["broadcast"]
+
+    return cambios
 
 
 class _HasChannels(Protocol):
@@ -800,7 +910,7 @@ class AgentRegistry:
 def _validate_channel_uniqueness(agents: dict[str, AgentConfig]) -> None:
     """
     Rechaza configs donde varios agentes comparten la misma identidad de canal,
-    o donde un mismo agente tiene dos canales con el mismo ``broadcast.port``.
+    o donde un mismo agente tiene dos canales con el mismo ``broadcast.server.port``.
 
     Motivo: un bot de Telegram solo admite UN ``getUpdates`` activo por token
     (Telegram API). Si dos agentes declaran el mismo token, el daemon levanta
@@ -811,8 +921,8 @@ def _validate_channel_uniqueness(agents: dict[str, AgentConfig]) -> None:
     declarar ``channels.telegram`` apuntando al mismo token que el principal.
 
     Broadcast port uniqueness: dentro de un mismo agente, dos canales no pueden
-    declarar el mismo ``broadcast.port`` — ambos intentarían hacer ``bind()``
-    en el mismo puerto del host.
+    declarar el mismo ``broadcast.server.port`` — ambos intentarían hacer
+    ``bind()`` en el mismo puerto del host.
     """
     from core.domain.errors import ConfigError
 
@@ -824,15 +934,19 @@ def _validate_channel_uniqueness(agents: dict[str, AgentConfig]) -> None:
         if token:
             telegram_tokens.setdefault(token, []).append(agent_id)
 
-        # Unicidad de broadcast.port dentro del mismo agente.
+        # Unicidad de broadcast.server.port dentro del mismo agente. Solo los
+        # servers hacen bind(); un bloque con enabled=false no levanta transporte.
         broadcast_ports: dict[int, list[str]] = {}
         for channel_name, channel_raw in cfg.channels.items():
             if not isinstance(channel_raw, dict):
                 continue
             bc_raw = channel_raw.get("broadcast")
-            if not isinstance(bc_raw, dict):
+            if not isinstance(bc_raw, dict) or bc_raw.get("enabled") is False:
                 continue
-            bc_port = bc_raw.get("port")
+            server_raw = bc_raw.get("server")
+            if not isinstance(server_raw, dict):
+                continue
+            bc_port = server_raw.get("port")
             if bc_port is not None:
                 broadcast_ports.setdefault(int(bc_port), []).append(channel_name)
 
@@ -843,7 +957,7 @@ def _validate_channel_uniqueness(agents: dict[str, AgentConfig]) -> None:
                 for p, chs in duplicated_bc_ports.items()
             )
             raise ConfigError(
-                f"Agente '{agent_id}': broadcast.port duplicado — {conflicts}. "
+                f"Agente '{agent_id}': broadcast.server.port duplicado — {conflicts}. "
                 "Cada canal del agente debe usar un puerto de broadcast distinto."
             )
 

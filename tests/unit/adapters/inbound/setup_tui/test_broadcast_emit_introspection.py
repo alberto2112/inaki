@@ -42,7 +42,7 @@ def test_emit_flags_visibles_desde_agentconfig_via_channels():
         "channels": {
             "telegram": {
                 "broadcast": {
-                    "port": 6499,
+                    "server": {"port": 6499},
                     "emit": {"user_input_voice": True},
                 }
             }

@@ -691,7 +691,7 @@ The sticky state is persisted in `agent_state` in `history.db`, scoped by `(agen
 
 Allows multiple Inaki instances on the same LAN to share a Telegram group. The Bot API does not deliver messages from other bots, so a TCP side channel is used.
 
-**Topology:** star — one server (`broadcast.port`), N clients (`broadcast.remote.host`).  
+**Topology:** star — one server (`broadcast.server`), N clients (`broadcast.client`); shared HMAC secret in `broadcast.auth`.  
 **Wire format:** JSON line-delimited, signed HMAC-SHA256 with a 60 s freshness window.  
 **Behavior modes:** `listen` (receive only) | `mention` (responds when mentioned) | `autonomous` (responds if it considers it can contribute, may emit `[SKIP]`).  
 **Rate limiter:** `FixedWindowRateLimiter` to prevent infinite loops in `autonomous` mode.

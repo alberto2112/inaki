@@ -1844,8 +1844,8 @@ class AppContainer:
            ``groups.behavior == "autonomous"``, con ``groups.rate_limiter_window``.
            NO depende del broadcast — un bot autónomo sin LAN igual lo necesita.
         2. **TcpBroadcastAdapter** (``broadcast_adapter``): solo si hay bloque
-           ``broadcast:``. server si ``port`` (host "0.0.0.0"); client si ``remote``
-           (host/port de ``remote.host`` "ip:port").
+           ``broadcast:`` con ``enabled=True``. Rol por bloque nombrado: ``server``
+           (escucha en "0.0.0.0") XOR ``client`` (conecta a ``client.host:port``).
 
         Si el agente no tiene container (falló en _build_agent_containers) o no tiene
         canal telegram, se omite silenciosamente.
@@ -1886,52 +1886,35 @@ class AppContainer:
                 groups_cfg.rate_limiter_window,
             )
 
-        # (2) Adapter TCP de broadcast — solo si hay bloque broadcast.
+        # (2) Adapter TCP de broadcast — solo si hay bloque broadcast habilitado.
         broadcast_cfg = tg_cfg.broadcast
         if broadcast_cfg is None:
             # Sin transporte LAN (el rate limiter de grupos ya se resolvió arriba).
             return
+        if not broadcast_cfg.enabled:
+            logger.info(
+                "Agente '%s': broadcast deshabilitado (enabled=false) — transporte no wired",
+                agent_cfg.id,
+            )
+            return
 
-        # Determinar rol y parámetros de conexión.
-        # El validador de BroadcastConfig garantiza port XOR remote y auth obligatorio
-        # en modo server — cast para mypy que no puede inferirlo en este scope.
+        # Rol explícito por bloque nombrado: server XOR client (garantizado por el
+        # validador de BroadcastConfig, junto con auth no-None cuando enabled).
         role: Literal["server", "client"]
-        auth_str: str
 
-        if broadcast_cfg.port is not None:
+        if broadcast_cfg.server is not None:
             # Modo server: escucha en todas las interfaces de la LAN.
             role = "server"
             host = "0.0.0.0"
-            port = broadcast_cfg.port
-            # auth requerido en server mode — validado por BroadcastConfig
-            auth_str = broadcast_cfg.auth  # type: ignore[assignment]
+            port = broadcast_cfg.server.port
         else:
-            # Modo client: remote.host tiene formato "ip:port".
-            # BroadcastConfig validator garantiza que remote is not None en este branch.
             role = "client"
-            assert broadcast_cfg.remote is not None  # satisface narrowing de mypy
-            remote = broadcast_cfg.remote
-            remote_parts = remote.host.rsplit(":", 1)
-            if len(remote_parts) != 2:
-                logger.error(
-                    "Agente '%s': broadcast.remote.host='%s' no tiene formato 'ip:port' — "
-                    "broadcast wiring omitido",
-                    agent_cfg.id,
-                    remote.host,
-                )
-                return
-            host = remote_parts[0]
-            try:
-                port = int(remote_parts[1])
-            except ValueError:
-                logger.error(
-                    "Agente '%s': broadcast.remote.host='%s' — puerto no es entero — "
-                    "broadcast wiring omitido",
-                    agent_cfg.id,
-                    remote.host,
-                )
-                return
-            auth_str = remote.auth
+            assert broadcast_cfg.client is not None  # satisface narrowing de mypy
+            host = broadcast_cfg.client.host
+            port = broadcast_cfg.client.port
+
+        assert broadcast_cfg.auth is not None  # validado con enabled=True
+        auth_str: str = broadcast_cfg.auth
 
         buffer = BroadcastBuffer()
         adapter = TcpBroadcastAdapter(

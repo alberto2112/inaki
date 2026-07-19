@@ -478,9 +478,8 @@ user:
 #     # [channels.telegram.groups] — Comportamiento del bot en CHATS GRUPALES
 #     # -------------------------------------------------------------------------
 #     # OPCIONAL. Política de respuesta + timing en grupos. Aplica con o SIN
-#     # broadcast TCP: un solo bot en un grupo igual usa estos flags. (behavior/
-#     # bot_username/rate_limiter vivían antes en `broadcast`; se movieron acá
-#     # porque no dependen del transporte — ver docs/configuracion.md.)
+#     # broadcast TCP: un solo bot en un grupo igual usa estos flags — la política
+#     # vive acá (no en `broadcast`) porque no depende del transporte.
 #     # groups:
 #     #   behavior: "mention"      # listen | mention | autonomous
 #     #                            #   listen     — nunca responde, solo escucha.
@@ -523,27 +522,33 @@ user:
 #     # (requiere NTP sincronizado en todas las Pis — falla silenciosa con
 #     # warning en logs si hay drift > 60s).
 #     #
-#     # Un broadcast: port XOR remote. No ambos, no ninguno si el bloque existe.
-#     # Dos canales del MISMO agente no pueden declarar el mismo `broadcast.port`.
+#     # El ROL se declara con un bloque nombrado: `server` XOR `client` (uno y
+#     # solo uno). `auth` es el secreto HMAC COMPARTIDO — un único campo para
+#     # ambos roles; el del client DEBE matchear el del server. Dos canales del
+#     # MISMO agente no pueden declarar el mismo `server.port`.
 #     #
-#     # --- Modo SERVER (el Inaki que acepta conexiones) ---
+#     # --- Rol SERVER (el Inaki que acepta conexiones) ---
 #     # broadcast:
-#     #   port: 6499              # Puerto TCP donde escucha (1024..65535).
+#     #   enabled: true           # OPCIONAL (default true). false = transporte
+#     #                           # apagado sin borrar el bloque.
 #     #   auth: "shared-secret"   # Secret compartido HMAC. → SECRETS
+#     #   server:
+#     #     port: 6499            # Puerto TCP donde escucha (1024..65535).
 #     #   emit:                   # OPCIONAL — qué eventos se emiten al LAN.
 #     #     assistant_response: true   # (default) respuestas del LLM tras un turno.
 #     #     user_input_voice: false    # transcripciones de audio (activar en 1 bot).
 #     #     user_input_photo: false    # descripciones de foto (activar en 1 bot).
 #     #
-#     # --- Modo CLIENT (el Inaki que se conecta al server) ---
+#     # --- Rol CLIENT (el Inaki que se conecta al server) ---
 #     # broadcast:
-#     #   remote:
-#     #     host: "192.168.1.50:6499"  # host:port del server.
-#     #     auth: "shared-secret"      # DEBE matchear el auth del server. → SECRETS
+#     #   auth: "shared-secret"   # DEBE matchear el auth del server. → SECRETS
+#     #   client:
+#     #     host: "192.168.1.50"  # IP o hostname del server (sin puerto).
+#     #     port: 6499            # Puerto del server (1024..65535).
 #     #
 #     # Reconexión automática con backoff exponencial + jitter. El cliente queda
-#     # reintentando hasta que el server levante — no hay feature flag; la
-#     # ausencia de este bloque es el flag.
+#     # reintentando hasta que el server levante. Ausencia del bloque (o
+#     # `enabled: false`) = sin transporte.
 #     #
 #     # Ver docs/configuracion.md y docs/broadcast-smoke.md para detalles y
 #     # prueba de humo E2E (listen / mention / autonomous + rate limiter).
@@ -572,7 +577,5 @@ user:
 #   telegram:
 #     token: "7xxxxxxx:AAF..."   # Bot token de BotFather
 #     broadcast:
-#       auth: "shared-secret"    # HMAC shared-secret (server mode)
-#       # — o bien, en modo client —
-#       # remote:
-#       #   auth: "shared-secret" # DEBE matchear el del server
+#       auth: "shared-secret"    # HMAC shared-secret — mismo campo para server
+#                                # y client (el del client matchea el del server)

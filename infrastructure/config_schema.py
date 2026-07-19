@@ -534,14 +534,22 @@ class WorkspaceConfig(_ConfigBaseModel):
         object.__setattr__(self, "path", str(Path(self.path).expanduser()))
 
 
-class RemoteBroadcastConfig(_ConfigBaseModel):
-    """Config de conexión al servidor broadcast remoto (modo client)."""
+class BroadcastServerConfig(_ConfigBaseModel):
+    """Rol **server** del broadcast: esta instancia escucha conexiones entrantes."""
+
+    port: int = Field(ge=1024, le=65535)
+    """Puerto TCP en el que escucha el servidor (1024..65535). Escucha en todas
+    las interfaces de la LAN (``0.0.0.0``)."""
+
+
+class BroadcastClientConfig(_ConfigBaseModel):
+    """Rol **client** del broadcast: esta instancia se conecta a un server remoto."""
 
     host: str
-    """Dirección del servidor en formato ``ip:port`` (ej: ``"192.168.1.10:9000"``)."""
+    """Dirección IP o hostname del servidor (sin puerto — ese va en ``port``)."""
 
-    auth: str = Field(json_schema_extra={"secret": True})
-    """Secreto compartido con el servidor para autenticación HMAC-SHA256."""
+    port: int = Field(ge=1024, le=65535)
+    """Puerto TCP del servidor remoto (1024..65535)."""
 
 
 class BroadcastEmitConfig(_ConfigBaseModel):
@@ -584,24 +592,31 @@ class BroadcastConfig(_ConfigBaseModel):
     cualquier grupo — haya o no broadcast TCP activo. Mezclar ambos forzaba a
     levantar el transporte solo para configurar cómo responde el bot.
 
-    Un nodo opera como **servidor** si declara ``port`` (sin ``remote``).
-    Un nodo opera como **cliente** si declara ``remote`` (sin ``port``).
-    Ambos ausentes → broadcast inactivo para ese canal.
+    El rol se declara con bloques nombrados: ``server`` (esta instancia escucha)
+    XOR ``client`` (esta instancia se conecta). El rol y sus campos son la misma
+    cosa — no existe un ``mode`` aparte que pueda desincronizarse del bloque.
+    ``auth`` es el secreto HMAC compartido, único para ambos roles (el del
+    client DEBE coincidir con el del server).
 
-    Validaciones:
-    - ``port`` y ``remote`` son mutuamente excluyentes (``port XOR remote``).
-    - Si ``port`` está seteado → ``auth`` es obligatorio.
-    - ``port`` debe estar en el rango 1024..65535.
+    Validaciones (solo con ``enabled=True``; apagado no se exige topología):
+    - ``server`` y ``client`` son mutuamente excluyentes, y uno debe estar.
+    - ``auth`` es obligatorio.
+    - Los rangos de puerto (1024..65535) los validan los sub-modelos.
     """
 
-    port: int | None = None
-    """Puerto TCP en el que escucha el servidor. ``None`` → modo cliente."""
-
-    remote: RemoteBroadcastConfig | None = None
-    """Config del servidor remoto al que conectar como cliente. ``None`` → modo servidor."""
+    enabled: bool = True
+    """Kill-switch del transporte. ``False`` = el bloque queda escrito pero no se
+    levanta ningún adapter TCP (y no se exige topología ni auth)."""
 
     auth: str | None = Field(default=None, json_schema_extra={"secret": True})
-    """Secreto HMAC-SHA256 del servidor. Obligatorio cuando ``port`` está seteado."""
+    """Secreto HMAC-SHA256 compartido entre server y clients. Obligatorio cuando
+    ``enabled=True`` (default)."""
+
+    server: BroadcastServerConfig | None = None
+    """Rol server: esta instancia escucha en ``server.port``. XOR con ``client``."""
+
+    client: BroadcastClientConfig | None = None
+    """Rol client: esta instancia se conecta a ``client.host:client.port``. XOR con ``server``."""
 
     emit: BroadcastEmitConfig = BroadcastEmitConfig()
     """Flags que controlan qué tipos de eventos se emiten al broadcast.
@@ -609,32 +624,30 @@ class BroadcastConfig(_ConfigBaseModel):
 
     @model_validator(mode="after")
     def _validar_topologia(self) -> "BroadcastConfig":
-        """Valida que el nodo sea server XOR client, y que server tenga auth."""
-        tiene_port = self.port is not None
-        tiene_remote = self.remote is not None
+        """Valida server XOR client + auth obligatorio. Con ``enabled=False`` no
+        se exige nada: el bloque puede quedar incompleto mientras está apagado."""
+        if not self.enabled:
+            return self
 
-        if tiene_port and tiene_remote:
+        tiene_server = self.server is not None
+        tiene_client = self.client is not None
+
+        if tiene_server and tiene_client:
             raise ValueError(
-                "BroadcastConfig: 'port' y 'remote' son mutuamente excluyentes — "
+                "BroadcastConfig: 'server' y 'client' son mutuamente excluyentes — "
                 "un nodo no puede ser servidor y cliente simultáneamente."
             )
 
-        if not tiene_port and not tiene_remote:
+        if not tiene_server and not tiene_client:
             raise ValueError(
-                "BroadcastConfig: debe definirse 'port' (modo servidor) o "
-                "'remote' (modo cliente) — no pueden estar ambos ausentes."
+                "BroadcastConfig: debe definirse el bloque 'server' (esta instancia "
+                "escucha) o 'client' (esta instancia se conecta) — no pueden estar "
+                "ambos ausentes. Para apagar el transporte sin borrar el bloque, "
+                "usá 'enabled: false'."
             )
 
-        if tiene_port:
-            if self.auth is None:
-                raise ValueError(
-                    "BroadcastConfig: 'auth' es obligatorio cuando 'port' está definido."
-                )
-            if not (1024 <= self.port <= 65535):  # type: ignore[operator]
-                raise ValueError(
-                    f"BroadcastConfig: 'port' debe estar en el rango 1024..65535, "
-                    f"recibido: {self.port}."
-                )
+        if self.auth is None:
+            raise ValueError("BroadcastConfig: 'auth' (secreto HMAC compartido) es obligatorio.")
 
         return self
 

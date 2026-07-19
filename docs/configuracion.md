@@ -195,7 +195,7 @@ and `faces`/`photos` are single per-process singletons (see "Tiers de recursos" 
 `CLAUDE.md`) — to isolate one, run a **second harness process with its own `--home`**.
 
 **Ports are NOT derived from the home.** A second instance must set its own `admin.port`
-and `broadcast.port` (if used) in its YAML to avoid colliding with the first.
+and `broadcast.server.port` (if used) in its YAML to avoid colliding with the first.
 
 Backward-compat: the default `~/.inaki` is unchanged, so existing single-instance
 deployments need no migration. The old `--config DIR` flag was replaced by `--home`
@@ -958,10 +958,9 @@ If `allowed_chat_ids` is empty or absent, only private chats from users in
 ---
 
 **`channels.telegram.groups`** — response policy and timing in group chats. Applies
-**with or without** broadcast: a lone bot in a group still uses these flags. `behavior`,
-`bot_username`, `rate_limiter` and `rate_limiter_window` used to live under `broadcast`,
-which forced you to stand up the TCP transport just to configure how the bot replies.
-They now live here because they don't depend on the transport.
+**with or without** broadcast: a lone bot in a group still uses these flags. The
+response policy (`behavior`, `bot_username`, `rate_limiter`, `rate_limiter_window`)
+lives here — not under `broadcast` — because it doesn't depend on the transport.
 
 ```yaml
 channels:
@@ -978,30 +977,37 @@ channels:
 
 ---
 
-**`channels.telegram.broadcast`** — server mode (this instance listens for incoming connections).
-This block models the **transport only**; the response policy lives in `groups` (above):
+**`channels.telegram.broadcast`** — transport between instances. This block models the
+**transport only**; the response policy lives in `groups` (above). The role is declared
+with a named block: `server` (this instance listens) XOR `client` (this instance connects).
+`auth` is the shared HMAC secret, a single field for both roles — the client's value must
+match the server's. `enabled` (default `true`) is a kill-switch: set it to `false` to turn
+the transport off without deleting the block (topology and auth are not enforced while off).
+
+Server role (this instance listens for incoming connections):
 
 ```yaml
 channels:
   telegram:
     api_key: "..."
     broadcast:
-      port: 1234                          # TCP listen port (1024..65535)
+      enabled: true                       # optional, default true
       auth: "shared-secret-entre-agentes" # HMAC-SHA256 shared secret
+      server:
+        port: 1234                        # TCP listen port (1024..65535)
 ```
 
----
-
-**`channels.telegram.broadcast`** — client mode (this instance connects to the server):
+Client role (this instance connects to the server):
 
 ```yaml
 channels:
   telegram:
     api_key: "..."
     broadcast:
-      remote:
-        host: "192.168.1.10:1234"           # server ip:port
-        auth: "shared-secret-entre-agentes" # must match the server
+      auth: "shared-secret-entre-agentes" # must match the server
+      client:
+        host: "192.168.1.10"              # server IP or hostname
+        port: 1234                        # server port (1024..65535)
 ```
 
 To respond autonomously to what arrives over the LAN, set `groups.behavior: autonomous`.
@@ -1011,14 +1017,15 @@ To respond autonomously to what arrives over the LAN, set `groups.behavior: auto
 ### `broadcast.emit` — what event types each bot emits
 
 Each bot has flags per `event_type` that control **what** it emits to the channel. Defaults
-designed to maintain backward-compat and avoid accidental duplicates:
+designed to avoid accidental duplicates:
 
 ```yaml
 channels:
   telegram:
     broadcast:
-      port: 1234
       auth: "..."
+      server:
+        port: 1234
       emit:
         assistant_response: true   # default true — LLM responses after group turn
         user_input_voice: false    # default false — audio transcriptions
@@ -1036,8 +1043,8 @@ so that the other bots have that context in their buffers.
 that owns the capability. If two bots emit the same event, the receiver will see it twice
 (there is no deduplication; it's an admin decision).
 
-`assistant_response` stays `true` by default to maintain the behavior of the
-existing broadcast (bots see the responses from other bots).
+`assistant_response` is `true` by default because it is the core purpose of the
+broadcast: bots see the responses from other bots.
 
 ---
 

@@ -82,7 +82,7 @@ regla escrita).
   (setup TUI, `config_repository`) — el callback de `cli.py` propaga `--home` al env. Los
   configs con `RuntimePath` usados como default de `GlobalConfig` (`scheduler`, `knowledge`)
   usan `Field(default_factory=...)` para resolver en runtime, no al importar. **Puertos NO
-  se derivan del home**: una 2ª instancia declara `admin.port`/`broadcast.port` en su YAML.
+  se derivan del home**: una 2ª instancia declara `admin.port`/`broadcast.server.port` en su YAML.
 
 - **Per-agente (compartir vs aislar es CONFIGURABLE):** `memory`, `history`, `channels`,
   `llm`, `embedding`. Config en `AgentConfig`; se construyen por agente en
@@ -280,7 +280,8 @@ grupo* — aplican con o sin broadcast TCP —, pero vivían en `BroadcastConfig
 validador exige `port XOR remote`. Eso **obligaba a levantar el transporte LAN solo
 para configurar el comportamiento**: no podías tener `behavior: mention` en un bot
 sin broadcast. Ahora `groups` cubre timing (`min/max_delay_response`, `reactions`) +
-política, y `BroadcastConfig` queda como **transporte puro** (`port`/`remote`/`auth`/`emit`).
+política, y `BroadcastConfig` queda como **transporte puro** (`port`/`remote`/`auth`/`emit`;
+la forma de esos campos fue rediseñada después — ver `broadcast-topology-config`).
 
 **Cambio de wiring clave**: el `FixedWindowRateLimiter` ya **no** se instancia dentro
 de `_wire_broadcast_for_agent` atado a la presencia de `broadcast:`. Ahora se crea cuando
@@ -300,6 +301,45 @@ introspección del schema → `behavior` aparece solo bajo la sección GROUPS, s
 **Sin migración de DB ni pasos manuales del operador.** Backward-compat: configs viejas se
 migran solas. El corte es limpio (el bot lee SOLO de `groups`, sin fallback a `broadcast`):
 si por un path raro la migración no corriera, un bot caería al default `behavior: mention`.
+
+### `broadcast-topology-config`
+
+La config de `channels.telegram.broadcast` abandonó el formato **implícito** (`port`
+presente = server, `remote` presente = client, `auth` duplicado en dos paths según el
+rol, `remote.host` como string `"ip:port"` parseado a mano en el container con fallo
+silencioso) por un formato de **rol explícito**:
+
+```yaml
+broadcast:
+  enabled: true            # kill-switch (default true); false relaja topología y auth
+  auth: "shared-secret"    # HMAC único para AMBOS roles (client debe matchear server)
+  server: { port: 6499 }   # XOR client — el rol se LEE en el YAML
+  client: { host: "192.168.1.50", port: 6499 }
+  emit: { ... }            # sin cambios
+```
+
+Modelos nuevos `BroadcastServerConfig` / `BroadcastClientConfig` (rangos de puerto
+1024..65535 vía `Field(ge/le)`, validados al CARGAR — muere el parseo de `"ip:port"` y
+sus dos paths de skip silencioso en `_wire_broadcast_for_agent`). `RemoteBroadcastConfig`
+eliminado. El validador pasa de `port XOR remote` a `server XOR client` + `auth`
+obligatorio, y con `enabled: false` no exige nada (el bloque puede quedar incompleto
+mientras está apagado). `_validate_channel_uniqueness` chequea `server.port` (ignora
+bloques `enabled: false` — no hacen `bind()`).
+
+**Migración automática en caliente** (`migrate_telegram_broadcast_topology` en
+`config_loader.py`, llamada desde `ensure_user_config` DESPUÉS de
+`migrate_telegram_group_fields`): `port` → `server.port`; `remote.host "ip:port"` →
+`client.host`+`client.port`; `remote.auth` → `auth` (el existente gana). Cubre las 4
+capas (un secrets con solo `remote: {auth}` queda como `auth` top-level y mergea con el
+`client` de la capa principal). Idempotente, ruamel, preserva comentarios. Host sin
+`:puerto` parseable → se migra solo el host y el schema reclama `client.port` al cargar
+(error visible > skip mudo).
+
+**Sin migración de DB ni pasos del operador. El wire format TCP no cambia** — instancias
+con config vieja y nueva siguen hablando entre sí (esto es SOLO config). Corte limpio:
+el código lee SOLO el formato nuevo, sin fallback — un bloque viejo sin migrar falla al
+cargar con error de validación explícito. NUNCA volver al rol implícito por presencia de
+campo ni duplicar `auth` por rol.
 
 ### `channel-send-history-persist`
 

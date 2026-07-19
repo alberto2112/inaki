@@ -48,6 +48,6 @@ def test_groups_politica_aparece_como_addable_si_ausente():
 def test_broadcast_ya_no_expone_politica_de_grupos():
     """Guard de regresión: BroadcastConfig no declara la política de grupos —
     ni como campo presente ni como opción añadible."""
-    tree = build_schema_tree(BroadcastConfig, {"port": 6499}, root_label="broadcast")
+    tree = build_schema_tree(BroadcastConfig, {"server": {"port": 6499}}, root_label="broadcast")
     declarados = {c.key for c in tree.children} | {o.key for o in tree.addable}
     assert _POLITICA.isdisjoint(declarados)

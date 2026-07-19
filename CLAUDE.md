@@ -326,20 +326,16 @@ obligatorio, y con `enabled: false` no exige nada (el bloque puede quedar incomp
 mientras está apagado). `_validate_channel_uniqueness` chequea `server.port` (ignora
 bloques `enabled: false` — no hacen `bind()`).
 
-**Migración automática en caliente** (`migrate_telegram_broadcast_topology` en
-`config_loader.py`, llamada desde `ensure_user_config` DESPUÉS de
-`migrate_telegram_group_fields`): `port` → `server.port`; `remote.host "ip:port"` →
-`client.host`+`client.port`; `remote.auth` → `auth` (el existente gana). Cubre las 4
-capas (un secrets con solo `remote: {auth}` queda como `auth` top-level y mergea con el
-`client` de la capa principal). Idempotente, ruamel, preserva comentarios. Host sin
-`:puerto` parseable → se migra solo el host y el schema reclama `client.port` al cargar
-(error visible > skip mudo).
+**Sin migración automática**: todas las instancias del operador se migraron a mano al
+formato nuevo, así que NO se dejó una `migrate_*` en `config_loader.py` (sería código
+muerto — el corte fue manual, cerrado). Si en el futuro reaparece config vieja en una
+instancia, el mapeo es mecánico: `port` → `server.port`; `remote.host "ip:port"` →
+`client.host`+`client.port`; `remote.auth` → `auth`.
 
-**Sin migración de DB ni pasos del operador. El wire format TCP no cambia** — instancias
-con config vieja y nueva siguen hablando entre sí (esto es SOLO config). Corte limpio:
-el código lee SOLO el formato nuevo, sin fallback — un bloque viejo sin migrar falla al
-cargar con error de validación explícito. NUNCA volver al rol implícito por presencia de
-campo ni duplicar `auth` por rol.
+**Sin migración de DB. El wire format TCP no cambia** — esto es SOLO config; el cambio
+no toca la red. Corte limpio: el código lee SOLO el formato nuevo, sin fallback — un
+bloque viejo sin migrar falla al cargar con error de validación explícito. NUNCA volver
+al rol implícito por presencia de campo ni duplicar `auth` por rol.
 
 ### `channel-send-history-persist`
 

@@ -153,6 +153,44 @@ Secrets are YAML-only (no env vars). `*.secrets.yaml` files are gitignored.
 
 ## Migration Notes
 
+### `write-file-explicit-mode`
+
+`write_file` tenía `overwrite: bool = False` y ese default **appendeaba**. Cuando el
+LLM quería actualizar un fichero, mandaba el contenido completo sin tocar el flag y
+el tool le pegaba el texto nuevo al final del viejo → **contenido duplicado**. La
+descripción llamaba a ese modo *"safe mode"*, que era exactamente al revés. El LLM
+no elegía mal por falta de instrucciones: la tool producía el bug por diseño, y
+además `patch_file` era el camino CARO (pide líneas 1-based y `read_file` devolvía
+el contenido sin numerar → había que contar a mano). Entre una tool barata que
+rompe y una cara que funciona, un LLM agarra la barata. Siempre.
+
+**Cambios** (los tres son una sola decisión: hacer que el camino correcto sea el barato):
+
+1. **`write_file`: `overwrite: bool` → `mode: "create" | "overwrite" | "append"`, SIN
+   default.** Sobre un fichero existente y no vacío el modo es **obligatorio**: si
+   falta, la tool **falla sin escribir** y el error nombra la alternativa
+   (`edit_file` / `patch_file`). Si el target no existe o está vacío, `mode` ausente
+   = `create`. `mode="create"` sobre fichero con contenido también falla.
+2. **`read_file`: flag opt-in `line_numbers: bool = False`.** Con `true` cada línea
+   sale prefijada `"  42\ttexto"`, **numeración absoluta** (respeta `offset`) para
+   que los números se pasen tal cual a `patch_file`. El payload suma la clave
+   `line_numbers`. Default `false` → output idéntico al anterior.
+3. **Descripciones cruzadas**: `write_file` dice explícitamente que NO puede
+   modificar contenido in place y deriva a `edit_file`/`patch_file`; `edit_file` se
+   declara la tool **preferida** para actualizar; `patch_file` manda a leer con
+   `line_numbers=true` antes de patchear. Las tres se nombran entre sí — sin eso el
+   flag de (2) es invisible para el LLM.
+
+**BREAKING del contrato de la tool (sin auto-migración)**: el parámetro `overwrite`
+**ya no existe**. Si llega, la tool devuelve error explícito y **no escribe** — corte
+limpio deliberado: mapearlo en silencio a un modo reintroduce el fallo que esto
+elimina. `overwrite=True` → `mode="overwrite"`; `overwrite=False` → `mode="append"`
+(o, casi siempre, la llamada correcta era `edit_file`).
+
+**Sin migración de DB ni cambios de config.** Nada persistido cambia de forma. Las
+tool calls viejas viven en `history.db` pero no se re-ejecutan. NUNCA volver a darle
+a `write_file` un modo por default sobre ficheros con contenido: el default ES el bug.
+
 ### `persist-tool-calls`
 
 Por diseño histórico, el rastro de tool calls de un turno (el mensaje

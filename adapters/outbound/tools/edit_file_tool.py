@@ -25,9 +25,13 @@ _VALID_OPS = ("replace", "insert_before", "insert_after", "delete_lines")
 class EditFileTool(ITool):
     name = "edit_file"
     description = (
-        "Edits a file by pattern matching (line-oriented, sed-like). "
+        "Preferred tool for updating an existing file: edits it in place by pattern matching "
+        "(line-oriented, sed-like). "
+        "Never use write_file to update a file that already exists — it can only replace the "
+        "whole content or append to the end, which duplicates or destroys what is there. "
         "Use this for quick search-and-replace, conditional inserts, or deleting matching lines "
-        "without counting line numbers. For exact line-range surgery, use patch_file instead. "
+        "without counting line numbers. For exact line-range surgery, use patch_file instead "
+        "(read the file with line_numbers=true first). "
         "Operations: 'replace' (substitute pattern with replacement inside matching lines), "
         "'insert_before' / 'insert_after' (add content adjacent to matching lines), "
         "'delete_lines' (remove matching lines). "

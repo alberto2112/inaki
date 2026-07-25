@@ -22,9 +22,14 @@ logger = logging.getLogger(__name__)
 class PatchFileTool(ITool):
     name = "patch_file"
     description = (
-        "Applies line-range patches to a file. "
-        "Line numbers are 1-based (first line = 1). "
+        "Modifies an existing file in place by line ranges — the precise way to update a file "
+        "without rewriting it (never use write_file to update an existing file: it replaces or "
+        "duplicates the whole content). "
+        "Line numbers are 1-based (first line = 1): read the file first with read_file and "
+        "line_numbers=true to get them exactly, never guess or count them by hand. "
         "A patch with null content deletes lines; a string replaces/inserts over the range. "
+        "If you can identify the target by its text instead of its position, edit_file is "
+        "simpler and needs no line numbers. "
         "Returns structured JSON: success, path (resolved), patches_applied, or error."
     )
     parameters_schema = {

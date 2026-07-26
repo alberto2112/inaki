@@ -262,6 +262,36 @@ journalctl -u inaki -f
 
 The service file is at [`systemd/inaki.service`](systemd/inaki.service). It runs the `inaki daemon` command which starts all configured agents and channels.
 
+### What `install.sh` does
+
+1. Generates `/etc/systemd/system/inaki.service` from the template, substituting the real `User`, `Group`, `WorkingDirectory` and the absolute path to the venv interpreter. The file in the repo is a **template** — the values in it are placeholders.
+2. Enables the service (autostart on boot) and restarts it.
+3. **Symlinks the CLI**: `/usr/local/bin/inaki` → `<repo>/.venv/bin/inaki`.
+
+### Why the CLI symlink (and where it points)
+
+Without it, the `inaki` command only exists inside the venv — you would have to activate it, or type `.venv/bin/inaki` every time.
+
+`/usr/local/bin` is the only directory that satisfies both requirements:
+
+- The FHS reserves it for locally-installed software. `/usr/bin` belongs to `dpkg`/`apt` — a package could overwrite or remove anything you put there.
+- **It is in systemd's minimal `PATH`.** systemd does not read `.bashrc` or `.profile`, so the daemon's environment is just `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`.
+
+A bare symlink is enough: pip's console script carries a shebang with the **absolute** path to the venv interpreter, so it resolves correctly no matter where the link lives. The link is re-pointed on every `install.sh` run; if `/usr/local/bin/inaki` already exists as a **real file** (not a symlink), the step is skipped rather than clobbering it.
+
+> **Consequence — read this.** Because `/usr/local/bin` is in the daemon's `PATH`, the symlink also makes the CLI reachable from the agent's `shell_exec` tool. That gives the LLM the whole harness (`inaki scheduler`, `inaki knowledge`, `inaki tool`, …) outside the tool layer. Prefer capabilities as tools; `shell_exec` reaching for the CLI is usually a smell.
+>
+> To keep the CLI for yourself only, remove the link and put it in your user bin instead — your login shell sees it, systemd's minimal `PATH` does not:
+>
+> ```bash
+> sudo rm /usr/local/bin/inaki
+> mkdir -p ~/.local/bin && ln -sfn "$PWD/.venv/bin/inaki" ~/.local/bin/inaki
+> ```
+>
+> (run from the repo root — `$PWD` must be the repo)
+
+If the repo moves, re-run `sudo bash systemd/install.sh` — it re-points both the unit and the symlink.
+
 ---
 
 ## Development

@@ -22,6 +22,14 @@ RUN_GROUP="$(id -gn "$RUN_USER")"
 
 VENV_PYTHON="$INAKI_DIR/.venv/bin/python"
 
+# CLI del venv → /usr/local/bin. Es el ÚNICO directorio que cumple las dos
+# condiciones: el FHS lo reserva para software local (a diferencia de /usr/bin,
+# territorio de dpkg/apt) y está en el PATH mínimo de systemd — que NO lee
+# .bashrc/.profile. Sin este enlace, `inaki` solo existe dentro del venv: ni tu
+# shell ni el daemon (ni por ende el `shell_exec` del agente) lo encuentran.
+VENV_CLI="$INAKI_DIR/.venv/bin/inaki"
+CLI_LINK="/usr/local/bin/inaki"
+
 if [ ! -f "$SERVICE_TEMPLATE" ]; then
     echo "Error: $SERVICE_TEMPLATE no encontrado."
     exit 1
@@ -50,6 +58,22 @@ sed \
 
 chmod 644 "$SERVICE_TARGET"
 
+# Enlaza el CLI. El console script de pip lleva shebang con ruta ABSOLUTA al
+# python del venv, así que el symlink resuelve al intérprete correcto sin wrapper.
+echo "Enlazando el CLI en $CLI_LINK..."
+if [ ! -x "$VENV_CLI" ]; then
+    echo "  ⚠ No existe $VENV_CLI — se omite el enlace."
+    echo "    Instalá el paquete en el venv: .venv/bin/pip install -e ."
+elif [ -e "$CLI_LINK" ] && [ ! -L "$CLI_LINK" ]; then
+    # Fichero real (no un symlink nuestro): no lo pisamos a ciegas.
+    echo "  ⚠ $CLI_LINK ya existe y NO es un symlink — se omite para no pisarlo."
+    echo "    Revisalo a mano si querés que apunte a $VENV_CLI."
+else
+    mkdir -p "$(dirname "$CLI_LINK")"
+    ln -sfn "$VENV_CLI" "$CLI_LINK"
+    echo "  ✓ $CLI_LINK → $VENV_CLI"
+fi
+
 echo "Recargando systemd..."
 systemctl daemon-reload
 
@@ -68,3 +92,8 @@ echo "  journalctl -u inaki -f       → logs en tiempo real"
 echo "  systemctl stop inaki         → detener"
 echo "  systemctl restart inaki      → reiniciar"
 echo "  systemctl disable inaki      → deshabilitar arranque automático"
+echo "  inaki --version              → CLI (ya disponible sin activar el venv)"
+echo ""
+echo "Nota: el enlace en $CLI_LINK también hace visible el CLI para el"
+echo "      \`shell_exec\` del agente. Si no lo querés, borralo:"
+echo "      sudo rm $CLI_LINK"

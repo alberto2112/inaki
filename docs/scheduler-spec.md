@@ -407,7 +407,10 @@ schedule, enabled, executions_remaining, log_enabled
 id, status, next_run, last_run, created_at, retry_count
 ```
 
-> **Important**: when changing `trigger_type`, also update `trigger_payload.type` with the same value — it is a discriminated union.
+> **Important**: when changing `trigger_type`, also replace `trigger_payload` with one of the
+> new type (matching `type` **and** the fields that type requires) — it is a discriminated union.
+> This is no longer a convention you have to remember: `ScheduledTask` rejects the mismatch on
+> save, so the editor will bounce you back with the validation error.
 
 ---
 

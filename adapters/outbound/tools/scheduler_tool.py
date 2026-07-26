@@ -124,9 +124,28 @@ _LLM_TO_TASK_KIND = {v: k for k, v in _TASK_KIND_TO_LLM.items()}
 # Fields the LLM is allowed to update on an existing task. El status runtime
 # NO está: setear 'running' a mano brickea la task (el loop solo levanta
 # 'pending') y la intención on/off se expresa con las operaciones enable/disable.
+#
+# `trigger_type` y `task_kind` SÍ son mutables, pero solo como cambio ATÓMICO
+# junto a su campo acoplado (ver _update): trigger_type↔trigger_payload (unión
+# discriminada) y task_kind↔schedule (cron ↔ datetime ISO).
 _MUTABLE_FIELDS = frozenset(
-    {"name", "description", "schedule", "trigger_payload", "executions_remaining"}
+    {
+        "name",
+        "description",
+        "schedule",
+        "trigger_type",
+        "trigger_payload",
+        "task_kind",
+        "executions_remaining",
+    }
 )
+
+# Campos que no se pueden cambiar solos: mover uno sin el otro deja la task
+# incoherente (el dominio lo rechaza) o con un schedule del formato equivocado.
+_COUPLED_FIELDS: dict[str, str] = {
+    "trigger_type": "trigger_payload",
+    "task_kind": "schedule",
+}
 
 
 class SchedulerTool(ITool):
@@ -157,7 +176,10 @@ class SchedulerTool(ITool):
         "Without trigger_payload the create call WILL fail. "
         "Use 'list' to see all active tasks. "
         "Use 'get' to retrieve full detail (including trigger_payload) for a specific task. "
-        "Use 'update' to modify mutable fields on a task. "
+        "Use 'update' to modify mutable fields on a task: name, description, schedule, "
+        "trigger_type, trigger_payload, task_kind, executions_remaining. Two of them are "
+        "COUPLED and must travel together in the same call: changing trigger_type requires "
+        "trigger_payload, and changing task_kind requires schedule. "
         "Use 'delete' to remove a non-builtin task permanently. "
         "Use 'enable' to turn a task on (also re-arms a failed/missed task). "
         "Use 'disable' to pause a task without deleting it. "
@@ -210,13 +232,21 @@ class SchedulerTool(ITool):
                 "enum": ["one_shot", "recurring"],
                 "description": (
                     "Task type. 'one_shot' runs once at a specific time; "
-                    "'recurring' runs on a cron schedule."
+                    "'recurring' runs on a cron schedule. "
+                    "On 'update' it CAN be changed, but only together with 'schedule' "
+                    "in the same call — the old schedule is in the wrong format for the "
+                    "new kind (recurring needs cron, one_shot needs a datetime)."
                 ),
             },
             "trigger_type": {
                 "type": "string",
                 "enum": sorted(_ALLOWED_TRIGGER_TYPES),
-                "description": "Kind of action to execute when the task fires.",
+                "description": (
+                    "Kind of action to execute when the task fires. "
+                    "On 'update' it CAN be changed, but only together with "
+                    "'trigger_payload' in the same call — each type has its own "
+                    "payload shape, so the existing payload is not valid for a new type."
+                ),
             },
             "trigger_payload": {
                 "type": "object",
@@ -227,7 +257,7 @@ class SchedulerTool(ITool):
                     'channel_send → {"text": "mensaje"}: por default va a la conversación '
                     'actual. Para enviar a OTRO chat, incluí "target" como routing key '
                     '"canal:id" (ej. "telegram:-1001582404077"). Para que el envío quede '
-                    'en el historial de OTRO agente (publicar EN SU NOMBRE), incluí '
+                    "en el historial de OTRO agente (publicar EN SU NOMBRE), incluí "
                     '"agent_id" con su id (ej. "anacleto"). '
                     'agent_send → {"task": "lo que el agente debe hacer"} '
                     "(agent_id se resuelve a 'self' automáticamente; "
@@ -570,7 +600,7 @@ class SchedulerTool(ITool):
         except (TypeError, ValueError):
             return self._error(f"Invalid 'task_id': '{task_id}'. Must be an integer.")
 
-        # Collect mutable fields — silently drop immutable ones
+        # Campos simples — se aceptan solos, sin acoplamiento con ningún otro.
         updates: dict[str, Any] = {}
 
         if "name" in params:
@@ -582,26 +612,25 @@ class SchedulerTool(ITool):
         if "executions_remaining" in params:
             updates["executions_remaining"] = params["executions_remaining"]
 
+        payload_raw: dict[str, Any] | None = None
         if "trigger_payload" in params:
             payload_raw_original = params["trigger_payload"]
-            payload_raw = _coerce_to_dict(payload_raw_original)
-            if not isinstance(payload_raw, dict):
+            coerced = _coerce_to_dict(payload_raw_original)
+            if not isinstance(coerced, dict):
                 logger.error(
                     "scheduler.update: trigger_payload inválido — type=%s, repr=%r",
                     type(payload_raw_original).__name__,
                     payload_raw_original,
                 )
                 return self._error("'trigger_payload' must be an object.")
-            # Need trigger_type to validate — fetch existing task first
-            # (handled below when we call update_task)
-            updates["_trigger_payload_raw"] = payload_raw
+            payload_raw = coerced
 
-        # Las ramas `schedule` y `trigger_payload` necesitan la task existente
-        # (la primera para discriminar cron vs ISO según task_kind, la segunda
-        # para validar el payload contra el trigger_type). Se hace un único
-        # fetch lazy y se reusa.
+        # Las cuatro ramas acopladas necesitan la task existente: para saber si
+        # el valor recibido CAMBIA algo (reenviar el valor actual es un no-op,
+        # no un error) y para validar payload/schedule contra los valores
+        # EFECTIVOS — los nuevos si vienen en esta misma llamada, los viejos si no.
         existing: ScheduledTask | None = None
-        if "schedule" in params or "_trigger_payload_raw" in updates:
+        if any(k in params for k in ("schedule", "trigger_payload", "trigger_type", "task_kind")):
             try:
                 existing = await self._uc.get_task(task_id)
             except TaskNotFoundError as exc:
@@ -609,10 +638,60 @@ class SchedulerTool(ITool):
             except SchedulerError as exc:
                 return self._error(str(exc))
 
+        # --- trigger_type: mutable, pero SOLO junto a su trigger_payload ---
+        effective_trigger_type = existing.trigger_type.value if existing is not None else ""
+        if "trigger_type" in params:
+            assert existing is not None  # garantizado por el fetch de arriba
+            requested_type = str(params["trigger_type"] or "").strip().lower()
+            if requested_type not in _ALLOWED_TRIGGER_TYPES:
+                return self._error(
+                    f"Invalid 'trigger_type': '{requested_type}'. "
+                    f"Must be one of: {', '.join(sorted(_ALLOWED_TRIGGER_TYPES))}."
+                )
+            if requested_type != existing.trigger_type.value:
+                if payload_raw is None:
+                    example = _PAYLOAD_EXAMPLE_BY_TRIGGER.get(requested_type, '{"text": "..."}')
+                    return self._error(
+                        f"Changing 'trigger_type' to '{requested_type}' requires sending "
+                        f"'{_COUPLED_FIELDS['trigger_type']}' in the SAME call: the payload "
+                        f"shape is type-specific, so the current one is not valid for the "
+                        f"new type. Retry with trigger_type='{requested_type}' and "
+                        f"trigger_payload={example}."
+                    )
+                updates["trigger_type"] = TriggerType(requested_type)
+                effective_trigger_type = requested_type
+
+        # --- task_kind: mutable, pero SOLO junto a su schedule ---
+        effective_task_kind = existing.task_kind if existing is not None else None
+        if "task_kind" in params:
+            assert existing is not None  # garantizado por el fetch de arriba
+            requested_kind = str(params["task_kind"] or "").strip().lower()
+            if requested_kind not in _LLM_TO_TASK_KIND:
+                return self._error(
+                    f"Invalid 'task_kind': '{requested_kind}'. Must be 'one_shot' or 'recurring'."
+                )
+            domain_kind = TaskKind(_LLM_TO_TASK_KIND[requested_kind])
+            if domain_kind != existing.task_kind:
+                if "schedule" not in params:
+                    expected = (
+                        "a cron expression (e.g. '0 8 * * *')"
+                        if domain_kind == TaskKind.RECURRENT
+                        else "a datetime ('+2h' or ISO 8601)"
+                    )
+                    return self._error(
+                        f"Changing 'task_kind' to '{requested_kind}' requires sending "
+                        f"'{_COUPLED_FIELDS['task_kind']}' in the SAME call: the current "
+                        f"schedule is in the format of the OLD kind. Retry with "
+                        f"task_kind='{requested_kind}' and schedule set to {expected}."
+                    )
+                updates["task_kind"] = domain_kind
+                effective_task_kind = domain_kind
+
         if "schedule" in params:
-            assert existing is not None  # garantizado por el fetch lazy de arriba
             schedule_raw = str(params["schedule"]).strip()
-            is_recurring = existing.task_kind == TaskKind.RECURRENT
+            # Contra el kind EFECTIVO: si task_kind cambia en esta misma llamada,
+            # el schedule nuevo debe interpretarse con el kind nuevo, no el viejo.
+            is_recurring = effective_task_kind == TaskKind.RECURRENT
             if schedule_raw.startswith("+"):
                 if is_recurring:
                     return self._error(
@@ -641,51 +720,59 @@ class SchedulerTool(ITool):
                 if past_error is not None:
                     return past_error
 
-        if not {k for k in updates if not k.startswith("_")}:
-            if "_trigger_payload_raw" not in updates:
+        # Resolución del trigger_payload contra el trigger_type EFECTIVO — el
+        # nuevo si vino en esta llamada, el existente si no. Validar contra el
+        # viejo era el bug: producía un "Invalid trigger_payload for X" que
+        # mentía sobre la causa, o peor, un update "exitoso" que dejaba el
+        # trigger_type sin cambiar (los payload models ignoran claves extra).
+        if payload_raw is not None:
+            assert existing is not None  # garantizado por el fetch de arriba
+            if effective_trigger_type not in _ALLOWED_TRIGGER_TYPES:
                 return self._error(
-                    "No mutable fields provided. "
-                    f"Mutable fields: {', '.join(sorted(_MUTABLE_FIELDS))}."
-                )
-
-        # If trigger_payload update requested, resolve it now
-        if "_trigger_payload_raw" in updates:
-            payload_raw = updates.pop("_trigger_payload_raw")
-            assert existing is not None  # garantizado por el fetch lazy de arriba
-
-            trigger_type_str = existing.trigger_type.value
-            if trigger_type_str not in _ALLOWED_TRIGGER_TYPES:
-                return self._error(
-                    f"Cannot update trigger_payload for system trigger type '{trigger_type_str}'."
+                    "Cannot update trigger_payload for system trigger type "
+                    f"'{effective_trigger_type}'."
                 )
             # Resolución de target para channel_send (misma lógica que _create)
-            if trigger_type_str == "channel_send":
+            if effective_trigger_type == "channel_send":
                 target, err = self._resolve_channel_send_target(payload_raw)
                 if err is not None:
                     return err
                 if target is None:
-                    # El LLM no informó destino → conservar el target existente.
-                    # En esta rama el payload existente DEBE ser ChannelSendPayload
-                    # (invariante por construcción); el isinstance narrowea el Union
-                    # de los 5 tipos posibles para mypy.
-                    assert isinstance(existing.trigger_payload, ChannelSendPayload)
-                    target = existing.trigger_payload.target
+                    # Sin destino explícito: conservar el de la task si YA era
+                    # channel_send. Si el trigger_type cambió recién no hay target
+                    # previo que heredar → caer a la conversación actual (_create).
+                    if isinstance(existing.trigger_payload, ChannelSendPayload):
+                        target = existing.trigger_payload.target
+                    else:
+                        context = self._get_channel_context()
+                        if context is None:
+                            return self._error(
+                                "No hay contexto de canal disponible. channel_send necesita "
+                                "una conversación interactiva o un 'target' explícito "
+                                "(ej. 'telegram:-1001582404077')."
+                            )
+                        target = context.routing_key
                 payload_raw["target"] = target
 
             # Resolución de 'self' para agent_send (misma lógica que _create)
-            if trigger_type_str == "agent_send":
+            if effective_trigger_type == "agent_send":
                 raw_agent_id = payload_raw.get("agent_id")
                 if raw_agent_id is None or str(raw_agent_id).strip().lower() == "self":
                     payload_raw["agent_id"] = self._agent_id
 
-            payload_model_cls = _TRIGGER_PAYLOAD_MODELS[trigger_type_str]
+            payload_model_cls = _TRIGGER_PAYLOAD_MODELS[effective_trigger_type]
             try:
-                payload_raw["type"] = trigger_type_str
+                payload_raw["type"] = effective_trigger_type
                 updates["trigger_payload"] = cast(
                     TriggerPayload, payload_model_cls.model_validate(payload_raw)
                 )
             except Exception as exc:  # noqa: BLE001
-                return self._error(f"Invalid trigger_payload for '{trigger_type_str}': {exc}")
+                return self._error(f"Invalid trigger_payload for '{effective_trigger_type}': {exc}")
+
+        if not updates:
+            return self._error(
+                f"No mutable fields provided. Mutable fields: {', '.join(sorted(_MUTABLE_FIELDS))}."
+            )
 
         try:
             updated = await self._uc.update_task(task_id, **updates)

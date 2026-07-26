@@ -42,6 +42,7 @@ from core.domain.entities.task import (
     ShellExecPayload,
     TaskKind,
     TaskStatus,
+    TriggerPayload,
     TriggerType,
 )
 from core.domain.entities.task_log import TaskLog
@@ -112,12 +113,19 @@ def _make_task(
     trigger_type: TriggerType = TriggerType.CHANNEL_SEND,
     created_by: str = _AGENT_ID,
 ) -> ScheduledTask:
+    # El payload se deriva del trigger_type: la entidad exige que coincidan
+    # (son el mismo dato — ver ScheduledTask._trigger_type_matches_payload).
+    payload: TriggerPayload = {  # type: ignore[assignment]
+        TriggerType.CHANNEL_SEND: ChannelSendPayload(target="telegram:ch1", text="hello"),
+        TriggerType.AGENT_SEND: AgentSendPayload(agent_id=_AGENT_ID, task="do something"),
+        TriggerType.SHELL_EXEC: ShellExecPayload(command="echo hello"),
+    }[trigger_type]
     return ScheduledTask(
         id=task_id,
         name=name,
         task_kind=task_kind,
         trigger_type=trigger_type,
-        trigger_payload=ChannelSendPayload(target="telegram:ch1", text="hello"),
+        trigger_payload=payload,
         schedule="2026-04-12T14:00:00Z",
         created_by=created_by,
         created_at=datetime(2026, 4, 10, 12, 0, 0, tzinfo=timezone.utc),
@@ -483,6 +491,153 @@ async def test_update_recurring_with_relative_schedule_is_error() -> None:
 
     assert result.success is False
     assert "cron" in result.output.lower() or "recurring" in result.output.lower()
+    uc.update_task.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# update — trigger_type / task_kind: mutables, pero como cambio ATÓMICO
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_trigger_type_con_payload_cambia_ambos() -> None:
+    """trigger_type + trigger_payload juntos → el payload se valida contra el tipo NUEVO."""
+    tool, uc = _make_tool()
+    existing = _make_task(task_id=60, trigger_type=TriggerType.CHANNEL_SEND)
+    uc.get_task.return_value = existing
+    uc.update_task.return_value = existing
+
+    result = await tool.execute(
+        operation="update",
+        task_id=60,
+        trigger_type="shell_exec",
+        trigger_payload={"command": "echo hola"},
+    )
+
+    assert result.success is True, result.error
+    kwargs = uc.update_task.await_args.kwargs
+    assert kwargs["trigger_type"] == TriggerType.SHELL_EXEC
+    assert isinstance(kwargs["trigger_payload"], ShellExecPayload)
+    assert kwargs["trigger_payload"].command == "echo hola"
+
+
+@pytest.mark.asyncio
+async def test_update_trigger_type_solo_es_error_accionable() -> None:
+    """trigger_type sin trigger_payload → error que NOMBRA el campo faltante."""
+    tool, uc = _make_tool()
+    uc.get_task.return_value = _make_task(task_id=61, trigger_type=TriggerType.CHANNEL_SEND)
+
+    result = await tool.execute(operation="update", task_id=61, trigger_type="agent_send")
+
+    assert result.success is False
+    assert "trigger_payload" in (result.error or "")
+    uc.update_task.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_update_trigger_type_igual_al_actual_es_no_op() -> None:
+    """Reenviar el trigger_type vigente no exige payload ni cuenta como cambio.
+
+    El LLM suele re-mandar todos los campos que leyó con `get`; eso no debe
+    romper un update de otro campo.
+    """
+    tool, uc = _make_tool()
+    uc.get_task.return_value = _make_task(task_id=62, trigger_type=TriggerType.CHANNEL_SEND)
+    uc.update_task.return_value = _make_task(task_id=62, name="Nuevo")
+
+    result = await tool.execute(
+        operation="update", task_id=62, trigger_type="channel_send", name="Nuevo"
+    )
+
+    assert result.success is True, result.error
+    uc.update_task.assert_awaited_once_with(62, name="Nuevo")
+
+
+@pytest.mark.asyncio
+async def test_update_trigger_type_con_payload_del_tipo_viejo_falla() -> None:
+    """El payload se valida contra el tipo NUEVO — un payload del viejo no pasa.
+
+    Antes esto validaba contra el trigger_type EXISTENTE: o daba un error que
+    mentía sobre la causa, o "actualizaba" dejando el trigger_type sin cambiar.
+    """
+    tool, uc = _make_tool()
+    uc.get_task.return_value = _make_task(task_id=63, trigger_type=TriggerType.CHANNEL_SEND)
+
+    result = await tool.execute(
+        operation="update",
+        task_id=63,
+        trigger_type="agent_send",
+        trigger_payload={"text": "hola"},  # shape de channel_send
+    )
+
+    assert result.success is False
+    assert "agent_send" in (result.error or "")
+    uc.update_task.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_update_a_channel_send_sin_target_usa_contexto_actual() -> None:
+    """Al CAMBIAR a channel_send no hay target previo que heredar → contexto del canal."""
+    tool, uc = _make_tool()
+    uc.get_task.return_value = _make_task(task_id=64, trigger_type=TriggerType.SHELL_EXEC)
+    uc.update_task.return_value = _make_task(task_id=64)
+
+    result = await tool.execute(
+        operation="update",
+        task_id=64,
+        trigger_type="channel_send",
+        trigger_payload={"text": "hola"},
+    )
+
+    assert result.success is True, result.error
+    payload = uc.update_task.await_args.kwargs["trigger_payload"]
+    assert isinstance(payload, ChannelSendPayload)
+    assert payload.target == _DEFAULT_CHANNEL_CTX.routing_key
+
+
+@pytest.mark.asyncio
+async def test_update_task_kind_con_schedule_cambia_ambos() -> None:
+    """task_kind + schedule juntos → el schedule se interpreta con el kind NUEVO."""
+    tool, uc = _make_tool()
+    uc.get_task.return_value = _make_task(task_id=65, task_kind=TaskKind.ONESHOT)
+    uc.update_task.return_value = _make_task(task_id=65, task_kind=TaskKind.RECURRENT)
+
+    result = await tool.execute(
+        operation="update", task_id=65, task_kind="recurring", schedule="0 8 * * *"
+    )
+
+    assert result.success is True, result.error
+    kwargs = uc.update_task.await_args.kwargs
+    assert kwargs["task_kind"] == TaskKind.RECURRENT
+    # Cron crudo: si se hubiera interpretado con el kind VIEJO (oneshot) el
+    # parseo a ISO habría fallado.
+    assert kwargs["schedule"] == "0 8 * * *"
+
+
+@pytest.mark.asyncio
+async def test_update_task_kind_solo_es_error_accionable() -> None:
+    """task_kind sin schedule → error que NOMBRA el campo faltante."""
+    tool, uc = _make_tool()
+    uc.get_task.return_value = _make_task(task_id=66, task_kind=TaskKind.ONESHOT)
+
+    result = await tool.execute(operation="update", task_id=66, task_kind="recurring")
+
+    assert result.success is False
+    assert "schedule" in (result.error or "")
+    uc.update_task.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_update_task_kind_invalido_es_error() -> None:
+    tool, uc = _make_tool()
+    uc.get_task.return_value = _make_task(task_id=67)
+
+    result = await tool.execute(
+        operation="update", task_id=67, task_kind="cada_tanto", schedule="0 8 * * *"
+    )
+
+    assert result.success is False
+    assert "task_kind" in (result.error or "")
     uc.update_task.assert_not_called()
 
 

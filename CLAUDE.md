@@ -166,6 +166,66 @@ Secrets are YAML-only (no env vars). `*.secrets.yaml` files are gitignored.
 
 ## Migration Notes
 
+### `scheduler-trigger-type-mutable`
+
+`trigger_type` y `task_kind` NO eran editables desde la tool `scheduler`
+(`_MUTABLE_FIELDS` los omitía y `_update` los **descartaba en silencio**). No era
+una decisión de diseño: el dominio SIEMPRE los soportó (`_INVALIDATING_FIELDS` en
+`schedule_task.py` los incluye — ese frozenset solo tiene sentido si son
+editables, y `update_task` re-valida el cron cuando cambia `task_kind`) y el CLI
+SIEMPRE los dejó editar (`_EDITABLE_FIELDS`). Era un gap de UNA superficie,
+heredado del commit inicial de la tool (`9ace581`), sin test ni comentario que lo
+justificara. Peor: el `parameters_schema` **declaraba** `trigger_type` como
+parámetro sin decir "create only" → el LLM lo intentaba y chocaba.
+
+Tres síntomas según cómo llamara el LLM: (a) solo `trigger_type` → `updates`
+vacío → `"No mutable fields provided"` (lo que reportaba el usuario); (b)
+`trigger_type` + `trigger_payload` → el payload se validaba contra el trigger_type
+**VIEJO** → `"Invalid trigger_payload for X"`, un error que **mentía sobre la
+causa**; (c) los payload models no declaran `extra="forbid"` (default pydantic =
+*ignore*) → si el payload nuevo casualmente validaba contra el modelo viejo, la
+tool respondía `"updated"` y la task quedaba con el trigger_type viejo →
+**corrupción silenciosa**.
+
+**Cambios**:
+
+1. **Invariante de dominio** — `ScheduledTask._trigger_type_matches_payload`
+   (`@model_validator(mode="after")`) exige `trigger_payload.type ==
+   trigger_type.value`. La unión es discriminada por `payload.type` pero el
+   dispatcher rutea por la columna `trigger_type`: si divergen, la task ejecuta
+   un trigger distinto del que declara. Aplica a TODAS las superficies (tool,
+   CLI, repo) — el estado incoherente deja de ser representable.
+2. **Tool**: `trigger_type` y `task_kind` entran a `_MUTABLE_FIELDS`, pero como
+   cambio **ATÓMICO** junto a su campo acoplado (`_COUPLED_FIELDS`):
+   `trigger_type` exige `trigger_payload`, `task_kind` exige `schedule`. Falta el
+   acompañante → error accionable que lo NOMBRA (con ejemplo de payload / formato
+   de schedule esperado), nunca un drop silencioso.
+3. El payload se valida contra el trigger_type **EFECTIVO** (el nuevo si viene en
+   la llamada, el existente si no); ídem el schedule contra el `task_kind`
+   efectivo (cron ↔ ISO). Mandar el valor ACTUAL de `trigger_type`/`task_kind` es
+   un **no-op**, no un error: el LLM suele re-enviar lo que leyó con `get`.
+4. Al **cambiar a** `channel_send` no hay target previo que heredar — el `assert
+   isinstance(existing.trigger_payload, ChannelSendPayload)` habría reventado.
+   Ahora cae a la conversación actual (misma lógica que `_create`).
+
+**Sin migración de DB ni cambios de config.** Ninguna columna cambia de forma.
+**Chequeo previo al deploy**: el validador nuevo corre también al LEER
+(`_row_to_task`), así que una fila legacy incoherente (posible: el editor del CLI
+la permitía) haría fallar el listado de tareas. Verificar en cada instancia antes
+de reiniciar:
+
+```bash
+sqlite3 ~/.inaki/scheduler.db "SELECT id, name, trigger_type, json_extract(trigger_payload,'\$.type') FROM scheduled_tasks WHERE trigger_type IS NOT json_extract(trigger_payload,'\$.type');"
+```
+
+Salida vacía = todo coherente. (Verificado el 2026-07-26 en el home local: 18
+tareas, cero incoherentes.) Si aparece alguna, corregir el `trigger_payload` con
+`inaki scheduler edit <ID>` ANTES de desplegar.
+
+NUNCA volver a hacer que `_update` descarte campos en silencio: si un campo no se
+puede cambiar, el error tiene que decirlo. Y NUNCA validar un `trigger_payload`
+contra un `trigger_type` que la misma llamada está cambiando.
+
 ### `write-file-explicit-mode`
 
 `write_file` tenía `overwrite: bool = False` y ese default **appendeaba**. Cuando el

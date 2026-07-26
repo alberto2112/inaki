@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # Frontera de IDs reservados: ids < USER_TASK_ID_START son tareas builtin
 # (protegidas contra update/delete); la asignación de IDs de usuario arranca acá.
@@ -140,3 +140,22 @@ class ScheduledTask(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     last_run: datetime | None = None
     next_run: datetime | None = None
+
+    @model_validator(mode="after")
+    def _trigger_type_matches_payload(self) -> ScheduledTask:
+        """``trigger_type`` y ``trigger_payload.type`` son EL MISMO dato.
+
+        La unión es discriminada por ``payload.type``, pero el dispatcher rutea
+        por la columna ``trigger_type`` — si divergen, la task se persiste
+        "válida" y ejecuta un trigger distinto del que declara. Es un estado que
+        no debe ser representable: cambiar uno obliga a cambiar el otro.
+        """
+        payload_type = self.trigger_payload.type
+        if payload_type != self.trigger_type.value:
+            raise ValueError(
+                f"trigger_payload.type '{payload_type}' no coincide con trigger_type "
+                f"'{self.trigger_type.value}'. Son el mismo dato: al cambiar el "
+                f"trigger_type hay que reemplazar el trigger_payload por uno del "
+                f"tipo nuevo (la unión es discriminada por 'type')."
+            )
+        return self

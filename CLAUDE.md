@@ -58,6 +58,19 @@ un canal, parás: la capacidad va a un use case + tool, y el canal solo dispara 
 El CLI offline (`inaki/`) puede construir el use case directo para bootstrap sin daemon
 — eso es legítimo (es un composition root), no una pasarela en un canal.
 
+**Excepción CERRADA — los slash commands de Telegram** (`commands.py`: `/stop`, `/clear`,
+`/consolidate`, `/reconcile`, `/scheduler`, `/ratelimit`, `/reload`, `/chatid`). NO son
+la vía de acceso a capacidades: son el **panel de control del OPERADOR** — admin-only por
+`allowed_user_ids`, deterministas, sin pasar por el LLM. Existen para cuando el LLM está
+ocupado, o cuando querés CERTEZA de que la acción se hizo. Toda capacidad que exponen
+está también (y primero) como tool. Reglas: extender un slash **YA existente** con un
+sub-comando cuya capacidad ya vive en una tool es aceptable (costo: un port más en
+`TelegramBotPorts`) — es lo que se hizo con `/scheduler run <id>` el 2026-07-26, decisión
+explícita del operador, con la capacidad ya disponible vía la tool `scheduler`
+(`operation: "run"`), `inaki scheduler run` y el REST admin. Crear un slash **NUEVO** para
+una capacidad nueva NO: eso es la explosión N×M. Y NUNCA replicar estos slash en un canal
+nuevo — un Slack que nazca mañana hereda las TOOLS, no `/scheduler`.
+
 ### Tiers de recursos — harness-global vs per-agente (LEER antes de agregar un recurso con estado)
 
 Un arnés = **1 daemon = N agentes** (`AgentContainer`). Los recursos con estado se

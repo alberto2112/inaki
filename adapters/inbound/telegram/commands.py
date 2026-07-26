@@ -9,9 +9,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from telegram import BotCommand, Update
+from telegram import BotCommand, Message, Update
 from telegram.ext import ContextTypes
 
+from adapters.inbound.telegram.message_mapper import split_message
 from core.domain.entities.task import ScheduledTask
 from core.domain.errors import TaskNotFoundError
 
@@ -95,6 +96,7 @@ class TelegramCommandsMixin:
             "/scheduler show <id> — Detalle de una tarea\n"
             "/scheduler enable <id> — Habilitar una tarea\n"
             "/scheduler disable <id> — Deshabilitar una tarea\n"
+            "/scheduler run <id> — Disparar una tarea AHORA (no toca su agenda)\n"
             "/ratelimit — Mostrar/ajustar el rate limiter de grupos (autonomous) en runtime\n"
             "/reload — Reiniciar el daemon (cierra y vuelve a levantar todos los canales)\n"
             "/start — Presentación\n"
@@ -396,7 +398,11 @@ class TelegramCommandsMixin:
         await message.reply_text("\n".join(partes))
 
     async def _cmd_scheduler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """`/scheduler {list|show|enable|disable} [id]` — gestión read-only/toggle de tareas."""
+        """`/scheduler {list|show|enable|disable|run} [id]` — gestión de tareas.
+
+        ``run`` dispara la tarea AHORA sin tocar su agenda (mismo motor que
+        ``inaki scheduler run <id>``: ``IManualTaskRunner.run_task_now``).
+        """
         user = update.effective_user
         message = update.message
         if user is None or message is None:
@@ -416,7 +422,8 @@ class TelegramCommandsMixin:
                 "/scheduler list\n"
                 "/scheduler show <id>\n"
                 "/scheduler enable <id>\n"
-                "/scheduler disable <id>"
+                "/scheduler disable <id>\n"
+                "/scheduler run <id>"
             )
             return
 
@@ -435,7 +442,7 @@ class TelegramCommandsMixin:
             await message.reply_text(self._format_task_list(tasks))
             return
 
-        if sub in {"show", "enable", "disable"}:
+        if sub in {"show", "enable", "disable", "run"}:
             if len(args) < 2:
                 await message.reply_text(f"Uso: /scheduler {sub} <id>")
                 return
@@ -452,9 +459,11 @@ class TelegramCommandsMixin:
                 elif sub == "enable":
                     await uc.enable_task(task_id)
                     await message.reply_text(f"Tarea {task_id} habilitada.")
-                else:  # disable
+                elif sub == "disable":
                     await uc.disable_task(task_id)
                     await message.reply_text(f"Tarea {task_id} deshabilitada.")
+                else:  # run
+                    await self._scheduler_run(message, task_id)
             except TaskNotFoundError:
                 await message.reply_text(f"Tarea {task_id} no encontrada.")
             except Exception as exc:
@@ -465,8 +474,36 @@ class TelegramCommandsMixin:
             return
 
         await message.reply_text(
-            f"Sub-comando desconocido: {sub}. Usá list, show, enable o disable."
+            f"Sub-comando desconocido: {sub}. Usá list, show, enable, disable o run."
         )
+
+    async def _scheduler_run(self, message: Message, task_id: int) -> None:
+        """Dispara la tarea ``task_id`` on-demand y reporta el resultado.
+
+        Espeja ``inaki scheduler run <id>``: NO destructivo (no toca status /
+        next_run / executions_remaining) y queda en ``task_logs`` marcado como
+        ``trigger=manual``. Las excepciones (incluida ``TaskNotFoundError``)
+        suben al caller, que ya las mapea a mensajes de usuario.
+        """
+        runner = self._ports.manual_task_runner
+        if runner is None:
+            await message.reply_text("El disparo manual no está disponible en este proceso.")
+            return
+
+        await message.reply_text(f"Disparando tarea {task_id}...")
+        result = await runner.run_task_now(task_id)
+
+        if not result.success:
+            await message.reply_text(f"Tarea {task_id} falló: {result.error}")
+            return
+
+        await message.reply_text(f"Tarea {task_id} ejecutada — agenda intacta.")
+        # El output de un agent_send es la respuesta cruda del LLM: sin trocear,
+        # Telegram rechaza con BadRequest cualquier texto de más de 4096 chars y
+        # el usuario vería un "Error:" pese a que la tarea corrió bien.
+        if result.output:
+            for chunk in split_message(result.output):
+                await message.reply_text(chunk)
 
     @staticmethod
     def _format_task_list(tasks: list[ScheduledTask]) -> str:
@@ -509,7 +546,7 @@ class TelegramCommandsMixin:
             BotCommand("new", "Consolidar memoria y empezar de cero en este chat"),
             BotCommand("consolidate", "Extraer recuerdos del historial"),
             BotCommand("reconcile", "Reconsiderar recuerdos relacionados"),
-            BotCommand("scheduler", "Gestionar tareas programadas (list/show/enable/disable)"),
+            BotCommand("scheduler", "Gestionar tareas programadas (list/show/enable/disable/run)"),
             BotCommand("chatid", "Obtener el ID del chat actual (útil para configurar grupos)"),
             BotCommand(
                 "ratelimit", "Ver/ajustar el rate limiter de grupos (autonomous) en runtime"

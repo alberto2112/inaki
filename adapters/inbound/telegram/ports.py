@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.ports.inbound.scheduler_port import IManualTaskRunner
 from core.ports.outbound.file_downloader_port import IFileDownloader
 from core.ports.outbound.scope_registry_port import IScopeRegistry
 from core.ports.outbound.telegram_file_repo_port import IFileRecordRepo
@@ -38,6 +39,7 @@ class TelegramBotPorts:
     consolidate_memory: ConsolidateMemoryUseCase | None = None
     reconcile_memory: ReconcileMemoryUseCase | None = None
     schedule_task: ScheduleTaskUseCase | None = None
+    manual_task_runner: IManualTaskRunner | None = None
     process_photo: ProcessPhotoUseCase | None = None
     transcription: ITranscriptionProvider | None = None
     telegram_file_repo: IFileRecordRepo | None = None

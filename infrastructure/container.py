@@ -211,6 +211,7 @@ def build_telegram_bot_ports(container: AgentContainer) -> TelegramBotPorts:
         consolidate_memory=container.consolidate_memory,
         reconcile_memory=container.reconcile_memory,
         schedule_task=container.schedule_task,
+        manual_task_runner=container.manual_task_runner,
         process_photo=container.process_photo,
         transcription=container.transcription,
         telegram_file_repo=container.telegram_file_repo,
@@ -266,6 +267,10 @@ class AgentContainer:
 
         # ScheduleTaskUseCase — wired en fase 3 por AppContainer. None hasta entonces.
         self.schedule_task: ScheduleTaskUseCase | None = None
+
+        # IManualTaskRunner (el SchedulerService harness-global) — wired en la misma
+        # fase 3, junto a schedule_task: ambos None o ambos seteados.
+        self.manual_task_runner: IManualTaskRunner | None = None
 
         # ProcessPhotoUseCase — wired en fase 5 por AppContainer. None si photos no habilitado.
         self.process_photo: ProcessPhotoUseCase | None = None
@@ -924,6 +929,7 @@ class AgentContainer:
             )
         )
         self.schedule_task = schedule_task_uc
+        self.manual_task_runner = manual_runner
         self._scheduler_wired = True
         logger.info("AgentContainer '%s': scheduler tool registrada", self.agent_config.id)
 

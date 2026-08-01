@@ -385,15 +385,17 @@ class ChatHistoryConfig(_ConfigBaseModel):
     merge_chats: bool = False  # False = aislar historial por (channel, chat_id);
     # True = compartir todo el historial del agente entre canales/chats
 
-    persist_tool_calls: bool = False
+    persist_tool_calls: bool = True
     """Persistir el par assistant+tool_calls ↔ tool_results en el historial.
 
-    Default ``False`` (comportamiento legacy: el rastro de herramientas vive solo
-    en el tool loop del turno y se descarta). Con ``True``, el agente principal
-    recupera memoria episódica de sus propias acciones entre turnos (ej. no
-    olvida en qué path escribió con ``write_file``). Solo afecta al agente
-    principal; los subagentes one-shot quedan afuera por diseño. Ver la nota de
-    migración ``persist-tool-calls`` en ``CLAUDE.md``."""
+    Default ``True``: el agente principal tiene memoria episódica de sus propias
+    acciones entre turnos (no olvida en qué path escribió con ``write_file``, ni
+    qué ficheros ya mandó). Con ``False`` el rastro vive solo en el tool loop del
+    turno y se descarta — el agente queda amnésico de su actividad con
+    herramientas, que es lo que producía el patrón "afirmo haber hecho algo que
+    no recuerdo haber hecho". Solo afecta al agente principal; los subagentes
+    one-shot quedan afuera por diseño. Ver las notas de migración
+    ``persist-tool-calls`` y ``outbound-send-single-owner`` en ``CLAUDE.md``."""
 
     persist_tool_result_max_chars: int = 2000
     """Truncación (en chars) de cada tool result al persistirlo con

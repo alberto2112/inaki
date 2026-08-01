@@ -6,6 +6,14 @@ individual y ``album`` (lista de fotos enviadas como media group).
 El destino siempre es el chat actual del turno (resuelto del ``ChannelContext``).
 La persistencia en historial corre a cargo del adapter del registry — la tool
 NO persiste directamente.
+
+Dueño único del rastro: como el destino ES el chat del turno, con
+``chat_history.persist_tool_calls`` activo el tool loop ya persiste esta llamada
+(assistant+tool_calls con los argumentos ↔ tool result). En ese caso la tool
+manda ``record_history=False`` para que el adapter no agregue una fila
+duplicada — que además caería ENTRE el assistant y su result, partiendo el grupo
+protocolar. Con el flag apagado nadie más registra y el adapter sigue siendo el
+dueño. Ver ``IChannelOutbound`` y la nota ``outbound-send-single-owner``.
 """
 
 from __future__ import annotations
@@ -94,11 +102,15 @@ class SendToTelegramTool(ITool):
         workspace: Path,
         containment: ContainmentMode,
         get_channel_context: Callable[[], ChannelContext | None],
+        tool_calls_persisted: bool = False,
     ) -> None:
         self._registry = registry
         self._workspace = workspace
         self._containment = containment
         self._get_channel_context = get_channel_context
+        # ``chat_history.persist_tool_calls`` del agente: si está activo, el tool
+        # loop ya es dueño del rastro de este envío y el adapter no debe duplicarlo.
+        self._tool_calls_persisted = tool_calls_persisted
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         content_type = str(kwargs.get("content_type") or "").strip().lower()
@@ -148,6 +160,7 @@ class SendToTelegramTool(ITool):
                 kind=kind,
                 sources=paths,
                 caption=caption,
+                record_history=not self._tool_calls_persisted,
             )
         except (FileNotFoundError, ValueError) as exc:
             return self._fail(str(exc), retryable=False)

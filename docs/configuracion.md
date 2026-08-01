@@ -319,14 +319,17 @@ chat_history:
   db_filename: "data/history.db"  # SQLite history file (relative to ~/.inaki/)
                                  # separate from inaki.db (which uses sqlite-vec)
   max_messages: 21               # Last N messages injected into the LLM (0 = no limit)
-  persist_tool_calls: false      # Persist the tool-call trace (assistant+tool_calls ↔
-                                 # tool results) in history. Default false = legacy
-                                 # (the trace lives only in the turn's tool loop and is
-                                 # discarded). true = the MAIN agent gains episodic memory
-                                 # of its own actions across turns (e.g. it no longer
-                                 # forgets which path it wrote to with write_file).
+  persist_tool_calls: true       # Persist the tool-call trace (assistant+tool_calls ↔
+                                 # tool results) in history. Default true = the MAIN
+                                 # agent has episodic memory of its own actions across
+                                 # turns (it does not forget which path it wrote to with
+                                 # write_file, nor which files it already sent).
+                                 # false = the trace lives only in the turn's tool loop
+                                 # and is discarded — the agent goes amnesic about its
+                                 # own tool activity between turns.
                                  # Sub-agents (one-shot delegation) are excluded by design.
-                                 # See CLAUDE.md → Migration Notes → persist-tool-calls.
+                                 # See CLAUDE.md → Migration Notes → persist-tool-calls
+                                 # and outbound-send-single-owner.
   persist_tool_result_max_chars: 2000  # Truncation (chars) of each tool result when
                                  # persisted with persist_tool_calls. Caps context/disk
                                  # cost for large dumps (web_search, RAG). 0 = no truncation.

@@ -35,6 +35,28 @@ def use_case(
     )
 
 
+@pytest.fixture
+def use_case_sin_trace(
+    agent_config, mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools
+):
+    """Agente con ``chat_history.persist_tool_calls`` apagado (camino legacy).
+
+    Con el flag activo —el default— la narración del tool loop viaja dentro del
+    ``content`` del assistant del trace; persistir además el sink duplicaría. El
+    camino en que el sink ES la única fuente solo existe con el flag apagado.
+    """
+    agent_config.chat_history.persist_tool_calls = False
+    return RunAgentUseCase(
+        llm=mock_llm,
+        memory=mock_memory,
+        embedder=mock_embedder,
+        skills=mock_skills,
+        history=mock_history,
+        tools=mock_tools,
+        settings=build_run_agent_settings(agent_config),
+    )
+
+
 async def test_execute_returns_llm_response(use_case, mock_llm):
     mock_llm.complete.return_value = LLMResponse.of_text("Hola, soy Inaki")
     response = await use_case.execute("Hola")
@@ -675,18 +697,22 @@ async def test_recording_intermediate_sink_acumula_y_reenvia_en_orden():
 
 
 async def test_intermedios_se_persisten_en_orden_antes_de_la_respuesta_final(
-    use_case, mock_history
+    use_case_sin_trace, mock_history
 ):
     """Los bloques emitidos vía intermediate_sink durante el tool loop quedan en
     history.db como Message(role=ASSISTANT), en el mismo orden en que se
-    entregaron al canal, ANTES de la respuesta final."""
+    entregaron al canal, ANTES de la respuesta final.
+
+    Camino ``persist_tool_calls=False``: el sink es la ÚNICA fuente de la
+    narración (con el flag activo viaja dentro del trace — ver el fixture).
+    """
     real_sink = _RecordingSink()
 
     with patch(
         "core.use_cases.run_agent.run_tool_loop",
         new=AsyncMock(side_effect=_tool_loop_con_intermedios),
     ):
-        response = await use_case.execute("hacé algo largo", intermediate_sink=real_sink)
+        response = await use_case_sin_trace.execute("hacé algo largo", intermediate_sink=real_sink)
 
     assert response == "respuesta final"
     # El sink real sigue recibiendo cada emit() — la entrega en vivo no cambia.

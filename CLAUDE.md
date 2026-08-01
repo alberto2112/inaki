@@ -166,6 +166,66 @@ Secrets are YAML-only (no env vars). `*.secrets.yaml` files are gitignored.
 
 ## Migration Notes
 
+### `outbound-send-single-owner`
+
+Un envío por `send_to_telegram` **desaparecía del contexto del LLM**, y con él la
+tool call entera. Consecuencia real (2026-07-31, `history.db` de producción,
+filas 6223-6237): el agente mandó un fichero, y dos turnos después lo **reenvió**;
+cuando el usuario le reclamó, contestó *"no te lo he vuelto a enviar — el bloque
+que ves es un artefacto del harness, no una acción mía"*. **No estaba
+alucinando: el harness le había borrado su propia tool call.**
+
+Cadena causal — **dos escritores** sobre `history.db` en el MISMO turno, sin
+saber uno del otro:
+
+1. Turno conversacional (`skip_marker=None`) → `incremental = True` → el tool
+   loop persiste el rastro EN CALIENTE, mensaje a mensaje.
+2. Se persiste `assistant`+`tool_calls[send_to_telegram]`.
+3. La tool ejecuta y `TelegramChannelOutbound.send()` persistía **por su cuenta**
+   un `Message(role=ASSISTANT, content=caption)` — DENTRO del grupo protocolar.
+4. Se persiste el `tool` result.
+   → En disco: `assistant(tool_calls)` → `assistant(texto)` → `tool`.
+5. Al cargar, `_drop_orphan_tool_messages` solo toleraba `role=user` intercalado;
+   ante un `assistant` hacía `break` → grupo "incompleto" → **descartaba el
+   assistant+tool_calls**, y después el `tool` result quedaba huérfano
+   top-level → **también descartado**. El envío entero, invisible.
+
+`write_file` NO sufría esto: el bug era específico de las tools que envían por el
+canal, las únicas que se auto-persisten.
+
+**Cambios** (los tres son una sola decisión: **un solo dueño del rastro por
+envío**, y un loader que no se rompe si aparece otro):
+
+1. **Lector** — `_drop_orphan_tool_messages` reubica tras el grupo el `assistant`
+   SIN tool_calls intercalado, igual que ya hacía con `user`. Un `assistant` CON
+   tool_calls sigue cortando el escaneo (abre grupo nuevo). Defensa en
+   profundidad: cualquier escritor concurrente futuro deja de poder borrar un
+   grupo. **Recupera los rastros ya corruptos en disco** — no hace falta tocar
+   `history.db`.
+2. **Escritor** — `IChannelOutbound.send()` acepta `record_history: bool = True`.
+   `send_to_telegram` (destino = chat del turno) pasa `record_history=not
+   persist_tool_calls`: con el flag activo el tool loop YA es dueño (los
+   argumentos del envío viajan en `tool_calls` y el resultado en el `tool`), así
+   que el adapter no duplica. `send_telegram_message` (destino = OTRO chat)
+   **siempre** persiste: el rastro del loop vive en el scope del turno y no llega
+   al scope destino. El REST admin `/admin/send` (fuera de todo turno) idem.
+3. **Default** — `chat_history.persist_tool_calls` pasa de `False` a **`True`**.
+
+**Sin migración de DB.** Ninguna columna cambia de forma; el fix (1) sana en
+lectura las filas ya escritas.
+
+**Cambio de comportamiento observable por el flip del default**: una instancia que
+no declaraba `persist_tool_calls` empieza a persistir el rastro de tools →
+`history.db` crece más rápido y la ventana `max_messages` se llena con filas de
+tool (acotadas por `persist_tool_result_max_chars`, default 2000). Si una
+instancia necesita el comportamiento viejo, declarar `persist_tool_calls: false`
+explícitamente. **Al apagarlo, `send_to_telegram` vuelve a delegar el registro en
+el adapter** — el rastro no se pierde, cambia de dueño.
+
+NUNCA volver a persistir en `history.db` desde dentro de una tool sin preguntarse
+quién más está escribiendo ese scope en ese mismo turno. Y NUNCA asumir que el LLM
+alucina cuando niega una acción propia: primero mirar qué le entregó el loader.
+
 ### `scheduler-trigger-type-mutable`
 
 `trigger_type` y `task_kind` NO eran editables desde la tool `scheduler`

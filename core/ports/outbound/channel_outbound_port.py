@@ -9,9 +9,21 @@ Contrato del adapter:
 - ``capabilities()`` declara los ``OutboundKind`` que soporta el adapter.
 - ``send()`` es el único punto de entrada para envío. Valida las precondiciones
   antes de delegar al canal.
-- El adapter es responsable de persistir el envío exitoso en ``IHistoryStore``
-  bajo el scope ``(agent_id, channel_name, chat_id)`` con ``Role.ASSISTANT``.
-  Esto NO es opcional: garantiza que el historial refleje lo enviado.
+- El adapter persiste el envío exitoso en ``IHistoryStore`` bajo el scope
+  ``(agent_id, channel_name, chat_id)`` con ``Role.ASSISTANT``, salvo que el
+  caller pase ``record_history=False`` porque YA es dueño de ese rastro (ver el
+  contrato de dueño único abajo).
+
+Dueño único del rastro
+----------------------
+El historial de un scope tiene UN dueño por envío. Cuando el envío ocurre dentro
+de un turno con tool loop y ``chat_history.persist_tool_calls`` está activo, el
+dueño es el loop: persiste el ``assistant+tool_calls`` (con los argumentos del
+envío) y su ``tool result``. Que el adapter agregue ADEMÁS su propia fila no solo
+duplica — la mete ENTRE el assistant y su result, partiendo el grupo protocolar.
+Por eso el caller que ya es dueño pasa ``record_history=False``. Fuera de un
+turno (scheduler, REST admin) o con el flag apagado, nadie más registra: el
+adapter persiste y ``record_history`` queda en ``True``.
 
 Reglas de validación en ``send()``:
 - ``kind=TEXT``: requiere ``text`` no vacío.
@@ -54,6 +66,7 @@ class IChannelOutbound(ABC):
         text: str | None = None,
         sources: list[Path] | None = None,
         caption: str | None = None,
+        record_history: bool = True,
     ) -> None:
         """Envía un payload al canal.
 
@@ -64,6 +77,9 @@ class IChannelOutbound(ABC):
             sources: Paths locales de los archivos a enviar. Requerido cuando
                 ``kind`` es media (PHOTO, AUDIO, VIDEO, FILE, ALBUM).
             caption: Texto descriptivo adjunto a un archivo o álbum. Opcional.
+            record_history: Persistir el envío en el historial del scope destino.
+                ``False`` solo cuando el caller YA es dueño del rastro (ver
+                "Dueño único del rastro" arriba). El envío en sí no cambia.
 
         Raises:
             ValueError: Si el kind no está en ``capabilities()``, si falta

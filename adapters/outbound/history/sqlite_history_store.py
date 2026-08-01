@@ -140,11 +140,22 @@ def _drop_orphan_tool_messages(messages: list[Message]) -> list[Message]:
     2. **Grupo incompleto** (assistant con tool_calls cuyos results FALTAN —
        típico: crash del daemon a mitad de un batch con persistencia
        incremental) → se descarta el assistant Y sus results parciales.
-    3. **Users intercalados dentro de un grupo** (in-flight injection: el
-       inbound adapter persistió un mensaje del usuario mientras las tools del
-       batch corrían) → se REUBICAN inmediatamente después del grupo completo.
-       Coincide con lo que el LLM vio en vivo (el drain los presenta tras el
-       batch) y respeta la contigüidad que exigen los providers.
+    3. **Mensajes intercalados dentro de un grupo** → se REUBICAN inmediatamente
+       después del grupo completo. Dos escritores concurrentes los producen:
+       ``role=user`` (in-flight injection: el inbound adapter persistió un
+       mensaje del usuario mientras las tools del batch corrían) y ``role=
+       assistant`` SIN tool_calls (un adapter outbound que persiste su propio
+       envío desde DENTRO de la tool, ej. ``TelegramChannelOutbound``).
+       Reubicarlos coincide con lo que el LLM vio en vivo (el drain los presenta
+       tras el batch) y respeta la contigüidad que exigen los providers.
+
+       Sin esto, el intercalado rompía el grupo y se perdía el rastro ENTERO de
+       la tool call (assistant + results), dejando al agente amnésico de su
+       propia acción — reenviaba ficheros ya enviados y negaba haberlos enviado
+       (ver nota de migración ``outbound-send-single-owner`` en CLAUDE.md).
+
+    Un assistant CON tool_calls sí corta el escaneo: abre un grupo nuevo, no es
+    un intercalado.
 
     Escaneo lineal por grupos. Sin mensajes ``role=tool`` ni assistants con
     tool_calls, devuelve la lista tal cual (flag persist-tool-calls apagado).
@@ -157,7 +168,7 @@ def _drop_orphan_tool_messages(messages: list[Message]) -> list[Message]:
         if m.role == Role.ASSISTANT and m.tool_calls:
             expected = {tc.get("id", "") for tc in m.tool_calls}
             group_tools: list[Message] = []
-            deferred: list[Message] = []  # users intercalados dentro del grupo
+            deferred: list[Message] = []  # mensajes intercalados dentro del grupo
             j = i + 1
             while j < n and expected:
                 nxt = messages[j]
@@ -166,14 +177,15 @@ def _drop_orphan_tool_messages(messages: list[Message]) -> list[Message]:
                     expected.discard(nxt.tool_call_id)
                     j += 1
                     continue
-                if nxt.role == Role.USER:
+                if nxt.role == Role.USER or (nxt.role == Role.ASSISTANT and not nxt.tool_calls):
                     deferred.append(nxt)
                     j += 1
                     continue
-                break  # otro assistant o un tool ajeno → el grupo quedó trunco
+                break  # assistant CON tool_calls o un tool ajeno → el grupo quedó trunco
             if expected:
                 # Grupo incompleto: drop assistant + results parciales; los
-                # users intercalados se conservan (son del usuario, no del grupo).
+                # intercalados se conservan (contenido real que el usuario vio,
+                # ajeno al grupo roto).
                 result.extend(deferred)
             else:
                 result.append(m)

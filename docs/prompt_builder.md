@@ -9,7 +9,7 @@ The prompt the LLM receives on each turn **is not static**. It is built dynamica
 3. Relevant skills selected via semantic routing
 4. The schemas of selected tools (filtered or not by semantic routing)
 
-The conversation history is sent as a separate message list from the system prompt, **truncated to the configured maximum** before being sent to the LLM.
+The conversation history is sent as a separate message list from the system prompt, **truncated to the configured maximum** and **normalized** (see [Group normalization on load](#group-normalization-on-load-_drop_orphan_tool_messages)) before being sent to the LLM.
 
 ---
 
@@ -22,6 +22,8 @@ RunAgentUseCase.execute(user_input)
 │       → list[Message]  ← scoped history from SQLite (history.db)
 │       → only the last N messages (if max_messages > 0)
 │       → scoped by (agent_id, channel, chat_id)
+│       → normalized: protocol groups (assistant+tool_calls ↔ tool results)
+│         are completed-or-dropped and interleaved rows relocated
 │
 ├── 2. _embedder.embed_query(user_input)
 │       → query_vec: list[float]
@@ -267,18 +269,59 @@ Skill and tool embeddings are computed **once** on first use and cached in memor
 
 ## History: What Gets Saved and What Doesn't
 
-Only `user` and `assistant` messages are persisted in `history.db` (`history` table, scoped by `agent_id, channel, chat_id`).
+Persisted in `history.db` (`history` table, scoped by `agent_id, channel, chat_id`):
 
-Tool call and tool result messages are **ephemeral** — they exist only in `working_messages` during the execution loop and are never persisted to history.
+- `user` and `assistant` messages — always.
+- The **tool-call trace** — the `assistant` message carrying `tool_calls` plus its
+  matching `tool` results — when `chat_history.persist_tool_calls` is on
+  (**default `true`**). This is what gives the main agent episodic memory of its own
+  actions across turns: which path it wrote to, which file it already sent.
+  Each persisted tool result is truncated to `persist_tool_result_max_chars`
+  (the in-flight turn always sees the full output).
 
 ```
-Persisted in history.db:        Only in memory during the turn:
-───────────────────────         ──────────────────────────────────
-role=user: ...                  tool_call: { name: "shell", args: ... }
-role=assistant: ...             tool_result: "[shell]: output..."
-role=user: ...
-role=assistant: ...
+persist_tool_calls: true (default)     persist_tool_calls: false (legacy)
+──────────────────────────────────     ──────────────────────────────────
+role=user                              role=user
+role=assistant  tool_calls=[write_file]  ← dropped after the turn
+role=tool       tool_call_id=call_1      ← dropped after the turn
+role=assistant                         role=assistant
 ```
+
+Sub-agents (one-shot delegation) are excluded by design: they pass no
+`persist_message`/`tool_trace` to the loop, so their trace is never persisted.
+`thinking` is never persisted either (Anthropic requires a `signature` to
+reconstruct it, and the domain does not model one).
+
+**When rows are written** depends on `incremental-persist`: a turn that cannot end
+in `__SKIP__` (`skip_marker is None` — i.e. every conversational turn) persists
+**hot, message by message**, as the LLM generates it. A skip-capable turn
+(autonomous group flush, scheduler, bg-results) accumulates and persists in a
+batch after the loop, because whether to persist at all depends on the outcome.
+
+### Group normalization on load (`_drop_orphan_tool_messages`)
+
+Both OpenAI and Anthropic reject (HTTP 400) a request where an `assistant` message
+with `tool_calls` is not followed, contiguously, by a `tool` result for **every**
+`tool_call_id`. The window (`max_messages`) and concurrent writers routinely break
+that invariant on disk, so `SQLiteHistoryStore.load()` normalizes every window
+before it reaches the prompt:
+
+| Situation on disk | What load() does |
+|---|---|
+| `tool` result whose `assistant` fell outside the window | dropped |
+| `assistant`+`tool_calls` with **missing** results (daemon crashed mid-batch) | the whole group is dropped |
+| `user` interleaved inside a group (in-flight injection) | **relocated** right after the complete group |
+| plain `assistant` interleaved inside a group (an outbound adapter persisting its own send from inside the tool) | **relocated** right after the complete group |
+
+This is a real load-bearing step, not a formality: before the interleaved-`assistant`
+case was handled, a single row written mid-group made the loader discard the
+**entire** tool call — the agent lost all record of an action it had actually
+performed, re-sent files it had already sent, and denied having sent them. See
+`outbound-send-single-owner` in `CLAUDE.md`.
+
+The write side complements it: a caller that already owns the trace of a send tells
+the outbound adapter not to duplicate it (`IChannelOutbound.send(record_history=False)`).
 
 ---
 

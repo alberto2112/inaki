@@ -786,6 +786,52 @@ def test_drop_orphan_user_intercalado_se_reubica_tras_el_grupo():
     assert [m.content for m in out] == ["abre grupo", "r1", "para", "final"]
 
 
+def test_drop_orphan_assistant_intercalado_se_reubica_tras_el_grupo():
+    """Un adapter outbound que persiste su propio envío DESDE DENTRO de la tool
+    deja un assistant sin tool_calls intercalado en el grupo.
+
+    Regresión de `outbound-send-single-owner`: antes esto hacía `break` → el
+    grupo quedaba "incompleto" → se descartaba el assistant+tool_calls Y su
+    result → el agente perdía todo rastro de un envío que SÍ ocurrió, reenviaba
+    el fichero y negaba haberlo enviado. Debe reubicarse, no romper.
+    """
+    from adapters.outbound.history.sqlite_history_store import _drop_orphan_tool_messages
+
+    seq = [
+        _user("mandame el fichero"),
+        _a_tc(""),  # assistant + tool_calls[send_to_telegram], sin texto
+        _a("caption del envío"),  # el adapter outbound, dentro de la tool
+        _tool('{"sent": true}'),
+        _a("ahí lo tenés"),
+    ]
+    out = _drop_orphan_tool_messages(seq)
+    assert [m.content for m in out] == [
+        "mandame el fichero",
+        "",
+        '{"sent": true}',
+        "caption del envío",
+        "ahí lo tenés",
+    ]
+    # El grupo sobrevive entero: el LLM ve que llamó la tool y que salió bien.
+    assert out[1].tool_calls == _TC
+    assert out[2].tool_call_id == "call_1"
+
+
+def test_drop_orphan_assistant_con_tool_calls_sigue_cortando_el_grupo():
+    """Un assistant CON tool_calls no es un intercalado: abre un grupo nuevo.
+    El grupo previo, sin sus results, sigue descartándose entero."""
+    from adapters.outbound.history.sqlite_history_store import _drop_orphan_tool_messages
+
+    otro = [{"id": "call_2", "type": "function", "function": {"name": "b", "arguments": "{}"}}]
+    seq = [
+        _a_tc("grupo trunco"),  # call_1 sin result
+        _a_tc("grupo nuevo", tool_calls=otro),
+        _tool("r2", tc_id="call_2"),
+    ]
+    out = _drop_orphan_tool_messages(seq)
+    assert [m.content for m in out] == ["grupo nuevo", "r2"]
+
+
 # ---------------------------------------------------------------------------
 # Cursor de drainage in-flight — last_row_id + load_user_messages_since
 # ---------------------------------------------------------------------------

@@ -22,7 +22,9 @@ class _FakeAdapter(IChannelOutbound):
     def capabilities(self) -> set[OutboundKind]:
         return self._kinds
 
-    async def send(self, *, chat_id, kind, text=None, sources=None, caption=None) -> None:
+    async def send(
+        self, *, chat_id, kind, text=None, sources=None, caption=None, record_history=True
+    ) -> None:
         pass  # pragma: no cover
 
 

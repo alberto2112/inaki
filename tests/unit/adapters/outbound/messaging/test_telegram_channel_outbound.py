@@ -299,6 +299,40 @@ async def test_chat_id_no_entero_lanza_value_error(fake_bot, fake_history):
 
 
 # ---------------------------------------------------------------------------
+# record_history — dueño único del rastro (outbound-send-single-owner)
+# ---------------------------------------------------------------------------
+
+
+async def test_record_history_false_envia_pero_no_persiste(fake_bot, fake_history, tmp_path):
+    """El caller ya es dueño del rastro (el tool loop persiste la tool call):
+    el adapter envía igual pero NO agrega su fila — duplicaría, y caería DENTRO
+    del grupo protocolar del turno."""
+    adapter = _adapter(fake_bot, fake_history)
+    foto = _archivo(tmp_path)
+
+    await adapter.send(
+        chat_id="42",
+        kind=OutboundKind.PHOTO,
+        sources=[foto],
+        caption="mirá esto",
+        record_history=False,
+    )
+
+    fake_bot.send_photo.assert_awaited_once()
+    fake_history.append.assert_not_awaited()
+
+
+async def test_record_history_true_es_el_default(fake_bot, fake_history):
+    """Fuera de un turno (scheduler, REST admin) nadie más registra: el adapter
+    sigue siendo el dueño sin que el caller tenga que pedirlo."""
+    adapter = _adapter(fake_bot, fake_history)
+
+    await adapter.send(chat_id="42", kind=OutboundKind.TEXT, text="hola")
+
+    fake_history.append.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
 # capabilities
 # ---------------------------------------------------------------------------
 

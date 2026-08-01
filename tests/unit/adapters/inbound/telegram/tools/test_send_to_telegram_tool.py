@@ -41,6 +41,7 @@ def _make_tool(
     *,
     ctx: ChannelContext | None,
     adapter: MagicMock | None = None,
+    tool_calls_persisted: bool = False,
 ) -> tuple[SendToTelegramTool, MagicMock | None]:
     ad = adapter if adapter is not None else _make_adapter()
     registry = _make_registry(ad)
@@ -49,6 +50,7 @@ def _make_tool(
         workspace=workspace,
         containment="strict",
         get_channel_context=lambda: ctx,
+        tool_calls_persisted=tool_calls_persisted,
     )
     return tool, ad
 
@@ -107,6 +109,36 @@ async def test_envia_album(workspace):
     assert kwargs["kind"] == OutboundKind.ALBUM
     assert [p.name for p in kwargs["sources"]] == ["a.jpg", "b.jpg"]
     assert kwargs["caption"] == "grupo"
+
+
+# ---------------------------------------------------------------------------
+# Dueño único del rastro (outbound-send-single-owner)
+# ---------------------------------------------------------------------------
+
+
+async def test_con_persist_tool_calls_el_adapter_no_registra(workspace):
+    """El destino ES el chat del turno: con persist_tool_calls activo el tool
+    loop ya persiste la llamada (args + result). Que el adapter agregue su fila
+    duplicaría Y partiría el grupo protocolar."""
+    file = _foto(workspace)
+    ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100")
+    tool, adapter = _make_tool(workspace, ctx=ctx, tool_calls_persisted=True)
+
+    result = await tool.execute(content_type="photo", filename=file.name, caption="hola")
+
+    assert result.success is True
+    assert adapter.send.call_args.kwargs["record_history"] is False
+
+
+async def test_sin_persist_tool_calls_el_adapter_sigue_registrando(workspace):
+    """Flag apagado: nadie más deja rastro del envío → el adapter es el dueño."""
+    file = _foto(workspace)
+    ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="-100")
+    tool, adapter = _make_tool(workspace, ctx=ctx, tool_calls_persisted=False)
+
+    await tool.execute(content_type="photo", filename=file.name, caption="hola")
+
+    assert adapter.send.call_args.kwargs["record_history"] is True
 
 
 # ---------------------------------------------------------------------------

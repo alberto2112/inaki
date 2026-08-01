@@ -67,8 +67,13 @@ class TelegramChannelOutbound(IChannelOutbound):
         text: str | None = None,
         sources: list[Path] | None = None,
         caption: str | None = None,
+        record_history: bool = True,
     ) -> None:
         """Envía un payload a Telegram y lo persiste en el historial.
+
+        Con ``record_history=False`` el envío se hace igual pero NO se persiste:
+        el caller ya es dueño de ese rastro (ver "Dueño único del rastro" en
+        ``IChannelOutbound``).
 
         Valida precondiciones antes de llamar a la API de Telegram:
         - kind no soportado → ``ValueError``
@@ -99,6 +104,9 @@ class TelegramChannelOutbound(IChannelOutbound):
                 )
             await self._enviar_media(chat_id=chat_id, kind=kind, source=fuentes[0], caption=caption)
             contenido_historial = caption or ""
+
+        if not record_history:
+            return
 
         # Persistir en historial bajo scope (agent_id, "telegram", chat_id)
         await self._history.append(

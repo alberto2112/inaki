@@ -7,6 +7,14 @@ Permite escribirle a otro chat distinto al de la conversación en curso.
 El mensaje saliente se persiste en el historial bajo el scope del chat DESTINO
 (``channel='telegram'``, ``chat_id=<destino>``) como un mensaje ``ASSISTANT``,
 a través del adapter del registry — la tool NO persiste directamente.
+
+A diferencia de ``send_to_telegram``, acá el adapter SIEMPRE persiste (``
+record_history`` queda en su default ``True``): el destino es OTRO scope, donde
+el rastro del tool loop —que vive en el scope del turno— no llega. Sin esa fila,
+la conversación destino no tendría registro de lo que el bot le dijo. Si el LLM
+apunta al chat del turno en curso, la fila cae dentro del grupo protocolar y el
+normalizador del store la reubica tras el grupo (ver
+``_drop_orphan_tool_messages``); no se pierde ni rompe nada.
 """
 
 from __future__ import annotations

@@ -1000,6 +1000,9 @@ class AgentContainer:
                 workspace=workspace_path,
                 containment=ws_cfg.containment,
                 get_channel_context=self.get_channel_context,
+                # Dueño único del rastro: con persist_tool_calls activo el tool
+                # loop ya persiste esta llamada; el adapter no debe duplicarla.
+                tool_calls_persisted=self.agent_config.chat_history.persist_tool_calls,
             )
         )
         self._tools.register(

@@ -140,8 +140,9 @@ class RunAgentSettings(BaseModel, frozen=True):
     request_delay_seconds: float = 2.0
     timestamp_channels: frozenset[str] = frozenset()
     # Persistencia del rastro de tool calls (par assistant+tool_calls ↔ tool_results)
-    # en el historial. Solo el agente principal; ver ``persist-tool-calls`` en CLAUDE.md.
-    persist_tool_calls: bool = False
+    # en el historial. Default True (memoria episódica de las propias acciones).
+    # Solo el agente principal; ver ``persist-tool-calls`` en CLAUDE.md.
+    persist_tool_calls: bool = True
     persist_tool_result_max_chars: int = 2000
     memory: MemorySettings = MemorySettings()
 

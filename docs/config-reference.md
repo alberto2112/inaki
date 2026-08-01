@@ -91,7 +91,7 @@
 | `enabled` | `bool` | `True` |  | Habilita la consolidación para ESTE agente. Flag PER-AGENT (agents/{id}.yaml). |
 | `schedule` | `str` | `'0 3 * * *'` |  | Cron de la consolidación global nocturna (una tarea que itera todos los agentes). |
 | `delay_seconds` | `int` | `2` |  | Pausa (segundos) entre llamadas al LLM extractor. Aplica TANTO entre agentes |
-| `keep_last_messages` | `int` | `0` |  | Mensajes a preservar por agente tras consolidar. 0 = fallback del sistema (84). |
+| `keep_last_messages` | `int` | `0` |  | Mensajes CONVERSACIONALES a preservar por scope tras consolidar. |
 | `min_relevance_score` | `float` | `0.5` |  | Umbral mínimo (0.0-1.0) para persistir un recuerdo extraído por el LLM. |
 | `channels_infused` | `list[str] \| None` | `null` |  | Canales cuyo historial se incluye en la consolidación. |
 | `agent_id` | `str \| None` | `null` |  | Sub-agente EXTRACTOR opcional (debe existir en ``agents/sub-agents/``). |

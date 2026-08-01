@@ -132,6 +132,38 @@ async def test_trim_zero_is_noop(history_store):
     assert len(messages) == 3
 
 
+async def test_trim_no_cuenta_el_rastro_de_tools_en_el_presupuesto(history_store):
+    """`keep_last` cuenta CONVERSACIÓN, no filas.
+
+    Regresión de `trim-cuenta-conversacion`: contando filas crudas, un turno con
+    herramientas costaba como varios turnos de conversación. Medido en
+    producción, el chat más usado retenía 19 filas de tool y solo 10 mensajes del
+    usuario → 7 horas de memoria, contra 40-60 días en los chats sin tools.
+    """
+    tc = [{"id": "call_1", "type": "function", "function": {"name": "x", "arguments": "{}"}}]
+    # 3 turnos conversacionales, pero el del medio arrastra un grupo protocolar
+    # de 2 filas extra que NO deben consumir presupuesto.
+    await history_store.append("agent1", Message(role=Role.USER, content="u1"))
+    await history_store.append("agent1", Message(role=Role.ASSISTANT, content="a1"))
+    await history_store.append("agent1", Message(role=Role.USER, content="u2"))
+    await history_store.append("agent1", Message(role=Role.ASSISTANT, content="", tool_calls=tc))
+    await history_store.append(
+        "agent1", Message(role=Role.TOOL, content="resultado", tool_call_id="call_1")
+    )
+    await history_store.append("agent1", Message(role=Role.ASSISTANT, content="a2"))
+
+    # 4 conversacionales (u1, a1, u2, a2): con keep_last=3 cae solo u1, y el
+    # grupo protocolar viaja gratis con el corte.
+    await history_store.trim("agent1", keep_last=3)
+
+    contenidos = [m.content for m in await history_store.load("agent1")]
+    assert contenidos == ["a1", "u2", "", "resultado", "a2"]
+    # Contando FILAS crudas, keep_last=3 habría preservado solo las 3 últimas
+    # (assistant+tool_calls, tool result, a2): se perdían DOS turnos de
+    # conversación reales por culpa del rastro de UNA sola tool.
+    assert "u2" in contenidos and "a1" in contenidos
+
+
 async def test_trim_isolated_per_agent(history_store):
     for i in range(1, 6):
         await history_store.append("agent_a", Message(role=Role.USER, content=f"a{i}"))

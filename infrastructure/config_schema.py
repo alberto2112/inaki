@@ -254,7 +254,13 @@ class ConsolidationConfig(_ConfigBaseModel):
     """
 
     keep_last_messages: int = 0
-    """Mensajes a preservar por agente tras consolidar. 0 = fallback del sistema (84)."""
+    """Mensajes CONVERSACIONALES a preservar por scope tras consolidar.
+
+    0 = fallback del sistema (84). Cuenta ``user`` + ``assistant`` de texto: el
+    rastro protocolar (``tool`` results y el ``assistant`` con ``tool_calls``) NO
+    consume presupuesto — antes sí, y un turno con herramientas costaba como
+    varios turnos de conversación. Ver ``trim-cuenta-conversacion`` en
+    ``docs/migraciones.md``."""
 
     min_relevance_score: float = 0.5
     """Umbral mínimo (0.0-1.0) para persistir un recuerdo extraído por el LLM."""

@@ -11,6 +11,7 @@ Verifica el comportamiento del feature ``in-flight-message-injection``:
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 from unittest.mock import AsyncMock
 
@@ -57,6 +58,14 @@ class _FakeHistoryStore(IHistoryStore):
         chat_id: str = "",
     ) -> int:
         return len(self.messages)
+
+    async def retention_horizon(
+        self,
+        agent_id: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+    ) -> datetime | None:
+        return None
 
     async def load_user_messages_since(
         self,

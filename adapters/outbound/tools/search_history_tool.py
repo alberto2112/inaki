@@ -26,6 +26,30 @@ logger = logging.getLogger(__name__)
 _DEFAULT_LIMIT = 20
 _MAX_LIMIT = 100
 
+# Toda respuesta de la tool cierra con una de estas frases. El historial NO es un
+# registro completo del pasado: la consolidación llama ``trim()``, que BORRA filas.
+# Sin decirlo, "no encontré" se lee como "no ocurrió" — y un agente al que sus
+# instrucciones empujan a admitir fallos convierte esa falsa ausencia en una
+# confesión ("te dije que lo hice y no lo hice") que no puede sostener.
+_HORIZON_TEMPLATE = (
+    "SCOPE OF THIS RECORD: this search only has COMPLETE coverage from {desde} "
+    "onwards. Older messages were DELETED by memory consolidation — they are not "
+    "searchable and their absence here proves NOTHING. If the user refers to "
+    "something from before that timestamp, the honest answer is 'I have no record "
+    "of it', never 'it did not happen' and never an admission that you failed to "
+    "do it."
+)
+_HORIZON_EMPTY = (
+    "SCOPE OF THIS RECORD: there are NO stored messages at all for these filters, "
+    "so this search can neither confirm nor deny anything. Do not read it as "
+    "evidence about the past."
+)
+_HORIZON_UNKNOWN = (
+    "SCOPE OF THIS RECORD: could not be determined. History is pruned by "
+    "consolidation, so absence of results is not evidence that something did not "
+    "happen."
+)
+
 
 class SearchHistoryTool(ITool):
     name = "search_history"
@@ -43,7 +67,12 @@ class SearchHistoryTool(ITool):
         "ONE conversation; omit to search all of this agent's history), 'limit' "
         "(max results, default 20, capped at 100). Without 'query' it returns the "
         "most recent messages of the matched scope, most-recent first, each "
-        "annotated with its origin scope."
+        "annotated with its origin scope. "
+        "IMPORTANT: this history is PRUNED — memory consolidation permanently "
+        "deletes older messages. Every result ends with the timestamp of the "
+        "oldest message still stored; an empty result means 'not in what I still "
+        "have', NOT 'it never happened'. Never turn an empty result into a claim "
+        "about the past."
     )
     # Disparadores multilingües SOLO para el embedding del semantic routing
     # (no van al schema del LLM). Apuntan a lo LITERAL/textual de un chat puntual,
@@ -132,21 +161,46 @@ class SearchHistoryTool(ITool):
                 retryable=True,
             )
 
+        horizonte = await self._horizonte(channel, chat_id)
+
         if not messages:
             detalle = f" matching '{query}'" if query else ""
             return ToolResult(
                 tool_name=self.name,
-                output=f"No messages found{detalle} for the given filters.",
+                output=f"No messages found{detalle} for the given filters.\n{horizonte}",
                 success=True,
             )
 
         lines = [f"Found {len(messages)} message(s) (most recent first):"]
         lines.extend(self._format(msg) for msg in messages)
+        lines.append(horizonte)
         return ToolResult(
             tool_name=self.name,
             output="\n".join(lines),
             success=True,
         )
+
+    async def _horizonte(self, channel: str | None, chat_id: str | None) -> str:
+        """Frase que acota el alcance del registro consultado.
+
+        El historial NO es el pasado completo: la consolidación llama ``trim()``,
+        que BORRA filas. Sin esta frase, un resultado vacío se lee como
+        "no ocurrió" cuando solo significa "ya no lo tengo" — y el agente
+        termina afirmando (o confesando) cosas que no puede saber.
+        """
+        try:
+            desde = await self._history.retention_horizon(
+                self._agent_id,
+                channel=channel,
+                chat_id=chat_id,
+            )
+        except Exception:
+            logger.exception("SearchHistoryTool: error resolviendo el horizonte de retención")
+            return _HORIZON_UNKNOWN
+
+        if desde is None:
+            return _HORIZON_EMPTY
+        return _HORIZON_TEMPLATE.format(desde=desde.isoformat())
 
     @staticmethod
     def _clean(value: object) -> str | None:

@@ -276,11 +276,16 @@ memories:
                                  # Applies BOTH between agents (global consolidation) and
                                  # between scopes (channel, chat_id) WITHIN each agent.
                                  # Prevents rate-limits from the remote LLM provider.
-    keep_last_messages: 0        # Messages per agent to preserve after consolidation.
-                                 # After extracting memories to vector storage, the
-                                 # rest of the history is truncated but the last N
-                                 # messages ARE PRESERVED as immediate context for the
+    keep_last_messages: 0        # CONVERSATIONAL messages per scope to preserve after
+                                 # consolidation. After extracting memories to vector
+                                 # storage, the rest of the history is DELETED but the
+                                 # last N ARE PRESERVED as immediate context for the
                                  # next turn. Sentinel: 0 → use system fallback (84).
+                                 # Counts user + assistant text only: the tool-call
+                                 # trace (tool results, assistant with tool_calls) does
+                                 # NOT consume the budget, so turning on
+                                 # persist_tool_calls no longer shrinks conversational
+                                 # memory. See migraciones.md → trim-cuenta-conversacion.
                                  # Any value > 0 is respected as-is.
     min_relevance_score: 0.5     # Minimum threshold (0.0-1.0) to persist a fact extracted
                                  # by the LLM. Filters BEFORE embedding (saves tokens).

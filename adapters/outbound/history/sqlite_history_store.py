@@ -379,6 +379,40 @@ class SQLiteHistoryStore(IHistoryStore):
             )
         return int(rows[0][0])
 
+    async def retention_horizon(
+        self,
+        agent_id: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+    ) -> datetime | None:
+        filtros, params = _build_where_filters(agent_id, channel=channel, chat_id=chat_id)
+        async with self._conn() as conn:
+            await self._ensure_schema(conn)
+            # MAX de los MIN POR SCOPE, no el MIN global: `trim` borra por scope,
+            # así que cada conversación tiene su propio horizonte. Con un solo
+            # scope ambos coinciden; sobre varios, el MIN global sería el del
+            # scope MENOS podado y mentiría sobre los demás — justo el caso real
+            # (búsqueda sin chat_id: MIN global mayo, pero el chat del usuario
+            # solo llegaba a esa misma mañana). Este valor es el punto desde el
+            # cual la cobertura está COMPLETA en todo lo consultado.
+            rows = list(
+                await conn.execute_fetchall(
+                    "SELECT MAX(primero) FROM ("
+                    f"  SELECT MIN(created_at) AS primero FROM history WHERE {filtros}"
+                    "   GROUP BY channel, chat_id"
+                    ")",
+                    params,
+                )
+            )
+        crudo = rows[0][0] if rows else None
+        if not crudo:
+            return None
+        try:
+            return datetime.fromisoformat(crudo)
+        except ValueError:
+            logger.warning("created_at ilegible en history (%r) — sin horizonte", crudo)
+            return None
+
     async def load_user_messages_since(
         self,
         agent_id: str,
@@ -519,32 +553,57 @@ class SQLiteHistoryStore(IHistoryStore):
             return
         async with self._conn() as conn:
             await self._ensure_schema(conn)
-            # ROW_NUMBER() OVER (PARTITION BY channel, chat_id …) garantiza que
-            # se preservan los últimos `keep_last` mensajes POR SCOPE. Sin esto,
-            # el LIMIT global dejaba vacíos los chats menos activos.
+            # `keep_last` cuenta mensajes CONVERSACIONALES (user + assistant de
+            # texto), NO filas. Las filas del rastro protocolar —los `tool` result
+            # y el `assistant` que lleva `tool_calls`— se conservan o se borran
+            # según el corte, pero nunca consumen el presupuesto.
+            #
+            # Contar filas crudas hacía que un turno con herramientas valiera
+            # tanto como varios turnos de conversación: medido en producción, un
+            # scope con 59 filas retenía 19 de tool y solo 10 mensajes del
+            # usuario → 7 HORAS de memoria, contra 40-60 días en los scopes sin
+            # tools. Con `persist_tool_calls` en `true` por default eso empeora
+            # solo (ver `outbound-send-single-owner`).
+            #
+            # El corte es el id del `keep_last`-ésimo mensaje conversacional más
+            # reciente DE SU SCOPE (trim borra por scope: partición por
+            # channel, chat_id). Un scope con menos conversación que el
+            # presupuesto no tiene corte → la subconsulta da NULL, `id < NULL`
+            # es NULL, y no se borra nada. El rastro que sobrevive al corte
+            # queda íntegro; si el corte cayera dentro de un grupo protocolar,
+            # `_drop_orphan_tool_messages` normaliza al cargar.
             cursor = await conn.execute(
                 """
+                WITH cortes AS (
+                  SELECT channel, chat_id, id AS corte
+                  FROM (
+                    SELECT id, channel, chat_id,
+                           ROW_NUMBER() OVER (
+                             PARTITION BY channel, chat_id
+                             ORDER BY id DESC
+                           ) AS rn
+                    FROM history
+                    WHERE agent_id = ?
+                      AND role IN ('user', 'assistant')
+                      AND tool_calls IS NULL
+                  )
+                  WHERE rn = ?
+                )
                 DELETE FROM history
                 WHERE agent_id = ?
-                  AND id NOT IN (
-                    SELECT id FROM (
-                      SELECT id,
-                             ROW_NUMBER() OVER (
-                               PARTITION BY channel, chat_id
-                               ORDER BY id DESC
-                             ) AS rn
-                      FROM history
-                      WHERE agent_id = ?
-                    )
-                    WHERE rn <= ?
+                  AND id < (
+                    SELECT corte FROM cortes c
+                    WHERE c.channel = history.channel
+                      AND c.chat_id = history.chat_id
                   )
                 """,
-                (agent_id, agent_id, keep_last),
+                (agent_id, keep_last, agent_id),
             )
             await conn.commit()
             if cursor.rowcount > 0:
                 logger.info(
-                    "Historial de '%s' truncado: %d fila(s) borrada(s), últimas %d por scope preservadas",
+                    "Historial de '%s' truncado: %d fila(s) borrada(s), "
+                    "últimos %d mensajes conversacionales por scope preservados",
                     agent_id,
                     cursor.rowcount,
                     keep_last,

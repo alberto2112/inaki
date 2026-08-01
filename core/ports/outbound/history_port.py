@@ -1,4 +1,6 @@
 from abc import ABC, abstractmethod
+from datetime import datetime
+
 from core.domain.entities.message import Message
 from core.domain.value_objects.conversation_state import ConversationState
 
@@ -117,6 +119,28 @@ class IHistoryStore(ABC):
         ...
 
     @abstractmethod
+    async def retention_horizon(
+        self,
+        agent_id: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+    ) -> datetime | None:
+        """``created_at`` del mensaje MÁS ANTIGUO que sobrevive en el scope.
+
+        ``None`` si el scope no tiene ninguna fila. Los filtros son los mismos
+        de ``search`` —``None`` = sin filtrar, no ``""``— para que el horizonte
+        acote exactamente lo que se buscó.
+
+        Existe porque el historial NO es un registro completo del pasado: la
+        consolidación llama ``trim()``, que **BORRA** filas. Una búsqueda vacía
+        por debajo de este horizonte significa "no lo sé", no "no ocurrió" — y
+        sin esta primitiva quien consulta el historial no puede notar la
+        diferencia. Un agente que la ignora convierte la ausencia de evidencia
+        en certeza (ver la nota ``search-history-retention-horizon``).
+        """
+        ...
+
+    @abstractmethod
     async def search(
         self,
         agent_id: str,
@@ -200,6 +224,15 @@ class IHistoryStore(ABC):
         Se llama tras una consolidación exitosa: los recuerdos relevantes ya
         están extraídos al storage vectorial, pero preservamos los últimos N
         mensajes de CADA conversación como contexto inmediato para el próximo turno.
+
+        ``keep_last`` cuenta mensajes **CONVERSACIONALES** (``user`` y
+        ``assistant`` de texto), no filas: el rastro protocolar (``tool``
+        results y el ``assistant`` que lleva ``tool_calls``) se conserva o se
+        borra con el corte pero NUNCA consume el presupuesto. Contar filas
+        crudas hacía que un turno con herramientas costara como varios turnos de
+        conversación, y con ``chat_history.persist_tool_calls`` activo eso
+        colapsaba la memoria de los chats más usados (ver la nota
+        ``trim-cuenta-conversacion``).
 
         Si `keep_last <= 0` no borra nada (no-op defensivo).
         Si un scope tiene menos mensajes que `keep_last`, no borra nada de ese scope.

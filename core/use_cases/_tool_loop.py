@@ -101,6 +101,104 @@ async def _cancel_requested(
     return await scope_registry.is_cancel_requested(scope)
 
 
+def _account_inflight_drain(
+    *,
+    checkpoint: str,
+    count: int,
+    iteration: int,
+    inflight_resets: int,
+    agent_id: str,
+) -> tuple[int, int, bool]:
+    """Contabiliza un drain no vacío. Devuelve ``(iteration, resets, reseteó)``.
+
+    Un drain resetea el contador de iteraciones para que el mensaje recién
+    incorporado tenga runway completo, pero solo hasta
+    ``_MAX_INFLIGHT_ITER_RESETS`` veces por turno; pasado el tope el mensaje se
+    incorpora igual y el contador avanza normal. Los TRES checkpoints comparten
+    esta contabilidad: tenerla en tres copias era garantía de que iban a
+    divergir, y de esa contabilidad depende que el loop termine.
+    """
+    if inflight_resets < _MAX_INFLIGHT_ITER_RESETS:
+        logger.info(
+            "[in-flight] drain checkpoint=%s count=%d agent_id=%s iter_reset_from=%d",
+            checkpoint,
+            count,
+            agent_id,
+            iteration,
+        )
+        return 0, inflight_resets + 1, True
+    logger.warning(
+        "[in-flight] drain checkpoint=%s count=%d agent_id=%s — reset cap (%d) "
+        "alcanzado, el contador avanza para acotar el turno",
+        checkpoint,
+        count,
+        agent_id,
+        _MAX_INFLIGHT_ITER_RESETS,
+    )
+    return iteration, inflight_resets, False
+
+
+async def _reroute_visible_tools(
+    *,
+    reroute_tools: Callable[[str], Awaitable[list[dict]]] | None,
+    drained: list[Message],
+    tool_schemas: list[dict],
+    visible_names: set[str],
+    budget: int,
+    agent_id: str,
+) -> int:
+    """Suma al set visible las tools que el texto drenado in-flight hace relevantes.
+
+    El semantic routing corre UNA sola vez por turno, con la query del PRIMER
+    mensaje. Si el mensaje in-flight cambia de tema, las tools visibles siguen
+    siendo las del tema viejo y el LLM no tiene con qué atenderlo (el page-in
+    solo lo salva si ADIVINA el nombre de una tool que no está viendo). Acá
+    re-ruteamos con el texto drenado y UNIMOS el resultado.
+
+    NUNCA reemplazamos el set: el turno ya tiene trabajo en vuelo con las tools
+    viejas y sacárselas a mitad de camino garantiza una tool call fallida.
+
+    ``budget`` es cuántos schemas EXTRA quedan permitidos en el turno — un set
+    visible que crece sin techo degrada la selección del LLM. Devuelve cuántos
+    se agregaron. Un fallo del re-routing (embedder caído) se loguea y sigue:
+    perder el turno entero sería peor que perder las tools nuevas.
+    """
+    if reroute_tools is None or budget <= 0:
+        return 0
+    texto = "\n".join(m.content for m in drained if m.content).strip()
+    if not texto:
+        return 0
+    try:
+        candidatos = await reroute_tools(texto)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[in-flight] reroute de tools falló (agent=%s): %s", agent_id, exc)
+        return 0
+
+    agregadas = 0
+    for sch in candidatos:
+        nombre = sch.get("function", {}).get("name", "")
+        if not nombre or nombre in visible_names:
+            continue
+        if agregadas >= budget:
+            logger.warning(
+                "[in-flight] reroute: presupuesto de %d tools extra agotado — "
+                "'%s' NO se agrega al set visible (agent=%s)",
+                budget,
+                nombre,
+                agent_id,
+            )
+            break
+        tool_schemas.append(sch)
+        visible_names.add(nombre)
+        agregadas += 1
+        logger.info(
+            "[in-flight] reroute: tool '%s' agregada al set visible (agent=%s)",
+            nombre,
+            agent_id,
+        )
+    return agregadas
+
+
 async def run_tool_loop(
     *,
     llm: ILLMProvider,
@@ -121,6 +219,8 @@ async def run_tool_loop(
     page_in_schemas: list[dict] | None = None,
     scope_registry: IScopeRegistry | None = None,
     persist_message: Callable[[Message], Awaitable[None]] | None = None,
+    reroute_tools: Callable[[str], Awaitable[list[dict]]] | None = None,
+    reroute_max_extra_tools: int = 0,
 ) -> str:
     """
     Ejecuta el loop LLM + tool-dispatch hasta obtener respuesta final o
@@ -197,6 +297,17 @@ async def run_tool_loop(
             batch post-loop del caller. Mutuamente excluyente en la práctica
             con ``tool_trace`` (el caller pasa uno u otro), aunque el loop
             tolera ambos. Default ``None`` → sin persistencia incremental.
+        reroute_tools: Callback de re-routing semántico para el texto drenado
+            in-flight. Recibe el texto de los mensajes recién drenados y
+            devuelve los schemas que ese texto hace relevantes; el loop los UNE
+            al set visible (ver ``_reroute_visible_tools``). El caller es dueño
+            de la política (bypass por input corto, routing inactivo,
+            ``tools_override``) — el loop solo une. Default ``None`` → el set
+            visible queda congelado con el routing inicial del turno.
+        reroute_max_extra_tools: Techo de schemas EXTRA que el re-routing puede
+            sumar en TODO el turno. Sin techo, varios drains inflan el set
+            visible y degradan la selección del LLM. Default ``0`` → el
+            re-routing no agrega nada aunque haya callback.
 
     Returns:
         El texto de respuesta final del LLM (sin tool calls).
@@ -237,6 +348,9 @@ async def run_tool_loop(
     # Cuántas veces ya reseteamos el contador por un drain in-flight. Acotado por
     # _MAX_INFLIGHT_ITER_RESETS para que el turno no viva indefinidamente.
     inflight_resets = 0
+    # Schemas extra que el re-routing in-flight ya sumó al set visible en este
+    # turno, contra el techo `reroute_max_extra_tools`.
+    reroute_extra_used = 0
 
     # Kill-switch (/stop): cuando pasa a True, el loop corta y salta al wrap-up
     # (una última llamada SIN tools para resumir dónde quedó el trabajo).
@@ -265,23 +379,21 @@ async def run_tool_loop(
         cursor, drained = await _drain_new_user_messages(history_store, scope, cursor)
         if drained:
             working_messages.extend(drained)
-            if inflight_resets < _MAX_INFLIGHT_ITER_RESETS:
-                logger.info(
-                    "[in-flight] drain checkpoint=A count=%d agent_id=%s iter_reset_from=%d",
-                    len(drained),
-                    agent_id,
-                    iteration,
-                )
-                iteration = 0
-                inflight_resets += 1
-            else:
-                logger.warning(
-                    "[in-flight] drain checkpoint=A count=%d agent_id=%s — reset cap "
-                    "(%d) alcanzado, NO reseteo el contador para acotar el turno",
-                    len(drained),
-                    agent_id,
-                    _MAX_INFLIGHT_ITER_RESETS,
-                )
+            reroute_extra_used += await _reroute_visible_tools(
+                reroute_tools=reroute_tools,
+                drained=drained,
+                tool_schemas=tool_schemas,
+                visible_names=visible_names,
+                budget=reroute_max_extra_tools - reroute_extra_used,
+                agent_id=agent_id,
+            )
+            iteration, inflight_resets, _ = _account_inflight_drain(
+                checkpoint="A",
+                count=len(drained),
+                iteration=iteration,
+                inflight_resets=inflight_resets,
+                agent_id=agent_id,
+            )
 
         # Kill-switch — checkpoint A: si hay un /stop pendiente, no gastamos ni
         # una llamada más al LLM en seguir trabajando; salimos directo al
@@ -304,7 +416,49 @@ async def run_tool_loop(
         last_text = response.text
 
         if not response.tool_calls:
-            return response.text
+            # Checkpoint C — última chance de drenar antes de cerrar el turno.
+            # Sin esto, todo lo que el usuario mandó MIENTRAS el LLM componía
+            # esta respuesta quedaba huérfano: nadie lo drena y `mark_idle` no
+            # re-chequea nada, así que el mensaje dormía en history.db hasta el
+            # próximo turno del usuario — que ya había recibido el ACK "lo
+            # incorporo a lo que estoy haciendo". El ACK mentía, y la ventana
+            # no eran microsegundos sino toda la generación de la respuesta
+            # final (segundos con un provider remoto). Con este checkpoint la
+            # ventana residual sí es la que CLAUDE.md declara: los pocos ms que
+            # van de acá hasta `mark_idle`.
+            cursor, drained = await _drain_new_user_messages(history_store, scope, cursor)
+            if not drained:
+                return response.text
+
+            # Llegó algo: esta respuesta deja de ser final y pasa a ser un
+            # borrador de contexto. NO se emite al sink — el contrato es UNA
+            # respuesta por turno (ver INFLIGHT_CLARIFICATIONS_SECTION) — y NO
+            # se persiste: el usuario nunca la vio. Misma regla que __SKIP__,
+            # no entregado ⇒ no persistido. Queda en working_messages para que
+            # el LLM no pierda el trabajo que ya tenía redactado.
+            if response.text.strip():
+                working_messages.append(Message(role=Role.ASSISTANT, content=response.text))
+            working_messages.extend(drained)
+            reroute_extra_used += await _reroute_visible_tools(
+                reroute_tools=reroute_tools,
+                drained=drained,
+                tool_schemas=tool_schemas,
+                visible_names=visible_names,
+                budget=reroute_max_extra_tools - reroute_extra_used,
+                agent_id=agent_id,
+            )
+            iteration, inflight_resets, reseteo = _account_inflight_drain(
+                checkpoint="C",
+                count=len(drained),
+                iteration=iteration,
+                inflight_resets=inflight_resets,
+                agent_id=agent_id,
+            )
+            if not reseteo:
+                # Tope de resets alcanzado: el contador DEBE avanzar o el turno
+                # no termina nunca si el usuario sigue escribiendo.
+                iteration += 1
+            continue
 
         # Iteración con tool calls. El assistant puede haber emitido texto
         # narrando lo que va a hacer ("ok, voy a buscar esto...") junto
@@ -449,23 +603,23 @@ async def run_tool_loop(
         cursor, drained = await _drain_new_user_messages(history_store, scope, cursor)
         if drained:
             working_messages.extend(drained)
-            if inflight_resets < _MAX_INFLIGHT_ITER_RESETS:
-                logger.info(
-                    "[in-flight] drain checkpoint=B count=%d agent_id=%s iter_reset_from=%d",
-                    len(drained),
-                    agent_id,
-                    iteration,
-                )
-                iteration = 0
-                inflight_resets += 1
-                continue  # no incrementar: ya reseteamos, arrancamos iteración 1
-            logger.warning(
-                "[in-flight] drain checkpoint=B count=%d agent_id=%s — reset cap "
-                "(%d) alcanzado, dejo avanzar el contador para acotar el turno",
-                len(drained),
-                agent_id,
-                _MAX_INFLIGHT_ITER_RESETS,
+            reroute_extra_used += await _reroute_visible_tools(
+                reroute_tools=reroute_tools,
+                drained=drained,
+                tool_schemas=tool_schemas,
+                visible_names=visible_names,
+                budget=reroute_max_extra_tools - reroute_extra_used,
+                agent_id=agent_id,
             )
+            iteration, inflight_resets, reseteo = _account_inflight_drain(
+                checkpoint="B",
+                count=len(drained),
+                iteration=iteration,
+                inflight_resets=inflight_resets,
+                agent_id=agent_id,
+            )
+            if reseteo:
+                continue  # no incrementar: ya reseteamos, arrancamos iteración 1
 
         iteration += 1
 

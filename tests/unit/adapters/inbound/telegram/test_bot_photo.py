@@ -291,9 +291,14 @@ async def test_happy_path_private_chat_pipeline_corrido(agent_cfg, mock_containe
 
 async def test_privado_slot_ocupado_record_user_message_y_ack(agent_cfg, mock_container) -> None:
     """En privado con un turno en curso en este scope: la foto se procesa al
-    margen, el enriched se persiste como user-msg NUEVO (no update_message_content,
+    margen, el análisis se persiste como user-msg NUEVO (no update_message_content,
     para que el drain del turno en curso lo capte vía `_drain_new_user_messages`),
     y se devuelve un ACK rápido sin disparar `_run_pipeline`.
+
+    Esa fila nueva lleva SOLO el delta `@analysis (for <path>)`: el placeholder
+    `@photo` que se persistió al principio ya es una fila `role=user` con
+    `id > cursor`, o sea que el turno en curso YA la va a drenar. Repetir ahí el
+    bloque completo le mostraba al LLM la misma foto dos veces.
     """
     mock_container.scope_registry.try_mark_busy = AsyncMock(return_value=False)
 
@@ -307,13 +312,20 @@ async def test_privado_slot_ocupado_record_user_message_y_ack(agent_cfg, mock_co
     mock_container.process_photo.execute.assert_awaited_once()
 
     # NO se enriquece el placeholder (porque el drain no detecta ediciones in-place)
-    # — en su lugar persiste un user-msg nuevo con el enriched.
+    # — en su lugar persiste un user-msg nuevo con SOLO el análisis.
     mock_container.run_agent.update_message_content.assert_not_called()
     mock_container.run_agent.record_user_message.assert_awaited_once()
-    call_kwargs = mock_container.run_agent.record_user_message.await_args.kwargs
-    assert "una foto de prueba" in call_kwargs.get(
-        "content", mock_container.run_agent.record_user_message.await_args.args[0]
-    )
+    delta = mock_container.run_agent.record_user_message.await_args.args[0]
+    assert "una foto de prueba" in delta
+    assert delta.startswith("@analysis (for "), f"debía ser un delta, fue: {delta!r}"
+
+    # El bloque @photo aparece UNA sola vez en todo el historial del turno: en el
+    # placeholder. Si el delta lo repitiera, el drain devolvería las dos filas y
+    # el LLM vería la misma foto dos veces (una sin análisis y otra con).
+    mock_container.run_agent.record_photo_message.assert_awaited_once()
+    placeholder = mock_container.run_agent.record_photo_message.await_args.args[0]
+    assert placeholder.startswith("@photo ")
+    assert "@photo" not in delta
 
     # NO se dispara execute() — el turno en curso va a drenar el enriched solo.
     mock_container.run_agent.execute.assert_not_called()
@@ -322,6 +334,28 @@ async def test_privado_slot_ocupado_record_user_message_y_ack(agent_cfg, mock_co
     update.message.reply_text.assert_awaited_once()
     ack = update.message.reply_text.await_args.args[0]
     assert "incorporo" in ack.lower() or "moment" in ack.lower()
+
+
+async def test_privado_slot_ocupado_sin_analisis_no_persiste_segunda_fila(
+    agent_cfg, mock_container
+) -> None:
+    """Sin análisis no hay delta que emitir: el placeholder ya lleva path y caption."""
+    mock_container.scope_registry.try_mark_busy = AsyncMock(return_value=False)
+    mock_container.process_photo.execute.return_value = ProcessPhotoResult(
+        text_context="",
+        annotated_image=None,
+        should_skip_run_agent=False,
+    )
+
+    bot = _build_bot(agent_cfg, mock_container)
+    update = _mk_update(chat_type="private")
+
+    await bot._handle_photo_message(update, MagicMock())
+
+    mock_container.run_agent.record_photo_message.assert_awaited_once()
+    mock_container.run_agent.record_user_message.assert_not_called()
+    mock_container.run_agent.update_message_content.assert_not_called()
+    update.message.reply_text.assert_awaited_once()
 
     # El slot NO se libera (no lo adquirimos), pero `mark_idle` no debe llamarse.
     scope = ("dev", "telegram", str(update.effective_chat.id))

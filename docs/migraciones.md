@@ -36,6 +36,8 @@ Orden: **cronológico inverso** (la más reciente primero).
 | Nota | Cambio observable |
 |---|---|
 | [`outbound-send-single-owner`](#outbound-send-single-owner) | `persist_tool_calls` pasa a `true` por default → `history.db` crece más rápido |
+| [`trim-cuenta-conversacion`](#trim-cuenta-conversacion) | `keep_last_messages` cuenta conversación, no filas → se retiene **más** historial |
+| [`search-history-retention-horizon`](#search-history-retention-horizon) | `search_history` declara hasta dónde llega el registro; un resultado vacío deja de leerse como "no ocurrió" |
 | [`write-file-explicit-mode`](#write-file-explicit-mode) | **BREAKING de contrato**: el parámetro `overwrite` ya no existe |
 | [`subagent-inheritance`](#subagent-inheritance) | El sub-agente hereda `llm`/recursos del **caller**, no de su propio YAML |
 | [`in-flight-message-injection`](#in-flight-message-injection) | Dos mensajes seguidos → **una** respuesta combinada, no dos turnos |
@@ -48,6 +50,8 @@ Orden: **cronológico inverso** (la más reciente primero).
 - **Historial y persistencia del turno**: `outbound-send-single-owner`,
   `persist-tool-calls`, `incremental-persist`, `intermediate-persist`,
   `in-flight-message-injection`, `turn-kill-switch`
+- **Retención y alcance del registro**: `trim-cuenta-conversacion`,
+  `search-history-retention-horizon`
 - **Telegram y canales**: `attachment-grammar`, `groups-vs-broadcast`,
   `broadcast-topology-config`, `broadcast-cross-agent-events`,
   `multi-agent-telegram-broadcast`, `telegram-group-auth`,
@@ -60,6 +64,93 @@ Orden: **cronológico inverso** (la más reciente primero).
 - **Tools y config**: `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `search-history-retention-horizon`
+
+El agente **confesó una mentira que no podía probar que había cometido**, y
+escribió esa confesión en su memoria permanente. Caso real (2026-07-31,
+`history.db` de producción, filas 6190-6219).
+
+Cadena causal:
+
+1. La consolidación llama `IHistoryStore.trim()`, que **BORRA filas** (`DELETE`,
+   no un `LIMIT`). El historial NO es un registro completo del pasado.
+2. Medido en producción: el scope `telegram:4879536` tenía **59 filas desde esa
+   misma mañana** — 0.3 días de memoria. Los scopes sin filas de tool retenían
+   40-60 días con las mismas ~64 filas (ver `trim-cuenta-conversacion`).
+3. El usuario pregunta por unas tareas que pidió anotar ANTES de ese horizonte.
+   El agente llama `search_history` cinco veces; las cinco devuelven
+   `"No messages found ... for the given filters."` con **`success=True`**, y la
+   `description` de la tool se vendía como *"the EXACT, verbatim text of messages
+   from this agent's history database"* — el registro autoritativo del pasado.
+4. **Nada le decía que el registro había sido truncado.** El agente no podía
+   distinguir "nunca pasó" de "lo borré", y sus instrucciones (Honesty Above All,
+   NO PHANTOM ACTIONS) lo empujan a admitir el fallo → convirtió la ausencia de
+   evidencia en certeza: *"**La verdad**: te dije que las anoté, pero no lo hice"*.
+5. Peor: escribió esa confesión en `users/telegram/{context_id}.md`, fichero
+   permanente que se inyecta en cada turno y que la consolidación nunca toca.
+   Auto-creencia envenenada, para siempre.
+
+Es la MISMA falla que `outbound-send-single-owner` apuntando al pasado en vez de
+al mundo: **afirmar sin evidencia**. Una confesión fantasma es tan grave como una
+acción fantasma — y encima el usuario la creyó.
+
+**Cambios**:
+
+1. Port nuevo `IHistoryStore.retention_horizon(agent_id, channel, chat_id)` →
+   `datetime | None`. Filtros con semántica de `search` (`None` = sin filtrar,
+   NO `""`, que `_build_where_filters` trata como valor literal).
+2. Devuelve el **MAX de los MIN por scope**, no el MIN global: `trim` borra por
+   scope, así que cada conversación tiene su propio horizonte. Es el punto desde
+   el cual la cobertura está COMPLETA en todo lo consultado. Con el MIN global la
+   búsqueda real (sin `chat_id`) habría reportado *mayo* mientras el chat del
+   usuario solo llegaba a esa mañana — y el agente habría concluido igual de mal.
+3. `search_history` cierra **toda** respuesta —vacía o no— con la frase de
+   alcance, y su `description` avisa que el historial está podado.
+
+**Sin migración de DB ni cambios de config.** Solo cambia el texto que la tool
+devuelve al LLM. NUNCA dejar que una tool responda "no existe" cuando lo que sabe
+es "no lo tengo": una tool que no puede decir *no sé* fuerza al modelo a inventar
+certeza.
+
+---
+
+### `trim-cuenta-conversacion`
+
+`keep_last_messages` contaba **filas crudas**, así que el rastro protocolar
+(`tool` results y el `assistant` que lleva `tool_calls`) consumía el presupuesto
+de retención. Un turno con herramientas costaba como varios turnos de
+conversación.
+
+Medido en la `history.db` de producción (2026-07-31), con ~64 filas por scope:
+
+| scope | filas | user | tool | memoria retenida |
+|---|---|---|---|---|
+| `telegram:4879536` (el chat más usado) | 59 | **10** | **19** | **0.3 días** |
+| `telegram:1355413334` | 64 | 30 | 0 | 47.7 días |
+| `telegram:39836839` | 56 | 29 | 0 | 60.0 días |
+
+La correlación es exacta: **el agente con el que más se hablaba era el que menos
+recordaba.** Y `outbound-send-single-owner` puso `persist_tool_calls` en `true`
+por default, con lo que el efecto pasaba a ser universal.
+
+**Cambio**: `SQLiteHistoryStore.trim` cuenta solo mensajes **conversacionales**
+(`role IN ('user','assistant')` con `tool_calls IS NULL`). El corte es el id del
+`keep_last`-ésimo conversacional más reciente de su scope; se borra todo lo
+anterior. El rastro que queda del lado nuevo del corte sobrevive íntegro y no
+paga presupuesto. Un scope con menos conversación que el presupuesto no tiene
+corte (la subconsulta da `NULL`, `id < NULL` es `NULL`) → no se borra nada.
+
+**Sin migración de DB ni cambios de config**, pero el **valor configurado cambia
+de significado**: `keep_last_messages: 64` ahora son 64 mensajes de conversación
+reales, no 64 filas. En una instancia con `persist_tool_calls` activo eso
+**aumenta** lo que se retiene en disco — que es exactamente el punto. Si hace
+falta acotar, bajar el número.
+
+NUNCA expresar una política de retención en filas cuando lo que se quiere acotar
+es conversación.
 
 ---
 
@@ -333,6 +424,35 @@ generaliza a documentos/videos enviados juntos (Telegram también les pone
 (todos los tipos, `received_at ASC`); (d) la description de
 `download_from_telegram` ahora dice "usá el path del bloque; llamame solo ante
 `pending` o para media viejo".
+
+**Extensión `format_analysis_delta` (2026-08-01)** — análisis TARDÍO de un
+attachment ya persistido:
+
+```
+@analysis (for /abs/path.jpg): se ve a Alberto en una terraza...
+```
+
+Motivo: en el camino in-flight de foto (llegó una foto con un turno ya corriendo
+en ese scope), `media.py` persistía el placeholder `@photo` al principio
+—obligatorio: `ProcessPhotoUseCase` necesita el `history_id` para la side-table
+`message_face_metadata`, y la persistencia simétrica exige dejar rastro— y
+después persistía el bloque **enriquecido completo** como fila nueva. Las dos
+filas tienen `id > cursor`, así que **el drain devolvía las dos**: el LLM veía la
+misma foto dos veces (una sin `@analysis`, otra con) y el duplicado quedaba en
+`history.db` para siempre. El camino normal ya evitaba exactamente eso con
+`update_message_content`.
+
+La fila nueva sigue siendo necesaria (el drain busca `id > cursor`, NO detecta
+ediciones in-place), pero ahora lleva **solo el delta**: referencia al bloque
+original por su `ref_token()` (el path local, o `id: <file_ref>` en modo
+degradado) y aporta únicamente el análisis. Sin caption — ya viaja en el bloque
+original; duplicarla reintroduciría el problema por otra puerta. Sin análisis no
+hay segunda fila. `ATTACHMENTS_SECTION` explica la forma al LLM, incluyendo que
+**no** significa que llegó media nueva.
+
+Trade-off aceptado: en `history.db` el análisis queda en una fila separada de la
+foto. Si la ventana `max_messages` corta entre ambas, sobrevive un `@analysis
+(for /p)` sin su bloque — el path sigue siendo accionable.
 
 **Sin migración de DB ni cambios de config.** Las filas viejas con prefijos
 `__X__` conviven con las nuevas (el LLM ve historia mixta unos días — aceptable).
@@ -911,18 +1031,63 @@ En `_run_pipeline` el branch in-flight se activa solo cuando `not es_grupo and
 user_input is not None` (también skip cuando `user_input=None` para no romper
 el path history-derived de fotos enriquecidas).
 
-**Bug aceptado para V1 — race window narrow**: si `execute()` termina exactamente
-cuando llega un mensaje nuevo (microsegundos entre `mark_idle` y `try_mark_busy`),
-el mensaje puede quedar persistido en history sin que nadie lo procese hasta el
-siguiente turno del usuario. Aceptable para uso doméstico (el usuario re-envía
-o el próximo mensaje lo trae al loop). Si se vuelve problemático, mitigación
-sería re-chequear `try_mark_busy` después del persist y disparar un turno
-history-derived si el scope se liberó en el ínterin.
+**FIX checkpoint C (2026-08-01)**: los checkpoints A y B dejaban un agujero en
+la SALIDA del loop. Cuando el LLM devolvía una respuesta sin `tool_calls`,
+`run_tool_loop` hacía `return` **sin drenar**: todo lo que el usuario mandó
+mientras se generaba ESA respuesta quedaba huérfano — nadie lo drenaba y
+`mark_idle` no re-chequea nada, así que el mensaje dormía en `history.db` hasta
+el próximo turno. Pero el usuario YA había recibido el ACK *"Lo incorporo a lo
+que estoy haciendo"*. **El ACK mentía.**
+
+Esta nota describía ese agujero como *"race window narrow — microsegundos entre
+`mark_idle` y `try_mark_busy`"*. **Era falso**: la ventana real era toda la
+generación de la respuesta final (segundos con un provider remoto en la Pi).
+
+**Checkpoint C** drena justo antes del `return`. Si aparece algo, la respuesta
+deja de ser final y pasa a ser un **borrador de contexto**: queda en
+`working_messages` (el LLM no pierde el trabajo redactado), el loop reentra, y
+el usuario recibe UNA respuesta que ya contempla las dos cosas. Recién ahora la
+ventana residual es la que este párrafo declaraba: los pocos ms entre el
+checkpoint y `mark_idle`.
+
+El borrador **NO se emite al sink y NO se persiste**: el usuario nunca lo vio.
+Misma regla que `__SKIP__` — *no entregado ⇒ no persistido*. Y no contradice
+`intermediate-persist`: esa nota persiste la narración PORQUE el usuario la vio.
+
+El bookkeeping de resets es el mismo de A y B (extraído a
+`_account_inflight_drain` — con tres checkpoints, tres copias era garantía de
+divergencia). **De esa contabilidad depende que el loop termine**: pasado
+`_MAX_INFLIGHT_ITER_RESETS` el contador avanza, o un usuario que escribe en cada
+respuesta mantiene el turno vivo para siempre.
+
+**Grupos**: el párrafo de arriba dice que están excluidos, y es cierto para el
+*routing* inbound (no hay `try_mark_busy`; el buffer-delay hace de coalescencia).
+Pero el drain SÍ corre en el flush de grupo — `_execute_turn` siempre pasa
+`history_store` + `scope` al loop —, así que el checkpoint C también cierra ahí
+la fuga equivalente: un mensaje que llegaba mientras `_run_group_pipeline`
+generaba su respuesta no lo veía nadie, y `_schedule_group_flush` no crea flush
+nuevo mientras el task corre (ni hay ACK que delate la pérdida).
+
+**Re-routing in-flight de tools (2026-08-01)**: el semantic routing corre UNA
+vez por turno, con la query del PRIMER mensaje. Un in-flight que cambia de tema
+no traía sus tools (el page-in solo salva si el LLM ADIVINA el nombre de una que
+no ve). Ahora, tras cada drain no vacío, el loop llama el callback opcional
+`reroute_tools` y **UNE** el resultado al set visible. Nunca reemplaza: el turno
+tiene trabajo en vuelo con las tools viejas. La política vive en
+`RunAgentUseCase` (bypass por input corto, routing inactivo, respeto a
+`tools_override`); el loop solo une, acotado por `reroute_max_extra_tools`
+(= `tools_top_k`) porque un set visible sin techo degrada la selección del LLM.
+Un fallo del re-routing se loguea y el turno sigue.
+
+**Alcance deliberado: SOLO tools.** Skills y knowledge chunks NO se recalculan —
+viven en el system prompt, que se arma una vez por turno; rehacerlos obligaría a
+reconstruirlo entre iteraciones e invalidaría el prompt caching del provider. Es
+otra feature, no un olvido.
 
 **Costo I/O**: cada iteración del tool loop hace 2 queries adicionales a SQLite
-(checkpoints A y B). Con el drainage por cursor son deltas por índice
-(`WHERE id > ?`), aún más baratas que el load completo original — overhead
-despreciable en la Pi 5.
+(checkpoints A y B), más una en la salida (checkpoint C). Con el drainage por
+cursor son deltas por índice (`WHERE id > ?`), aún más baratas que el load
+completo original — overhead despreciable en la Pi 5.
 
 ### `telegram-group-auth`
 

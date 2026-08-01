@@ -625,6 +625,37 @@ class RunAgentUseCase:
                 persist_trace = _persist_trace_msg
             else:
                 tool_trace = []
+
+        # Re-routing de tools sobre lo drenado in-flight: el semantic routing de
+        # arriba corrió UNA vez, con la query del PRIMER mensaje. Si el mensaje
+        # que el usuario mete a mitad del loop cambia de tema, las tools visibles
+        # siguen siendo las del tema viejo. Acá va la POLÍTICA (qué amerita
+        # re-rutear); el loop solo une el resultado al set visible.
+        #
+        # Alcance deliberado: SOLO tools. Skills y knowledge chunks viven en el
+        # system prompt, que se arma una vez por turno — recalcularlos obligaría
+        # a reconstruirlo entre iteraciones e invalidaría el prompt caching del
+        # provider. Es otra feature, no un olvido.
+        async def _reroute_tools_for_drain(texto: str) -> list[dict]:
+            if tools_override is not None:
+                # El override es autoridad del caller (scheduler), igual que en
+                # el page-in: no se lo pisamos con RAG.
+                return []
+            if len(self._tools.get_schemas()) <= self._settings.tools_min_tools:
+                return []  # routing inactivo: el LLM ya ve todas las tools
+            if should_bypass_routing_for_short_input(
+                user_input=texto,
+                min_words_threshold=self._settings.min_words_threshold,
+                prev_state=prev_state,
+            ):
+                return []  # un "para" o un "dale" no amerita gastar un embedding
+            query_vec = await self._embedder.embed_query(texto)
+            return await self._tools.get_schemas_relevant(
+                query_vec,
+                top_k=self._settings.tools_top_k,
+                min_score=self._settings.tools_min_score,
+            )
+
         try:
             response = await run_tool_loop(
                 llm=self._llm,
@@ -658,6 +689,11 @@ class RunAgentUseCase:
                 # incremental-persist: callback en caliente (solo turnos que no
                 # pueden skipear); None → el batch post-loop sigue a cargo.
                 persist_message=persist_trace,
+                # in-flight re-routing: el techo son `tools_top_k` schemas extra
+                # en todo el turno — el set visible no puede crecer sin límite
+                # sin degradar la selección del LLM.
+                reroute_tools=_reroute_tools_for_drain,
+                reroute_max_extra_tools=self._settings.tools_top_k,
             )
         except ToolLoopMaxIterationsError as e:
             response = e.last_response or (

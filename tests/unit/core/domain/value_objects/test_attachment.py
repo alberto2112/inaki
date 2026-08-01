@@ -10,6 +10,7 @@ from __future__ import annotations
 from core.domain.value_objects.attachment import (
     IncomingAttachment,
     format_album,
+    format_analysis_delta,
     format_attachment,
 )
 
@@ -112,3 +113,39 @@ def test_album_miembro_degradado_conserva_pending():
     block = format_album(members)
     assert "@photo at /1.jpg" in block
     assert "@photo pending (id: ph-2)" in block
+
+
+# ---------------------------------------------------------------------------
+# format_analysis_delta — análisis tardío de un attachment ya persistido
+# ---------------------------------------------------------------------------
+
+
+def test_analysis_delta_referencia_por_path_y_no_repite_el_header():
+    """La razón de existir de esta forma: NO repetir la línea @photo.
+
+    Si el delta trajera el header, el LLM vería la misma foto dos veces (una
+    sin análisis y otra con) y ese duplicado quedaría en history.db para
+    siempre.
+    """
+    att = IncomingAttachment(type="photo", path="/cache/foto.jpg")
+    block = format_analysis_delta(att, "se ve a Alberto en una terraza")
+
+    assert block == "@analysis (for /cache/foto.jpg): se ve a Alberto en una terraza"
+    assert "@photo" not in block
+
+
+def test_analysis_delta_degrada_a_file_ref_sin_path():
+    """Sin path (pre-descarga fallida) referencia por id, igual que header_line."""
+    att = IncomingAttachment(type="photo", file_ref="ph-9")
+    block = format_analysis_delta(att, "dos personas")
+
+    assert block == "@analysis (for id: ph-9): dos personas"
+
+
+def test_analysis_delta_no_lleva_caption():
+    """El caption ya viaja en el bloque original — duplicarlo reintroduce el bug."""
+    att = IncomingAttachment(type="photo", path="/cache/foto.jpg")
+    block = format_analysis_delta(att, "  una terraza  ")
+
+    assert "@caption" not in block
+    assert block.endswith("una terraza"), "el análisis se normaliza con strip()"

@@ -130,9 +130,24 @@ Cada una salió de un fallo en producción. El caso completo está en
   escribe ese scope en ese turno. Dos escritores rompen el grupo protocolar. → `outbound-send-single-owner`
 - **NUNCA** asumir que el LLM alucina cuando niega una acción propia: primero mirá qué le
   entregó el loader. → `outbound-send-single-owner`
+- **NUNCA** dejar que una tool responda "no existe" cuando lo que sabe es "no lo tengo".
+  Una tool que no puede decir *no sé* fuerza al modelo a inventar certeza — y una confesión
+  fantasma es tan grave como una acción fantasma. → `search-history-retention-horizon`
+- **NUNCA** expresar una política de retención en FILAS cuando lo que querés acotar es
+  conversación: el rastro de tools se come el presupuesto. → `trim-cuenta-conversacion`
 - **NUNCA** persistir un grupo protocolar confiando en que "el load lo arregla". → `incremental-persist`
 - **NUNCA** volver a un drain por conteo sobre una vista ventaneada — el cursor es por
   rowid monotónico. → `in-flight-message-injection`
+- **NUNCA** cerrar el tool loop sin drenar (checkpoint C): si el ACK le prometió al usuario
+  "lo incorporo", incorporalo. → `in-flight-message-injection`
+- **NUNCA** persistir un borrador que el usuario no vio — no entregado ⇒ no persistido,
+  misma regla que `__SKIP__`. → `in-flight-message-injection`
+- **NUNCA** dejar que un drain resetee el contador de iteraciones sin tope: de esa
+  contabilidad depende que el turno termine. → `in-flight-message-injection`
+- **NUNCA** REEMPLAZAR el set de tools visible a mitad de turno (el re-routing in-flight
+  UNE, y con techo): hay trabajo en vuelo con las viejas. → `in-flight-message-injection`
+- **NUNCA** re-emitir el bloque completo de un attachment ya persistido para agregarle el
+  análisis — eso es `format_analysis_delta`. → `attachment-grammar`
 - **NUNCA** descartar el return del `dispatch()`: es la única vía por la que un resultado
   `bg-N` llega al usuario. → `background-delegation`
 

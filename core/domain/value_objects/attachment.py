@@ -21,6 +21,12 @@ Formato (texto fijo en INGLÉS — convención system-prompts-language):
 Modo degradado (la pre-descarga falló): la línea principal termina en
 ``pending (id: <file_ref>) — retrieve with download_from_telegram`` para que
 el LLM sepa recuperarlo por su cuenta.
+
+Análisis TARDÍO (``format_analysis_delta``): cuando el bloque del attachment ya
+se persistió y el análisis llega después, se emite un bloque suelto que
+REFERENCIA al original por su path en vez de repetirlo::
+
+    @analysis (for /abs/path.jpg): se ve a Alberto en una terraza...
 """
 
 from __future__ import annotations
@@ -48,6 +54,18 @@ class IncomingAttachment(BaseModel, frozen=True):
     name: str | None = None
     mime: str | None = None
     file_ref: str | None = None
+
+    def ref_token(self) -> str:
+        """Identificador para referenciar este attachment desde OTRO bloque.
+
+        El path local es el token accionable de la gramática, así que es la
+        referencia preferida. Sin path (pre-descarga fallida) cae al
+        ``file_ref``, con el mismo formato ``id: <ref>`` que usa
+        ``header_line`` en modo degradado.
+        """
+        if self.path:
+            return self.path
+        return f"id: {self.file_ref}" if self.file_ref else "unknown"
 
     def header_line(self) -> str:
         """Línea principal del bloque: ``@<type> [name] [(mime)] at <path>``."""
@@ -99,6 +117,25 @@ def format_attachment(
             *_aux_lines(transcription=transcription, analysis=analysis, caption=caption),
         ]
     )
+
+
+def format_analysis_delta(attachment: IncomingAttachment, analysis: str) -> str:
+    """Formatea un análisis TARDÍO de un attachment que YA se persistió.
+
+    Caso de uso: el canal deja el bloque del media en el historial apenas lo
+    recibe (persistencia simétrica) y el análisis —reconocimiento facial,
+    descripción de escena— tarda segundos más. Si ese análisis se emitiera con
+    ``format_attachment`` volvería a incluir la línea principal, y el LLM vería
+    la MISMA foto dos veces: una sin análisis y otra con. Esta forma referencia
+    al bloque original por su ``ref_token`` y aporta SOLO el análisis::
+
+        @analysis (for /abs/path.jpg): se ve a Alberto en una terraza...
+
+    NO lleva caption: esa ya viaja en el bloque original. Duplicarla acá
+    reintroduciría por otra puerta el problema que esta función existe para
+    evitar.
+    """
+    return f"@analysis (for {attachment.ref_token()}): {analysis.strip()}"
 
 
 def format_album(

@@ -608,3 +608,312 @@ async def test_drain_at_checkpoint_b_after_tools():
     # Importante: el mensaje "incluí Paris" llegó DURANTE la ejecución de la tool
     # de iter 1 — checkpoint B (después del batch) o checkpoint A de iter 2 lo verá.
     assert seen_paris_in_iter_2
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint C — drain antes de devolver la respuesta final
+# ---------------------------------------------------------------------------
+
+
+def _schema(name: str) -> dict:
+    return {"type": "function", "function": {"name": name, "description": "", "parameters": {}}}
+
+
+async def test_checkpoint_c_absorbe_mensaje_llegado_durante_la_respuesta_final():
+    """Un mensaje que aterriza mientras el LLM compone la respuesta final NO se pierde.
+
+    Antes del checkpoint C esto era el bug del "ACK que miente": el usuario
+    recibía "lo incorporo a lo que estoy haciendo", nadie lo drenaba, y el
+    mensaje dormía en history.db hasta el próximo turno.
+    """
+    initial_msg = Message(role=Role.USER, content="hacé X")
+    history = _FakeHistoryStore(initial=[initial_msg])
+
+    call_count = 0
+    vio_correccion = False
+    vio_borrador = False
+
+    async def llm_complete(messages, system_prompt, tools=None):  # noqa: ARG001
+        nonlocal call_count, vio_correccion, vio_borrador
+        call_count += 1
+        if call_count == 1:
+            # El usuario escribe MIENTRAS se genera esta respuesta "final".
+            history.messages.append(Message(role=Role.USER, content="esperá, mejor Y"))
+            return LLMResponse.of_text("Listo: X resuelto")
+        vio_correccion = any(m.content == "esperá, mejor Y" for m in messages)
+        vio_borrador = any(m.content == "Listo: X resuelto" for m in messages)
+        return LLMResponse.of_text("Listo: Y resuelto")
+
+    llm = AsyncMock()
+    llm.complete = AsyncMock(side_effect=llm_complete)
+    llm.thinking_active = False
+
+    result = await run_tool_loop(
+        llm=llm,
+        tools=_make_tools(),
+        messages=[initial_msg],
+        system_prompt="x",
+        tool_schemas=[],
+        max_iterations=5,
+        circuit_breaker_threshold=3,
+        agent_id="agent1",
+        history_store=history,
+        scope=_SCOPE,
+    )
+
+    assert result == "Listo: Y resuelto", "la respuesta final debe contemplar la corrección"
+    assert vio_correccion, "el LLM debía ver el mensaje in-flight"
+    assert vio_borrador, "el borrador queda en working_messages: el LLM no pierde su trabajo"
+
+
+async def test_checkpoint_c_sin_drain_devuelve_igual_que_siempre():
+    """Regresión: sin mensajes nuevos, el checkpoint C es transparente."""
+    initial_msg = Message(role=Role.USER, content="hacé X")
+    history = _FakeHistoryStore(initial=[initial_msg])
+
+    llm = AsyncMock()
+    llm.complete = AsyncMock(return_value=LLMResponse.of_text("Listo"))
+    llm.thinking_active = False
+
+    result = await run_tool_loop(
+        llm=llm,
+        tools=_make_tools(),
+        messages=[initial_msg],
+        system_prompt="x",
+        tool_schemas=[],
+        max_iterations=5,
+        circuit_breaker_threshold=3,
+        agent_id="agent1",
+        history_store=history,
+        scope=_SCOPE,
+    )
+
+    assert result == "Listo"
+    assert llm.complete.await_count == 1
+
+
+async def test_checkpoint_c_borrador_no_se_emite_ni_se_persiste():
+    """El borrador descartado no llega al canal ni a history: el usuario nunca lo vio.
+
+    Misma regla que ``__SKIP__``: no entregado ⇒ no persistido.
+    """
+    initial_msg = Message(role=Role.USER, content="hacé X")
+    history = _FakeHistoryStore(initial=[initial_msg])
+    persistidos: list[Message] = []
+
+    async def _persist(msg: Message) -> None:
+        persistidos.append(msg)
+
+    call_count = 0
+
+    async def llm_complete(messages, system_prompt, tools=None):  # noqa: ARG001
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            history.messages.append(Message(role=Role.USER, content="esperá"))
+            return LLMResponse.of_text("BORRADOR-DESCARTADO")
+        return LLMResponse.of_text("final")
+
+    llm = AsyncMock()
+    llm.complete = AsyncMock(side_effect=llm_complete)
+    llm.thinking_active = False
+
+    sink = AsyncMock()
+    trace: list[Message] = []
+
+    result = await run_tool_loop(
+        llm=llm,
+        tools=_make_tools(),
+        messages=[initial_msg],
+        system_prompt="x",
+        tool_schemas=[],
+        max_iterations=5,
+        circuit_breaker_threshold=3,
+        agent_id="agent1",
+        intermediate_sink=sink,
+        history_store=history,
+        scope=_SCOPE,
+        tool_trace=trace,
+        persist_message=_persist,
+    )
+
+    assert result == "final"
+    emitidos = [c.args[0] for c in sink.emit.await_args_list]
+    assert "BORRADOR-DESCARTADO" not in emitidos, "el borrador no se emite al canal"
+    assert all("BORRADOR-DESCARTADO" not in m.content for m in persistidos)
+    assert all("BORRADOR-DESCARTADO" not in m.content for m in trace)
+
+
+async def test_checkpoint_c_termina_aunque_el_usuario_escriba_sin_parar():
+    """Guard anti-loop-infinito: pasado el tope de resets, el contador avanza.
+
+    Sin esto, un usuario que escribe en cada respuesta mantiene el turno vivo
+    para siempre — el checkpoint C reentraría al loop en cada vuelta.
+    """
+    initial_msg = Message(role=Role.USER, content="hacé X")
+    history = _FakeHistoryStore(initial=[initial_msg])
+
+    call_count = 0
+
+    async def llm_complete(messages, system_prompt, tools=None):  # noqa: ARG001
+        nonlocal call_count
+        call_count += 1
+        history.messages.append(Message(role=Role.USER, content=f"y ahora {call_count}"))
+        return LLMResponse.of_text(f"respuesta {call_count}")
+
+    llm = AsyncMock()
+    llm.complete = AsyncMock(side_effect=llm_complete)
+    llm.thinking_active = False
+
+    with pytest.raises(ToolLoopMaxIterationsError):
+        await run_tool_loop(
+            llm=llm,
+            tools=_make_tools(),
+            messages=[initial_msg],
+            system_prompt="x",
+            tool_schemas=[],
+            max_iterations=2,
+            circuit_breaker_threshold=3,
+            agent_id="agent1",
+            history_store=history,
+            scope=_SCOPE,
+        )
+
+    # 3 resets + max_iterations=2 acota el turno. El número exacto importa menos
+    # que la cota: sin el guard esto no terminaría nunca.
+    assert call_count <= 8, f"el turno no está acotado: {call_count} llamadas al LLM"
+
+
+# ---------------------------------------------------------------------------
+# Re-routing de tools sobre lo drenado
+# ---------------------------------------------------------------------------
+
+
+async def test_reroute_une_schemas_nuevos_sin_sacar_los_viejos():
+    """Un in-flight que cambia de tema trae sus tools; las del tema viejo quedan.
+
+    Nunca se reemplaza el set: el turno tiene trabajo en vuelo con las viejas.
+    """
+    initial_msg = Message(role=Role.USER, content="hacé X")
+    history = _FakeHistoryStore(initial=[initial_msg])
+
+    call_count = 0
+    tools_vistas: list[str] = []
+
+    async def llm_complete(messages, system_prompt, tools=None):  # noqa: ARG001
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            history.messages.append(Message(role=Role.USER, content="che, agendame una tarea"))
+            return _tool_call_response()
+        tools_vistas.extend(s["function"]["name"] for s in (tools or []))
+        return LLMResponse.of_text("hecho")
+
+    llm = AsyncMock()
+    llm.complete = AsyncMock(side_effect=llm_complete)
+    llm.thinking_active = False
+
+    async def _reroute(texto: str) -> list[dict]:
+        assert "agendame" in texto
+        return [_schema("scheduler")]
+
+    await run_tool_loop(
+        llm=llm,
+        tools=_make_tools(),
+        messages=[initial_msg],
+        system_prompt="x",
+        tool_schemas=[_schema("search")],
+        max_iterations=5,
+        circuit_breaker_threshold=3,
+        agent_id="agent1",
+        history_store=history,
+        scope=_SCOPE,
+        reroute_tools=_reroute,
+        reroute_max_extra_tools=5,
+    )
+
+    assert "scheduler" in tools_vistas, "la tool del tema nuevo debía hacerse visible"
+    assert "search" in tools_vistas, "las tools del tema viejo NO se sacan"
+
+
+async def test_reroute_respeta_el_techo_de_tools_extra():
+    """El set visible no puede crecer sin límite: degrada la selección del LLM."""
+    initial_msg = Message(role=Role.USER, content="hacé X")
+    history = _FakeHistoryStore(initial=[initial_msg])
+
+    call_count = 0
+    tools_vistas: list[str] = []
+
+    async def llm_complete(messages, system_prompt, tools=None):  # noqa: ARG001
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            history.messages.append(Message(role=Role.USER, content="cambio total de tema"))
+            return _tool_call_response()
+        tools_vistas.extend(s["function"]["name"] for s in (tools or []))
+        return LLMResponse.of_text("hecho")
+
+    llm = AsyncMock()
+    llm.complete = AsyncMock(side_effect=llm_complete)
+    llm.thinking_active = False
+
+    async def _reroute(texto: str) -> list[dict]:  # noqa: ARG001
+        return [_schema("t1"), _schema("t2"), _schema("t3")]
+
+    await run_tool_loop(
+        llm=llm,
+        tools=_make_tools(),
+        messages=[initial_msg],
+        system_prompt="x",
+        tool_schemas=[_schema("search")],
+        max_iterations=5,
+        circuit_breaker_threshold=3,
+        agent_id="agent1",
+        history_store=history,
+        scope=_SCOPE,
+        reroute_tools=_reroute,
+        reroute_max_extra_tools=2,
+    )
+
+    assert "t1" in tools_vistas and "t2" in tools_vistas
+    assert "t3" not in tools_vistas, "el tercer schema excede el techo"
+
+
+async def test_reroute_que_falla_no_mata_el_turno():
+    """Perder el turno entero sería peor que perder las tools nuevas."""
+    initial_msg = Message(role=Role.USER, content="hacé X")
+    history = _FakeHistoryStore(initial=[initial_msg])
+
+    call_count = 0
+
+    async def llm_complete(messages, system_prompt, tools=None):  # noqa: ARG001
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            history.messages.append(Message(role=Role.USER, content="cambio de tema largo acá"))
+            return _tool_call_response()
+        return LLMResponse.of_text("hecho igual")
+
+    llm = AsyncMock()
+    llm.complete = AsyncMock(side_effect=llm_complete)
+    llm.thinking_active = False
+
+    async def _reroute(texto: str) -> list[dict]:  # noqa: ARG001
+        raise RuntimeError("embedder caído")
+
+    result = await run_tool_loop(
+        llm=llm,
+        tools=_make_tools(),
+        messages=[initial_msg],
+        system_prompt="x",
+        tool_schemas=[_schema("search")],
+        max_iterations=5,
+        circuit_breaker_threshold=3,
+        agent_id="agent1",
+        history_store=history,
+        scope=_SCOPE,
+        reroute_tools=_reroute,
+        reroute_max_extra_tools=5,
+    )
+
+    assert result == "hecho igual"

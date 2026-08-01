@@ -33,6 +33,7 @@ from core.domain.errors import TranscriptionError
 from core.domain.value_objects.attachment import (
     IncomingAttachment,
     format_album,
+    format_analysis_delta,
     format_attachment,
 )
 from core.domain.value_objects.telegram_file import FileContentType, TelegramFileRecord
@@ -296,15 +297,28 @@ class TelegramMediaMixin:
                 sender = extract_sender_name(message)
                 enriched_content = f"{sender} (foto):\n{enriched_content}"
 
-            # CAMINO IN-FLIGHT (privado, slot ocupado): persistir el enriched como un
-            # mensaje user NUEVO (no update_message_content) para que el drain del turno
-            # en curso lo capte entre iteraciones — `_drain_new_user_messages` cuenta
-            # filas nuevas, no detecta ediciones in-place. ACK rápido y volvemos sin
+            # CAMINO IN-FLIGHT (privado, slot ocupado): el análisis va como fila
+            # NUEVA, no como edición del placeholder — el drain del turno en curso
+            # busca filas con `id > cursor` y NO detecta ediciones in-place, así
+            # que un `update_message_content` sería invisible para ese turno.
+            #
+            # Pero la fila nueva lleva SOLO el delta (`@analysis (for <path>)`),
+            # nunca el bloque completo: el placeholder de arriba ya es una fila
+            # `role=user` con `id > cursor`, o sea que el turno en curso YA la va
+            # a drenar. Repetir ahí la línea `@photo ... at <path>` le mostraba al
+            # LLM la misma foto dos veces (una sin análisis y otra con) y dejaba
+            # ese duplicado en `history.db` para siempre.
+            #
+            # Sin análisis no hay segunda fila: el placeholder ya lleva el path
+            # —el token accionable— y el caption. ACK rápido y volvemos sin
             # disparar otro execute().
             if not slot_acquired and chat_type not in _TIPOS_GRUPO:
-                await self._ports.run_agent.record_user_message(
-                    enriched_content, channel="telegram", chat_id=chat_id
-                )
+                if result.text_context:
+                    await self._ports.run_agent.record_user_message(
+                        format_analysis_delta(att, result.text_context),
+                        channel="telegram",
+                        chat_id=chat_id,
+                    )
                 await message.reply_text(INFLIGHT_ACK)
                 return
 

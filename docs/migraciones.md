@@ -76,7 +76,7 @@ Orden: **cronológico inverso** (la más reciente primero).
 `auth` correctos. El client no lograba conectarse nunca; en `journalctl` no había un
 solo `ERROR`. El puerto simplemente no estaba escuchando.
 
-Había **dos caminos que se tragaban el fallo**, y el síntoma es idéntico en los dos:
+Había **tres caminos que se tragaban el fallo**, y el síntoma es idéntico en los tres:
 
 1. **`TcpBroadcastAdapter.start()` no bindeaba** — hacía
    `asyncio.create_task(self._ejecutar_server())` y retornaba. El
@@ -94,6 +94,12 @@ Había **dos caminos que se tragaban el fallo**, y el síntoma es idéntico en l
    desde afuera se ve un daemon sano con el puerto cerrado. Cae acá cualquier
    `broadcast:` en formato viejo (`port:` suelto o `remote:`, ver
    `broadcast-topology-config`), sin `auth`, o con un puerto fuera de 1024..65535.
+3. **Un `broadcast:` fuera de `channels.telegram` se descartaba sin una palabra** — y
+   este fue el caso real. El wiring solo lee `channels.telegram.broadcast`; un bloque
+   en la raíz del agente lo tira `assemble_agent_config` (que solo copia `channels`),
+   y uno en `channels.broadcast` sobrevive el filtro de adapters pero ningún canal lo
+   consume. Peor que (2): el bloque **ni siquiera llega al parser**, así que tampoco
+   se emite el error de topología. Silencio absoluto, en cualquier nivel de log.
 
 **Cambios**:
 
@@ -109,6 +115,9 @@ Había **dos caminos que se tragaban el fallo**, y el síntoma es idéntico en l
    puerto queda cerrado. El log de éxito ya no miente.
 4. El parseo fallido de `channels.telegram` pasa de `WARNING` a `ERROR`, nombra los
    dos recursos que se pierden y enuncia la topología esperada.
+5. `load_agent_config` avisa (`WARNING`) si encuentra un bloque `broadcast:` en la
+   raíz del agente o en `channels.broadcast`, nombrando el único path que el wiring
+   lee. No rompe el arranque: el agente carga igual.
 
 Los mensajes accionables van con `%`-args y no solo en `extra=`: el formatter por
 default de `journalctl` descarta el `extra`, y un log estructurado que el operador no
@@ -118,7 +127,9 @@ ve es lo mismo que no loguear.
 observable es que ahora hay `ERROR` en el log donde antes había silencio (o un
 `WARNING` enterrado). **NUNCA dejar que el `bind()` de un puerto viva dentro de una
 tarea de fondo mientras el caller loguea éxito**: un arranque que no puede fallar es
-un arranque que no se puede diagnosticar.
+un arranque que no se puede diagnosticar. Y **NUNCA descartar en silencio un bloque
+de config que el operador escribió**: si está en el lugar equivocado, decírselo es
+más barato que la sesión de debugging que provoca.
 
 ---
 

@@ -178,6 +178,8 @@ Cada una salió de un fallo en producción. El caso completo está en
   diagnosticar. → `broadcast-arranque-observable`
 - **NUNCA** degradar a `WARNING` un wiring que se saltea recursos declarados en la config
   — el daemon arranca sano y el operador no tiene pista. → `broadcast-arranque-observable`
+- **NUNCA** descartar en silencio un bloque de config escrito en el nivel equivocado: si
+  nadie lo lee, avisá con el path válido. → `broadcast-arranque-observable`
 
 ## Git workflow
 

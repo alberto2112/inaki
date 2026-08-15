@@ -602,6 +602,43 @@ def _filter_channel_adapters(raw: dict) -> dict:
     return {k: v for k, v in raw.items() if isinstance(v, dict)}
 
 
+# Único path donde el wiring LEE el bloque de broadcast. Cualquier otro lugar
+# donde el operador lo escriba se descarta sin efecto.
+_BROADCAST_PATH_VALIDO = "channels.telegram.broadcast"
+
+
+def _avisar_broadcast_extraviado(agent_id: str, merged: dict) -> None:
+    """Avisa si hay un bloque ``broadcast:`` en un nivel del YAML que nadie lee.
+
+    ``_wire_broadcast_for_agent`` solo mira ``channels.telegram.broadcast``. Un
+    bloque escrito en la raíz del agente lo descarta ``assemble_agent_config``
+    (que solo copia ``channels``), y uno escrito como ``channels.broadcast``
+    sobrevive el filtro de adapters pero ningún canal lo consume. En los dos
+    casos el daemon arranca sano, el puerto queda cerrado y **no se loguea nada
+    a ningún nivel** — el operador no tiene ni un hilo del que tirar.
+
+    Caso real: un `broadcast:` fuera de `channels.telegram` con la topología
+    vieja (`port:` suelto). Ni el error de validación llegó a emitirse, porque
+    el bloque nunca alcanzó el parser.
+    """
+    extraviados = []
+    if isinstance(merged.get("broadcast"), dict):
+        extraviados.append("broadcast (raíz del agente)")
+    canales = merged.get("channels")
+    if isinstance(canales, dict) and isinstance(canales.get("broadcast"), dict):
+        extraviados.append("channels.broadcast")
+
+    if extraviados:
+        logger.warning(
+            "Agente '%s': bloque de broadcast en un nivel que NADIE lee (%s). El único "
+            "path válido es '%s' — tal como está, el transporte no se levanta y el "
+            "puerto queda cerrado.",
+            agent_id,
+            ", ".join(extraviados),
+            _BROADCAST_PATH_VALIDO,
+        )
+
+
 def assemble_agent_config(merged: dict) -> AgentConfig:
     """Ensambla un ``AgentConfig`` desde un dict YA mergeado y resuelto.
 
@@ -680,6 +717,7 @@ def load_agent_config(
     merged = _deep_merge(global_raw, agent_raw)
 
     _check_legacy_shape(merged)
+    _avisar_broadcast_extraviado(agent_id, merged)
 
     try:
         return assemble_agent_config(merged)

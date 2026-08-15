@@ -1873,9 +1873,16 @@ class AppContainer:
         try:
             tg_cfg = TelegramChannelConfig.model_validate(tg_raw)
         except Exception as exc:
-            logger.warning(
-                "Agente '%s': no se pudo parsear TelegramChannelConfig — "
-                "broadcast/grupos wiring omitido: %s",
+            # ERROR, no WARNING: este return se lleva puestos el transporte de
+            # broadcast Y el rate limiter de grupos, y el daemon sigue arrancando
+            # como si nada. Un bloque `broadcast:` en formato viejo (`port:` suelto,
+            # `remote:`) o sin `auth` cae acá — el operador ve el bot online, el
+            # puerto cerrado, y ninguna pista de por qué.
+            logger.error(
+                "Agente '%s': channels.telegram NO valida — se omiten el transporte de "
+                "broadcast y el rate limiter de grupos. Revisá la topología "
+                "(broadcast.server.port XOR broadcast.client.host+port, broadcast.auth "
+                "obligatorio, puertos 1024..65535). Detalle: %s",
                 agent_cfg.id,
                 exc,
             )
@@ -2048,17 +2055,24 @@ class AppContainer:
         logger.info("BackgroundDelegationQueue iniciada")
 
         # Arrancar todos los adapters de broadcast (start es idempotente).
+        # En rol server, start() hace el bind() y PROPAGA el OSError si el puerto
+        # no se pudo abrir — por eso este log de éxito ya no miente.
         for adapter in self._broadcast_adapters:
+            role = adapter._role  # type: ignore[attr-defined]
+            host = adapter._host  # type: ignore[attr-defined]
+            port = adapter._port  # type: ignore[attr-defined]
             try:
                 await adapter.start()  # type: ignore[attr-defined]
-                logger.info(
-                    "broadcast adapter iniciado: role=%s host=%s port=%d",
-                    adapter._role,  # type: ignore[attr-defined]
-                    adapter._host,  # type: ignore[attr-defined]
-                    adapter._port,  # type: ignore[attr-defined]
-                )
+                logger.info("broadcast adapter iniciado: role=%s host=%s port=%d", role, host, port)
             except Exception as exc:
-                logger.error("Error arrancando broadcast adapter: %s", exc)
+                logger.error(
+                    "Broadcast %s NO arrancó en %s:%d — el puerto queda cerrado y ningún "
+                    "cliente podrá conectarse: %s",
+                    role,
+                    host,
+                    port,
+                    exc,
+                )
 
     async def shutdown(self) -> None:
         """Detiene la cola de background-delegation, el scheduler service y los

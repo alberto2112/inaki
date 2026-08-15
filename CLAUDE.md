@@ -173,6 +173,11 @@ Cada una salió de un fallo en producción. El caso completo está en
   gramática se extiende en `core/domain/value_objects/attachment.py`. → `attachment-grammar`
 - **NUNCA** volver al rol implícito por presencia de campo en la config de broadcast, ni
   duplicar `auth` por rol. → `broadcast-topology-config`
+- **NUNCA** dejar el `bind()` de un puerto dentro de una tarea de fondo mientras el caller
+  loguea éxito: un arranque que no puede fallar es un arranque que no se puede
+  diagnosticar. → `broadcast-arranque-observable`
+- **NUNCA** degradar a `WARNING` un wiring que se saltea recursos declarados en la config
+  — el daemon arranca sano y el operador no tiene pista. → `broadcast-arranque-observable`
 
 ## Git workflow
 

@@ -230,18 +230,71 @@ class TcpBroadcastAdapter:
         """Inicia el server TCP o la conexión cliente según el rol configurado.
 
         Idempotente: si ya está iniciado, no hace nada.
+
+        **Rol server: el ``bind()`` ocurre ACÁ, no dentro de la tarea.** Si el
+        puerto está ocupado, la interfaz no existe o falta permiso, ``start()``
+        LANZA el ``OSError`` al caller y el adapter queda sin iniciar
+        (``_iniciado=False``, reintentable). Antes el bind vivía dentro de la
+        tarea de fondo: ``start()`` retornaba siempre OK, el caller logueaba
+        "adapter iniciado" y el ``OSError`` moría en una tarea que nadie
+        awaitea — el puerto no se abría y NADA lo decía.
+
+        Rol client: la conexión sigue siendo asíncrona a propósito (el bucle
+        reconecta con backoff), así que ``start()`` no puede prometer que haya
+        upstream vivo; los fallos se ven en ``broadcast.client.reconnecting``.
+
+        Raises:
+            OSError: (solo rol server) si el bind del puerto falla.
         """
         if self._iniciado:
             return
-        self._iniciado = True
 
         if self._role == "server":
+            # bind() ANTES de marcar iniciado: si falla, el adapter queda intacto.
+            self._server_obj = await asyncio.start_server(
+                self._manejar_conexion_cliente,
+                host=self._host,
+                port=self._port,
+            )
+            logger.info(
+                "broadcast.server.started",
+                extra={"host": self._host, "port": self._port, "agent_id": self._agent_id},
+            )
+            self._iniciado = True
             self._tarea_principal = asyncio.create_task(
-                self._ejecutar_server(), name=f"broadcast:server:{self._agent_id}"
+                self._servir_para_siempre(), name=f"broadcast:server:{self._agent_id}"
             )
         else:
+            self._iniciado = True
             self._tarea_principal = asyncio.create_task(
                 self._ejecutar_cliente(), name=f"broadcast:client:{self._agent_id}"
+            )
+
+        self._tarea_principal.add_done_callback(self._reportar_muerte_tarea)
+
+    def _reportar_muerte_tarea(self, tarea: asyncio.Task) -> None:
+        """Loguea si ``_tarea_principal`` muere con excepción.
+
+        Sin este callback, una tarea que revienta después del arranque (el
+        ``serve_forever()`` del server, el bucle de reconexión del client) se
+        traga el error hasta que el GC recolecte la tarea — y el container
+        mantiene una referencia viva durante todo el proceso, así que puede no
+        recolectarse nunca. El transporte queda muerto y los logs, mudos.
+
+        El mensaje va con ``%`` y no solo en ``extra`` para que sea legible en
+        ``journalctl`` con el formatter por default.
+        """
+        if tarea.cancelled():
+            return
+        exc = tarea.exception()
+        if exc is not None:
+            logger.error(
+                "Broadcast %s del agente '%s' (%s:%d) murió: %s",
+                self._role,
+                self._agent_id,
+                self._host,
+                self._port,
+                exc,
             )
 
     async def stop(self) -> None:
@@ -289,17 +342,9 @@ class TcpBroadcastAdapter:
     # Modo server — internos
     # ------------------------------------------------------------------
 
-    async def _ejecutar_server(self) -> None:
-        """Cuerpo principal del rol server."""
-        self._server_obj = await asyncio.start_server(
-            self._manejar_conexion_cliente,
-            host=self._host,
-            port=self._port,
-        )
-        logger.info(
-            "broadcast.server.started",
-            extra={"host": self._host, "port": self._port, "agent_id": self._agent_id},
-        )
+    async def _servir_para_siempre(self) -> None:
+        """Cuerpo principal del rol server. El socket ya está bindeado por ``start()``."""
+        assert self._server_obj is not None, "start() debe haber bindeado el socket"
         async with self._server_obj:
             await self._server_obj.serve_forever()
 

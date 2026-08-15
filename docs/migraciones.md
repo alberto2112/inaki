@@ -44,6 +44,7 @@ Orden: **cronológico inverso** (la más reciente primero).
 | [`background-delegation`](#background-delegation) | `delegate` es **async por default** (`wait=false`) |
 | [`drop-per-agent-rest`](#drop-per-agent-rest) | Bloques `channels.rest` se ignoran en silencio |
 | [`broadcast-topology-config`](#broadcast-topology-config) | Rol explícito `server` XOR `client`; config vieja falla al cargar |
+| [`broadcast-arranque-observable`](#broadcast-arranque-observable) | El fallo de `bind()` y la config de broadcast que no valida ahora salen como `ERROR` en el log |
 
 ## Índice por subsistema
 
@@ -53,7 +54,8 @@ Orden: **cronológico inverso** (la más reciente primero).
 - **Retención y alcance del registro**: `trim-cuenta-conversacion`,
   `search-history-retention-horizon`
 - **Telegram y canales**: `attachment-grammar`, `groups-vs-broadcast`,
-  `broadcast-topology-config`, `broadcast-cross-agent-events`,
+  `broadcast-topology-config`, `broadcast-arranque-observable`,
+  `broadcast-cross-agent-events`,
   `multi-agent-telegram-broadcast`, `telegram-group-auth`,
   `telegram-photo-recognition`, `drop-per-agent-rest`
 - **Contexto per-entidad**: `channel-contextid`, `group-context-by-chat-id`
@@ -64,6 +66,59 @@ Orden: **cronológico inverso** (la más reciente primero).
 - **Tools y config**: `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `broadcast-arranque-observable`
+
+**El server de broadcast no abría el puerto y el daemon no decía nada.** Caso real
+(2026-08-15): Inaki configurado como server, Anacleto como client con IP, puerto y
+`auth` correctos. El client no lograba conectarse nunca; en `journalctl` no había un
+solo `ERROR`. El puerto simplemente no estaba escuchando.
+
+Había **dos caminos que se tragaban el fallo**, y el síntoma es idéntico en los dos:
+
+1. **`TcpBroadcastAdapter.start()` no bindeaba** — hacía
+   `asyncio.create_task(self._ejecutar_server())` y retornaba. El
+   `asyncio.start_server()` (el `bind()`) corría DENTRO de la tarea. Resultado:
+   `start()` no podía fallar nunca, el `try/except` de `AppContainer.startup()` no
+   tenía nada que atrapar, y el log de éxito —`"broadcast adapter iniciado"`— se
+   emitía igual con el puerto cerrado. El `OSError` (`EADDRINUSE`, interfaz
+   inexistente, permiso) quedaba retenido en una tarea que nadie awaitea; ni
+   siquiera aparecía el `"Task exception was never retrieved"` de Python, porque el
+   container conserva la referencia a `_tarea_principal` mientras vive el proceso.
+2. **`_wire_broadcast_for_agent` se salteaba el wiring con un `WARNING`** — parsea
+   `channels.telegram` con `TelegramChannelConfig.model_validate()`; si el bloque no
+   valida, hace `return`. Ese `return` se lleva puestos DOS recursos: el transporte
+   TCP **y** el rate limiter de grupos. El bot de Telegram levanta igual, así que
+   desde afuera se ve un daemon sano con el puerto cerrado. Cae acá cualquier
+   `broadcast:` en formato viejo (`port:` suelto o `remote:`, ver
+   `broadcast-topology-config`), sin `auth`, o con un puerto fuera de 1024..65535.
+
+**Cambios**:
+
+1. `start()` hace el `bind()` **antes de crear la tarea** en rol server, y propaga el
+   `OSError` al caller. La tarea de fondo (`_servir_para_siempre`) solo corre el
+   `serve_forever()` sobre un socket ya abierto. Si el bind falla, el adapter queda
+   con `_iniciado=False` — reintentable, y `stop()` sigue siendo no-op. El rol client
+   NO cambia: su conexión es asíncrona por diseño (bucle de reconexión con backoff),
+   así que `start()` no puede prometer upstream vivo.
+2. `_tarea_principal` lleva un `add_done_callback` que loguea `ERROR` si muere con
+   excepción. Cubre el transporte que revienta DESPUÉS del arranque.
+3. `AppContainer.startup()` loguea el fallo con rol, host y puerto, diciendo que el
+   puerto queda cerrado. El log de éxito ya no miente.
+4. El parseo fallido de `channels.telegram` pasa de `WARNING` a `ERROR`, nombra los
+   dos recursos que se pierden y enuncia la topología esperada.
+
+Los mensajes accionables van con `%`-args y no solo en `extra=`: el formatter por
+default de `journalctl` descarta el `extra`, y un log estructurado que el operador no
+ve es lo mismo que no loguear.
+
+**Sin migración de DB ni cambios de config. El wire format TCP no cambia.** Lo único
+observable es que ahora hay `ERROR` en el log donde antes había silencio (o un
+`WARNING` enterrado). **NUNCA dejar que el `bind()` de un puerto viva dentro de una
+tarea de fondo mientras el caller loguea éxito**: un arranque que no puede fallar es
+un arranque que no se puede diagnosticar.
 
 ---
 

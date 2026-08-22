@@ -167,11 +167,14 @@ inaki/                                  ← repository root
 │   └── outbound/
 │       ├── providers/                 # LLM — dynamic discovery via PROVIDER_NAME
 │       │   ├── base.py
+│       │   ├── openai_compatible.py   # Template Method de la familia /chat/completions
 │       │   ├── openrouter.py
 │       │   ├── openai.py
 │       │   ├── openai_responses.py
+│       │   ├── anthropic.py
 │       │   ├── groq.py
 │       │   ├── ollama.py
+│       │   ├── custom.py              # endpoint propio OpenAI-compat (base_url obligatorio)
 │       │   └── deepseek.py
 │       ├── embedding/                 # Embedding — dynamic discovery
 │       │   ├── base.py

@@ -85,7 +85,7 @@ All three are auto-discovered by scanning for a module-level `PROVIDER_NAME` con
 The three registries are **independent** — being available as an LLM does not make a
 vendor available for transcription.
 
-- **LLM** (`adapters/outbound/providers/`): `anthropic`, `deepseek`, `groq`, `ollama`, `openai`, `openai_responses`, `openrouter`. The OpenAI-dialect ones share `OpenAICompatibleProvider`.
+- **LLM** (`adapters/outbound/providers/`): `anthropic`, `custom`, `deepseek`, `groq`, `ollama`, `openai`, `openai_responses`, `openrouter`. The OpenAI-dialect ones share `OpenAICompatibleProvider`. `custom` is the generic adapter for your own OpenAI-compatible endpoint (vLLM, llama.cpp, an unsloth GGUF on the LAN): classic `max_tokens`, optional `api_key`, no `Authorization` header when there is no key, and `base_url` is required.
 - **Embedding** (`adapters/outbound/embedding/`): `e5_onnx` (local ONNX, ARM64-friendly) and `openai`. Dimension is 384 — changing it requires dropping and recreating the memory DB.
 - **Transcription** (`adapters/outbound/transcription/`): `groq`, `openai`.
 

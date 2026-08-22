@@ -48,6 +48,19 @@
 #     anthropic:  { api_key: "sk-ant-..." }   # Claude nativo (/v1/messages)
 #     # ollama: no requiere entrada, usa default http://localhost:11434
 #
+# Servidor de inferencia propio (OpenAI-compat clásico: vLLM, llama.cpp, GGUF
+# de unsloth en la LAN). `base_url` es OBLIGATORIO; `api_key` solo si tu server
+# la pide:
+#
+#   providers:
+#     custom: { base_url: "http://192.168.1.50:8000/v1" }
+#
+# OJO con el presupuesto de contexto: `llm.max_tokens` viaja como techo de
+# generación y muchos servers validan `prompt + max_tokens > n_ctx`. Bajalo en
+# el AGENTE que use este provider (junto con `chat_history.max_messages`), no
+# en el global — un `max_tokens` pensado para un modelo cloud contra una
+# ventana local chica es un HTTP 400 garantizado.
+#
 # Multi-instance (billing separado con el mismo adapter):
 #
 #   providers:
@@ -82,7 +95,7 @@ app:
 llm:
   provider: "openrouter"      # KEY del `providers:` registry que provee las creds.
                               # Adapters nativos: openrouter, openai, openai_responses,
-                              # anthropic, deepseek, groq, ollama.
+                              # anthropic, deepseek, groq, ollama, custom.
                               # Añadir nuevo proveedor: crear
                               # adapters/outbound/providers/{name}.py con
                               # PROVIDER_NAME = "{name}" (descubrimiento automático)

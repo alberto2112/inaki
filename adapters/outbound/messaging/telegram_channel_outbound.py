@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from core.domain.entities.message import Message, Role
 from core.domain.value_objects.outbound_kind import OutboundKind
@@ -197,21 +198,63 @@ class TelegramChannelOutbound(IChannelOutbound):
             if not path.exists():
                 raise FileNotFoundError(f"El fichero no existe: {path}")
 
-        # Lazy import para no atar el adapter al módulo telegram en tiempo de carga
-        from telegram import InputMediaPhoto  # noqa: PLC0415
-
         handles = [path.open("rb") for path in sources]
         try:
-            media = [
-                InputMediaPhoto(media=handles[0], caption=caption),
-                *(InputMediaPhoto(media=h) for h in handles[1:]),
-            ]
-            await bot.send_media_group(  # type: ignore[attr-defined]
-                chat_id=chat_id_int, media=media
-            )
+            await self._enviar_media_group(bot, chat_id_int, handles, caption)
         finally:
             for h in handles:
                 h.close()
+
+    async def _enviar_media_group(
+        self,
+        bot: object,
+        chat_id_int: int,
+        handles: list[Any],
+        caption: str | None,
+    ) -> None:
+        """Manda el álbum con el caption renderizado, con fallback al caption crudo.
+
+        Este es el ÚNICO camino de salida de Telegram cuyo caption no pasa por
+        ``TelegramBot.send_photo`` y familia: el álbum lo lleva el primer
+        ``InputMediaPhoto``, no un kwarg del envío. Por eso repite acá el
+        renderizado — con la misma guarda de 1024 chars — en vez de heredarlo.
+
+        El ``seek(0)`` antes del reintento es obligatorio: python-telegram-bot ya
+        consumió los handles en el intento fallido y sin rebobinar el álbum se
+        subiría con ficheros vacíos.
+        """
+        # Lazy import para no atar el adapter al módulo telegram en tiempo de carga
+        from telegram import InputMediaPhoto  # noqa: PLC0415
+        from telegram.constants import ParseMode  # noqa: PLC0415
+        from telegram.error import BadRequest  # noqa: PLC0415
+
+        from adapters.inbound.telegram.message_mapper import (  # noqa: PLC0415
+            es_error_de_parseo,
+            format_caption,
+        )
+
+        def construir(texto: str | None, modo: "ParseMode | None") -> list[Any]:
+            return [
+                InputMediaPhoto(media=handles[0], caption=texto, parse_mode=modo),
+                *(InputMediaPhoto(media=h) for h in handles[1:]),
+            ]
+
+        texto, modo = format_caption(caption)
+        try:
+            await bot.send_media_group(  # type: ignore[attr-defined]
+                chat_id=chat_id_int, media=construir(texto, modo)
+            )
+        except BadRequest as exc:
+            if modo is None or not es_error_de_parseo(exc):
+                raise
+            logger.warning(
+                "Telegram rechazó el caption HTML del álbum; reintento en texto plano: %s", exc
+            )
+            for h in handles:
+                h.seek(0)
+            await bot.send_media_group(  # type: ignore[attr-defined]
+                chat_id=chat_id_int, media=construir(caption, None)
+            )
 
     # ---------------------------------------------------------------------------
     # Helpers

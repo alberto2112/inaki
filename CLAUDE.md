@@ -180,6 +180,15 @@ Cada una salió de un fallo en producción. El caso completo está en
   — el daemon arranca sano y el operador no tiene pista. → `broadcast-arranque-observable`
 - **NUNCA** descartar en silencio un bloque de config escrito en el nivel equivocado: si
   nadie lo lee, avisá con el path válido. → `broadcast-arranque-observable`
+- **NUNCA** aplicar el formateo de un canal en los call-sites: va en el BORDE del
+  transporte, el punto por el que pasan TODAS sus salidas. Por call-site, cada camino
+  nuevo nace roto. → `formato-en-el-borde-del-transporte`
+- **NUNCA** formatear un caption con la lógica del texto: no se puede trocear (viaja
+  pegado al media) y su límite es 1024, no 4096. El render EXPANDE — sin guarda de
+  longitud rompés envíos que funcionaban. → `formato-en-el-borde-del-transporte`
+- **NUNCA** reintentar un envío de media sin rebobinar el handle: ptb lo lee al
+  CONSTRUIR el envío, así que el reintento sube un fichero vacío.
+  → `formato-en-el-borde-del-transporte`
 
 ## Git workflow
 

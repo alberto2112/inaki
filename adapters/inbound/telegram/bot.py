@@ -24,6 +24,7 @@ from adapters.inbound.telegram.message_mapper import (
     _TIPOS_GRUPO,
     _safe_optional_str,
     compose_sender_identity,
+    send_caption_or_plain,
     send_html_or_plain,
     telegram_update_to_input,
 )
@@ -597,10 +598,22 @@ class TelegramBot(
     async def send_message(self, chat_id: int, text: str) -> None:
         """Envía un mensaje proactivo fuera del contexto de un handler.
 
-        Usado por `ChannelSenderAdapter` para triggers `channel_send` del
-        scheduler. Delega en el bot interno de `python-telegram-bot`.
+        Es la ÚNICA salida de texto para todo lo que no es una respuesta
+        conversacional: sinks del scheduler (`channel_send`), intermedios en vivo
+        del tool loop, resultados de delegación en background y
+        `TelegramChannelOutbound`. Todos resuelven este bot vía
+        `get_telegram_bot` y terminan acá.
+
+        Por eso el renderizado markdown → HTML vive en ESTE borde y no en cada
+        call-site: un camino de salida nuevo nace formateado, troceado a 4096 y
+        con fallback a texto plano, sin tener que acordarse de nada.
         """
-        await self._app.bot.send_message(chat_id=chat_id, text=text)
+        await send_html_or_plain(
+            lambda texto, pm: self._app.bot.send_message(
+                chat_id=chat_id, text=texto, parse_mode=pm
+            ),
+            text,
+        )
 
     async def send_photo(
         self,
@@ -609,7 +622,13 @@ class TelegramBot(
         caption: str | None = None,
     ) -> None:
         """Envía una foto a un chat. ``photo`` puede ser URL, path local o file-like."""
-        await self._app.bot.send_photo(chat_id=chat_id, photo=photo, caption=caption)
+        await send_caption_or_plain(
+            lambda texto, pm: self._app.bot.send_photo(
+                chat_id=chat_id, photo=photo, caption=texto, parse_mode=pm
+            ),
+            caption,
+            media=photo,
+        )
 
     async def send_audio(
         self,
@@ -617,7 +636,13 @@ class TelegramBot(
         audio: Any,
         caption: str | None = None,
     ) -> None:
-        await self._app.bot.send_audio(chat_id=chat_id, audio=audio, caption=caption)
+        await send_caption_or_plain(
+            lambda texto, pm: self._app.bot.send_audio(
+                chat_id=chat_id, audio=audio, caption=texto, parse_mode=pm
+            ),
+            caption,
+            media=audio,
+        )
 
     async def send_video(
         self,
@@ -625,7 +650,13 @@ class TelegramBot(
         video: Any,
         caption: str | None = None,
     ) -> None:
-        await self._app.bot.send_video(chat_id=chat_id, video=video, caption=caption)
+        await send_caption_or_plain(
+            lambda texto, pm: self._app.bot.send_video(
+                chat_id=chat_id, video=video, caption=texto, parse_mode=pm
+            ),
+            caption,
+            media=video,
+        )
 
     async def send_document(
         self,
@@ -633,7 +664,13 @@ class TelegramBot(
         document: Any,
         caption: str | None = None,
     ) -> None:
-        await self._app.bot.send_document(chat_id=chat_id, document=document, caption=caption)
+        await send_caption_or_plain(
+            lambda texto, pm: self._app.bot.send_document(
+                chat_id=chat_id, document=document, caption=texto, parse_mode=pm
+            ),
+            caption,
+            media=document,
+        )
 
     async def send_media_group(
         self,

@@ -9,7 +9,9 @@ from telegram.error import BadRequest, TimedOut
 
 from adapters.inbound.telegram.message_mapper import (
     _envio_no_llego,
+    format_caption,
     format_response,
+    send_caption_or_plain,
     send_html_or_plain,
     split_message,
 )
@@ -365,3 +367,136 @@ async def test_send_html_or_plain_trocea_respuesta_larga():
 
     assert len(llamadas) > 1  # se troceó
     assert all(pm == ParseMode.HTML for _, pm in llamadas)
+
+
+# ---------------------------------------------------------------------------
+# format_caption — límite de 1024 y degradación a crudo
+# ---------------------------------------------------------------------------
+
+
+def test_format_caption_renderiza_markdown_con_parse_mode():
+    assert format_caption("mirá el **gráfico**") == ("mirá el <b>gráfico</b>", ParseMode.HTML)
+
+
+def test_format_caption_none_pasa_derecho_sin_parse_mode():
+    """Un media sin caption no debe inventar un caption vacío ni un parse_mode."""
+    assert format_caption(None) == (None, None)
+
+
+def test_format_caption_vacio_no_activa_parse_mode():
+    assert format_caption("   ") == ("   ", None)
+
+
+def test_format_caption_degrada_a_crudo_si_el_html_no_entra_en_1024():
+    """LA guarda anti-regresión: el render EXPANDE, y un caption no se puede trocear.
+
+    300 ``<`` crudos entran holgados en el límite de Telegram; escapados a
+    ``&lt;`` ocupan 1200 y lo pasan. Formatear a ciegas rompería un envío que
+    hoy funciona — peor que el bug que vinimos a arreglar.
+    """
+    crudo = "<" * 300
+    assert len(crudo) <= 1024
+    assert len(format_response(crudo)) > 1024, "Fixture inválida: el HTML debe pasarse"
+
+    texto, modo = format_caption(crudo)
+
+    assert texto == crudo, "Debe devolver el caption CRUDO, no el HTML que no entra"
+    assert modo is None, "Sin render no puede haber parse_mode"
+
+
+def test_format_caption_acepta_el_borde_exacto_de_1024():
+    """Un HTML de exactamente 1024 chars entra: el límite es inclusivo."""
+    crudo = "a" * 1014 + " **bc**"  # -> "aaa... <b>bc</b>" = 1014 + 1 + 9 = 1024
+    texto, modo = format_caption(crudo)
+
+    assert len(texto) == 1024
+    assert modo == ParseMode.HTML
+
+
+# ---------------------------------------------------------------------------
+# send_caption_or_plain — fallback + rebobinado del handle
+# ---------------------------------------------------------------------------
+
+
+class _FakeHandle:
+    """Handle de fichero mínimo que registra sus rebobinados."""
+
+    def __init__(self) -> None:
+        self.seeks: list[int] = []
+
+    def seek(self, pos: int) -> None:
+        self.seeks.append(pos)
+
+
+async def test_send_caption_or_plain_happy_path():
+    llamadas: list[tuple[str | None, ParseMode | None]] = []
+
+    async def send(texto: str | None, pm: ParseMode | None) -> None:
+        llamadas.append((texto, pm))
+
+    await send_caption_or_plain(send, "la **foto**")
+
+    assert llamadas == [("la <b>foto</b>", ParseMode.HTML)]
+
+
+async def test_send_caption_or_plain_fallback_rebobina_el_handle():
+    """Sin ``seek(0)`` el reintento subiría un fichero VACÍO: ptb ya lo consumió."""
+    handle = _FakeHandle()
+    llamadas: list[tuple[str | None, ParseMode | None]] = []
+
+    async def send(texto: str | None, pm: ParseMode | None) -> None:
+        llamadas.append((texto, pm))
+        if len(llamadas) == 1:
+            raise BadRequest("Can't parse entities: unsupported start tag")
+
+    await send_caption_or_plain(send, "roto **abierto", media=handle)
+
+    assert llamadas[1] == ("roto **abierto", None), "El reintento manda el caption crudo"
+    assert handle.seeks == [0], "El handle debe rebobinarse antes del reintento"
+
+
+async def test_send_caption_or_plain_reraise_si_no_es_error_de_parseo():
+    """Un BadRequest ajeno (chat inexistente) sube tal cual, sin reintento."""
+    handle = _FakeHandle()
+    llamadas: list[tuple[str | None, ParseMode | None]] = []
+
+    async def send(texto: str | None, pm: ParseMode | None) -> None:
+        llamadas.append((texto, pm))
+        raise BadRequest("Chat not found")
+
+    with pytest.raises(BadRequest, match="Chat not found"):
+        await send_caption_or_plain(send, "la **foto**", media=handle)
+
+    assert len(llamadas) == 1
+    assert handle.seeks == [], "No hubo reintento: nada que rebobinar"
+
+
+async def test_send_caption_or_plain_sin_parse_mode_no_reintenta():
+    """Si el caption ya iba crudo, un error de parseo no es culpa nuestra: sube.
+
+    Reintentar lo MISMO sería un bucle inútil y un segundo envío del media.
+    """
+    llamadas: list[tuple[str | None, ParseMode | None]] = []
+
+    async def send(texto: str | None, pm: ParseMode | None) -> None:
+        llamadas.append((texto, pm))
+        raise BadRequest("Can't parse entities")
+
+    with pytest.raises(BadRequest):
+        await send_caption_or_plain(send, None)
+
+    assert len(llamadas) == 1
+
+
+async def test_send_caption_or_plain_tolera_media_no_seekable():
+    """Un ``file_id`` string o una URL no tienen ``seek``: el reintento va igual."""
+    llamadas: list[tuple[str | None, ParseMode | None]] = []
+
+    async def send(texto: str | None, pm: ParseMode | None) -> None:
+        llamadas.append((texto, pm))
+        if len(llamadas) == 1:
+            raise BadRequest("Can't parse entities")
+
+    await send_caption_or_plain(send, "la **foto**", media="AgACAgEAAxkBAAI")
+
+    assert llamadas[1] == ("la **foto**", None)

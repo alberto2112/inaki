@@ -55,6 +55,8 @@ Ver también `docs/scheduler-spec.md`.
 
 - **TelegramBot — estructura** — `bot.py` conserva wiring + auth + turno privado (`_run_pipeline`); los handlers viven en mixins por responsabilidad (`commands.py`, `media.py`, `group_flow.py`, `broadcast.py`), cada uno declarando el slice de estado que consume como anotaciones de clase (contrato mypy). El bot NO recibe `AgentContainer`/`AgentConfig`: recibe `TelegramBotPorts` + `TelegramBotSettings` (`ports.py`, tipados contra core), construidos por `build_telegram_bot_settings/ports` en `container.py`. Todo el estado se inicializa en `TelegramBot.__init__`.
 
+- **Formateo de salida — vive en el BORDE del transporte** — El renderizado markdown → HTML de Telegram (`message_mapper.py`) se aplica en `TelegramBot.send_message` y en `send_photo`/`send_audio`/`send_video`/`send_document`, NO en los call-sites. Todo lo que sale del canal fuera del turno conversacional (sinks del scheduler, intermedios del tool loop, resultados `bg-N`, `IChannelOutbound`) resuelve el bot vía `get_telegram_bot()` y converge ahí, así que un camino de salida nuevo nace formateado y troceado sin tener que acordarse de nada. Dos gemelos con contratos distintos: `send_html_or_plain` (texto: trocea a 4096, fallback a plano) y `send_caption_or_plain` (captions: NO trocea —viaja pegado al media—, límite 1024, degrada a crudo si el HTML no entra, y rebobina el handle antes de reintentar). Único caption que no pasa por el bot: el álbum multi-foto, que lo lleva dentro del primer `InputMediaPhoto` (`TelegramChannelOutbound._enviar_media_group`). Ver `formato-en-el-borde-del-transporte` en `docs/migraciones.md`.
+
 ## Config y setup
 
 Ver también `docs/configuracion.md`.

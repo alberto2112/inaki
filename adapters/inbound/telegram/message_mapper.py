@@ -328,7 +328,7 @@ _PARSE_ERROR_HINTS: tuple[str, ...] = (
 )
 
 
-def _es_error_de_parseo(exc: BadRequest) -> bool:
+def es_error_de_parseo(exc: BadRequest) -> bool:
     """``True`` si el ``BadRequest`` viene de un HTML que Telegram no pudo parsear."""
     mensaje = str(exc).lower()
     return any(hint in mensaje for hint in _PARSE_ERROR_HINTS)
@@ -468,10 +468,96 @@ async def _send_fragmento(
     try:
         await _send_con_reintento(lambda: send(format_response(fragmento), ParseMode.HTML))
     except BadRequest as exc:
-        if not _es_error_de_parseo(exc):
+        if not es_error_de_parseo(exc):
             raise
         logger.warning("Telegram rechazó el HTML; reintento en texto plano: %s", exc)
         await _send_con_reintento(lambda: send(fragmento, None))
+
+
+# Límite duro de Telegram para el caption de un media (1024 chars) — MUY por
+# debajo de los 4096 de un mensaje de texto.
+_TELEGRAM_MAX_CAPTION_CHARS = 1024
+
+
+def format_caption(caption: str | None) -> tuple[str | None, ParseMode | None]:
+    """Renderiza un caption a HTML de Telegram, degradando a crudo si no entra.
+
+    Devuelve ``(texto, parse_mode)`` listo para pasar a ``send_photo`` y familia.
+
+    Un caption NO es un mensaje de texto y NO se puede tratar igual:
+
+    - **No se puede trocear**: viaja pegado al media, en el mismo request. No hay
+      "segundo caption" al que mandar el sobrante.
+    - **El límite es 1024**, no 4096.
+
+    Como el render a HTML EXPANDE el texto (escapes ``&amp;``/``&lt;`` y tags
+    ``<b></b>``), un caption que hoy entra crudo puede NO entrar formateado. Sin
+    esta guarda, formatear rompería envíos que hoy funcionan: la regresión sería
+    peor que el bug. Ante la duda mandamos el crudo — perder el formato es mejor
+    que perder el envío.
+
+    Args:
+        caption: el caption markdown, o ``None`` si el media va sin texto.
+
+    Returns:
+        ``(caption_html, ParseMode.HTML)`` si el render entra en el límite;
+        ``(caption_original, None)`` en cualquier otro caso.
+    """
+    if caption is None or not caption.strip():
+        return caption, None
+    renderizado = format_response(caption)
+    if not renderizado or len(renderizado) > _TELEGRAM_MAX_CAPTION_CHARS:
+        return caption, None
+    return renderizado, ParseMode.HTML
+
+
+def rebobinar(media: Any) -> None:
+    """Devuelve un handle de fichero al byte 0, si es que lo es y se puede.
+
+    Reintentar un envío de media SIN rebobinar sube un fichero VACÍO:
+    python-telegram-bot ya consumió el stream en el intento fallido. Tolera
+    cualquier cosa que no sea seekable (``bytes``, ``file_id`` string, URL) —
+    en esos casos no hay nada que rebobinar y el reintento es seguro tal cual.
+    """
+    seek = getattr(media, "seek", None)
+    if seek is None:
+        return
+    try:
+        seek(0)
+    except Exception:  # pragma: no cover — stream no seekable (pipe, socket)
+        logger.warning("No se pudo rebobinar el media para el reintento sin formato")
+
+
+async def send_caption_or_plain(
+    send: Callable[[str | None, ParseMode | None], Awaitable[Any]],
+    caption: str | None,
+    media: Any = None,
+) -> None:
+    """Envía un media con su caption renderizado, con fallback al caption crudo.
+
+    Gemelo de ``send_html_or_plain`` para la familia ``send_photo`` /
+    ``send_audio`` / ``send_video`` / ``send_document``: mismo contrato de
+    "el usuario recibe el contenido aunque el formato falle", sin el troceo
+    (un caption no se puede partir) y con el rebobinado del handle, que es lo
+    que hace SEGURO el reintento.
+
+    Args:
+        send: callable async ``(caption, parse_mode) -> Awaitable``. El media ya
+            viaja capturado en el closure de cada call-site.
+        caption: el caption markdown crudo, o ``None``.
+        media: el payload del media, para rebobinarlo antes de reintentar. Se
+            ignora si no es un handle seekable.
+    """
+    texto, modo = format_caption(caption)
+    try:
+        await send(texto, modo)
+    except BadRequest as exc:
+        # Sin parse_mode no hay HTML que culpar: el fallo es otro y sube tal cual.
+        if modo is None or not es_error_de_parseo(exc):
+            raise
+        logger.warning("Telegram rechazó el caption HTML; reintento en texto plano: %s", exc)
+        rebobinar(media)
+        await send(caption, None)
 
 
 def _escape(text: str) -> str:

@@ -7,6 +7,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from telegram.constants import ParseMode
+from telegram.error import BadRequest
+
 from adapters.outbound.messaging.telegram_channel_outbound import TelegramChannelOutbound
 from core.domain.entities.message import Role
 from core.domain.value_objects.outbound_kind import OutboundKind
@@ -343,3 +346,87 @@ def test_capabilities_incluye_todos_los_kinds(fake_bot, fake_history):
 
     for kind in OutboundKind:
         assert kind in caps, f"Se esperaba {kind} en capabilities()"
+
+
+# ---------------------------------------------------------------------------
+# ALBUM — formateo del caption (el único que no pasa por bot.send_photo)
+# ---------------------------------------------------------------------------
+
+
+async def test_album_renderiza_el_caption_a_html(fake_bot, fake_history, tmp_path):
+    """El caption del álbum viaja en el primer InputMediaPhoto, no como kwarg.
+
+    Por eso este camino repite el renderizado en vez de heredarlo de
+    ``TelegramBot.send_photo``: si no, el álbum sería el único que sigue
+    mostrando los asteriscos crudos.
+    """
+    adapter = _adapter(fake_bot, fake_history)
+    fotos = [_archivo(tmp_path, f"{i}.jpg") for i in range(3)]
+
+    await adapter.send(
+        chat_id="-100",
+        kind=OutboundKind.ALBUM,
+        sources=fotos,
+        caption="las **tres** fotos",
+    )
+
+    media = fake_bot.send_media_group.call_args.kwargs["media"]
+    assert media[0].caption == "las <b>tres</b> fotos"
+    assert media[0].parse_mode == ParseMode.HTML
+    assert getattr(media[1], "caption", None) is None, "Solo la primera lleva caption"
+
+    # El historial guarda el caption CRUDO: es el texto del dominio, no HTML de transporte.
+    msg = fake_history.append.call_args.args[1]
+    assert msg.content == "las **tres** fotos"
+
+
+async def test_album_fallback_rebobina_todos_los_handles(fake_bot, fake_history, tmp_path):
+    """Si Telegram rechaza el caption HTML, el reintento va crudo y con los ficheros enteros.
+
+    ``InputMediaPhoto`` lee el handle al CONSTRUIRSE (lo envuelve en un
+    ``InputFile``), no al enviarse. Sin el ``seek(0)`` previo, el álbum del
+    reintento se armaría con tres ficheros VACÍOS: el usuario recibiría el
+    caption bien formateado y las fotos rotas.
+    """
+    adapter = _adapter(fake_bot, fake_history)
+    fotos = [_archivo(tmp_path, f"{i}.jpg") for i in range(3)]
+    subidos: list[list[bytes]] = []
+
+    async def rechazar_una_vez(*, chat_id, media):
+        subidos.append([m.media.input_file_content for m in media])
+        if len(subidos) == 1:
+            raise BadRequest("Can't parse entities: unsupported start tag")
+
+    fake_bot.send_media_group = AsyncMock(side_effect=rechazar_una_vez)
+
+    await adapter.send(
+        chat_id="-100",
+        kind=OutboundKind.ALBUM,
+        sources=fotos,
+        caption="roto **abierto",
+    )
+
+    assert fake_bot.send_media_group.await_count == 2
+    media = fake_bot.send_media_group.call_args.kwargs["media"]
+    assert media[0].caption == "roto **abierto", "El reintento manda el caption crudo"
+    assert media[0].parse_mode is None
+    assert subidos[1] == subidos[0], "El reintento debe subir los mismos bytes"
+    assert all(b for b in subidos[1]), "Ningún fichero puede subirse vacío"
+
+
+async def test_album_badrequest_ajeno_al_parseo_se_propaga(fake_bot, fake_history, tmp_path):
+    """Un chat inexistente no se disfraza de problema de formato."""
+    adapter = _adapter(fake_bot, fake_history)
+    fotos = [_archivo(tmp_path, f"{i}.jpg") for i in range(3)]
+    fake_bot.send_media_group = AsyncMock(side_effect=BadRequest("Chat not found"))
+
+    with pytest.raises(BadRequest, match="Chat not found"):
+        await adapter.send(
+            chat_id="-100",
+            kind=OutboundKind.ALBUM,
+            sources=fotos,
+            caption="las **tres**",
+        )
+
+    assert fake_bot.send_media_group.await_count == 1, "No debe reintentar"
+    fake_history.append.assert_not_awaited(), "Un envío fallido no se persiste"

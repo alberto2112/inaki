@@ -45,6 +45,7 @@ Orden: **cronológico inverso** (la más reciente primero).
 | [`drop-per-agent-rest`](#drop-per-agent-rest) | Bloques `channels.rest` se ignoran en silencio |
 | [`broadcast-topology-config`](#broadcast-topology-config) | Rol explícito `server` XOR `client`; config vieja falla al cargar |
 | [`broadcast-arranque-observable`](#broadcast-arranque-observable) | El fallo de `bind()` y la config de broadcast que no valida ahora salen como `ERROR` en el log |
+| [`formato-en-el-borde-del-transporte`](#formato-en-el-borde-del-transporte) | Todo lo que Telegram manda fuera del turno conversacional (scheduler, `bg-N`, intermedios, media) sale **formateado** y troceado, no en markdown crudo |
 
 ## Índice por subsistema
 
@@ -53,7 +54,8 @@ Orden: **cronológico inverso** (la más reciente primero).
   `in-flight-message-injection`, `turn-kill-switch`
 - **Retención y alcance del registro**: `trim-cuenta-conversacion`,
   `search-history-retention-horizon`
-- **Telegram y canales**: `attachment-grammar`, `groups-vs-broadcast`,
+- **Telegram y canales**: `attachment-grammar`, `formato-en-el-borde-del-transporte`,
+  `groups-vs-broadcast`,
   `broadcast-topology-config`, `broadcast-arranque-observable`,
   `broadcast-cross-agent-events`,
   `multi-agent-telegram-broadcast`, `telegram-group-auth`,
@@ -66,6 +68,86 @@ Orden: **cronológico inverso** (la más reciente primero).
 - **Tools y config**: `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `formato-en-el-borde-del-transporte`
+
+**Inaki mandaba markdown crudo por Telegram y el usuario veía los asteriscos.**
+Caso real (2026-08-24): una investigación larga terminaba con `**POLKA
+corresponde al ensayo NCT05898399**` — con los asteriscos a la vista, sin
+negrita. Parecía un problema de prompt ("pedile al LLM que formatee distinto"),
+y no lo era: **el renderer existía y funcionaba, pero no lo llamaba nadie en ese
+camino**.
+
+**El diagnóstico.** `format_response()` (markdown → subset HTML de Telegram) y
+`send_html_or_plain()` (envío con `parse_mode=HTML`, troceo a 4096 y fallback a
+texto plano) estaban bien hechos desde siempre, pero se invocaban en **tres
+call-sites**, los tres del camino conversacional: `bot.py` (privado),
+`group_flow.py` (grupo) y `media.py` (foto/audio). Todo el resto de las salidas
+del canal mandaba el texto crudo:
+
+| Camino | Qué entrega |
+|---|---|
+| `TelegramSink` | resultados del scheduler (`channel_send`) |
+| `TelegramLiveIntermediateSink` | los bloques intermedios del tool loop |
+| `background_queue_adapter._deliver_response` | los resultados `bg-N` de una delegación |
+| `TelegramChannelOutbound._enviar_texto` | la superficie `IChannelOutbound` (tool `send_to_telegram`, gateway admin) |
+
+**El error de diseño**, que es lo que importa: el formateo es responsabilidad
+del canal y va en el **borde del transporte**, no en cada call-site. Aplicado por
+call-site, cada camino de salida nuevo **nace roto por default** y nadie se
+entera hasta que un usuario ve los asteriscos. Es la misma lógica del canal THIN:
+la capacidad se implementa UNA vez, en el punto por el que pasan todos.
+
+**El cambio.** El renderizado se mudó al borde:
+
+- `TelegramBot.send_message` envuelve su envío en `send_html_or_plain`. Los
+  cuatro caminos de la tabla resuelven el bot vía `get_telegram_bot()`, que
+  devuelve la instancia de `TelegramBot` (no el `Bot` de python-telegram-bot):
+  **todos convergen ahí**, así que el arreglo es uno solo.
+- `TelegramBot.send_photo` / `send_audio` / `send_video` / `send_document`
+  formatean su `caption` con el gemelo `send_caption_or_plain`.
+- `TelegramChannelOutbound._enviar_media_group` hace lo propio para el álbum
+  multi-foto — el único caption que NO pasa por `send_photo`, porque viaja
+  dentro del primer `InputMediaPhoto`.
+
+No hay riesgo de doble formateo: los tres call-sites conversacionales usan
+`message.reply_text` o `self._app.bot` (el `Bot` de ptb), nunca
+`TelegramBot.send_message`.
+
+**Efecto colateral bienvenido**: esos caminos tampoco tenían troceo. Un resultado
+`bg-N` de más de 4096 chars **rebotaba** con "message is too long" y el usuario
+no recibía NADA. Ahora se parte solo.
+
+**Los captions no son mensajes de texto** y por eso tienen su propia función
+(`format_caption`) en vez de reusar la del texto:
+
+- **No se pueden trocear**: viajan pegados al media, en el mismo request. No hay
+  "segundo caption" al que mandar el sobrante.
+- **El límite es 1024**, no 4096.
+
+Como el render a HTML **expande** el texto (escapes `&amp;`/`&lt;`, tags
+`<b></b>`), un caption que hoy entra crudo puede no entrar formateado. Sin la
+guarda de longitud, formatear habría roto envíos que funcionaban: la regresión
+sería peor que el bug. `format_caption` devuelve el crudo cuando el HTML no
+entra — perder el formato es mejor que perder el envío.
+
+**El reintento de un media exige rebobinar el handle.** `InputMediaPhoto` (y
+`send_photo` y familia) leen el fichero **al construirse**, no al enviarse. Si el
+fallback a texto plano re-envía sin un `seek(0)` previo, sube un fichero
+**vacío**: el usuario recibe el caption bien formateado y la foto rota. De ahí el
+`rebobinar()` del mapper y el `seek(0)` sobre todos los handles del álbum.
+
+**Sin migración ni cambios de config.** Cambia el aspecto de lo que ya llegaba: lo
+que antes salía en markdown crudo ahora sale con negritas, cursivas, citas y
+código. Si algún texto dependía de leerse literal, ahora se renderiza.
+
+**Invariantes**: NUNCA aplicar el formateo de un canal en los call-sites — va en
+el borde del transporte, el punto por el que pasan TODAS sus salidas. NUNCA
+formatear un caption con la lógica del texto: no se trocea y su límite es 1024,
+así que el render necesita su propia guarda de longitud. NUNCA reintentar un
+envío de media sin rebobinar el handle.
 
 ---
 

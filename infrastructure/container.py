@@ -66,7 +66,7 @@ from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRep
 from adapters.outbound.embedding.sqlite_embedding_cache import SqliteEmbeddingCache
 from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
 from adapters.outbound.tools.tool_registry import ToolRegistry
-from core.domain.errors import AgentNotFoundError, InakiError
+from core.domain.errors import AgentNotFoundError, ConfigError, InakiError
 from core.domain.services.broadcast_buffer import BroadcastBuffer
 from core.domain.value_objects.channel_context import current_channel_context
 from core.domain.services.rate_limiter import FixedWindowRateLimiter
@@ -1140,7 +1140,17 @@ class AgentContainer:
                 photos_cfg.scene.provider,
             )
         except Exception as exc:
-            logger.error("Error en wire_photos para agente '%s': %s", self.agent_config.id, exc)
+            # DEGRADACIÓN DELIBERADA, no descuido: el stack de visión (InsightFace,
+            # modelos ONNX) es una dependencia externa pesada que puede faltar en el
+            # host sin que el resto de la config esté mal. Se degrada esta capacidad
+            # y solo esta — a diferencia del wiring de canales/scheduler/delegación,
+            # que son fatales porque dejarían muda una capacidad declarada.
+            logger.error(
+                "Agente '%s': el procesamiento de fotos QUEDA DESHABILITADO — %s. "
+                "El resto del agente arranca normal; las fotos entrantes no se analizan.",
+                self.agent_config.id,
+                exc,
+            )
             self._photos_wired = True
 
     def _build_scene_describer(self, photos_cfg):
@@ -1534,7 +1544,12 @@ class AppContainer:
                 )
                 logger.info("AgentContainer creado para '%s'", agent_cfg.id)
             except Exception as exc:
-                logger.error("Error creando container para agente '%s': %s", agent_cfg.id, exc)
+                # Mismo criterio que ``load_agent_config``: un agente que no se
+                # construye es indistinguible de uno que nunca se configuró.
+                raise ConfigError(
+                    f"Agente '{agent_cfg.id}': no se pudo construir su container. "
+                    f"El agente quedaría declarado pero inexistente. Detalle: {exc}"
+                ) from exc
 
     def _build_channel_router(self) -> None:
         # Router de canales — construido ANTES que la cola de background-delegation
@@ -1611,7 +1626,10 @@ class AppContainer:
                     get_sub_agent_raw=self.registry.get_sub_agent_raw,
                 )
             except Exception as exc:
-                logger.error("Error en wire_delegation para agente '%s': %s", agent_id, exc)
+                raise ConfigError(
+                    f"Agente '{agent_id}': falló el wiring de delegación. El agente "
+                    f"declara 'delegation' pero no podría delegar. Detalle: {exc}"
+                ) from exc
 
     def _build_consolidation(self) -> None:
         # Global consolidation use case — itera agentes habilitados con delay.
@@ -1692,7 +1710,10 @@ class AppContainer:
                     self.schedule_task_uc, self.scheduler_service, user_timezone
                 )
             except Exception as exc:
-                logger.error("Error en wire_scheduler para agente '%s': %s", agent_id, exc)
+                raise ConfigError(
+                    f"Agente '{agent_id}': falló el wiring del scheduler. Sus tareas "
+                    f"programadas no se ejecutarían. Detalle: {exc}"
+                ) from exc
 
     def _wire_broadcast_adapters(self) -> None:
         # Wire de recursos telegram per-agente — requiere todos los containers ya
@@ -1705,7 +1726,12 @@ class AppContainer:
             try:
                 self._wire_broadcast_for_agent(agent_cfg)
             except Exception as exc:
-                logger.error("Error en wire_broadcast para agente '%s': %s", agent_cfg.id, exc)
+                # Ver nota `broadcast-arranque-observable`: este wiring resuelve el
+                # transporte TCP Y el rate limiter de grupos. Degradarlo dejaba al
+                # daemon arrancando sano con el puerto cerrado.
+                raise ConfigError(
+                    f"Agente '{agent_cfg.id}': falló el wiring de broadcast/grupos. Detalle: {exc}"
+                ) from exc
 
     def _wire_photos(self) -> None:
         # Wire photos — singletons compartidos (vision lazy, face registry)
@@ -1740,7 +1766,14 @@ class AppContainer:
                     "Photos singletons inicializados (faces.db=%s, vision=lazy)", faces_db_path
                 )
             except Exception as exc:
-                logger.error("Error inicializando photos singletons: %s", exc)
+                # Ídem: dependencia externa pesada. Sin estos singletons ningún
+                # agente analiza fotos, pero el daemon sigue siendo útil.
+                logger.error(
+                    "Reconocimiento facial y descripción de escena QUEDAN DESHABILITADOS "
+                    "para TODOS los agentes — no se pudieron inicializar los singletons "
+                    "de photos: %s",
+                    exc,
+                )
 
         for agent_id, container in self.agents.items():
             if self.registry.is_sub_agent(agent_id):
@@ -1752,7 +1785,11 @@ class AppContainer:
                     self.global_config,
                 )
             except Exception as exc:
-                logger.error("Error en wire_photos para agente '%s': %s", agent_id, exc)
+                logger.error(
+                    "Agente '%s': el procesamiento de fotos QUEDA DESHABILITADO — %s",
+                    agent_id,
+                    exc,
+                )
 
     def _wire_telegram_tools(self) -> None:
         # Wire telegram tools (send_to_telegram + download_from_telegram).
@@ -1790,7 +1827,10 @@ class AppContainer:
                     self._telegram_file_repo,
                 )
             except Exception as exc:
-                logger.error("Error en wire_telegram_tools para agente '%s': %s", agent_id, exc)
+                raise ConfigError(
+                    f"Agente '{agent_id}': falló el wiring de las tools de Telegram. "
+                    f"El agente tiene canal telegram pero no podría usarlas. Detalle: {exc}"
+                ) from exc
 
     def _wire_memory_extractors(self) -> None:
         # Wire memory extractor sub-agents.

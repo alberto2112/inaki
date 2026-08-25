@@ -25,6 +25,7 @@ Orden: **cronológico inverso** (la más reciente primero).
 | [`telegram-group-auth`](#telegram-group-auth) | Agregar `chat_id` a `allowed_chat_ids` o el bot deja de responder en grupos |
 | [`channel-contextid`](#channel-contextid) | `mv` de los ficheros de contexto a `{context_id}.md` + cambiar la variable del prompt |
 | [`per-user-context-files`](#per-user-context-files) | *(superseded)* `mv` de `USER.md` a `users/{channel}/…` |
+| [`config-falla-ruidoso`](#config-falla-ruidoso) | **Puede impedir el arranque**: corregir el typo/valor que el error nombra (antes se ignoraba en silencio) |
 
 ### Migración automática en caliente — sin acción
 
@@ -71,8 +72,71 @@ Orden: **cronológico inverso** (la más reciente primero).
   `agent-state-scoped-by-channel-chat`
 - **Scheduler**: `scheduler-trigger-type-mutable`, `channel-send-history-persist`
 - **Tools y config**: `write-file-explicit-mode`, `tool-config-protocol`,
-  `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`
+  `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
+  `config-falla-ruidoso`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `config-falla-ruidoso`
+
+> **Nota para el operador**: esta es la única fase del refactor de config que
+> puede impedir que el daemon arranque con una config que antes "funcionaba".
+> Si el arranque falla tras actualizar, el mensaje nombra el fichero, el bloque
+> y la clave a corregir. **Es a propósito**: lo que arrancaba, arrancaba mal.
+
+**El subsistema de config tenía tres formas distintas de mentir.** Ninguna era
+un bug puntual; las tres eran decisiones de "no molestar al operador" que
+terminaban costándole mucho más caro que un error al arrancar:
+
+| Mentira | Qué veía el operador |
+|---|---|
+| Claves desconocidas ignoradas (33 de 37 modelos) | `temperatura: 0.9` no hacía nada; el modelo corría con `temperature: 0.7` |
+| Valores basura sanitizados a un default | `timeout_seconds: "sesenta"` corría con 60; creía tener 300 para thinking mode |
+| Un agente inválido desaparecía con WARNING | El bot no responde y el daemon dice estar sano |
+
+**El cambio.**
+
+1. **`extra="forbid"` para TODO el schema**, puesto en la clase base en vez de
+   modelo por modelo. Un validador propio se adelanta al genérico de Pydantic
+   para nombrar el bloque, la clave sobrante y —vía `difflib`— la que se quiso
+   escribir: `LLMConfig: clave(s) desconocida(s): 'temperatura' ¿Quisiste decir
+   'temperature'?`. Los tres canales pierden su `extra="allow"`: existía
+   mientras el bloque no se validaba al cargar, y desde
+   [`channels-validados-al-cargar`](#channels-validados-al-cargar) ya no aplica.
+2. **`timeout_seconds` y `request_delay_seconds` dejan de sanitizarse** —
+   `gt=0` y `ge=0` declarativos, sin validador propio.
+3. **Un agente con config inválida aborta el arranque** con `ConfigError`
+   nombrando el fichero. Un agente que NO EXISTE sigue devolviendo `None`: no
+   es lo mismo "no está" que "está roto".
+4. **Cinco wirings del container pasan de degradar a ser fatales**: construcción
+   del `AgentContainer`, delegación, scheduler, broadcast y tools de Telegram.
+   Todos comparten la misma forma: el operador declaró una capacidad y el
+   `except Exception → logger.error → continuar` la dejaba muda.
+
+**Lo que se degrada, se degrada a propósito y lo dice.** El stack de visión
+(InsightFace, modelos ONNX) es una dependencia externa pesada que puede faltar
+en el host sin que la config esté mal, así que sigue degradando — pero el log
+pasó de `Error en wire_photos para agente 'x'` a nombrar la capacidad perdida:
+`el procesamiento de fotos QUEDA DESHABILITADO`. Ídem las extensiones de
+`ext/`: código de terceros del usuario, que una rota tumbe el daemon sería peor
+que saltearla con aviso.
+
+**Reversión de un criterio anterior — leer esto.** `timeout_seconds` y
+`request_delay_seconds` tenían fallback explícito por pedido del operador, con
+la regla escrita en sus tests: *"nada de fail-fast acá: priorizamos que el
+bootstrap del daemon no muera por un dedazo en el YAML"*. Esta nota **revierte
+esa decisión**, y la razón es que la red resultó peor que el problema que
+evitaba: un default silencioso que contradice lo escrito en el YAML no es
+robustez, es un bug que no se puede diagnosticar. El daemon que no arranca se
+arregla en diez segundos leyendo el error; el que arranca con un timeout que no
+pediste puede pasar meses sin que lo notes.
+
+**Invariante.** **NUNCA** sanitizar un valor de config a un default "para no
+romper el arranque". Un valor mal escrito es un error del operador, y el
+arranque es el único momento en que se puede señalar con precisión. La única
+degradación legítima es la de una **dependencia externa** (no de la config), y
+tiene que nombrar en el log qué capacidad queda muda.
 
 ---
 

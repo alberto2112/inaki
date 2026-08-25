@@ -730,7 +730,8 @@ def assemble_agent_config(merged: dict) -> AgentConfig:
 
     Lanza ``KeyError`` si falta un campo requerido (``id``/``name``/``description``)
     o ``ValueError`` si un sub-modelo es inválido. El caller decide la política:
-    ``load_agent_config`` envuelve en try/except → ``None``; el builder efímero propaga.
+    ``load_agent_config`` lo envuelve en ``ConfigError`` nombrando el fichero; el
+    builder efímero propaga tal cual.
     """
     providers = _parse_providers(merged)
     transcription_raw = merged.get("transcription")
@@ -770,7 +771,9 @@ def load_agent_config(
     ``extra_base`` son los defaults de rol (ej. sub-agentes, ver ``SUBAGENT_DEFAULTS``):
     pisan a ``global_raw`` pero el YAML explícito del agente sigue pisando por encima.
 
-    Retorna None si el agente tiene config inválida (loggea WARNING).
+    Retorna ``None`` solo si el fichero NO EXISTE (caso legítimo: el caller
+    pregunta por un agente que no está). Una config presente pero inválida
+    levanta ``ConfigError`` y aborta el arranque: ver el comentario en el except.
     """
     agent_yaml = agents_dir / f"{agent_id}.yaml"
 
@@ -792,8 +795,15 @@ def load_agent_config(
     try:
         return assemble_agent_config(merged)
     except (KeyError, ValueError) as exc:
-        logger.warning("Config inválida para agente '%s': %s", agent_id, exc)
-        return None
+        # ABORTA, no degrada. Antes esto era un WARNING y el agente simplemente
+        # desaparecía del registry: el operador veía el daemon "sano", su bot sin
+        # responder, y ninguna relación evidente entre las dos cosas. Un agente
+        # que no existe es indistinguible de uno que nunca se configuró.
+        from core.domain.errors import ConfigError
+
+        raise ConfigError(
+            f"Config inválida para el agente '{agent_id}' ({agent_yaml}): {exc}"
+        ) from exc
 
 
 # ---------------------------------------------------------------------------

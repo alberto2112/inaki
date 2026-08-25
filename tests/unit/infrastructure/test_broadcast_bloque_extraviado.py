@@ -23,6 +23,7 @@ import logging
 import pytest
 import yaml
 
+from core.domain.errors import ConfigError
 from infrastructure.config import load_agent_config
 
 
@@ -62,19 +63,17 @@ def test_bloque_extraviado_avisa(tmp_path, caplog, cuerpo, esperado, sigue_carga
     agents_dir = tmp_path / "agents"
     _escribir_agente(agents_dir, cuerpo)
 
-    cfg = load_agent_config("inaki", agents_dir, dict(GLOBAL_MINIMO))
-
     if sigue_cargando:
+        cfg = load_agent_config("inaki", agents_dir, dict(GLOBAL_MINIMO))
         assert cfg is not None, (
             "fuera de ``channels`` el bloque es una clave suelta: el aviso no rompe el arranque"
         )
     else:
         # Garantía MÁS fuerte que el WARNING: dentro de ``channels`` el bloque
-        # extraviado es además un canal desconocido, y ``AgentConfig`` lo rechaza.
-        assert cfg is None, (
-            "un bloque dentro de channels que ningún canal reclama debe abortar la "
-            "carga del agente, no solo avisar"
-        )
+        # extraviado es además un canal desconocido, así que ``AgentConfig`` lo
+        # rechaza y (desde la Fase 4) el arranque aborta en vez de degradar.
+        with pytest.raises(ConfigError, match="channels.broadcast"):
+            load_agent_config("inaki", agents_dir, dict(GLOBAL_MINIMO))
     assert esperado in caplog.text
     assert "channels.telegram.broadcast" in caplog.text, (
         f"el aviso debe nombrar el path válido; dijo: {caplog.text!r}"

@@ -190,6 +190,10 @@ Cada una salió de un fallo en producción. El caso completo está en
   `core/domain/config_merge.py` (dict⊕dict funde, lista reemplaza, `null` pisa,
   sentinel borra, cambiar de forma entre capas es error). Si no alcanza para un caso
   nuevo, **extendé el motor**; no nazca otro al lado. → `motor-de-merge-unico`
+- **NUNCA** sanitizar un valor de config a un default "para no romper el arranque":
+  un default silencioso que contradice el YAML es un bug que no se puede diagnosticar.
+  La única degradación legítima es la de una **dependencia externa** (no de la config),
+  y el log tiene que nombrar qué capacidad queda muda. → `config-falla-ruidoso`
 - **NUNCA** volver al rol implícito por presencia de campo en la config de broadcast, ni
   duplicar `auth` por rol. → `broadcast-topology-config`
 - **NUNCA** dejar el `bind()` de un puerto dentro de una tarea de fondo mientras el caller

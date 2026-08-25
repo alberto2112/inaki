@@ -8,6 +8,7 @@ y la fachada (``config``) viven aparte. Importá desde ``infrastructure.config``
 from __future__ import annotations
 
 import logging
+from difflib import get_close_matches
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -93,9 +94,44 @@ class _ConfigBaseModel(BaseModel):
     definir la clase. Funciona con los ``.py`` presentes en disco (deploy actual:
     systemd + código fuente). Si en el futuro se empaqueta SIN fuentes (zipapp,
     solo ``.pyc``), revalidar que las descripciones se sigan poblando.
+
+    Activa también ``extra="forbid"`` para TODO el schema: una clave que el
+    modelo no declara es un typo del operador, y tragárselo en silencio hacía
+    que el campo pareciera configurado sin estarlo. El validador de abajo se
+    adelanta a Pydantic para nombrar la clave y sugerir la que quiso escribir.
     """
 
-    model_config = ConfigDict(use_attribute_docstrings=True)
+    model_config = ConfigDict(use_attribute_docstrings=True, extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _rechazar_claves_desconocidas(cls, data: Any) -> Any:
+        """Convierte el "Extra inputs are not permitted" de Pydantic en algo accionable.
+
+        Corre ANTES de la validación para poder nombrar el bloque, la clave
+        sobrante y —cuando hay una parecida— el campo que el operador quiso
+        escribir. El ``extra="forbid"`` de arriba queda como red: si un camino
+        de construcción esquiva este validador, la clave se rechaza igual.
+        """
+        if not isinstance(data, dict):
+            return data
+
+        conocidas = set(cls.model_fields)
+        desconocidas = [k for k in data if isinstance(k, str) and k not in conocidas]
+        if not desconocidas:
+            return data
+
+        detalles = []
+        for clave in sorted(desconocidas):
+            parecidas = get_close_matches(clave, conocidas, n=1, cutoff=0.6)
+            sugerencia = f" ¿Quisiste decir '{parecidas[0]}'?" if parecidas else ""
+            detalles.append(f"'{clave}'{sugerencia}")
+
+        validas = ", ".join(sorted(conocidas)) or "(ninguna)"
+        raise ValueError(
+            f"{cls.__name__}: clave(s) desconocida(s): {'; '.join(detalles)}. "
+            f"Claves válidas: {validas}."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -147,16 +183,20 @@ class LLMConfig(_ConfigBaseModel):
     temperature: float = 0.7
     max_tokens: int = 2048
     reasoning_effort: str | None = None
-    timeout_seconds: int = _LLM_TIMEOUT_FALLBACK
+    timeout_seconds: int = Field(default=_LLM_TIMEOUT_FALLBACK, gt=0)
     """Timeout HTTP del request al provider, en segundos.
 
     Default ``60``. Recomendado subirlo (180-300) cuando se usa thinking mode
     sobre queries complejas, donde el modelo puede tardar mucho más en
-    responder. Valores no-int, ``<= 0`` o no parseables se sanitizan al
-    fallback de 60s para no fallar el bootstrap por config mal definida.
+    responder.
+
+    Un valor no parseable o ``<= 0`` es un error de config, no algo que
+    sanitizar: hasta la Fase 4 del refactor esto caía al fallback de 60s en
+    silencio, así que ``timeout_seconds: "sesenta"`` corría con 60 y el
+    operador creía haber configurado otra cosa.
     """
 
-    request_delay_seconds: float = 2.0
+    request_delay_seconds: float = Field(default=2.0, ge=0)
     """Espera mínima (segundos) ANTES de cada llamada al provider dentro del
     loop agéntico, EXCEPTO la primera del turno.
 
@@ -165,27 +205,10 @@ class LLMConfig(_ConfigBaseModel):
     ``llm.complete()``): sin throttle, 5 tool calls disparan 5 requests
     back-to-back. La primera llamada del turno NO se demora (sería latencia pura
     sin proteger nada — el rate limiter se satura por las llamadas encadenadas).
-    ``0`` desactiva el throttle. Valores negativos se clampean a ``0``; valores
-    no parseables caen al default ``2.0`` para no fallar el bootstrap.
+
+    ``0`` desactiva el throttle. Un negativo o un valor no parseable es un
+    error de config (antes se clampeaban o caían al default en silencio).
     """
-
-    @field_validator("timeout_seconds", mode="before")
-    @classmethod
-    def _coerce_timeout(cls, v: object) -> int:
-        try:
-            n = int(v)  # type: ignore[call-overload]
-            return n if n > 0 else _LLM_TIMEOUT_FALLBACK
-        except (TypeError, ValueError):
-            return _LLM_TIMEOUT_FALLBACK
-
-    @field_validator("request_delay_seconds", mode="before")
-    @classmethod
-    def _coerce_request_delay(cls, v: object) -> float:
-        try:
-            n = float(v)  # type: ignore[arg-type]
-            return n if n >= 0 else 0.0
-        except (TypeError, ValueError):
-            return 2.0
 
 
 class EmbeddingConfig(_ConfigBaseModel):
@@ -694,8 +717,6 @@ class TelegramGroupsConfig(_ConfigBaseModel):
       solo para configurarlos. Ahora aplican a cualquier grupo, con o sin broadcast.
     """
 
-    model_config = ConfigDict(extra="allow")
-
     min_delay_response: float | None = None
     """Delay mínimo (segundos) antes de flushar el buffer de grupo al LLM. ``None`` → default del módulo."""
 
@@ -760,8 +781,6 @@ class CliChannelConfig(_ConfigBaseModel):
     ``ChannelContext`` de un turno conversacional sin canal de mensajería.
     """
 
-    model_config = ConfigDict(extra="allow")
-
     user: str | None = None
     """Identidad ESTABLE del turno CLI/REST. Se usa como ``user_id`` y como
     ``context_id`` (nombra ``~/.inaki/users/cli/{user}.md``) y puebla
@@ -773,11 +792,11 @@ class TelegramChannelConfig(_ConfigBaseModel):
     """
     Config tipada del canal Telegram.
 
-    Soporta ``extra="allow"`` para no romper campos desconocidos que puedan
-    existir en configs de usuario hasta que sean adoptados formalmente.
+    Tuvo ``extra="allow"`` mientras el bloque no se validaba al cargar: sin
+    validación, rechazar lo desconocido habría roto configs sin dar un
+    diagnóstico útil. Desde que el canal se valida contra ``CHANNEL_SCHEMAS``,
+    un campo que no está acá es un typo y se rechaza como en el resto del schema.
     """
-
-    model_config = ConfigDict(extra="allow")
 
     token: str = Field(default="", json_schema_extra={"secret": True})
     """Token del bot de Telegram (BotFather). Requerido para que el canal levante."""

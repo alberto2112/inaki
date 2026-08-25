@@ -19,6 +19,8 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from core.domain.errors import ConfigError
+
 from infrastructure.config import (
     CHANNEL_SCHEMAS,
     AgentConfig,
@@ -195,16 +197,13 @@ def test_el_loader_entrega_el_canal_tipado(tmp_path: Path) -> None:
     assert agente.telegram.allowed_chat_ids == [-100]
 
 
-def test_el_loader_reporta_el_canal_invalido_con_su_path(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    """El error se DETECTA y se nombra: antes ni siquiera se validaba.
+def test_el_loader_aborta_con_un_canal_invalido(tmp_path: Path) -> None:
+    """El canal roto ABORTA el arranque nombrando su path y el fichero.
 
-    El agente sigue cayéndose del registry con WARNING en vez de abortar el
-    arranque — ese sigue siendo el fallo silencioso genérico de
-    ``load_agent_config``, y lo endereza la Fase 4 del refactor de config
-    (``docs/config-refactor-plan.md``). Lo que esta fase garantiza es que el
-    diagnóstico exista y apunte al path exacto.
+    La Fase 2 hizo que el error se detectara (antes ni siquiera se validaba);
+    la Fase 4 lo convirtió en fatal. Hasta entonces el agente desaparecía del
+    registry con un WARNING, que en la práctica significa un bot que no
+    responde sin nada que lo relacione con el daemon "sano".
     """
     cfg_dir, agents_dir = _escribir_home(
         tmp_path,
@@ -212,12 +211,13 @@ def test_el_loader_reporta_el_canal_invalido_con_su_path(
     )
     _, global_raw = load_global_config(cfg_dir)
 
-    with caplog.at_level("WARNING"):
-        agente = load_agent_config("dev", agents_dir, global_raw)
+    with pytest.raises(ConfigError) as exc:
+        load_agent_config("dev", agents_dir, global_raw)
 
-    assert agente is None
-    assert "channels.slack" in caplog.text
-    assert "canal desconocido" in caplog.text
+    mensaje = str(exc.value)
+    assert "channels.slack" in mensaje
+    assert "canal desconocido" in mensaje
+    assert "dev.yaml" in mensaje, "el error debe nombrar el fichero a corregir"
 
 
 def test_los_flags_globales_no_contaminan_el_dict_de_adapters(tmp_path: Path) -> None:

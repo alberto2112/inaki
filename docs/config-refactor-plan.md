@@ -1,6 +1,6 @@
 # Plan de refactorización — Sistema de configuración
 
-> Estado: EN PROGRESO — Fases 1, 2 y 3 implementadas. Documento vivo.
+> Estado: EN PROGRESO — Fases 1 a 4 implementadas. Documento vivo.
 > Origen: auditoría del 2026-08-25 (Engram `architecture/config-system-audit` y
 > `architecture/config-secrets-layer`).
 > Última actualización: 2026-08-25.
@@ -137,23 +137,23 @@ carril de edición del TUI y los sub-agentes efímeros.
 5. La fachada `infrastructure/config.py` reexporta desde el módulo nuevo (sin romper
    el contrato histórico todavía; su muerte es Fase 7).
 
-## Fase 4 — Fallos ruidosos
+## Fase 4 — Fallos ruidosos ✅ HECHA
 
 **Objetivo**: aplicar el invariante del repo ("un arranque que no puede fallar es un
 arranque que no se puede diagnosticar") al subsistema de config.
 
 1. `load_agent_config` roto → `ConfigError` que ABORTA el arranque, con path del
    fichero y campo culpable (hoy: WARNING y el agente desaparece del registry).
-2. `extra="forbid"` gradual, un commit por grupo de modelos (empezar por hojas: LLM,
-   embedding, memories, scheduler; `TelegramChannelConfig`/`TelegramGroupsConfig`
-   pierden su `extra="allow"` — ya validados en Fase 2). Colchón: mensaje de error
-   con la clave desconocida y sugerencia del campo más parecido.
+2. `extra="forbid"` NO gradual: puesto en la clase base `_ConfigBaseModel`, cubre los
+   37 modelos de una. El colchón (clave desconocida + sugerencia vía `difflib`) es un
+   validador de la misma base, así que aplica a todo el schema por igual.
 3. Matar la sanitización que traga basura: `_coerce_timeout` / `_coerce_request_delay`
    (`config_schema.py:164-180`) → `ConfigError` (un `timeout_seconds: "sesenta"` debe
    fallar, no correr con 60).
-4. Barrido de los `except Exception → logger → continuar` del wiring en
-   `container.py` (~13 sitios): clasificar cada uno como fatal / degradado-explícito,
-   siguiendo el criterio ya sentado por `broadcast-arranque-observable`.
+4. Barrido de los 13 `except Exception → logger → continuar` del wiring: 5 pasan a
+   fatales (container del agente, delegación, scheduler, broadcast, tools de Telegram);
+   los de visión y extensiones quedan degradados a propósito, nombrando la capacidad
+   que se pierde; los de shutdown y `adapter.start()` no se tocan.
 
 ## Fase 5 — `inaki config show --effective --origin`
 
@@ -230,7 +230,7 @@ tres carriles — ir consumidor por consumidor), Fases 4-7 mecánicas y troceabl
 - [x] Fase 1 — erradicar `*.secrets.yaml` — nota `secrets-layer-eradication` en `docs/migraciones.md`
 - [x] Fase 2 — validar `channels` al cargar — nota `channels-validados-al-cargar` en `docs/migraciones.md`
 - [x] Fase 3 — motor de merge único — nota `motor-de-merge-unico` en `docs/migraciones.md`
-- [ ] Fase 4 — fallos ruidosos
+- [x] Fase 4 — fallos ruidosos — nota `config-falla-ruidoso` en `docs/migraciones.md`
 - [ ] Fase 5 — `inaki config show --effective --origin`
 - [ ] Fase 6 — docs fuente única
 - [ ] Fase 7 — limpieza menor

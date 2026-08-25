@@ -1,7 +1,15 @@
 # Plan de implementación — Rediseño Setup TUI (split-pane + add/remove por schema)
 
 > Estado: EN PROGRESO. Documento vivo para sobrevivir compactación de contexto.
-> Última actualización: 2026-06-19.
+> Última actualización: 2026-08-25.
+
+> **Nota posterior (erradicación de `*.secrets.yaml`)** — Cuando se escribió este plan
+> el merge era de 4 capas y cada escritura tenía que decidir "¿principal o secrets?".
+> Eso se terminó: quedan **2 capas** (`config/global.yaml` y `agents/{id}.yaml`,
+> más `agents/sub-agents/{id}.yaml`) y **no hay capa de secrets**. El `kind=="secret"`
+> del schema ya no rutea a ningún fichero — solo enmascara en la UI. Las menciones
+> a "capa secrets" en las fases de abajo quedan como registro de lo que se hizo
+> entonces; el código actual escribe siempre en la capa principal.
 
 ## Por qué este rediseño (el problema raíz)
 
@@ -13,7 +21,7 @@ fatales para el caso del usuario:
    `_schema.py::_should_skip` lo descarta (`_SKIP_ORIGINS = (dict, list, set, frozenset)`).
    Por eso **`channels` no aparece en el setup** aunque en producción el usuario lo
    tiene declarado dentro del agente. Es un dict arbitrario para sobrevivir el merge
-   de 4 capas sin validación estricta.
+   de capas sin validación estricta.
 2. **`sections_for_model` solo recursa 2 niveles** (PADRE, PADRE.HIJO). `channels →
    telegram → groups` son 3 niveles. No alcanza.
 
@@ -141,7 +149,8 @@ Recorre `model` (Pydantic) + `current_values` (dict del YAML mergeado) recursiva
 - **Eliminar campo/sección**: construir `cambios` con `_SENTINEL_ELIMINAR` en el path.
   Exponer helper público `eliminar_en_path(path: tuple) -> dict` que arme el dict anidado
   terminando en `CampoTriestado(INHERIT)` (ya resuelve a sentinel). Reusa todo el merge.
-- Capa destino: secrets si el campo es `kind=="secret"`, sino la principal (igual que hoy).
+- Capa destino: **siempre la principal** (`global.yaml` / `agents/{id}.yaml`). No hay
+  capa de secrets: `kind=="secret"` solo decide el enmascarado en la UI, no el fichero.
 
 ## Fases de implementación
 
@@ -171,16 +180,18 @@ Recorre `model` (Pydantic) + `current_values` (dict del YAML mergeado) recursiva
 - [x] **FASE 4 — Migrar GlobalPage / AgentDetailPage a TreeEditorPage** ✅
   - `agent_detail_page.py` reescrito sobre TreeEditorPage: channel_schemas del
     container, exclude_keys={providers}, tri-estado paths dotted lowercase
-    (`memories.llm.*`), routing a capa secrets, cross-ref warnings (`_warnings.py`).
-    Lee main+secrets mergeados. persist_delete solo poda en la capa donde el path
-    EXISTE (`_existe_path`) — evita escribir el sentinel en una rama nueva.
-  - `global_page.py` reescrito: root_label="global", capas GLOBAL/GLOBAL_SECRETS.
+    (`memories.llm.*`), cross-ref warnings (`_warnings.py`). Lee la capa AGENT.
+    persist_delete solo poda donde el path EXISTE (`_existe_path`) — evita escribir
+    el sentinel en una rama nueva. (En su día ruteaba a la capa secrets y leía
+    main+secrets mergeados; ver nota del encabezado.)
+  - `global_page.py` reescrito: root_label="global", capa GLOBAL.
   - `screens/_warnings.py` (NUEVO): warn_on_invalid_refs extraído (compartido).
   - Tests viejos arreglados: test_agent_detail_helpers (→ `_coerce`),
     test_schema_tristate (set uppercase local). **Suite completa: 2553 verde.**
 - [x] **FASE 5 — Cobertura de integración + limpieza del sistema viejo** ✅
   - [x] `test_page_persistence.py` (10): hooks persist_* de ambas páginas
-    construyen el `cambios` por path correcto y eligen capa (principal vs secrets).
+    construyen el `cambios` por path correcto y escriben en su capa
+    (GLOBAL / AGENT — la elección principal-vs-secrets ya no existe).
   - [x] Comentario obsoleto en `di.py` actualizado (build_schema_tree).
   - [x] `_schema.py` reducido a helpers de inferencia: borrados `sections_for_model`,
     `_fields_for_model`, `_should_skip` (sin uso en prod). Cero refs residuales.

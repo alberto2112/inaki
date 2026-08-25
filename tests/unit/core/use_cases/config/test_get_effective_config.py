@@ -23,7 +23,7 @@ def _repo_con_capas(capas: dict[tuple, dict]) -> MagicMock:
 
 
 # ---------------------------------------------------------------------------
-# Solo capas globales (sin agente)
+# Solo capa global (sin agente)
 # ---------------------------------------------------------------------------
 
 
@@ -41,19 +41,22 @@ def test_solo_global_sin_agente() -> None:
     assert resultado.origenes["llm.model"] == OrigenCampo(capa="global")
 
 
-def test_global_secrets_pisa_global() -> None:
-    """Un campo en global.secrets pisa al de global → origen 'global.secrets'."""
+def test_credenciales_globales_tienen_origen_global() -> None:
+    """La api_key de un provider vive en global.yaml → origen 'global'.
+
+    Antes había una capa ``global.secrets`` que la pisaba; ahora la credencial
+    es un campo más de la capa global.
+    """
     repo = _repo_con_capas(
         {
-            (LayerName.GLOBAL, None): {"providers": {"groq": {"api_key": "old"}}},
-            (LayerName.GLOBAL_SECRETS, None): {"providers": {"groq": {"api_key": "new"}}},
+            (LayerName.GLOBAL, None): {"providers": {"groq": {"api_key": "gsk_secret"}}},
         }
     )
     uc = GetEffectiveConfigUseCase(repo)
     resultado = uc.execute(agent_id=None)
 
-    assert resultado.datos["providers"]["groq"]["api_key"] == "new"
-    assert resultado.origenes["providers.groq.api_key"] == OrigenCampo(capa="global.secrets")
+    assert resultado.datos["providers"]["groq"]["api_key"] == "gsk_secret"
+    assert resultado.origenes["providers.groq.api_key"] == OrigenCampo(capa="global")
 
 
 def test_capa_vacia_ignorada() -> None:
@@ -61,11 +64,11 @@ def test_capa_vacia_ignorada() -> None:
     repo = _repo_con_capas(
         {
             (LayerName.GLOBAL, None): {"app": {"name": "Inaki"}},
-            (LayerName.GLOBAL_SECRETS, None): {},
+            (LayerName.AGENT, "dev"): {},
         }
     )
     uc = GetEffectiveConfigUseCase(repo)
-    resultado = uc.execute(agent_id=None)
+    resultado = uc.execute(agent_id="dev")
 
     assert resultado.datos["app"]["name"] == "Inaki"
 
@@ -80,9 +83,7 @@ def test_agent_pisa_global() -> None:
     repo = _repo_con_capas(
         {
             (LayerName.GLOBAL, None): {"llm": {"model": "default-model", "temperature": 0.7}},
-            (LayerName.GLOBAL_SECRETS, None): {},
             (LayerName.AGENT, "dev"): {"llm": {"model": "agente-model"}},
-            (LayerName.AGENT_SECRETS, "dev"): {},
         }
     )
     uc = GetEffectiveConfigUseCase(repo)
@@ -95,21 +96,33 @@ def test_agent_pisa_global() -> None:
     assert resultado.datos["llm"]["temperature"] == 0.7
 
 
-def test_agent_secrets_pisa_agent() -> None:
-    """agent.secrets tiene mayor prioridad que agent."""
+def test_credenciales_del_agente_tienen_origen_agent() -> None:
+    """El token del canal vive en agents/{id}.yaml → origen 'agent'.
+
+    Antes había una capa ``agent.secrets`` con mayor prioridad; ahora la
+    credencial es un campo más de la capa del agente.
+    """
     repo = _repo_con_capas(
         {
             (LayerName.GLOBAL, None): {},
-            (LayerName.GLOBAL_SECRETS, None): {},
-            (LayerName.AGENT, "dev"): {"channels": {"telegram": {"token": "old-token"}}},
-            (LayerName.AGENT_SECRETS, "dev"): {"channels": {"telegram": {"token": "secret-token"}}},
+            (LayerName.AGENT, "dev"): {"channels": {"telegram": {"token": "secret-token"}}},
         }
     )
     uc = GetEffectiveConfigUseCase(repo)
     resultado = uc.execute(agent_id="dev")
 
     assert resultado.datos["channels"]["telegram"]["token"] == "secret-token"
-    assert resultado.origenes["channels.telegram.token"] == OrigenCampo(capa="agent.secrets")
+    assert resultado.origenes["channels.telegram.token"] == OrigenCampo(capa="agent")
+
+
+def test_cadena_de_capas_es_global_y_agent() -> None:
+    """Con agent_id, la cadena leída es exactamente global → agent."""
+    repo = _repo_con_capas({})
+    uc = GetEffectiveConfigUseCase(repo)
+    uc.execute(agent_id="dev")
+
+    llamadas = [call[0][0] for call in repo.read_layer.call_args_list]
+    assert llamadas == [LayerName.GLOBAL, LayerName.AGENT]
 
 
 def test_sin_agente_no_lee_capas_de_agente() -> None:
@@ -123,7 +136,7 @@ def test_sin_agente_no_lee_capas_de_agente() -> None:
     uc = GetEffectiveConfigUseCase(repo)
     uc.execute(agent_id=None)
 
-    # Solo deben haberse llamado las capas globales
+    # Solo debe haberse llamado la capa global
     llamadas = [call[0][0] for call in repo.read_layer.call_args_list]
+    assert llamadas == [LayerName.GLOBAL]
     assert LayerName.AGENT not in llamadas
-    assert LayerName.AGENT_SECRETS not in llamadas

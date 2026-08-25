@@ -4,7 +4,8 @@ Tests de integración para YamlRepository.
 Validan el comportamiento de round-trip de ruamel.yaml:
 - Archivos con comentarios simples, anidados, listas, anchors y bloques comentados.
 - Escritura atómica (tmp → replace).
-- Permisos 600 en archivos de secrets.
+- Permisos 600 en TODAS las capas (contienen credenciales desde que los
+  ``*.secrets.yaml`` dejaron de existir), tanto al crear como al reescribir.
 - Idempotencia de delete_layer.
 - Manejo de archivos inexistentes (devuelve {}).
 - Mutación profunda preservando comentarios de otros campos.
@@ -12,7 +13,6 @@ Validan el comportamiento de round-trip de ruamel.yaml:
 
 from __future__ import annotations
 
-import os
 import stat
 from pathlib import Path
 
@@ -116,20 +116,50 @@ def test_write_archivo_nuevo_contiene_header(repo: YamlRepository) -> None:
     assert "# Generado por inaki setup" in contenido
 
 
-def test_write_secrets_permisos_600(repo: YamlRepository) -> None:
-    """Los archivos de secrets se crean con permisos 600."""
-    repo.write_layer(LayerName.GLOBAL_SECRETS, {"providers": {}})
-    path = repo._layer_path(LayerName.GLOBAL_SECRETS, None)
-    modo = oct(stat.S_IMODE(os.stat(path).st_mode))
-    assert modo == "0o600", f"Permisos esperados 0o600, obtenidos: {modo}"
+# ---------------------------------------------------------------------------
+# Tests: permisos 600 en todas las capas
+# ---------------------------------------------------------------------------
+
+# Todas las capas pueden contener credenciales desde la erradicación de los
+# ``*.secrets.yaml``, así que todas se protegen igual.
+_CAPAS = [
+    (LayerName.GLOBAL, None),
+    (LayerName.AGENT, "general"),
+    (LayerName.SUB_AGENT, "researcher"),
+]
 
 
-def test_write_agent_secrets_permisos_600(repo_agentes: YamlRepository) -> None:
-    """Los archivos de secrets de agente se crean con permisos 600."""
-    repo_agentes.write_layer(LayerName.AGENT_SECRETS, {"token": "abc"}, agent_id="general")
-    path = repo_agentes._layer_path(LayerName.AGENT_SECRETS, "general")
-    modo = oct(stat.S_IMODE(os.stat(path).st_mode))
-    assert modo == "0o600", f"Permisos esperados 0o600, obtenidos: {modo}"
+@pytest.mark.parametrize(("layer", "agent_id"), _CAPAS)
+def test_write_crea_la_capa_con_permisos_600(
+    repo: YamlRepository, layer: LayerName, agent_id: str | None
+) -> None:
+    """Toda capa nueva se crea con permisos 600 — contiene credenciales."""
+    repo.write_layer(layer, {"providers": {"groq": {"api_key": "gsk"}}}, agent_id=agent_id)
+
+    path = repo._layer_path(layer, agent_id)
+    modo = stat.S_IMODE(path.stat().st_mode)
+    assert modo == 0o600, f"Permisos esperados 0o600, obtenidos: {oct(modo)}"
+
+
+@pytest.mark.parametrize(("layer", "agent_id"), _CAPAS)
+def test_write_endurece_permisos_laxos_preexistentes(
+    repo: YamlRepository, layer: LayerName, agent_id: str | None
+) -> None:
+    """Reescribir un archivo con permisos laxos lo devuelve a 600.
+
+    Cubre el archivo editado a mano o heredado de una instalación previa a la
+    erradicación de los ``*.secrets.yaml``.
+    """
+    path = repo._layer_path(layer, agent_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("providers: {}\n", encoding="utf-8")
+    path.chmod(0o644)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o644  # precondición
+
+    repo.write_layer(layer, {"providers": {"groq": {"api_key": "gsk"}}}, agent_id=agent_id)
+
+    modo = stat.S_IMODE(path.stat().st_mode)
+    assert modo == 0o600, f"Permisos esperados 0o600, obtenidos: {oct(modo)}"
 
 
 # ---------------------------------------------------------------------------
@@ -186,8 +216,6 @@ def test_sub_agent_path_en_subdirectorio(repo: YamlRepository) -> None:
     """La capa SUB_AGENT resuelve bajo agents/sub-agents/, no en agents/."""
     path = repo._layer_path(LayerName.SUB_AGENT, "researcher")
     assert path == repo._agents_dir / "sub-agents" / "researcher.yaml"
-    secrets = repo._layer_path(LayerName.SUB_AGENT_SECRETS, "researcher")
-    assert secrets == repo._agents_dir / "sub-agents" / "researcher.secrets.yaml"
 
 
 def test_list_sub_agents_excluye_secrets_y_example(repo: YamlRepository) -> None:
@@ -207,14 +235,6 @@ def test_agentes_y_subagentes_no_se_mezclan(repo: YamlRepository) -> None:
 
     assert repo.list_agents() == ["dev"]
     assert repo.list_sub_agents() == ["researcher"]
-
-
-def test_write_sub_agent_secrets_permisos_600(repo: YamlRepository) -> None:
-    """Los archivos de secrets de sub-agente se crean con permisos 600."""
-    repo.write_layer(LayerName.SUB_AGENT_SECRETS, {"token": "abc"}, agent_id="researcher")
-    path = repo._layer_path(LayerName.SUB_AGENT_SECRETS, "researcher")
-    modo = oct(stat.S_IMODE(os.stat(path).st_mode))
-    assert modo == "0o600", f"Permisos esperados 0o600, obtenidos: {modo}"
 
 
 def test_delete_sub_agent_layer(repo: YamlRepository) -> None:

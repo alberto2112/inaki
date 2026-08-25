@@ -3,16 +3,12 @@ Resolución de rutas para el repositorio de configuración YAML.
 
 Layout canónico (matchea el runtime ``infrastructure/config.py``):
   ~/.inaki/config/global.yaml
-  ~/.inaki/config/global.secrets.yaml
   ~/.inaki/agents/{id}.yaml            ← sibling de config/, no subcarpeta
-  ~/.inaki/agents/{id}.secrets.yaml
 
 Con home relocalizado (``INAKI_HOME=HOME``, propagado por el composition root desde
 ``--home``):
   HOME/config/global.yaml
-  HOME/config/global.secrets.yaml
   HOME/agents/{id}.yaml
-  HOME/agents/{id}.secrets.yaml
 
 La TUI MATCHEA al runtime — no impone convención propia. Cualquier desviación
 acá rompe a usuarios con installs existentes.
@@ -56,11 +52,6 @@ def global_yaml_path() -> Path:
     return get_config_dir() / "global.yaml"
 
 
-def global_secrets_path() -> Path:
-    """Ruta a ``~/.inaki/config/global.secrets.yaml``."""
-    return get_config_dir() / "global.secrets.yaml"
-
-
 def agent_yaml_path(agent_id: str) -> Path:
     """
     Ruta a ``~/.inaki/agents/{agent_id}.yaml`` (default) o ``$INAKI_HOME/agents/...``.
@@ -71,15 +62,3 @@ def agent_yaml_path(agent_id: str) -> Path:
     if not agent_id:
         raise ValueError("agent_id no puede ser vacío")
     return get_agents_dir() / f"{agent_id}.yaml"
-
-
-def agent_secrets_path(agent_id: str) -> Path:
-    """
-    Ruta a ``~/.inaki/agents/{agent_id}.secrets.yaml`` (default).
-
-    Args:
-        agent_id: Identificador del agente (sin extensión).
-    """
-    if not agent_id:
-        raise ValueError("agent_id no puede ser vacío")
-    return get_agents_dir() / f"{agent_id}.secrets.yaml"

@@ -27,13 +27,14 @@ def test_escribe_en_capa_global_por_defecto(repo: MagicMock) -> None:
     assert layer_escrita == LayerName.GLOBAL
 
 
-def test_escribe_en_capa_global_secrets(repo: MagicMock) -> None:
-    """Puede escribir en GLOBAL_SECRETS si se pasa explícitamente."""
+def test_credenciales_van_a_la_capa_global(repo: MagicMock) -> None:
+    """Las credenciales se escriben en GLOBAL — ya no hay capa de secrets."""
     uc = UpdateGlobalLayerUseCase(repo)
-    uc.execute({"providers": {"groq": {"api_key": "k"}}}, layer=LayerName.GLOBAL_SECRETS)
+    uc.execute({"providers": {"groq": {"api_key": "k"}}})
 
-    layer_escrita = repo.write_layer.call_args[0][0]
-    assert layer_escrita == LayerName.GLOBAL_SECRETS
+    layer_escrita, datos_escritos, *_ = repo.write_layer.call_args[0]
+    assert layer_escrita == LayerName.GLOBAL
+    assert datos_escritos["providers"]["groq"]["api_key"] == "k"
 
 
 def test_merge_sobre_datos_existentes(repo: MagicMock) -> None:
@@ -86,11 +87,14 @@ def test_anade_seccion_vacia(repo: MagicMock) -> None:
     assert escritos["channels"]["telegram"] == {}
 
 
-def test_capa_de_agente_lanza_error(repo: MagicMock) -> None:
-    """Pasar una capa de agente lanza ValueError."""
+@pytest.mark.parametrize("layer", [LayerName.AGENT, LayerName.SUB_AGENT])
+def test_capa_de_agente_lanza_error(repo: MagicMock, layer: LayerName) -> None:
+    """GLOBAL es la única capa aceptada: cualquier otra lanza ValueError."""
     uc = UpdateGlobalLayerUseCase(repo)
-    with pytest.raises(ValueError, match="solo acepta capas globales"):
-        uc.execute({}, layer=LayerName.AGENT)
+    with pytest.raises(ValueError, match="solo acepta la capa global"):
+        uc.execute({}, layer=layer)
+
+    repo.write_layer.assert_not_called()
 
 
 def test_lee_la_capa_correcta_antes_de_escribir(repo: MagicMock) -> None:

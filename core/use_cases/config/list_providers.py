@@ -1,9 +1,8 @@
 """
 ListProvidersUseCase — lista los providers del registry sin exponer api_keys.
 
-Combina la sección ``providers:`` de ``global.yaml`` con la de
-``global.secrets.yaml`` (para detectar qué providers tienen api_key),
-pero devuelve las entradas SIN el campo ``api_key``.
+Lee la sección ``providers:`` de ``global.yaml`` y devuelve las entradas
+SIN el campo ``api_key`` (solo un booleano indicando si está definida).
 
 El propósito es poblar la pantalla de Providers en la TUI sin exponer
 credenciales en la vista de lista.
@@ -34,7 +33,7 @@ class ProviderInfo:
     """URL base override. ``None`` si usa el default del adapter."""
 
     tiene_api_key: bool
-    """Indica si el provider tiene ``api_key`` definida (en cualquier capa)."""
+    """Indica si el provider tiene ``api_key`` definida."""
 
 
 class ListProvidersUseCase:
@@ -47,33 +46,20 @@ class ListProvidersUseCase:
         """
         Retorna lista de ProviderInfo ordenada por key.
 
-        Combina ambas capas globales para detectar presencia de api_key,
-        pero NUNCA incluye el valor de la api_key en el resultado.
+        NUNCA incluye el valor de la api_key en el resultado.
         """
         global_data = self._repo.read_layer(LayerName.GLOBAL)
-        secrets_data = self._repo.read_layer(LayerName.GLOBAL_SECRETS)
-
-        providers_base: dict = global_data.get("providers") or {}
-        providers_secrets: dict = secrets_data.get("providers") or {}
-
-        # Todas las keys que aparecen en cualquier capa
-        todas_las_keys = set(providers_base) | set(providers_secrets)
+        providers: dict = global_data.get("providers") or {}
 
         resultado: list[ProviderInfo] = []
-        for key in sorted(todas_las_keys):
-            entrada_base = providers_base.get(key) or {}
-            entrada_secrets = providers_secrets.get(key) or {}
-
-            tiene_api_key = bool(entrada_base.get("api_key") or entrada_secrets.get("api_key"))
-            tipo = entrada_base.get("type") or entrada_secrets.get("type")
-            base_url = entrada_base.get("base_url") or entrada_secrets.get("base_url")
-
+        for key in sorted(providers):
+            entrada = providers.get(key) or {}
             resultado.append(
                 ProviderInfo(
                     key=key,
-                    type=tipo,
-                    base_url=base_url,
-                    tiene_api_key=tiene_api_key,
+                    type=entrada.get("type"),
+                    base_url=entrada.get("base_url"),
+                    tiene_api_key=bool(entrada.get("api_key")),
                 )
             )
 

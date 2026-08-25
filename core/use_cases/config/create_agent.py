@@ -4,8 +4,7 @@ CreateAgentUseCase — crea un nuevo agente desde una plantilla mínima.
 Valida que el id sea único. Si ya existe, lanza ``AgentYaExisteError``
 sin modificar ningún archivo.
 
-El archivo de secrets NO se crea automáticamente — solo se crea
-``agents/{id}.yaml`` con los valores del template.
+Crea ``agents/{id}.yaml`` con los valores del template.
 """
 
 from __future__ import annotations
@@ -32,8 +31,8 @@ class CreateAgentUseCase:
     """
     Crea ``agents/{id}.yaml`` con una plantilla mínima.
 
-    No crea ``agents/{id}.secrets.yaml`` — si el agente necesita secrets
-    (token de Telegram, etc.) el usuario los agrega después vía la TUI.
+    Las credenciales del agente (token de Telegram, etc.) se agregan después
+    vía la TUI, en ese mismo archivo.
     """
 
     def __init__(self, repo: "IConfigRepository") -> None:

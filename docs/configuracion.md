@@ -18,9 +18,13 @@ original formatting of YAML files.
 The V2 TUI uses a **one page per category** architecture with linear navigation:
 
 ```
-MainMenuPage → GlobalPage / AgentsPage / ProvidersPage / SecretsPage
+MainMenuPage → GlobalPage / AgentsPage (agents & subagents) / ProvidersPage
 AgentsPage   → AgentDetailPage (per agent)
 ```
+
+The main menu has four entries: **GLOBAL CONFIG**, **AGENTS**, **SUBAGENTS**,
+**PROVIDERS**. There is no separate secrets screen — credentials are edited in
+place, in the same page as the rest of the config (see "Masking" below).
 
 | Key | Action |
 |-----|--------|
@@ -38,10 +42,17 @@ There is no mouse navigation as a primary flow.
 | Screen | What it edits |
 |--------|---------------|
 | **GlobalPage** | All sections of `global.yaml` in a continuous form (a list of sections with their fields, no sub-screens) |
-| **ProvidersPage** | Add/remove/edit `providers.*` in `global.yaml`; `api_key` always goes to `global.secrets.yaml` |
-| **AgentsPage** | Create, clone, delete agents |
+| **ProvidersPage** | Add/remove/edit `providers.*` in `global.yaml`, `api_key` included. Deleting a provider removes the whole entry — its `api_key` with it |
+| **AgentsPage** | Create, clone, delete agents. Deleting an agent deletes its single YAML, credentials included |
 | **AgentDetailPage** | Per-agent overrides (same sections as GlobalPage, at the agent layer) |
-| **SecretsPage** | Consolidated view of all `*.secrets.yaml` files; masked fields; individual reveal |
+
+### Masking — secret is a schema mark, not a file
+
+There is no secrets screen and no secrets file. A field is secret because the
+**Pydantic schema marks it** as such (`kind == "secret"`), and that mark is what
+makes the TUI render it masked and edit it through `EditSecretModal`. The value
+itself is written to the same layer as any other field — `global.yaml` or
+`agents/{id}.yaml`, both created with `600` permissions.
 
 ### Modal editing — one modal per field type
 
@@ -132,29 +143,45 @@ inaki daemon              # if running in foreground
 
 ---
 
-## 4-layer merge system
+## 2-layer merge system
 
-The final configuration for each agent is built by merging four files in order.
+The final configuration for each agent is built by merging two files in order.
 Each layer overrides only the fields it defines — it never removes inherited fields that are absent.
 
 ```
-config/global.yaml                 (1) system base config
+config/global.yaml                 (1) system base config + shared credentials
     ↓ field-by-field merge
-config/global.secrets.yaml         (2) global secrets (shared api keys)
-    ↓ field-by-field merge
-agents/{id}.yaml                   (3) agent config (channels, model, prompt)
-    ↓ field-by-field merge
-agents/{id}.secrets.yaml           (4) agent secrets (tokens, auth keys)
+agents/{id}.yaml                   (2) agent config (channels, model, prompt) + its own credentials
     ↓
 Resolved and complete AgentConfig
 ```
 
-**Secrets rule:** if an agent does not define `llm.api_key`, it inherits the one from global.
-A missing secret at a lower level never nullifies the one from a higher level.
+**Credentials rule:** if an agent does not define its own `providers.<name>.api_key`,
+it inherits the one from global. A missing credential at the agent layer never
+nullifies the one from global.
 
-**Startup with missing secrets:** if `agents/{id}.secrets.yaml` does not exist,
-the system starts with a WARNING. Channels that require secrets will not start.
-The CLI always works.
+**Both files hold credentials, so neither one is committable.** They are created
+with `600` permissions and must stay out of git.
+
+**Secret is a schema mark, not a file.** A field is secret because the Pydantic
+schema says so (`kind == "secret"`) — that is what masks it in the `inaki setup`
+TUI. It has nothing to do with which file it lives in.
+
+### Migration from the 4-layer layout
+
+Earlier versions split each layer into `*.secrets.yaml` sidecars
+(`global.secrets.yaml`, `agents/{id}.secrets.yaml`). Those files were **never
+encrypted** — plain YAML with `600` permissions, exactly like their main layer.
+Their only real advantage was sharing config without credentials, at the cost of
+doubling files, merge layers and "where do I write this field?" decisions.
+
+On first startup the daemon folds each `*.secrets.yaml` into its main layer
+(`migrate_secrets_into_main_layers` in `infrastructure/config_loader.py`): the
+secrets content **wins on conflict** (same precedence the removed merge had),
+the main layer gets `chmod 600`, and the sidecar is deleted only *after* the
+write succeeds. It is idempotent and **the operator has nothing to do**.
+
+Full write-up in [`docs/migraciones.md`](migraciones.md) → `secrets-layer-eradication`.
 
 ---
 
@@ -162,16 +189,13 @@ The CLI always works.
 
 | File | Committable | Purpose |
 |------|-------------|---------|
-| `config/global.yaml` | ✅ yes | System base config (LLM provider, embeddings, memory, paths) |
-| `config/global.secrets.yaml` | ❌ no | Credentials registry (`providers.<name>.api_key`) |
-| `config/global.secrets.yaml.example` | ✅ yes | Reference of what secrets exist |
-| `config/tool_config.yaml` | ❌ no | Tool Config Protocol store (daemon-owned; `enc:` secrets inside). Not part of the 4-layer merge |
-| `agents/{id}.yaml` | ✅ yes | Agent config: id, name, description, system_prompt, overrides, channels |
-| `agents/{id}.secrets.yaml` | ❌ no | Agent secrets: tokens, auth_key |
-| `agents/{id}.secrets.yaml.example` | ✅ yes | Reference of agent secrets |
-| `config/global.example.yaml` | ✅ yes | Canonical reference with all documented parameters |
+| `config/global.yaml` | ❌ no | System base config (LLM provider, embeddings, memory, paths) **and** the shared credentials registry (`providers.<name>.api_key`, `admin.auth_key`). Mode `600` |
+| `config/tool_config.yaml` | ❌ no | Tool Config Protocol store (daemon-owned; `enc:` secrets inside). Not part of the merge |
+| `agents/{id}.yaml` | ❌ no | Agent config: id, name, description, system_prompt, overrides, channels — tokens included. Mode `600` |
+| `config/global.example.yaml` | ✅ yes | Canonical reference with all documented parameters (no real values) |
 
-`.gitignore` includes: `config/*.secrets.yaml` and `config/agents/*.secrets.yaml`
+Only the `*.example.yaml` reference is committable. `global.yaml` and
+`agents/{id}.yaml` carry live credentials — **never commit them**.
 
 ---
 
@@ -217,7 +241,7 @@ app:
 providers:
   openrouter:
     # type: openrouter      # optional — default = the key ("openrouter")
-    api_key: "sk-or-..."    # → global.secrets.yaml
+    api_key: "sk-or-..."    # credential — this file is never committed
     base_url: "https://openrouter.ai/api/v1"
   openai:
     api_key: "sk-..."
@@ -366,7 +390,7 @@ admin:
   port: 6497                    # Admin server port
   chat_timeout: 300.0           # Timeout (seconds) to wait for agent response
                                 # in POST /admin/chat/turn. Increase for slow models.
-  # auth_key → in global.secrets.yaml
+  # auth_key: "..."             # credential — lives right here, in global.yaml
 ```
 
 ### Admin server — exposed endpoints
@@ -602,10 +626,10 @@ CREATE TABLE files_indexed (
 
 ---
 
-## `config/global.secrets.yaml`
+## Credentials — where they live
 
-The credentials registry lives under `providers:` and is merged with the `providers:`
-from `global.yaml` (deep-merge field by field).
+There is no separate credentials file. The registry lives under `providers:` in
+`config/global.yaml`, next to everything else:
 
 ```yaml
 providers:
@@ -617,8 +641,13 @@ providers:
     api_key: "gsk_..."
 ```
 
-An entry declared in `global.yaml` (e.g. with `base_url`) is completed with
-the `api_key` from this file — there is no need to repeat fields.
+An agent that needs a different key for the same vendor redefines the entry in
+its own `agents/{id}.yaml` — the deep-merge completes field by field, so there
+is no need to repeat `base_url` or `type`.
+
+Both files are created with `600` permissions and **must never be committed**.
+The only file meant for sharing is `config/global.example.yaml`, which carries
+no real values.
 
 ---
 
@@ -627,9 +656,9 @@ the `api_key` from this file — there is no need to repeat fields.
 Credentials and settings for tools (builtin and `ext/`) live in their **own file**,
 `config/tool_config.yaml`, under a `tool_config:` root with one namespace per tool.
 This file is **owned by the daemon**: the store reads it at startup and rewrites it
-on `configure`. It is kept **separate from `global.secrets.yaml`** — that one is
-yours, hand-authored (`providers.*`, tokens), and the daemon never touches it. It
-does **not** participate in the 4-layer merge. **The user can configure tools from
+on `configure`. It is kept **separate from `global.yaml`** — that one is yours,
+hand-authored (`providers.*`, tokens), and the daemon never touches it. It
+does **not** participate in the 2-layer merge. **The user can configure tools from
 any channel by just talking to the agent** — the tool exposes `operation=configure`
 and persists here via the protocol (`IToolConfigStore`); hand-editing the YAML works too.
 
@@ -664,10 +693,11 @@ Current consumers: `web_search` (builtin), `exchange_calendar`/`exchange_mail`,
 `fal_music`, `replicate_music` (ext).
 
 **Migration from previous versions:** earlier builds stored `tool_config:` inside
-`global.secrets.yaml`. On first startup the daemon moves that block to
+the legacy `global.secrets.yaml`. On first startup the daemon moves that block to
 `config/tool_config.yaml` automatically (`migrate_tool_config_to_own_file`),
-preserving the rest of `global.secrets.yaml`. `secret.key` is unchanged, so
-encrypted (`enc:`) values keep decrypting — no reconfiguration needed.
+before the secrets sidecar itself is folded into `global.yaml`, so the block never
+lands in the main layer. `secret.key` is unchanged, so encrypted (`enc:`) values
+keep decrypting — no reconfiguration needed.
 
 ---
 
@@ -725,9 +755,10 @@ workspace:
   containment: "strict"                    # strict | warn | off (default: strict)
 
 # Channels available for this agent
-# Sensitive values (tokens, auth_key) go in {id}.secrets.yaml
+# Sensitive values (tokens, auth_key) live right here — this file is never committed
 channels:
   telegram:
+    token: "7xxxxxxx:AAF..."         # Bot token from BotFather
     allowed_user_ids: ["123456789"]  # Empty list = all allowed
     reactions: true                  # React with emojis to messages
     debug: false
@@ -1180,19 +1211,24 @@ systemctl status systemd-timesyncd  # or chrony
 
 ---
 
-## `agents/{id}.secrets.yaml`
+## Per-agent credentials
+
+Tokens and keys live in the agent's own `agents/{id}.yaml`, alongside the rest
+of its config — there is no sidecar file:
 
 ```yaml
 channels:
   telegram:
     token: "7xxxxxxx:AAF..."     # Bot token from BotFather
 
-# providers not defined here → inherits from global + global.secrets.
+# providers not defined here → inherited from global.yaml.
 # If the agent needs a different api_key (e.g. another Groq account):
 # providers:
 #   groq:
 #     api_key: "gsk_agent_specific_..."
 ```
+
+The file is created with `600` permissions and **must never be committed**.
 
 ---
 
@@ -1202,7 +1238,7 @@ channels:
 |-------|----------|
 | `llm` (block) | Field-by-field merge. Absent fields are inherited. No `api_key`/`base_url` (they live in `providers`). |
 | `providers` (block) | Field-by-field merge by key. A lower layer can complete an entry declared above. |
-| `providers.<name>.api_key` | Only in `*.secrets.yaml`. An agent can redefine an entire provider. |
+| `providers.<name>.api_key` | Merged like any other field. An agent can redefine an entire provider. |
 | `embedding` | Field-by-field merge if defined. No `api_key`/`base_url`. |
 | `transcription` (block) | Field-by-field merge. No `api_key`/`base_url` (they live in `providers`). |
 | `channels.telegram.voice_enabled` | Per-agent. Default `true`. If `true`, requires a `transcription:` block. |
@@ -1211,7 +1247,7 @@ channels:
 | `memories.consolidation.enabled` | **Per-agent in `agents/{id}.yaml`**. Default `true`. Filters which agents participate in the global nightly consolidation. |
 | `memories.reconciliation.*` (`enabled` / `schedule` / `similarity_threshold` / `top_k` / `agent_id`) | **Per-agent in `agents/{id}.yaml`**. Default `false` for `enabled`. Activating it auto-creates a builtin task `reconcile_memory_{id}` in `scheduler.db`. |
 | `channels` | Only in the agent. Does not exist in global. |
-| `channels.*.token` / `auth_key` | Only in `*.secrets.yaml`. |
+| `channels.*.token` / `auth_key` | In the agent's own `agents/{id}.yaml`. Marked `kind == "secret"` in the schema → masked in the setup TUI. |
 | `system_prompt` | Required on each agent. No default value. |
 | `id`, `name`, `description` | Required on each agent. |
 
@@ -1226,14 +1262,14 @@ Runtime path fields (`*_filename`, `*_dirname`) are resolved as follows:
 - **Tildes** (`~/...`) are expanded to the user's home directory.
 - The special SQLite value `:memory:` passes through without being interpreted as a path.
 
-The root `~/.inaki/` is fixed — it is the same one used by config/agents/secrets —
+The root `~/.inaki/` is fixed — it is the same one used by config and agents —
 following the principle of separation between user data and the project tree.
 
 Default layout:
 ```
 ~/.inaki/
-├── config/            # Global + secrets YAMLs
-├── agents/            # Per-agent YAMLs + secrets
+├── config/            # global.yaml (credentials included) + tool_config.yaml
+├── agents/            # Per-agent YAMLs (tokens included)
 ├── data/              # SQLite DBs (inaki.db, history.db, scheduler.db, embedding_cache.db)
 ├── models/            # ONNX models (e.g. e5-small/)
 ├── mem/               # Digest markdown — one file per scope (digest_{channel}_{chat_id}.md)
@@ -1263,8 +1299,8 @@ scheduler:
 ## Adding a new agent
 
 1. Create `agents/miagente.yaml` with `id`, `name`, `description`, `system_prompt`
-2. Create `agents/miagente.secrets.yaml` with the required tokens
-3. Restart the daemon: `systemctl restart inaki`
+   and the required tokens (e.g. `channels.telegram.token`) — one single file
+2. Restart the daemon: `systemctl restart inaki`
 
 The `AgentRegistry` automatically scans `agents/*.yaml` on startup.
 No manual registration or code restart is needed.
@@ -1585,7 +1621,7 @@ photos:
     provider: anthropic         # anthropic | openai | groq
     model: claude-haiku-4-5-20251001
     prompt_template: null       # null = built-in prompt in Spanish
-    api_key: null               # best placed in global.secrets.yaml
+    api_key: null               # credential — lives here, in global.yaml
 
   dedup:
     enabled: true
@@ -1626,7 +1662,7 @@ photos:
 | `provider` | enum | `anthropic` | Multimodal LLM provider for scene description. |
 | `model` | string | `claude-haiku-4-5-20251001` | Provider model. |
 | `prompt_template` | string\|null | `null` | Custom prompt. `null` uses the built-in prompt. |
-| `api_key` | string\|null | `null` | API key. Best placed in `global.secrets.yaml`. |
+| `api_key` | string\|null | `null` | API key. Lives in `global.yaml` (never committed). |
 
 #### `dedup.*`
 
@@ -1645,10 +1681,6 @@ photos:
   scene:
     provider: anthropic
     model: claude-haiku-4-5-20251001
-
-# global.secrets.yaml
-photos:
-  scene:
     api_key: "sk-ant-..."
 ```
 

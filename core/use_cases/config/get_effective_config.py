@@ -1,5 +1,5 @@
 """
-GetEffectiveConfigUseCase — config mergeada de 4 capas con metadata de origen.
+GetEffectiveConfigUseCase — config mergeada de las capas con metadata de origen.
 
 EXCEPCIÓN ARQUITECTURAL DOCUMENTADA:
 Este use case importa de ``infrastructure.config`` (``load_global_config``,
@@ -23,12 +23,12 @@ class OrigenCampo:
     """Metadata de origen de un valor en la config mergeada."""
 
     capa: str
-    """Nombre de la capa donde se definió el valor: 'global', 'global.secrets', 'agent', 'agent.secrets'."""  # noqa: E501
+    """Nombre de la capa donde se definió el valor: 'global', 'agent'."""
 
 
 @dataclass(frozen=True)
 class ConfigEfectiva:
-    """Resultado del merge de 4 capas para un agente dado."""
+    """Resultado del merge de capas para un agente dado."""
 
     datos: dict[str, Any]
     """Config mergeada completa (lo que vería el runtime)."""
@@ -75,7 +75,7 @@ class GetEffectiveConfigUseCase:
 
     Usa ``IConfigRepository.read_layer`` para leer cada capa individualmente,
     luego aplica el mismo orden de merge que ``infrastructure.config``:
-    global → global.secrets → agent → agent.secrets.
+    global → agent.
     """
 
     def __init__(self, repo: "IConfigRepository") -> None:
@@ -92,13 +92,9 @@ class GetEffectiveConfigUseCase:
 
         capas_y_nombres: list[tuple[LayerName, str | None, str]] = [
             (LayerName.GLOBAL, None, "global"),
-            (LayerName.GLOBAL_SECRETS, None, "global.secrets"),
         ]
         if agent_id is not None:
-            capas_y_nombres += [
-                (LayerName.AGENT, agent_id, "agent"),
-                (LayerName.AGENT_SECRETS, agent_id, "agent.secrets"),
-            ]
+            capas_y_nombres.append((LayerName.AGENT, agent_id, "agent"))
 
         merged: dict[str, Any] = {}
         origenes: dict[str, OrigenCampo] = {}

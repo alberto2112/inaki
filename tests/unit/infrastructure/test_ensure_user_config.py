@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import stat
 from pathlib import Path
 
 import pytest
@@ -22,7 +23,10 @@ def test_first_run_creates_all_artifacts(tmp_path: Path) -> None:
     assert config_dir.is_dir()
     assert agents_dir.is_dir()
     assert (config_dir / "global.yaml").is_file()
-    assert (config_dir / "global.secrets.yaml").is_file()
+    # La capa de secrets fue erradicada: global.yaml es la única capa global y
+    # contiene las credenciales, por eso nace con permisos 600.
+    assert not (config_dir / "global.secrets.yaml").exists()
+    assert stat.S_IMODE((config_dir / "global.yaml").stat().st_mode) == 0o600
 
 
 def test_is_idempotent(tmp_path: Path) -> None:
@@ -32,14 +36,11 @@ def test_is_idempotent(tmp_path: Path) -> None:
     ensure_user_config(config_dir, agents_dir)
 
     global_yaml = config_dir / "global.yaml"
-    secrets_yaml = config_dir / "global.secrets.yaml"
     global_yaml.write_text("user: edited\n", encoding="utf-8")
-    secrets_yaml.write_text("custom: secret\n", encoding="utf-8")
 
     ensure_user_config(config_dir, agents_dir)
 
     assert global_yaml.read_text(encoding="utf-8") == "user: edited\n"
-    assert secrets_yaml.read_text(encoding="utf-8") == "custom: secret\n"
 
 
 def test_agents_dir_created_empty(tmp_path: Path) -> None:

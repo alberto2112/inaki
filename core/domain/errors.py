@@ -217,7 +217,7 @@ class DaemonAuthError(DaemonClientError):
     def __init__(self, status_code: int = 401) -> None:
         super().__init__(
             status_code=status_code,
-            detail="Auth inválida. Verificá la X-Admin-Key en ~/.inaki/config/global.secrets.yaml.",
+            detail="Auth inválida. Verificá la X-Admin-Key en ~/.inaki/config/global.yaml.",
         )
 
 

@@ -1,5 +1,5 @@
 """
-UpdateAgentLayerUseCase — escribe cambios en la capa de agente o agente.secrets.
+UpdateAgentLayerUseCase — escribe cambios en la capa de agente.
 
 Gestiona el tri-estado de ``memory.llm.*`` (Inherit / Override / Override-to-null):
 - ``TristadoValor.INHERIT`` → elimina la clave del YAML (ausente = heredar de global).
@@ -54,18 +54,12 @@ class UpdateAgentLayerUseCase:
             cambios: Dict con los campos a actualizar.
                      Los valores pueden ser ``CampoTriestado`` para campos
                      bajo ``memory.llm.*`` que usan tri-estado.
-            layer: Solo capas de agente son válidas: ``AGENT``, ``AGENT_SECRETS``,
-                ``SUB_AGENT`` o ``SUB_AGENT_SECRETS``.
+            layer: Solo capas de agente son válidas: ``AGENT`` o ``SUB_AGENT``.
 
         Raises:
             ValueError: Si se pasa una capa global.
         """
-        if layer not in (
-            LayerName.AGENT,
-            LayerName.AGENT_SECRETS,
-            LayerName.SUB_AGENT,
-            LayerName.SUB_AGENT_SECRETS,
-        ):
+        if layer not in (LayerName.AGENT, LayerName.SUB_AGENT):
             raise ValueError(
                 f"UpdateAgentLayerUseCase solo acepta capas de agente, recibió: {layer!r}"
             )

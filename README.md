@@ -35,7 +35,7 @@ core/
   use_cases/  ← RunAgentUseCase · ConsolidateMemoryUseCase · ScheduleTaskUseCase
 infrastructure/
   container.py   ← Single wiring point (DI composition root)
-  config.py      ← 4-layer YAML loader
+  config.py      ← 2-layer YAML loader
 ```
 
 **Dependency direction is inviolable:** `adapters/ → core/`. The `core/` layer never imports from `adapters/` or any infrastructure library. `infrastructure/container.py` is the only place where concrete adapters are instantiated.
@@ -70,12 +70,12 @@ All user data lives in **`~/.inaki/`** (never inside the repo). On first run, th
 ```
 ~/.inaki/
 ├── config/
-│   ├── global.yaml              # Global defaults (LLM, memory, embedding…)
-│   ├── global.secrets.yaml      # API keys — gitignored, never commit this
+│   ├── global.yaml              # Global defaults (LLM, memory, embedding…) + API keys
+│   │                            # mode 600 — never commit this
 │   ├── tool_config.yaml         # Tool credentials (daemon-owned)
 │   └── agents/
-│       ├── general.yaml         # Agent-specific overrides
-│       └── general.secrets.yaml # Agent secrets (Telegram token, etc.)
+│       └── general.yaml         # Agent-specific overrides + its tokens
+│                                # mode 600 — never commit this either
 ├── data/
 │   ├── inaki.db                 # Long-term memory (SQLite + sqlite-vec)
 │   ├── history.db               # Conversation history
@@ -89,11 +89,13 @@ All user data lives in **`~/.inaki/`** (never inside the repo). On first run, th
 
 ### Config merging
 
-Config is resolved via a **4-layer YAML merge** (each layer overrides only what it defines):
+Config is resolved via a **2-layer YAML merge** (each layer overrides only what it defines):
 
 ```
-global.yaml  →  global.secrets.yaml  →  agents/{id}.yaml  →  agents/{id}.secrets.yaml
+global.yaml  →  agents/{id}.yaml
 ```
+
+Credentials (provider `api_key`s, Telegram tokens, `admin.auth_key`) live in those same two files, which are created with mode `600` — **neither is committable**. "Secret" is a mark in the Pydantic schema, not a separate file: it is what makes `inaki setup` mask the field. Installs coming from the old `*.secrets.yaml` sidecars are migrated automatically on first start; no operator action needed.
 
 `tool_config.yaml` is **not part of this merge** — it is daemon-owned (written at runtime when tools store credentials) and read directly by the `YamlToolConfigStore`. Sensitive fields are stored with Fernet encryption (`enc:` prefix) using `~/.inaki/secret.key`.
 
@@ -107,7 +109,8 @@ app:
   default_agent: general
 
 providers:
-  openrouter: {}   # api_key goes in global.secrets.yaml
+  openrouter:
+    api_key: "sk-or-..."   # credential — this file is never committed
 
 llm:
   provider: openrouter
@@ -119,13 +122,6 @@ embedding:
   provider: e5_onnx
   model_dirname: models/e5-small
   dimension: 384
-```
-
-`~/.inaki/config/global.secrets.yaml`:
-```yaml
-providers:
-  openrouter:
-    api_key: "sk-or-..."
 ```
 
 `~/.inaki/config/agents/general.yaml`:
@@ -177,22 +173,15 @@ Each agent can expose multiple inbound channels simultaneously. Channels are con
 ### Telegram
 
 ```yaml
-# agents/general.yaml
+# agents/general.yaml  (mode 600 — never commit it, the token lives here)
 channels:
   telegram:
+    token: "7xxxxxxx:AAF..."          # Bot token from BotFather
     allowed_user_ids: ["123456789"]   # Allowed private chat user IDs. Empty = everyone.
     allowed_chat_ids: []              # Allowed group chat IDs (negative numbers).
                                       # Empty list = bot does NOT respond in groups.
     reactions: true
     voice_enabled: true               # Whisper transcription for voice messages
-    # token → agents/general.secrets.yaml
-```
-
-```yaml
-# agents/general.secrets.yaml
-channels:
-  telegram:
-    token: "7xxxxxxx:AAF..."
 ```
 
 ### REST API

@@ -67,12 +67,11 @@ _MENU_ITEMS = [
     ("AGENTS", "agents"),
     ("SUBAGENTS", "subagents"),
     ("PROVIDERS", "providers"),
-    ("SECRETS", "secrets"),
 ]
 
 
 class MainMenuPage(Screen):
-    """Pantalla de inicio: lista las 4 categorías de configuración.
+    """Pantalla de inicio: lista las categorías de configuración.
 
     Navegación con ↑↓/j/k. Enter abre la página correspondiente.
     """
@@ -148,10 +147,6 @@ class MainMenuPage(Screen):
             from adapters.inbound.setup_tui.screens.providers_page import ProvidersPage
 
             self.app.push_screen(ProvidersPage(self._container))
-        elif destino == "secrets":
-            from adapters.inbound.setup_tui.screens.secrets_page import SecretsPage
-
-            self.app.push_screen(SecretsPage(self._container))
 
     def action_help(self) -> None:
         self.app.notify(

@@ -6,19 +6,23 @@
 # No es leído directamente — sirve como referencia canónica.
 #
 # Configuración real: config/global.yaml + agents/{id}.yaml
-# Secrets: config/global.secrets.yaml + agents/{id}.secrets.yaml
-#          (nunca commitear *.secrets.yaml — están en .gitignore)
 #
-# Sistema de merge (4 capas, campo a campo):
+# Sistema de merge (2 capas, campo a campo):
 #   config/global.yaml
-#       ↓
-#   config/global.secrets.yaml
 #       ↓
 #   agents/{id}.yaml
 #       ↓
-#   agents/{id}.secrets.yaml
-#       ↓
 #   AgentConfig resuelto
+#
+# Credenciales: viven en esas MISMAS dos capas (api_key de providers, tokens de
+# canales, admin.auth_key). No hay ficheros *.secrets.yaml. Ambos ficheros se
+# crean con permisos 600 y NUNCA se commitean. El único fichero compartible es
+# este ejemplo, que no lleva valores reales.
+#
+# "Secreto" es una marca del schema (kind == "secret"), no un fichero: sirve para
+# enmascarar el campo en la TUI `inaki setup`. Si venís de la versión de 4 capas,
+# el arranque pliega solo los *.secrets.yaml dentro de su capa principal — no hay
+# nada que hacer a mano.
 # =============================================================================
 
 
@@ -70,9 +74,10 @@
 # En este caso `llm.provider: groq-work` apunta al adapter groq con creds
 # corporativas. Las entradas coexisten sin pisarse.
 #
-# Las credenciales reales viven en `global.secrets.yaml` — este archivo es
-# solo referencia. Si definís `providers.groq.api_key: K` en `global.yaml`,
-# se mergea normalmente con los secrets (el secrets layer gana en conflicto).
+# Las credenciales reales viven en `global.yaml` (o en `agents/{id}.yaml` si un
+# agente necesita otra cuenta del mismo vendor) — este archivo es solo referencia.
+# La entrada del agente se mergea campo a campo sobre la global: alcanza con
+# redefinir el `api_key`, no hace falta repetir `base_url` ni `type`.
 providers: {}
 
 
@@ -197,7 +202,7 @@ memories:
   # NO lleva `agent_id`: la delegación a sub-agente es POR JOB (extractor vs
   # reconciler tienen prompts distintos) y se declara en
   # consolidation.agent_id / reconciliation.agent_id. El sub-agente, vía el merge
-  # de 4 capas, sobreescribe esta config LLM base de forma individual.
+  # de capas, sobreescribe esta config LLM base de forma individual.
   #
   # Semántica:
   #   - clave AUSENTE → hereda el valor de `llm.*`.
@@ -340,7 +345,7 @@ admin:
   host: "127.0.0.1"
   port: 6497
   chat_timeout: 300.0
-  # auth_key: "clave-secreta"   # → global.secrets.yaml
+  # auth_key: "clave-secreta"   # credencial — va acá mismo, en global.yaml
 
 
 # -----------------------------------------------------------------------------
@@ -439,7 +444,7 @@ user:
 #                                #   groq: llama-4-scout-17b-16e-instruct, etc.
 #     prompt_template: null      # Prompt personalizado. null = usar el prompt español
 #                                # built-in del adaptador.
-#     # api_key → global.secrets.yaml bajo photos.scene.api_key
+#     api_key: "sk-ant-..."      # credencial — va acá mismo, en global.yaml
 #
 #   dedup:
 #     enabled: true              # Habilita el job nocturno de deduplicación
@@ -485,7 +490,7 @@ user:
 #                               # respeta allowed_user_ids).
 #     reactions: true
 #     voice_enabled: true
-#     # token → agents/{id}.secrets.yaml
+#     token: "7xxxxxxx:AAF..."  # Bot token de BotFather — va acá mismo
 #
 #     # -------------------------------------------------------------------------
 #     # [channels.telegram.groups] — Comportamiento del bot en CHATS GRUPALES
@@ -568,27 +573,35 @@ user:
 
 
 # =============================================================================
-# SECRETS — config/global.secrets.yaml + agents/{id}.secrets.yaml
+# CREDENCIALES — dónde va cada cosa
 # =============================================================================
-# Los campos de abajo NUNCA van en archivos commiteables.
+# No hay ficheros de secrets: las credenciales van en las mismas dos capas del
+# merge. Esos ficheros se crean con permisos 600 y NUNCA se commitean.
 # =============================================================================
 
-# config/global.secrets.yaml:
+# config/global.yaml — credenciales compartidas por todos los agentes:
 # providers:
 #   openrouter: { api_key: "sk-or-..." }
 #   groq:       { api_key: "gsk_...",  base_url: "https://api.groq.com/openai/v1" }
 #   openai:     { api_key: "sk-..." }
-# tool_config:                   # Tool Config Protocol — config por namespace de tool.
-#   web_search:                  # Se puede escribir a mano, pero lo normal es decirle
-#     api_key: "tvly-..."        # la key al agente por chat (operation=configure);
-#   exchange:                    # los campos sensibles se cifran solos (enc:).
-#     username: "dominio\\user"
-#     password: "..."
+# admin:
+#   auth_key: "clave-secreta"    # header X-Admin-Key del admin server
 
-# agents/general.secrets.yaml:
+# agents/general.yaml — credenciales propias del agente:
 # channels:
 #   telegram:
 #     token: "7xxxxxxx:AAF..."   # Bot token de BotFather
 #     broadcast:
 #       auth: "shared-secret"    # HMAC shared-secret — mismo campo para server
 #                                # y client (el del client matchea el del server)
+
+# config/tool_config.yaml — FUERA del merge, dueño el daemon (Tool Config
+# Protocol). Se puede escribir a mano, pero lo normal es decirle la key al
+# agente por chat (operation=configure); los campos sensibles se cifran solos
+# con Fernet (prefijo `enc:`, clave en ~/.inaki/secret.key).
+# tool_config:
+#   web_search:
+#     api_key: "tvly-..."
+#   exchange:
+#     username: "dominio\\user"
+#     password: "..."

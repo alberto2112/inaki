@@ -29,7 +29,7 @@ Orden: **cronológico inverso** (la más reciente primero).
 ### Migración automática en caliente — sin acción
 
 `persist-tool-calls`, `groups-vs-broadcast`, `tool-config-own-file`,
-`agent-state-scoped-by-channel-chat`.
+`agent-state-scoped-by-channel-chat`, `secrets-layer-eradication`.
 
 ### Sin migración — pero cambian comportamiento observable
 
@@ -43,6 +43,7 @@ Orden: **cronológico inverso** (la más reciente primero).
 | [`in-flight-message-injection`](#in-flight-message-injection) | Dos mensajes seguidos → **una** respuesta combinada, no dos turnos |
 | [`background-delegation`](#background-delegation) | `delegate` es **async por default** (`wait=false`) |
 | [`drop-per-agent-rest`](#drop-per-agent-rest) | Bloques `channels.rest` se ignoran en silencio |
+| [`secrets-layer-eradication`](#secrets-layer-eradication) | Desaparece la pantalla SECRETS del setup; borrar provider/agente se lleva sus credenciales |
 | [`broadcast-topology-config`](#broadcast-topology-config) | Rol explícito `server` XOR `client`; config vieja falla al cargar |
 | [`broadcast-arranque-observable`](#broadcast-arranque-observable) | El fallo de `bind()` y la config de broadcast que no valida ahora salen como `ERROR` en el log |
 | [`formato-en-el-borde-del-transporte`](#formato-en-el-borde-del-transporte) | Todo lo que Telegram manda fuera del turno conversacional (scheduler, `bg-N`, intermedios, media) sale **formateado** y troceado, no en markdown crudo |
@@ -66,8 +67,82 @@ Orden: **cronológico inverso** (la más reciente primero).
   `agent-state-scoped-by-channel-chat`
 - **Scheduler**: `scheduler-trigger-type-mutable`, `channel-send-history-persist`
 - **Tools y config**: `write-file-explicit-mode`, `tool-config-protocol`,
-  `tool-config-own-file`
+  `tool-config-own-file`, `secrets-layer-eradication`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `secrets-layer-eradication`
+
+**Los `*.secrets.yaml` prometían una separación que nadie usaba, y cobraban el
+precio en todas las superficies de edición.** La config eran **4 capas**:
+`global.yaml` → `global.secrets.yaml` → `agents/{id}.yaml` →
+`agents/{id}.secrets.yaml`. La idea original era poder compartir o commitear la
+config sin arrastrar credenciales. Nunca se usó así, y no iba a usarse.
+
+**El diagnóstico.** La premisa que sostenía el diseño era falsa: los
+`*.secrets.yaml` **nunca estuvieron cifrados**. Eran YAML plano con permisos
+600 — exactamente lo mismo que su capa principal. El único cifrado real del
+sistema (Fernet, valores `enc:`, clave en `~/.inaki/secret.key`) vive en
+`tool_config.yaml`, que ni siquiera participa del merge. Con eso, el beneficio
+neto de la separación era **compartir sin credenciales**, y el costo era:
+
+| Costo | Dónde |
+|---|---|
+| 6 valores de `LayerName` en vez de 3 | `core/ports/config_repository.py` |
+| Una pantalla entera de la TUI (191 líneas) | `setup_tui/screens/secrets_page.py` |
+| Routing `kind == "secret"` → capa, en cada persistencia | `global_page.py`, `agent_detail_page.py` |
+| Poda de claves duplicada sobre dos capas | `persist_delete` de ambas páginas |
+| Dos preguntas al operador que solo existían por el split | borrar agente / borrar provider |
+
+Y sobre todo: **una decisión no obvia por cada edición** ("¿esto va al fichero
+principal o al de secrets?") en un sistema que ya tenía demasiadas.
+
+**El cambio.** Dos capas: `config/global.yaml` → `agents/{id}.yaml`. Las
+credenciales viven ahí, y **todas** las capas se crean y se reparan con permisos
+600 (antes solo las de secrets). La sensibilidad de un dato dejó de ser una
+propiedad del *fichero* para ser lo que siempre debió ser: una propiedad del
+**schema** (`kind == "secret"`), que es lo que enmascara el valor en la TUI y lo
+que permitirá redactarlo en el futuro `inaki config show`.
+
+**Migración automática, sin acción del operador.**
+`migrate_secrets_into_main_layers` corre en el bootstrap y pliega cada
+`*.secrets.yaml` dentro de su capa principal (el secrets **pisa**, mismo orden
+de precedencia que tenía el merge eliminado), aplica `chmod 600` y recién
+entonces borra el secrets. Orden deliberado — escribir lo nuevo antes de borrar
+lo viejo: en el peor caso quedan duplicados (benignos, el loader ya no los lee),
+nunca pérdida de datos. Alcanza a global, agentes y sub-agentes. Es idempotente.
+Corre **después** de `migrate_tool_config_to_own_file`, que necesita leer
+`global.secrets.yaml` antes de que desaparezca; si ese bloque sobrevive porque
+`tool_config.yaml` ya existía, se descarta en vez de ensuciar la capa principal.
+
+**Cambios observables.** Desaparece la entrada `SECRETS` del menú de `inaki
+setup` (queda GLOBAL CONFIG / AGENTS / SUBAGENTS / PROVIDERS). Borrar un
+provider ahora se lleva su `api_key` en la misma operación, y borrar un agente
+se lleva su único YAML con las credenciales adentro: en ambos casos se acabó la
+segunda pregunta, porque ya no hay un segundo fichero que dejar huérfano.
+
+**Los dos costos que se aceptan.** Ambos conocidos, ninguno accidental:
+
+1. **Se pierde la vista transversal de credenciales.** La `SecretsPage` listaba
+   *todos* los secretos declarados por el schema marcando cuáles estaban
+   configurados y cuáles pendientes (`iter_declared_secrets`, borrada con
+   ella). Esa vista no dependía del split de ficheros — era una feature propia
+   que cayó con la página. Hoy hay que navegar el árbol de global/agente para
+   ver una credencial.
+2. **`cat global.yaml` deja de ser pegable** en un issue sin filtrar llaves a
+   mano.
+
+Los dos los cubre la misma pieza pendiente: `inaki config show --effective
+--origin` con redacción de campos secretos (Fase 5 de
+[`config-refactor-plan.md`](config-refactor-plan.md)) — un dump que enmascara
+también responde "qué tengo configurado y qué me falta". Hasta entonces, los
+huecos existen. Ojo: **esa redacción todavía NO está implementada**;
+`get_effective_config` hoy devuelve los valores en claro.
+
+**Invariante.** **NUNCA** expresar "este dato es sensible" como un split de
+ficheros: es metadato del schema. Un split de ficheros por sensibilidad
+multiplica capas, decisiones de escritura y superficie de UI, y no cifra nada.
 
 ---
 

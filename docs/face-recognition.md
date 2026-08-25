@@ -160,16 +160,12 @@ Configurable via `photos.dedup.schedule` and `photos.dedup.similarity_threshold`
 ## Minimal Configuration
 
 ```yaml
-# ~/.inaki/config/global.yaml
+# ~/.inaki/config/global.yaml  (mode 600 — never commit it, it holds credentials)
 photos:
   enabled: true
   scene:
     provider: anthropic
     model: claude-haiku-4-5-20251001
-
-# ~/.inaki/config/global.secrets.yaml
-photos:
-  scene:
     api_key: "sk-ant-..."
 ```
 
@@ -181,7 +177,7 @@ See the full configuration reference in [`docs/configuracion.md`](configuracion.
 # 1. Stop the daemon
 systemctl --user stop inaki
 
-# 2. Add the photos: block in global.yaml (or secrets.yaml for the api_key)
+# 2. Add the photos: block in global.yaml (api_key included)
 # 3. Restart — faces.db is created automatically on first use
 systemctl --user start inaki
 

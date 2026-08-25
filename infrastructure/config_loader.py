@@ -1,8 +1,13 @@
 """Carga y merge de configuración de Inaki.
 
-Lee las 4 capas YAML, mergea, valida contra el schema (``config_schema``) y
-expone ``load_global_config`` / ``load_agent_config`` / ``AgentRegistry`` +
-el bootstrap del directorio del usuario. Importá desde ``infrastructure.config``.
+Lee las 2 capas YAML (``config/global.yaml`` → ``agents/{id}.yaml``), mergea,
+valida contra el schema (``config_schema``) y expone ``load_global_config`` /
+``load_agent_config`` / ``AgentRegistry`` + el bootstrap del directorio del
+usuario. Importá desde ``infrastructure.config``.
+
+Las credenciales viven en esas mismas capas (los ficheros se protegen con
+permisos ``600``). Los ``*.secrets.yaml`` fueron erradicados: ver
+``migrate_secrets_into_main_layers``.
 """
 
 from __future__ import annotations
@@ -135,28 +140,13 @@ _GLOBAL_YAML_HEADER = """\
 #   config.example.yaml (en el repo de Inaki)
 #
 # Layout:
-#   ~/.inaki/config/global.yaml          ← este archivo (config base)
-#   ~/.inaki/config/global.secrets.yaml  ← secrets (api keys)
-#   ~/.inaki/agents/{id}.yaml            ← config de cada agente
-#   ~/.inaki/agents/{id}.secrets.yaml    ← secrets por agente (opcional)
-# =============================================================================
-
-"""
-
-_SECRETS_YAML_HEADER = """\
-# =============================================================================
-# Inaki — Secrets globales
-# =============================================================================
+#   ~/.inaki/config/global.yaml  ← este archivo (config base + credenciales)
+#   ~/.inaki/agents/{id}.yaml    ← config de cada agente (+ sus credenciales)
 #
-# Poné acá las API keys compartidas entre todos los agentes.
-# Este archivo NUNCA debe commitearse a un repositorio.
-#
-# Las credenciales viven en el bloque top-level `providers:` y se referencian
-# desde cada feature (`llm`, `embedding`, `transcription`, `memory.llm`) por
+# Las credenciales van en el bloque top-level `providers:` y se referencian
+# desde cada feature (`llm`, `embedding`, `transcription`, `memories.llm`) por
 # el campo `provider: <key>`. Esto evita duplicar api_key cuando varias
-# features comparten vendor.
-#
-# Ejemplo:
+# features comparten vendor. Ejemplo:
 #
 #   providers:
 #     openrouter:
@@ -164,12 +154,11 @@ _SECRETS_YAML_HEADER = """\
 #     groq:
 #       api_key: "gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 #       base_url: "https://api.groq.com/openai/v1"
-#     openai:
-#       api_key: "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 #
-# Los secrets por agente (tokens de Telegram, auth_keys REST) van en
-# ~/.inaki/agents/{id}.secrets.yaml
+# Este archivo contiene credenciales: se crea con permisos 600 y NUNCA debe
+# commitearse a un repositorio.
 # =============================================================================
+
 """
 
 
@@ -216,8 +205,8 @@ def ensure_user_config(config_dir: Path, agents_dir: Path) -> None:
     """
     Bootstrap idempotente del layout ~/.inaki/.
 
-    Crea `config_dir`, `agents_dir`, `global.yaml` y `global.secrets.yaml`
-    si no existen. No toca archivos ya presentes.
+    Crea `config_dir`, `agents_dir` y `global.yaml` si no existen (el archivo
+    con permisos 600: contiene credenciales). No toca archivos ya presentes.
     """
     try:
         config_dir.mkdir(parents=True, exist_ok=True)
@@ -230,22 +219,17 @@ def ensure_user_config(config_dir: Path, agents_dir: Path) -> None:
     if not global_yaml.exists():
         try:
             global_yaml.write_text(_render_default_global_yaml(), encoding="utf-8")
+            global_yaml.chmod(0o600)
         except OSError as exc:
             logger.error("No se pudo escribir %s: %s", global_yaml, exc)
             raise
         logger.info("Config creada: %s", global_yaml)
 
-    secrets_yaml = config_dir / "global.secrets.yaml"
-    if not secrets_yaml.exists():
-        try:
-            secrets_yaml.write_text(_SECRETS_YAML_HEADER, encoding="utf-8")
-        except OSError as exc:
-            logger.error("No se pudo escribir %s: %s", secrets_yaml, exc)
-            raise
-        logger.info("Secrets file creado: %s", secrets_yaml)
-
+    # El orden importa: la extracción de `tool_config` lee `global.secrets.yaml`,
+    # así que tiene que correr ANTES de que el fold lo haga desaparecer.
     migrate_tool_config_to_own_file(config_dir)
     migrate_telegram_group_fields(config_dir)
+    migrate_secrets_into_main_layers(config_dir, agents_dir)
 
 
 def migrate_tool_config_to_own_file(config_dir: Path) -> None:
@@ -403,6 +387,131 @@ def _move_group_fields_broadcast_to_groups(doc: dict) -> bool:
     return True
 
 
+def migrate_secrets_into_main_layers(config_dir: Path, agents_dir: Path) -> None:
+    """Migración one-shot: pliega cada ``*.secrets.yaml`` dentro de su capa principal.
+
+    Los ``*.secrets.yaml`` nunca estuvieron cifrados — eran YAML plano con
+    permisos 600, igual que su capa principal. Su única ventaja real era poder
+    compartir/commitear la config sin credenciales, caso que nadie usa. A cambio
+    duplicaban el número de ficheros, de capas del merge y de decisiones
+    ("¿dónde escribo este campo?") en toda superficie de edición.
+
+    Tras esta migración las capas son dos: ``config/global.yaml`` y
+    ``agents/{id}.yaml`` (más ``agents/sub-agents/{id}.yaml``). La marca de
+    "esto es secreto" NO desaparece: vive en el schema (``kind == "secret"``),
+    que es lo que usa la TUI para enmascarar el valor al mostrarlo.
+
+    El contenido del secrets PISA al de la capa principal — mismo orden de
+    precedencia que tenía el merge que se elimina. Idempotente: si no hay
+    ``*.secrets.yaml``, no hace nada. Orden seguro: escribe la capa principal
+    ANTES de borrar el secrets — en el peor caso quedan duplicados (benigno,
+    el loader ya no lee secrets), nunca pérdida de datos.
+
+    Los comentarios de la capa principal se preservan (ruamel); los del secrets
+    se pierden al plegarse, salvo los que cuelgan de un bloque que se copia entero.
+    """
+    from ruamel.yaml import YAML
+
+    yaml_rt = YAML()
+    yaml_rt.preserve_quotes = True
+    yaml_rt.width = 4096
+
+    pares: list[tuple[Path, Path]] = [
+        (config_dir / "global.secrets.yaml", config_dir / "global.yaml")
+    ]
+    for directorio in (agents_dir, agents_dir / "sub-agents"):
+        if not directorio.is_dir():
+            continue
+        for secrets_path in sorted(directorio.glob("*.secrets.yaml")):
+            principal = secrets_path.with_name(secrets_path.name.replace(".secrets.yaml", ".yaml"))
+            pares.append((secrets_path, principal))
+
+    tool_config_ya_migrado = (config_dir / "tool_config.yaml").exists()
+
+    for secrets_path, principal_path in pares:
+        if not secrets_path.exists():
+            continue
+        try:
+            with secrets_path.open("r", encoding="utf-8") as f:
+                secrets_doc = yaml_rt.load(f)
+        except OSError as exc:
+            logger.error("Migración secrets: no se pudo leer %s (%s)", secrets_path, exc)
+            continue
+
+        if not isinstance(secrets_doc, dict):
+            secrets_doc = {}
+
+        # El bloque `tool_config` solo sobrevive acá si `tool_config.yaml` ya
+        # existía cuando corrió su migración: los datos están a salvo allá y el
+        # store nunca lee esta copia. Plegarlo solo ensuciaría la capa principal.
+        if "tool_config" in secrets_doc and tool_config_ya_migrado:
+            del secrets_doc["tool_config"]
+
+        if secrets_doc:
+            try:
+                with principal_path.open("r", encoding="utf-8") as f:
+                    principal_doc = yaml_rt.load(f)
+            except FileNotFoundError:
+                principal_doc = None
+            except OSError as exc:
+                logger.error(
+                    "Migración secrets: no se pudo leer %s (%s) — %s queda intacto",
+                    principal_path,
+                    exc,
+                    secrets_path.name,
+                )
+                continue
+            if not isinstance(principal_doc, dict):
+                principal_doc = {}
+
+            _plegar_en(principal_doc, secrets_doc)
+
+            try:
+                with principal_path.open("w", encoding="utf-8") as f:
+                    yaml_rt.dump(principal_doc, f)
+                principal_path.chmod(0o600)
+            except OSError as exc:
+                logger.error(
+                    "Migración secrets: no se pudo escribir %s (%s) — abortando, "
+                    "los datos quedan en %s",
+                    principal_path,
+                    exc,
+                    secrets_path.name,
+                )
+                continue
+
+        # Recién ahora, con los datos ya en la capa principal, borrar el secrets.
+        try:
+            secrets_path.unlink()
+        except OSError as exc:
+            logger.warning(
+                "Migración secrets: %s actualizado, pero no se pudo borrar %s (%s) — "
+                "duplicado benigno, el loader ya no lee ese archivo",
+                principal_path,
+                secrets_path,
+                exc,
+            )
+            continue
+
+        logger.info(
+            "Migración secrets: %s plegado en %s (permisos 600)", secrets_path, principal_path
+        )
+
+
+def _plegar_en(destino: dict, origen: dict) -> None:
+    """Deep merge in-place de ``origen`` sobre ``destino`` (``origen`` pisa).
+
+    Muta ``destino`` en vez de construir un dict nuevo para no perder los
+    comentarios que ruamel tiene colgados de la estructura original.
+    """
+    for key, value in origen.items():
+        actual = destino.get(key)
+        if isinstance(actual, dict) and isinstance(value, dict):
+            _plegar_en(actual, value)
+        else:
+            destino[key] = value
+
+
 class _HasChannels(Protocol):
     """Subset estructural de ``AgentConfig`` que ``ensure_user_channel_dirs``
     necesita. Declarado como Protocol para que tests puedan pasar stubs sin
@@ -512,16 +621,10 @@ def _parse_providers(merged: dict) -> dict[str, ProviderConfig]:
 
 def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
     """
-    Carga y mergea global.yaml + global.secrets.yaml.
+    Carga global.yaml (capa base, credenciales incluidas).
     Retorna (GlobalConfig, raw_dict) — el dict raw se usa para merge con agentes.
     """
-    base = _load_yaml_safe(config_dir / "global.yaml")
-    secrets = _load_yaml_safe(config_dir / "global.secrets.yaml")
-
-    if not secrets and not (config_dir / "global.secrets.yaml").exists():
-        logger.debug("global.secrets.yaml no encontrado — usando solo global.yaml")
-
-    merged = _deep_merge(base, secrets)
+    merged = _load_yaml_safe(config_dir / "global.yaml")
 
     _check_legacy_shape(merged)
     providers = _parse_providers(merged)
@@ -684,7 +787,7 @@ def load_agent_config(
 ) -> AgentConfig | None:
     """
     Carga y mergea la config de un agente:
-      global_raw → extra_base → agents/{id}.yaml → agents/{id}.secrets.yaml
+      global_raw → extra_base → agents/{id}.yaml
 
     ``extra_base`` son los defaults de rol (ej. sub-agentes, ver ``SUBAGENT_DEFAULTS``):
     pisan a ``global_raw`` pero el YAML explícito del agente sigue pisando por encima.
@@ -692,23 +795,12 @@ def load_agent_config(
     Retorna None si el agente tiene config inválida (loggea WARNING).
     """
     agent_yaml = agents_dir / f"{agent_id}.yaml"
-    agent_secrets = agents_dir / f"{agent_id}.secrets.yaml"
 
     if not agent_yaml.exists():
         logger.warning("Config del agente '%s' no encontrada: %s", agent_id, agent_yaml)
         return None
 
     agent_raw = _load_yaml_safe(agent_yaml)
-
-    if agent_secrets.exists():
-        secrets_raw = _load_yaml_safe(agent_secrets)
-        agent_raw = _deep_merge(agent_raw, secrets_raw)
-    else:
-        logger.warning(
-            "Agente '%s': %s no encontrado — canales con secrets no levantarán.",
-            agent_id,
-            agent_secrets.name,
-        )
 
     if extra_base is not None:
         global_raw = _deep_merge(global_raw, extra_base)
@@ -813,19 +905,15 @@ class AgentRegistry:
 
     def get_sub_agent_raw(self, agent_id: str) -> dict | None:
         """
-        Delta crudo (YAML + secrets mergeados, SIN global_raw ni SUBAGENT_DEFAULTS) de un
-        sub-agente. Lo usa el builder efímero (`build_ephemeral_child`) para resolver
-        `inherit` contra el caller en tiempo de delegación — no contra `global_raw`.
+        Delta crudo (SIN global_raw ni SUBAGENT_DEFAULTS) de un sub-agente. Lo usa
+        el builder efímero (`build_ephemeral_child`) para resolver `inherit` contra
+        el caller en tiempo de delegación — no contra `global_raw`.
         """
         return self._sub_agent_raw.get(agent_id)
 
     @staticmethod
     def _load_sub_agent_raw_delta(agent_id: str, sub_agents_dir: Path) -> dict:
-        raw = _load_yaml_safe(sub_agents_dir / f"{agent_id}.yaml")
-        secrets_path = sub_agents_dir / f"{agent_id}.secrets.yaml"
-        if secrets_path.exists():
-            raw = _deep_merge(raw, _load_yaml_safe(secrets_path))
-        return raw
+        return _load_yaml_safe(sub_agents_dir / f"{agent_id}.yaml")
 
     def agents_with_channel(self, channel_type: str) -> list[AgentConfig]:
         return [

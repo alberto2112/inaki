@@ -23,7 +23,6 @@ from infrastructure.config_loader import (  # noqa: F401
     _GLOBAL_YAML_HEADER,
     _LEGACY_ERROR_TEMPLATE,
     _LEGACY_FIELDS,
-    _SECRETS_YAML_HEADER,
     _HasChannels,
     _check_legacy_shape,
     _deep_merge,

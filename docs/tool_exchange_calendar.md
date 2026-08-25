@@ -22,7 +22,7 @@ Allows reading, searching, creating, updating, and deleting Outlook calendar eve
 ## Configuration
 
 Credentials live in the `tool_config.exchange` block of
-`~/.inaki/config/global.secrets.yaml` via the **Tool Config Protocol**
+`~/.inaki/config/tool_config.yaml` via the **Tool Config Protocol**
 (see `docs/configuracion.md` → "Tool Config Protocol"). No wizard, no `.env`:
 the `password` field is encrypted at rest with the auto-generated key in
 `~/.inaki/secret.key`.
@@ -40,7 +40,7 @@ The LLM invokes `operation=configure` and the credentials are persisted in
 
 ### Configuration block
 
-Inside `~/.inaki/config/tool_config.yaml` (daemon-owned, NOT `global.secrets.yaml`):
+Inside `~/.inaki/config/tool_config.yaml` (daemon-owned, NOT `global.yaml`):
 
 ```yaml
 tool_config:
@@ -80,7 +80,7 @@ Priority: **config store > environment variables**.
 
 ### `configure` — save credentials
 
-Persists credentials in `tool_config.exchange` of `global.secrets.yaml`.
+Persists credentials in `tool_config.exchange` of `config/tool_config.yaml`.
 Merges with existing configuration: only overwrites the fields that are provided.
 
 **Required parameters:** `username`, `password`, `mail`

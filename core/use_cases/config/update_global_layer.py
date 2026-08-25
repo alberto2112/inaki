@@ -1,11 +1,5 @@
 """
-UpdateGlobalLayerUseCase — escribe cambios en la capa global o global.secrets.
-
-Regla de routing de capa:
-- Si el campo pertenece a ``CAMPOS_SECRETS`` → escribe a ``global.secrets.yaml``.
-- En cualquier otro caso → escribe a ``global.yaml``.
-
-El llamador puede forzar la capa destino pasando ``layer`` explícitamente.
+UpdateGlobalLayerUseCase — escribe cambios en la capa global (``global.yaml``).
 """
 
 from __future__ import annotations
@@ -21,17 +15,10 @@ from core.use_cases.config._merge import (
 if TYPE_CHECKING:
     from core.ports.config_repository import IConfigRepository
 
-# Rutas de campo que siempre se persisten en global.secrets.
-# El campo ``providers.{key}.api_key`` se maneja en UpsertProviderUseCase.
-CAMPOS_SECRETS: frozenset[str] = frozenset()
-
 
 class UpdateGlobalLayerUseCase:
     """
-    Actualiza uno o más campos de la capa global indicada.
-
-    El caller puede especificar la capa de destino. Si no la especifica,
-    la capa por defecto es ``LayerName.GLOBAL``.
+    Actualiza uno o más campos de la capa global.
     """
 
     def __init__(self, repo: "IConfigRepository") -> None:
@@ -54,14 +41,14 @@ class UpdateGlobalLayerUseCase:
                      debe coincidir con las secciones del YAML (``app``, ``llm``, etc.).
                      Un valor ``CampoTriestado(TristadoValor.INHERIT)`` elimina
                      esa clave del YAML.
-            layer: Capa destino. Solo ``GLOBAL`` o ``GLOBAL_SECRETS`` son válidos aquí.
+            layer: Capa destino. Solo ``GLOBAL`` es válido aquí.
 
         Raises:
             ValueError: Si se pasa una capa de agente.
         """
-        if layer not in (LayerName.GLOBAL, LayerName.GLOBAL_SECRETS):
+        if layer is not LayerName.GLOBAL:
             raise ValueError(
-                f"UpdateGlobalLayerUseCase solo acepta capas globales, recibió: {layer!r}"
+                f"UpdateGlobalLayerUseCase solo acepta la capa global, recibió: {layer!r}"
             )
 
         datos_actuales = self._repo.read_layer(layer)

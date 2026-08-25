@@ -24,7 +24,6 @@ from pydantic_core import PydanticUndefined
 
 from adapters.inbound.setup_tui._schema import (
     _default_as_str,
-    _field_is_secret,
     _infer_kind,
     _list_item_type,
     _literal_choices,
@@ -157,7 +156,6 @@ def _build_section(
                     is_section=False,
                     description=descripcion,
                     default_value=_default_value(field_info),
-                    is_secret=_field_is_secret(field_info),
                 )
             )
 
@@ -311,77 +309,6 @@ def _dict_value_model(annotation: Any) -> type[BaseModel] | None:
         if inspect.isclass(v) and issubclass(v, BaseModel):
             return v
     return None
-
-
-# Path del secreto, ¿configurado?, valor actual (si lo hay).
-DeclaredSecret = tuple[tuple[str, ...], bool, Any]
-
-
-def iter_declared_secrets(
-    model: type[BaseModel],
-    values: dict[str, Any],
-    *,
-    channel_schemas: dict[str, type[BaseModel]] | None = None,
-    path: tuple[str, ...] = (),
-) -> list[DeclaredSecret]:
-    """Recorre ``model`` + ``values`` y recolecta TODOS los campos secretos
-    declarados (marcados en el schema), con su estado de configuración.
-
-    Permite a la SecretsPage ser proactiva: enumera qué secretos EXISTEN según
-    el schema y la estructura configurada, no solo los que ya están escritos.
-    ``configured`` = la clave está presente y no vacía. Maneja ``channels``
-    (heterogéneo, vía ``channel_schemas``) y cualquier ``dict[str, BaseModel]``
-    (homogéneo, ej. ``providers``) recursando por cada entrada presente.
-
-    LÍMITE DELIBERADO: solo cubre secretos del SCHEMA de config (providers,
-    channels, admin, photos.scene...). Los secretos de **tools y skills quedan
-    FUERA por diseño** — su config es conversacional vía el Tool Config Protocol
-    (``config_namespace`` + ``IToolConfigStore``), le da libertad al dev y no hay
-    sección de tools/skills en el setup TUI donde mostrarlos. NO "completar" esto
-    para tools: no es un olvido, es el borde del sistema.
-    """
-    out: list[DeclaredSecret] = []
-    values = values if isinstance(values, dict) else {}
-    channel_schemas = channel_schemas or {}
-
-    for name, field_info in model.model_fields.items():
-        annotation = field_info.annotation
-        if annotation is None:
-            continue
-
-        if _field_is_secret(field_info):
-            configurado = name in values and values.get(name) not in (None, "")
-            out.append((path + (name,), configurado, values.get(name)))
-            continue
-
-        sub = _unwrap_optional(annotation)
-
-        if name == "channels" and channel_schemas and _es_tipo_dict(annotation):
-            for canal, cval in (values.get("channels") or {}).items():
-                schema = channel_schemas.get(canal)
-                if schema is not None:
-                    out += iter_declared_secrets(
-                        schema,
-                        cval,
-                        channel_schemas=channel_schemas,
-                        path=path + ("channels", canal),
-                    )
-        elif _es_tipo_dict(annotation):
-            vmodel = _dict_value_model(annotation)
-            if vmodel is not None:
-                for k, v in (values.get(name) or {}).items():
-                    out += iter_declared_secrets(
-                        vmodel, v, channel_schemas=channel_schemas, path=path + (name, k)
-                    )
-        elif name in values and inspect.isclass(sub) and issubclass(sub, BaseModel):
-            # Solo se recursa en sub-secciones PRESENTES: un secreto de broadcast
-            # no aplica si el usuario no activó broadcast (evita ruido de pendientes
-            # de features no usadas). Al activar la sección, su secreto aparece.
-            out += iter_declared_secrets(
-                sub, values.get(name) or {}, channel_schemas=channel_schemas, path=path + (name,)
-            )
-
-    return out
 
 
 def _safe_value(raw: Any) -> Any:

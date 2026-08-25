@@ -23,13 +23,15 @@ inaki setup
 ```
 
 **Expected:** the TUI opens without error and shows `MainMenuPage` with 4 options:
-`Global Config`, `Providers`, `Agents`, `Secrets`.
+`GLOBAL CONFIG`, `AGENTS`, `SUBAGENTS`, `PROVIDERS`.
 
 **If it fails:** verify `textual>=0.80` is installed (`pip show textual`). On Pi 5
 with 4 GB RAM the TUI should open in under 3 seconds.
 
 - [ ] TUI opens without traceback.
 - [ ] Main menu is shown with the 4 categories.
+- [ ] There is **no** `SECRETS` entry — credentials are edited in place, masked,
+      in the page that owns them.
 - [ ] Breadcrumb in the top bar shows `inaki / setup`.
 
 ---
@@ -105,23 +107,40 @@ bat ~/.inaki/config/global.yaml | rg "reasoning_effort"
 
 ## 6. ProvidersPage — add a new provider
 
-1. In `MainMenuPage`, Enter on "Providers" → `ProvidersPage`.
+1. In `MainMenuPage`, Enter on "PROVIDERS" → `ProvidersPage`.
 2. Press `n` (new provider) or the available binding.
 3. Enter `id: test-provider`, `base_url: https://api.test.com/v1`.
-4. Enter a test `api_key` (e.g. `sk-test-1234567890`).
+4. Enter a test `api_key` (e.g. `sk-test-1234567890`) — the input is **masked**.
 5. Confirm.
 
 **Verify:**
 
 ```bash
 bat ~/.inaki/config/global.yaml | rg -A3 "test-provider"
-bat ~/.inaki/config/global.secrets.yaml | rg "test-provider"
-stat -f "%A" ~/.inaki/config/global.secrets.yaml   # should be 600
+stat -f "%A" ~/.inaki/config/global.yaml   # should be 600
 ```
 
-- [ ] `global.yaml` has the `test-provider` entry with `base_url`.
-- [ ] `global.secrets.yaml` has the provider's `api_key`.
-- [ ] Permissions on `global.secrets.yaml` are `600`.
+- [ ] `global.yaml` has the `test-provider` entry with `base_url` **and** `api_key` —
+      one single file, no `global.secrets.yaml` is created.
+- [ ] Permissions on `global.yaml` are `600`.
+- [ ] No `~/.inaki/config/global.secrets.yaml` exists
+      (`fd 'secrets.yaml' ~/.inaki/config/` → no match).
+
+---
+
+## 6b. ProvidersPage — delete a provider (entry goes whole)
+
+1. In `ProvidersPage`, select `test-provider` and press `Delete`.
+2. Confirm with `y`. **There is no second question about the `api_key`** — the whole entry goes.
+
+**Verify:**
+
+```bash
+bat ~/.inaki/config/global.yaml | rg "test-provider"   # no match
+```
+
+- [ ] The `test-provider` entry is gone from `global.yaml`, `api_key` included.
+- [ ] No orphan `api_key` is left behind anywhere.
 
 ---
 
@@ -186,6 +205,41 @@ bat ~/.inaki/config/agents/smoke-test.yaml
 - [ ] The listed options match the keys under `providers:` in `global.yaml`.
 - [ ] A `Literal` field (e.g. `workspace → containment`) still lists its own
       schema options (`strict`/`warn`/`off`), unaffected by the provider list.
+
+---
+
+## 8c. AgentDetailPage — a secret field is masked in place
+
+1. In `AgentDetailPage` for `smoke-test`, navigate to `CHANNELS → TELEGRAM → token`.
+2. Press `Enter` → `EditSecretModal` opens with the input in password mode.
+3. Type `7xxxxxxx:AAF-smoke` and save.
+
+**Verify:**
+
+```bash
+bat ~/.inaki/config/agents/smoke-test.yaml | rg "token"
+stat -f "%A" ~/.inaki/config/agents/smoke-test.yaml   # should be 600
+```
+
+- [ ] The token is written to `agents/smoke-test.yaml` — no sidecar file appears.
+- [ ] Back in the page, the value renders **masked**, not in clear text.
+- [ ] Permissions on the agent YAML are `600`.
+
+---
+
+## 8d. AgentsPage — delete an agent (single file goes)
+
+1. In `AgentsPage`, select `smoke-test` and press `Delete`.
+2. Confirm with `y`. **There is no second question about deleting a secrets file** — there isn't one.
+
+**Verify:**
+
+```bash
+fd smoke-test ~/.inaki/config/agents/   # no match
+```
+
+- [ ] `agents/smoke-test.yaml` is gone, credentials included.
+- [ ] No leftover file for that agent remains in `~/.inaki/config/agents/`.
 
 ---
 

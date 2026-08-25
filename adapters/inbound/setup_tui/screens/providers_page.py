@@ -175,11 +175,11 @@ class _EditProviderModal(ModalScreen[dict[str, str | bool] | None]):
 # ---------------------------------------------------------------------------
 
 
-class _ConfirmDeleteProviderModal(ModalScreen[str | None]):
+class _ConfirmDeleteProviderModal(ModalScreen[bool]):
     """Modal de confirmación para eliminar un provider.
 
-    Retorna ``"solo_global"`` para eliminar solo la entrada de global.yaml,
-    ``"con_secrets"`` para eliminar la api_key también, o ``None`` para cancelar.
+    Retorna ``True`` para eliminar la entrada completa de ``global.yaml``
+    (``api_key`` incluida), o ``False`` para cancelar.
     """
 
     DEFAULT_CSS = (
@@ -198,8 +198,7 @@ class _ConfirmDeleteProviderModal(ModalScreen[str | None]):
 
     BINDINGS = [
         Binding("escape", "cancel", show=False),
-        Binding("y", "solo_global", show=False),
-        Binding("s", "con_secrets", show=False),
+        Binding("y", "confirmar", show=False),
     ]
 
     def __init__(self, key: str, tiene_api_key: bool) -> None:
@@ -213,28 +212,21 @@ class _ConfirmDeleteProviderModal(ModalScreen[str | None]):
                 f"eliminar provider  [bold]{self._key}[/bold]",
                 classes="titulo",
             )
+            detalle = " (con su api_key)" if self._tiene_api_key else ""
             yield Label(
-                "[bold]y[/bold]  [dim]eliminar entrada de providers (global.yaml)[/dim]",
+                f"[bold]y[/bold]  [dim]eliminar entrada de providers{detalle}[/dim]",
                 classes="opcion",
             )
-            if self._tiene_api_key:
-                yield Label(
-                    "[bold]s[/bold]  [dim]eliminar también la api_key (secrets)[/dim]",
-                    classes="opcion",
-                )
             yield Label(
                 "[bold]esc[/bold] [dim]cancelar[/dim]",
                 classes="footer",
             )
 
-    def action_solo_global(self) -> None:
-        self.dismiss("solo_global")
-
-    def action_con_secrets(self) -> None:
-        self.dismiss("con_secrets")
+    def action_confirmar(self) -> None:
+        self.dismiss(True)
 
     def action_cancel(self) -> None:
-        self.dismiss(None)
+        self.dismiss(False)
 
 
 # ---------------------------------------------------------------------------
@@ -400,17 +392,15 @@ class ProvidersPage(BasePage):
 
         self.app.push_screen(
             _ConfirmDeleteProviderModal(field.label, tiene_api_key),
-            lambda resultado: self._after_delete(field.label, resultado),
+            lambda confirmado: self._after_delete(field.label, confirmado),
         )
 
-    def _after_delete(self, key: str, resultado: str | None) -> None:
-        if resultado is None or self._container is None:
+    def _after_delete(self, key: str, confirmado: bool | None) -> None:
+        if not confirmado or self._container is None:
             return
 
-        borrar_api_key = resultado == "con_secrets"
-
         try:
-            self._container.delete_provider.execute(key, borrar_api_key=borrar_api_key)
+            self._container.delete_provider.execute(key)
             self.app.notify(
                 f"provider '{key}' eliminado",
                 title="providers",

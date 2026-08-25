@@ -1,7 +1,7 @@
 """AgentDetailPage — edición de un agente/sub-agente (split-pane TUI v3).
 
 Hereda ``TreeEditorPage``: el árbol cuelga las secciones presentes en
-``agents/{id}.yaml`` (+ secrets) y el panel edita los campos hoja. Solo se pinta
+``agents/{id}.yaml`` y el panel edita los campos hoja. Solo se pinta
 lo presente; añadir/eliminar secciones y campos se hace con los modales.
 
 El dict ``channels`` se introspecciona vía ``channel_schemas`` del container
@@ -20,11 +20,7 @@ from adapters.inbound.setup_tui.domain.schema_node import SchemaNode
 from adapters.inbound.setup_tui.screens._tree_editor import TreeEditorPage
 from adapters.inbound.setup_tui.screens._warnings import warn_on_invalid_refs
 from core.ports.config_repository import LayerName
-from core.use_cases.config._merge import (
-    CampoTriestado,
-    TristadoValor,
-    deep_merge_con_eliminaciones,
-)
+from core.use_cases.config._merge import CampoTriestado, TristadoValor
 
 if TYPE_CHECKING:
     from adapters.inbound.setup_tui.di import SetupContainer
@@ -67,10 +63,6 @@ class AgentDetailPage(TreeEditorPage):
     def _main_layer(self) -> LayerName:
         return LayerName.SUB_AGENT if self._is_sub_agent else LayerName.AGENT
 
-    @property
-    def _secrets_layer(self) -> LayerName:
-        return LayerName.SUB_AGENT_SECRETS if self._is_sub_agent else LayerName.AGENT_SECRETS
-
     # ------------------------------------------------------------------
     # Hooks de TreeEditorPage
     # ------------------------------------------------------------------
@@ -86,9 +78,7 @@ class AgentDetailPage(TreeEditorPage):
         if self._container is None:
             return SchemaNode(path=(), label=self._agent_id, is_section=True)
         try:
-            main = self._container.repo.read_layer(self._main_layer, agent_id=self._agent_id)
-            secrets = self._container.repo.read_layer(self._secrets_layer, agent_id=self._agent_id)
-            datos = deep_merge_con_eliminaciones(main, secrets)
+            datos = self._container.repo.read_layer(self._main_layer, agent_id=self._agent_id)
         except Exception:
             # YAML roto: árbol vacío en vez de crash (el usuario corrige a mano).
             datos = {}
@@ -103,8 +93,7 @@ class AgentDetailPage(TreeEditorPage):
         )
 
     def persist_field_saved(self, leaf: SchemaNode, field: "Field") -> None:
-        layer = self._secrets_layer if field.kind == "secret" else self._main_layer
-        self._aplicar(cambios_anidados(leaf.path, field.value), layer)
+        self._aplicar(cambios_anidados(leaf.path, field.value), self._main_layer)
 
     def persist_tristate_saved(
         self, leaf: SchemaNode, field: "Field", result: "TristateResult"
@@ -119,25 +108,20 @@ class AgentDetailPage(TreeEditorPage):
 
     def persist_add(self, parent: SchemaNode, option: "AddableOption") -> None:
         valor: Any = {} if option.is_section else option.default_value
-        # Un campo secret recién creado va a la capa de secrets (coherente con la
-        # edición posterior). Las secciones siempre a la capa principal.
-        layer = self._secrets_layer if option.is_secret else self._main_layer
-        self._aplicar(cambios_anidados(parent.path + (option.key,), valor), layer)
+        self._aplicar(cambios_anidados(parent.path + (option.key,), valor), self._main_layer)
 
     def persist_delete(self, node: SchemaNode) -> None:
-        # La clave puede vivir en la capa principal o en secrets. Solo se poda en
-        # la capa donde EXISTE: aplicar el sentinel sobre una capa que no tiene el
-        # path escribiría una rama nueva con el marcador (basura no serializable).
+        # Solo se poda si el path EXISTE: aplicar el sentinel sobre una capa que
+        # no lo tiene escribiría una rama nueva con el marcador (basura no
+        # serializable).
         if self._container is None:
             return
-        cambios = eliminar_en_path(node.path)
-        for layer in (self._main_layer, self._secrets_layer):
-            try:
-                datos = self._container.repo.read_layer(layer, agent_id=self._agent_id)
-            except Exception:
-                continue
-            if _existe_path(datos, node.path):
-                self._aplicar(cambios, layer)
+        try:
+            datos = self._container.repo.read_layer(self._main_layer, agent_id=self._agent_id)
+        except Exception:
+            return
+        if _existe_path(datos, node.path):
+            self._aplicar(eliminar_en_path(node.path), self._main_layer)
 
     # ------------------------------------------------------------------
     # Helpers

@@ -87,16 +87,19 @@ Resumen operativo. El texto completo, con el porqué y los antipatrones, está e
 Config en **`~/.inaki/`** (no en el repo). El primer arranque hace bootstrap desde
 `config/global.example.yaml`. Relocalizable entera con `--home DIR` / `INAKI_HOME`.
 
-**Merge de 4 capas** (cada capa pisa solo los campos que declara):
+**Merge de 2 capas** (cada capa pisa solo los campos que declara):
 
 1. `~/.inaki/config/global.yaml`
-2. `~/.inaki/config/global.secrets.yaml`
-3. `~/.inaki/agents/{id}.yaml`
-4. `~/.inaki/agents/{id}.secrets.yaml`
+2. `~/.inaki/agents/{id}.yaml`
 
-Los secretos son solo YAML (sin env vars). Los `*.secrets.yaml` están gitignoreados —
-**nunca commitearlos**. `config/tool_config.yaml` es del daemon y **no participa** del
-merge (ver Tool Config Protocol en [`docs/convenciones.md`](docs/convenciones.md)).
+Las credenciales viven en esas mismas capas (solo YAML, sin env vars): los ficheros se
+crean con permisos **600** y están gitignoreados — **nunca commitearlos**. Un campo es
+secreto por su marca en el schema (`kind == "secret"`, que enmascara en la TUI), **no**
+por el fichero donde se escribe: **NUNCA** vuelvas a expresar la sensibilidad de un dato
+como un split de ficheros. → `secrets-layer-eradication`
+
+`config/tool_config.yaml` es del daemon y **no participa** del merge (ver Tool Config
+Protocol en [`docs/convenciones.md`](docs/convenciones.md)).
 
 ## Testing
 

@@ -42,13 +42,23 @@ def test_agent_ya_existe_lanza_error(repo: MagicMock) -> None:
     repo.write_layer.assert_not_called()
 
 
-def test_no_crea_secrets_automaticamente(repo: MagicMock) -> None:
-    """No se crea agents/{id}.secrets.yaml automáticamente."""
+def test_crea_un_solo_archivo_con_las_credenciales(repo: MagicMock) -> None:
+    """El agente vive en UN archivo: las credenciales van al mismo YAML.
+
+    Ya no existe un ``agents/{id}.secrets.yaml`` que crear aparte.
+    """
     uc = CreateAgentUseCase(repo)
-    uc.execute("nuevo", nombre="Nuevo")
+    uc.execute(
+        "nuevo",
+        nombre="Nuevo",
+        template_extra={"channels": {"telegram": {"token": "T"}}},
+    )
 
     capas_escritas = [call[0][0] for call in repo.write_layer.call_args_list]
-    assert LayerName.AGENT_SECRETS not in capas_escritas
+    assert capas_escritas == [LayerName.AGENT]
+
+    datos = repo.write_layer.call_args[0][1]
+    assert datos["channels"]["telegram"]["token"] == "T"
 
 
 def test_template_extra_se_mezcla(repo: MagicMock) -> None:
@@ -74,7 +84,7 @@ def test_system_prompt_custom(repo: MagicMock) -> None:
 
 
 def test_layer_exists_verifica_capa_agent(repo: MagicMock) -> None:
-    """Verifica la existencia en la capa AGENT (no en secrets)."""
+    """Verifica la existencia en la capa AGENT, que es la única del agente."""
     uc = CreateAgentUseCase(repo)
     uc.execute("nuevo", nombre="Nuevo")
 

@@ -5,8 +5,9 @@ El adapter preserva comentarios, orden de claves y anchors al escribir.
 El flujo de escritura es atómico: escribe a un archivo temporal y luego
 hace ``os.replace()`` para que la sustitución sea atómica a nivel del SO.
 
-Los archivos ``*.secrets.yaml`` se crean con permisos ``600`` (solo el
-propietario puede leer/escribir).
+Todas las capas se crean con permisos ``600`` (solo el propietario puede
+leer/escribir): contienen credenciales desde que los ``*.secrets.yaml``
+dejaron de existir.
 """
 
 from __future__ import annotations
@@ -32,23 +33,13 @@ _HEADER_GLOBAL = """\
 # Generado por inaki setup
 # Config global — ~/.inaki/config/global.yaml
 # Editá este archivo a mano o usá `inaki setup` para modificarlo con la TUI.
-"""
-
-_HEADER_GLOBAL_SECRETS = """\
-# Generado por inaki setup — SECRETO
-# Secrets globales — ~/.inaki/config/global.secrets.yaml
-# NUNCA commitees este archivo. Contiene API keys y credenciales compartidas.
+# Contiene credenciales (bloque `providers:`) — NUNCA lo commitees.
 """
 
 _HEADER_AGENT = """\
 # Generado por inaki setup
 # Config de agente — este archivo fue creado con `inaki setup`.
-"""
-
-_HEADER_AGENT_SECRETS = """\
-# Generado por inaki setup — SECRETO
-# Secrets del agente — contiene tokens y claves específicas de este agente.
-# NUNCA commitees este archivo.
+# Puede contener credenciales (token del canal, auth_keys) — NUNCA lo commitees.
 """
 
 _HEADER_SUB_AGENT = """\
@@ -57,34 +48,21 @@ _HEADER_SUB_AGENT = """\
 # Este archivo fue creado con `inaki setup`.
 """
 
-_HEADER_SUB_AGENT_SECRETS = """\
-# Generado por inaki setup — SECRETO
-# Secrets del sub-agente — contiene tokens y claves específicas de este sub-agente.
-# NUNCA commitees este archivo.
-"""
-
 _HEADERS: dict[LayerName, str] = {
     LayerName.GLOBAL: _HEADER_GLOBAL,
-    LayerName.GLOBAL_SECRETS: _HEADER_GLOBAL_SECRETS,
     LayerName.AGENT: _HEADER_AGENT,
-    LayerName.AGENT_SECRETS: _HEADER_AGENT_SECRETS,
     LayerName.SUB_AGENT: _HEADER_SUB_AGENT,
-    LayerName.SUB_AGENT_SECRETS: _HEADER_SUB_AGENT_SECRETS,
 }
-
-_SECRETS_LAYERS: frozenset[LayerName] = frozenset(
-    {LayerName.GLOBAL_SECRETS, LayerName.AGENT_SECRETS, LayerName.SUB_AGENT_SECRETS}
-)
 
 
 class YamlRepository:
     """
     Repositorio YAML con preservación de comentarios usando ruamel.yaml round-trip.
 
-    Implementa ``IConfigRepository`` a partir de los 4 archivos de configuración
-    en ``~/.inaki/config/``. Cada llamada a ``write_layer`` hace una escritura
-    atómica con ``os.replace()`` y preserva comentarios, orden de claves y
-    anchors YAML.
+    Implementa ``IConfigRepository`` a partir de los archivos de configuración
+    en ``~/.inaki/`` (``config/global.yaml`` + ``agents/{id}.yaml``). Cada
+    llamada a ``write_layer`` hace una escritura atómica con ``os.replace()``
+    y preserva comentarios, orden de claves y anchors YAML.
 
     Args:
         config_dir: Directorio raíz de configuración. Si es ``None``, se
@@ -120,26 +98,18 @@ class YamlRepository:
         match layer:
             case LayerName.GLOBAL:
                 return self._config_dir / "global.yaml"
-            case LayerName.GLOBAL_SECRETS:
-                return self._config_dir / "global.secrets.yaml"
             case LayerName.AGENT:
                 self._require_agent_id(agent_id)
                 return self._agents_dir / f"{agent_id}.yaml"
-            case LayerName.AGENT_SECRETS:
-                self._require_agent_id(agent_id)
-                return self._agents_dir / f"{agent_id}.secrets.yaml"
             case LayerName.SUB_AGENT:
                 self._require_agent_id(agent_id)
                 return self._sub_agents_dir / f"{agent_id}.yaml"
-            case LayerName.SUB_AGENT_SECRETS:
-                self._require_agent_id(agent_id)
-                return self._sub_agents_dir / f"{agent_id}.secrets.yaml"
 
     @staticmethod
     def _require_agent_id(agent_id: str | None) -> None:
         if not agent_id:
             raise ValueError(
-                "agent_id es requerido para capas LayerName.AGENT y LayerName.AGENT_SECRETS"
+                "agent_id es requerido para capas LayerName.AGENT y LayerName.SUB_AGENT"
             )
 
     # ------------------------------------------------------------------
@@ -167,7 +137,8 @@ class YamlRepository:
 
         Si el archivo no existe lo crea con un header comment apropiado.
         La escritura es atómica: tmp file → ``os.replace()``.
-        Los archivos de secrets se crean/protegen con permisos ``600``.
+        Todas las capas se crean/protegen con permisos ``600`` (contienen
+        credenciales).
 
         Args:
             layer: Capa de destino.
@@ -177,7 +148,6 @@ class YamlRepository:
         """
         path = self._layer_path(layer, agent_id)
         es_archivo_nuevo = not path.exists()
-        es_secrets = layer in _SECRETS_LAYERS
 
         # Asegurá que el directorio padre exista
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -202,13 +172,13 @@ class YamlRepository:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(contenido)
 
-            if es_secrets:
-                os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)  # 600
+            os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)  # 600
 
             os.replace(tmp_path, path)
 
-            # Si el archivo ya existía pero era de secrets, asegurar permisos
-            if es_secrets and not es_archivo_nuevo:
+            # El archivo puede haber existido con permisos laxos (editado a mano
+            # o heredado de una instalación previa a la erradicación de secrets).
+            if not es_archivo_nuevo:
                 os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
 
         except Exception:
@@ -224,7 +194,8 @@ class YamlRepository:
         Enumera los ids de agentes regulares en el directorio de agentes.
 
         Retorna una lista ordenada de ids (stems de ``{id}.yaml``),
-        excluyendo ``*.secrets.yaml`` y ``*.example.yaml``.
+        excluyendo ``*.example.yaml`` y cualquier ``*.secrets.yaml`` que haya
+        sobrevivido a la migración (nunca es un agente).
         Lista vacía si el directorio no existe o no tiene agentes.
 
         NO incluye los sub-agentes (``agents/sub-agents/``) — el glob es plano,
@@ -243,7 +214,8 @@ class YamlRepository:
 
     @staticmethod
     def _list_agent_ids(directory: Path) -> list[str]:
-        """Glob plano de ``{id}.yaml`` en ``directory``, excluyendo secrets/example."""
+        """Glob plano de ``{id}.yaml`` en ``directory``, excluyendo example y
+        restos de ``*.secrets.yaml`` (ver ``migrate_secrets_into_main_layers``)."""
         if not directory.exists():
             return []
         return sorted(

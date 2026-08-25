@@ -1,6 +1,6 @@
 # Plan de refactorización — Sistema de configuración
 
-> Estado: EN PROGRESO — Fase 1 implementada. Documento vivo.
+> Estado: EN PROGRESO — Fases 1 y 2 implementadas. Documento vivo.
 > Origen: auditoría del 2026-08-25 (Engram `architecture/config-system-audit` y
 > `architecture/config-secrets-layer`).
 > Última actualización: 2026-08-25.
@@ -81,18 +81,18 @@ y `agents/{id}.yaml`. La marca de secreto queda en el schema, no en el filesyste
 **Costo asumido y aceptado**: `cat global.yaml` ya no es pegable sin filtrar llaves.
 Lo cubre el `config show` con redacción (Fase 5).
 
-## Fase 2 — Validar `channels` al cargar (matar el dict laxo)
+## Fase 2 — Validar `channels` al cargar (matar el dict laxo) ✅ HECHA
 
 **Objetivo**: los 26 campos de Telegram/Broadcast se validan en el arranque, con la
 misma fuente de verdad que ya usa el TUI. Un typo en `channels.telegram` FALLA.
 
-1. Registry de schemas de canal en `infrastructure/` (p. ej.
-   `infrastructure/channel_schemas.py`): `{"telegram": TelegramChannelConfig, ...}`.
-   Es la única fuente; `setup_cli.py` deja de armar el dict a mano y lo importa de acá.
-2. Loader: tras el merge, validar cada bloque `channels.<nombre>` contra el registry →
-   `ConfigError` con path y detalle si no valida. Canal desconocido → `ConfigError`
-   (no warning). `AgentConfig.channels` puede seguir tipado laxo para el merge, pero
-   el loader adjunta/expone los modelos validados.
+1. Registry de schemas de canal: `CHANNEL_SCHEMAS`. Quedó en `config_schema.py` y no
+   en un módulo propio para no crear un ciclo de imports (indexa clases definidas ahí).
+   Es la única fuente; `setup_cli.py` la importa en vez de armar el dict a mano.
+2. Validación en el `field_validator` de `AgentConfig.channels`, NO en el loader: así
+   es la única puerta y cubre los cuatro caminos que construyen un `AgentConfig`
+   (loader, builder efímero, admin, tests). El bloque se coerciona a su modelo;
+   properties `telegram` / `cli` para acceso tipado. Se tipó `cli` por primera vez.
 3. `adapters/inbound/telegram/bot.py:103-160`: recibe el modelo validado; borrar los
    ~30 `.get()` con defaults triplicados y los `hasattr(x, "model_dump")` defensivos.
 4. `container.py:1872-1886` (`_wire_broadcast_for_agent`): la validación ya ocurrió en
@@ -226,7 +226,7 @@ tres carriles — ir consumidor por consumidor), Fases 4-7 mecánicas y troceabl
 ## Checklist de progreso
 
 - [x] Fase 1 — erradicar `*.secrets.yaml` — nota `secrets-layer-eradication` en `docs/migraciones.md`
-- [ ] Fase 2 — validar `channels` al cargar
+- [x] Fase 2 — validar `channels` al cargar — nota `channels-validados-al-cargar` en `docs/migraciones.md`
 - [ ] Fase 3 — motor de merge único
 - [ ] Fase 4 — fallos ruidosos
 - [ ] Fase 5 — `inaki config show --effective --origin`

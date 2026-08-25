@@ -756,6 +756,13 @@ workspace:
 
 # Channels available for this agent
 # Sensitive values (tokens, auth_key) live right here — this file is never committed
+#
+# Every block under `channels:` is validated at load time against the channel
+# registry (`CHANNEL_SCHEMAS` in `infrastructure/config_schema.py`): an unknown
+# channel name, a wrong type or an invalid broadcast topology is reported with
+# its exact path instead of being silently ignored. Supported channels today:
+# `telegram` and `cli`. Adding one = one model + one registry entry; the loader,
+# the setup TUI and `config-reference.md` all read from that same registry.
 channels:
   telegram:
     token: "7xxxxxxx:AAF..."         # Bot token from BotFather

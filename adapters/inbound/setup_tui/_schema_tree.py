@@ -8,10 +8,11 @@ el modal de "añadir sección/campo".
 Reusa los helpers de inferencia de tipos de ``_schema.py`` (``_infer_kind``,
 ``_unwrap_optional``, ...) — NO se duplican.
 
-Caso especial ``channels``: en ``AgentConfig`` el campo es ``dict[str, dict]``
-(no un ``BaseModel``), así que no se puede introspeccionar solo. El builder recibe
-``channel_schemas`` (``{"telegram": TelegramChannelConfig, ...}``) inyectado por el
-composition root y trata cada canal como una sub-sección tipada.
+Caso especial ``channels``: en ``AgentConfig`` el campo es un dict indexado por
+nombre de canal, así que la introspección por anotación no llega. El builder
+recibe ``channel_schemas`` —el registry ``CHANNEL_SCHEMAS`` que valida el
+loader, inyectado por el composition root— y trata cada canal como sub-sección
+tipada. El nombre del campo es solo el gancho; la fuente de verdad es el registry.
 """
 
 from __future__ import annotations

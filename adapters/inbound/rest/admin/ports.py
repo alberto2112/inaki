@@ -23,8 +23,34 @@ if TYPE_CHECKING:
     from core.use_cases.run_agent import RunAgentUseCase
 
 
+class _HasBroadcastEmit(Protocol):
+    """Flags de emisión que el admin consulta antes de publicar al LAN."""
+
+    assistant_response: bool
+
+
+class _HasBroadcast(Protocol):
+    emit: _HasBroadcastEmit
+
+
+class _HasTelegramChannel(Protocol):
+    """Subset del bloque ``channels.telegram`` que leen los routers del admin."""
+
+    broadcast: _HasBroadcast | None
+
+
 class _HasChannels(Protocol):
-    channels: dict[str, dict[str, Any]]
+    """Subset estructural de ``AgentConfig``.
+
+    Los valores de ``channels`` son los modelos ya validados del schema; el
+    admin no puede importarlos (regla hexagonal: ``adapters/`` no importa
+    ``infrastructure/``), así que declara acá la forma que consume.
+    """
+
+    channels: dict[str, Any]
+
+    @property
+    def telegram(self) -> _HasTelegramChannel | None: ...
 
 
 class AdminAgentContainer(Protocol):

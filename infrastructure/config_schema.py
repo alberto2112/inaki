@@ -11,7 +11,15 @@ import logging
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from infrastructure.home import get_inaki_home
 
@@ -732,6 +740,23 @@ class TelegramGroupsConfig(_ConfigBaseModel):
         return self
 
 
+class CliChannelConfig(_ConfigBaseModel):
+    """
+    Config tipada del canal CLI/REST.
+
+    Es el bloque ``channels.cli`` que consume el admin server al armar el
+    ``ChannelContext`` de un turno conversacional sin canal de mensajería.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    user: str | None = None
+    """Identidad ESTABLE del turno CLI/REST. Se usa como ``user_id`` y como
+    ``context_id`` (nombra ``~/.inaki/users/cli/{user}.md``) y puebla
+    ``{{CHANNEL.USERNAME}}``. ``None`` → el ``context_id`` es el ``session_id``
+    (UUID efímero por proceso, sin fichero pre-escribible)."""
+
+
 class TelegramChannelConfig(_ConfigBaseModel):
     """
     Config tipada del canal Telegram.
@@ -906,6 +931,27 @@ class UserConfig(_ConfigBaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Registry de canales — fuente única de "qué canal existe y con qué schema"
+# ---------------------------------------------------------------------------
+
+CHANNEL_SCHEMAS: dict[str, type[BaseModel]] = {
+    "telegram": TelegramChannelConfig,
+    "cli": CliChannelConfig,
+}
+"""Schema de cada canal soportado, indexado por su clave en ``channels:``.
+
+Fuente ÚNICA de la verdad, consumida por tres superficies que antes la
+duplicaban o la ignoraban: la validación de ``AgentConfig.channels`` (acá
+abajo), la introspección del setup TUI (inyectada desde ``inaki/setup_cli.py``)
+y el generador de ``docs/config-reference.md``.
+
+Vive en este módulo, y no en uno propio, para no crear un ciclo de imports:
+las clases que indexa se definen arriba. Agregar un canal = agregar su modelo
+y una entrada acá; **no** hay más lugares que tocar.
+"""
+
+
+# ---------------------------------------------------------------------------
 # AgentConfig — config completa y resuelta para un agente
 # ---------------------------------------------------------------------------
 
@@ -929,9 +975,71 @@ class AgentConfig(_ConfigBaseModel):
     workspace: WorkspaceConfig = WorkspaceConfig()
     delegation: AgentDelegationConfig = AgentDelegationConfig()
     transcription: TranscriptionConfig | None = None
-    channels: dict[str, dict[str, Any]] = {}
+    channels: dict[str, Any] = {}
+    """Adapters de canal del agente, indexados por su clave en ``channels:``.
+
+    Los bloques de canales conocidos (``CHANNEL_SCHEMAS``) llegan acá **ya
+    validados y coercionados a su modelo Pydantic** por ``_validar_channels``.
+    Para acceso tipado usá las properties (``telegram``, ``cli``); el dict
+    directo sirve para iterar o preguntar qué canales declaró el agente.
+    """
     providers: dict[str, ProviderConfig] = {}
     """Registry de proveedores post-merge. Heredado del global + overrides del agente."""
+
+    @field_validator("channels", mode="before")
+    @classmethod
+    def _validar_channels(cls, value: Any) -> Any:
+        """Valida cada bloque de canal conocido contra ``CHANNEL_SCHEMAS``.
+
+        Es la ÚNICA puerta de validación de canales, y por eso vive acá y no en
+        el loader: cubre por igual los cuatro caminos que construyen un
+        ``AgentConfig`` (``load_agent_config``, el builder efímero del flujo
+        delegate, el admin server y los tests). Antes ``channels`` era un
+        ``dict[str, dict[str, Any]]`` opaco y sus 26 campos —el 14% del schema—
+        no se validaban NUNCA al cargar: un typo o un tipo mal puesto viajaba
+        hasta el primer uso en runtime, o se comía un default silencioso.
+
+        Un canal desconocido es un error, no un bloque inerte: pasa lo mismo
+        que con un typo de campo, el operador escribió algo que nadie lee.
+        """
+        if not isinstance(value, dict):
+            return value
+
+        resultado: dict[str, Any] = {}
+        for nombre, bloque in value.items():
+            schema = CHANNEL_SCHEMAS.get(nombre)
+            if schema is None:
+                conocidos = ", ".join(sorted(CHANNEL_SCHEMAS))
+                raise ValueError(
+                    f"channels.{nombre}: canal desconocido. Canales soportados: {conocidos}."
+                )
+            if isinstance(bloque, schema):
+                resultado[nombre] = bloque
+                continue
+            if bloque is None:
+                bloque = {}
+            if not isinstance(bloque, dict):
+                raise ValueError(
+                    f"channels.{nombre}: se esperaba un bloque de config (mapa), "
+                    f"recibido {type(bloque).__name__}."
+                )
+            try:
+                resultado[nombre] = schema.model_validate(bloque)
+            except ValidationError as exc:
+                raise ValueError(f"channels.{nombre}: {exc}") from exc
+        return resultado
+
+    @property
+    def telegram(self) -> TelegramChannelConfig | None:
+        """Bloque ``channels.telegram`` tipado, o ``None`` si el agente no lo declara."""
+        bloque = self.channels.get("telegram")
+        return bloque if isinstance(bloque, TelegramChannelConfig) else None
+
+    @property
+    def cli(self) -> CliChannelConfig | None:
+        """Bloque ``channels.cli`` tipado, o ``None`` si el agente no lo declara."""
+        bloque = self.channels.get("cli")
+        return bloque if isinstance(bloque, CliChannelConfig) else None
 
 
 # ---------------------------------------------------------------------------

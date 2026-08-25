@@ -41,28 +41,40 @@ def _escribir_agente(agents_dir, cuerpo: dict) -> None:
 
 
 @pytest.mark.parametrize(
-    "cuerpo, esperado",
+    "cuerpo, esperado, sigue_cargando",
     [
         pytest.param(
             {"channels": {"telegram": {"token": "t"}}, "broadcast": BLOQUE},
             "broadcast (raíz del agente)",
+            True,
             id="raiz-del-agente",
         ),
         pytest.param(
             {"channels": {"telegram": {"token": "t"}, "broadcast": BLOQUE}},
             "channels.broadcast",
+            False,
             id="channels-broadcast",
         ),
     ],
 )
-def test_bloque_extraviado_avisa(tmp_path, caplog, cuerpo, esperado):
+def test_bloque_extraviado_avisa(tmp_path, caplog, cuerpo, esperado, sigue_cargando):
     caplog.set_level(logging.WARNING, logger="infrastructure.config_loader")
     agents_dir = tmp_path / "agents"
     _escribir_agente(agents_dir, cuerpo)
 
     cfg = load_agent_config("inaki", agents_dir, dict(GLOBAL_MINIMO))
 
-    assert cfg is not None, "el agente debe seguir cargando — el aviso no rompe el arranque"
+    if sigue_cargando:
+        assert cfg is not None, (
+            "fuera de ``channels`` el bloque es una clave suelta: el aviso no rompe el arranque"
+        )
+    else:
+        # Garantía MÁS fuerte que el WARNING: dentro de ``channels`` el bloque
+        # extraviado es además un canal desconocido, y ``AgentConfig`` lo rechaza.
+        assert cfg is None, (
+            "un bloque dentro de channels que ningún canal reclama debe abortar la "
+            "carga del agente, no solo avisar"
+        )
     assert esperado in caplog.text
     assert "channels.telegram.broadcast" in caplog.text, (
         f"el aviso debe nombrar el path válido; dijo: {caplog.text!r}"

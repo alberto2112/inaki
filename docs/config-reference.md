@@ -5,7 +5,7 @@
 > El test `tests/unit/infrastructure/test_config_docs_drift.py` falla si este
 > archivo queda desincronizado del schema.
 >
-> Narrativa (merge de 4 capas, flujos, ejemplos) vive en `configuracion.md`;
+> Narrativa (merge de capas, flujos, ejemplos) vive en `configuracion.md`;
 > acá vive solo la referencia exhaustiva de campos.
 
 ## GlobalConfig — `config/global.yaml`
@@ -282,7 +282,7 @@
 | `api_key` | `str \| None` | `null` | 🔒 |  |
 | `base_url` | `str \| None` | `null` |  |  |
 
-## AgentConfig — `config/agents/{id}.yaml`
+## AgentConfig — `agents/{id}.yaml`
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
@@ -300,7 +300,7 @@
 | `workspace` | `WorkspaceConfig` | _(sub-config)_ |  |  |
 | `delegation` | `AgentDelegationConfig` | _(sub-config)_ |  |  |
 | `transcription` | `TranscriptionConfig \| None` | `null` |  |  |
-| `channels` | `dict[str, dict[str, Any]]` | `{}` |  |  |
+| `channels` | `dict[str, Any]` | `{}` |  | Adapters de canal del agente, indexados por su clave en ``channels:``. |
 | `providers` | `dict[str, ProviderConfig]` | `{}` |  | Registry de proveedores post-merge. Heredado del global + overrides del agente. |
 
 ### `AgentDelegationConfig`
@@ -309,3 +309,67 @@
 |---|---|---|---|---|
 | `enabled` | `bool` | `False` |  |  |
 | `allowed_targets` | `list[str]` | `[]` |  |  |
+
+## Channels — `agents/{id}.yaml` → `channels.<nombre>`
+
+### `channels.cli`
+
+| Field | Type | Default | Secret | Description |
+|---|---|---|---|---|
+| `user` | `str \| None` | `null` |  | Identidad ESTABLE del turno CLI/REST. Se usa como ``user_id`` y como |
+
+### `channels.telegram`
+
+| Field | Type | Default | Secret | Description |
+|---|---|---|---|---|
+| `token` | `str` | `''` | 🔒 | Token del bot de Telegram (BotFather). Requerido para que el canal levante. |
+| `allowed_user_ids` | `list[int]` | _(default factory)_ |  | IDs de usuarios autorizados en CHATS PRIVADOS. Lista vacía = sin restricción. |
+| `allowed_chat_ids` | `list[int]` | _(default factory)_ |  | IDs de grupos autorizados. Lista vacía = el bot NO responde en grupos (solo |
+| `reactions` | `bool` | `False` |  | Si True, el bot envía una reacción emoji tras procesar un mensaje. |
+| `voice_enabled` | `bool` | `True` |  | Si True, el bot acepta mensajes de voz y los transcribe. |
+| `add_llm_timestamp` | `bool` | `False` |  | Si True, ``RunAgentUseCase`` antepone ``[YYYY-MM-DD HH:MM:SS TZ] `` al |
+| `broadcast` | `BroadcastConfig \| None` | `null` |  | Config del canal de broadcast entre instancias. None = broadcast inactivo. |
+| `groups` | `TelegramGroupsConfig \| None` | `null` |  | Config específica para chats grupales (delays, override de reactions). None = todos los defaults. |
+
+### `BroadcastConfig`
+
+| Field | Type | Default | Secret | Description |
+|---|---|---|---|---|
+| `enabled` | `bool` | `True` |  | Kill-switch del transporte. ``False`` = el bloque queda escrito pero no se |
+| `auth` | `str \| None` | `null` | 🔒 | Secreto HMAC-SHA256 compartido entre server y clients. Obligatorio cuando |
+| `server` | `BroadcastServerConfig \| None` | `null` |  | Rol server: esta instancia escucha en ``server.port``. XOR con ``client``. |
+| `client` | `BroadcastClientConfig \| None` | `null` |  | Rol client: esta instancia se conecta a ``client.host:client.port``. XOR con ``server``. |
+| `emit` | `BroadcastEmitConfig` | _(sub-config)_ |  | Flags que controlan qué tipos de eventos se emiten al broadcast. |
+
+### `BroadcastServerConfig`
+
+| Field | Type | Default | Secret | Description |
+|---|---|---|---|---|
+| `port` | `int` | **required** |  | Puerto TCP en el que escucha el servidor (1024..65535). Escucha en todas |
+
+### `BroadcastClientConfig`
+
+| Field | Type | Default | Secret | Description |
+|---|---|---|---|---|
+| `host` | `str` | **required** |  | Dirección IP o hostname del servidor (sin puerto — ese va en ``port``). |
+| `port` | `int` | **required** |  | Puerto TCP del servidor remoto (1024..65535). |
+
+### `BroadcastEmitConfig`
+
+| Field | Type | Default | Secret | Description |
+|---|---|---|---|---|
+| `assistant_response` | `bool` | `True` |  | Si ``True``, emite ``event_type="assistant_response"`` tras cada turno LLM en grupos. |
+| `user_input_voice` | `bool` | `False` |  | Si ``True``, emite ``event_type="user_input_voice"`` tras transcribir un audio. |
+| `user_input_photo` | `bool` | `False` |  | Si ``True``, emite ``event_type="user_input_photo"`` tras procesar una foto. |
+
+### `TelegramGroupsConfig`
+
+| Field | Type | Default | Secret | Description |
+|---|---|---|---|---|
+| `min_delay_response` | `float \| None` | `null` |  | Delay mínimo (segundos) antes de flushar el buffer de grupo al LLM. ``None`` → default del módulo. |
+| `max_delay_response` | `float \| None` | `null` |  | Delay máximo (segundos) antes de flushar el buffer. ``None`` → default del módulo. |
+| `reactions` | `bool \| None` | `null` |  | Override del flag ``channels.telegram.reactions`` para chats grupales. ``None`` → hereda del padre. |
+| `behavior` | `Literal['listen', 'mention', 'autonomous']` | `'mention'` |  | Modo de comportamiento en grupos: |
+| `bot_username` | `str \| None` | `null` |  | Username del bot Telegram (sin ``@``) para detección de menciones en modo ``mention``. |
+| `rate_limiter` | `int` | `5` |  | Máximo de respuestas proactivas (modo ``autonomous``) por ventana por chat. |
+| `rate_limiter_window` | `int` | `30` |  | Duración de la ventana del rate limiter en segundos. Default 30s. |

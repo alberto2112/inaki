@@ -77,6 +77,10 @@ def mock_agent_container(mock_run_agent: MagicMock) -> MagicMock:
     # record_user_message solo se llama en el branch busy — no se ejecuta en
     # los tests pero el mock evita TypeError si algún test futuro lo dispara.
     mock_run_agent.record_user_message = AsyncMock(return_value=None)
+    # Sin bloque ``channels.cli`` declarado: el ``user_id``/``context_id`` del
+    # turno cae al ``session_id``. Explícito porque los bloques de canal ya no
+    # son dicts crudos — sin esto el MagicMock devolvería un mock como identidad.
+    container.agent_config.channels = {}
     return container
 
 

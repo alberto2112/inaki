@@ -17,6 +17,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from telegram.error import BadRequest, NetworkError, TimedOut
 
+from adapters.inbound.telegram.ports import TelegramChannelSettings
+
 
 @pytest.fixture
 def settings() -> MagicMock:
@@ -24,7 +26,9 @@ def settings() -> MagicMock:
     cfg.id = "dev"
     cfg.name = "Inaki"
     cfg.description = "Asistente"
-    cfg.telegram = {"token": "dummy-token", "allowed_user_ids": [12345], "reactions": False}
+    cfg.telegram = TelegramChannelSettings(
+        token="dummy-token", allowed_user_ids=("12345",), reactions=False
+    )
     return cfg
 
 

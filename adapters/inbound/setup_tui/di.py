@@ -82,9 +82,11 @@ def build_setup_container(
         global_schema: clase Pydantic ``GlobalConfig`` — la inyecta el
                        composition root (el setup_tui no importa infrastructure).
         agent_schema: clase Pydantic ``AgentConfig`` — ídem.
-        channel_schemas: Registry ``nombre_canal → modelo`` (ej.
-                       ``{"telegram": TelegramChannelConfig}``) para resolver el
-                       dict ``channels`` del agente. ``None`` → ``{}``.
+        channel_schemas: Registry ``nombre_canal → modelo`` para resolver el
+                       dict ``channels`` del agente. El composition root inyecta
+                       el MISMO ``CHANNEL_SCHEMAS`` que valida el loader, así que
+                       la TUI no puede quedar desincronizada de lo que el runtime
+                       acepta. ``None`` → ``{}``.
         provider_adapters: Adaptadores de proveedor disponibles (nombres
                        autodescubiertos por las factories). Los consume la
                        página de providers para el desplegable de tipo.

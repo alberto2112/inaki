@@ -697,10 +697,16 @@ def _filter_channel_adapters(raw: dict) -> dict:
     """Filtra el campo ``channels`` heredado del global para excluir flags transversales.
 
     ``GlobalConfig.channels`` (``ChannelsGlobalConfig``) y ``AgentConfig.channels``
-    (``dict[str, dict[str, Any]]``) comparten clave de YAML pero significan cosas
-    distintas. El deep-merge propaga los flags globales al merged del agente; este
-    filtro deja solo los valores que son dicts (los adapters como ``telegram``,
-    ``cli``, ``broadcast`` per-grupo, etc.) y descarta scalars.
+    (dict de adapters) comparten clave de YAML pero significan cosas distintas. El
+    deep-merge propaga los flags globales al merged del agente; este filtro deja
+    solo los valores que son dicts (los adapters como ``telegram`` o ``cli``) y
+    descarta scalars.
+
+    Sigue siendo necesario, y ahora es CRÍTICO: desde que ``AgentConfig`` valida
+    cada bloque contra ``CHANNEL_SCHEMAS``, un flag global colado acá (p. ej.
+    ``thinking_indicator``) ya no sería ruido inerte — abortaría el arranque como
+    "canal desconocido". La colisión de nombre entre los dos bloques se salda en
+    la Fase 7 del refactor de config; hasta entonces, este filtro la contiene.
     """
     return {k: v for k, v in raw.items() if isinstance(v, dict)}
 
@@ -713,16 +719,20 @@ _BROADCAST_PATH_VALIDO = "channels.telegram.broadcast"
 def _avisar_broadcast_extraviado(agent_id: str, merged: dict) -> None:
     """Avisa si hay un bloque ``broadcast:`` en un nivel del YAML que nadie lee.
 
-    ``_wire_broadcast_for_agent`` solo mira ``channels.telegram.broadcast``. Un
-    bloque escrito en la raíz del agente lo descarta ``assemble_agent_config``
-    (que solo copia ``channels``), y uno escrito como ``channels.broadcast``
-    sobrevive el filtro de adapters pero ningún canal lo consume. En los dos
-    casos el daemon arranca sano, el puerto queda cerrado y **no se loguea nada
-    a ningún nivel** — el operador no tiene ni un hilo del que tirar.
-
+    ``_wire_broadcast_for_agent`` solo mira ``channels.telegram.broadcast``.
     Caso real: un `broadcast:` fuera de `channels.telegram` con la topología
     vieja (`port:` suelto). Ni el error de validación llegó a emitirse, porque
     el bloque nunca alcanzó el parser.
+
+    Quedan dos ubicaciones equivocadas, y desde que ``AgentConfig`` valida los
+    canales ya no se tratan igual:
+
+    - **Raíz del agente**: ``assemble_agent_config`` solo copia ``channels``, así
+      que el bloque se descarta sin que nada lo mire. Este warning es la ÚNICA
+      señal — sigue siendo imprescindible.
+    - **``channels.broadcast``**: ahora es un canal desconocido y la validación
+      lo rechaza con su path. El warning corre antes y agrega lo que el error no
+      sabe: cuál es el path válido.
     """
     extraviados = []
     if isinstance(merged.get("broadcast"), dict):
@@ -945,26 +955,18 @@ def _validate_channel_uniqueness(agents: dict[str, AgentConfig]) -> None:
     telegram_tokens: dict[str, list[str]] = {}
 
     for agent_id, cfg in agents.items():
-        tg_cfg = cfg.channels.get("telegram") or {}
-        token = tg_cfg.get("token")
-        if token:
-            telegram_tokens.setdefault(token, []).append(agent_id)
+        tg_cfg = cfg.telegram
+        if tg_cfg is not None and tg_cfg.token:
+            telegram_tokens.setdefault(tg_cfg.token, []).append(agent_id)
 
         # Unicidad de broadcast.server.port dentro del mismo agente. Solo los
         # servers hacen bind(); un bloque con enabled=false no levanta transporte.
         broadcast_ports: dict[int, list[str]] = {}
-        for channel_name, channel_raw in cfg.channels.items():
-            if not isinstance(channel_raw, dict):
+        for channel_name, channel_cfg in cfg.channels.items():
+            bc = getattr(channel_cfg, "broadcast", None)
+            if bc is None or bc.enabled is False or bc.server is None:
                 continue
-            bc_raw = channel_raw.get("broadcast")
-            if not isinstance(bc_raw, dict) or bc_raw.get("enabled") is False:
-                continue
-            server_raw = bc_raw.get("server")
-            if not isinstance(server_raw, dict):
-                continue
-            bc_port = server_raw.get("port")
-            if bc_port is not None:
-                broadcast_ports.setdefault(int(bc_port), []).append(channel_name)
+            broadcast_ports.setdefault(bc.server.port, []).append(channel_name)
 
         duplicated_bc_ports = {p: chs for p, chs in broadcast_ports.items() if len(chs) > 1}
         if duplicated_bc_ports:

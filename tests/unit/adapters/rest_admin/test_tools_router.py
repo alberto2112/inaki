@@ -40,6 +40,12 @@ from httpx import ASGITransport, AsyncClient
 
 from adapters.inbound.rest.admin.app import create_admin_app
 from core.domain.value_objects.outbound_kind import OutboundKind
+from infrastructure.config import (
+    BroadcastConfig,
+    BroadcastEmitConfig,
+    BroadcastServerConfig,
+    TelegramChannelConfig,
+)
 
 VALID_KEY = {"X-Admin-Key": "clave-test"}
 
@@ -104,15 +110,17 @@ def mock_agent_container(
 ) -> MagicMock:
     """Mock de AgentContainer con _tools y channel_outbound_registry.
 
-    agent_config.channels se configura como dict vacío para que el path de
-    broadcast no explote en los tests existentes (emit_assistant=True por default,
-    pero emitter=None → broadcasted=False sin error).
+    El agente no declara ``channels.telegram`` (``agent_config.telegram`` es
+    ``None``) para que el path de broadcast no explote en los tests existentes:
+    sin bloque rige el default del schema (emit_assistant=True), pero
+    emitter=None → broadcasted=False sin error.
     """
     container = MagicMock()
     container._tools = mock_tools_registry
     container.channel_outbound_registry = mock_outbound_registry
     # Evitar que MagicMock devuelva MagicMock en las navegaciones de config
     container.agent_config.channels = {}
+    container.agent_config.telegram = None
     return container
 
 
@@ -446,6 +454,22 @@ async def test_send_sin_auth_401(app) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _telegram_cfg_con_emit(emit_flag: bool) -> TelegramChannelConfig:
+    """``channels.telegram`` validado con ``broadcast.emit.assistant_response``.
+
+    El bloque llega al router como el modelo ya validado por ``AgentConfig``,
+    no como dict crudo: por eso se construye el schema real y no un literal.
+    """
+    return TelegramChannelConfig(
+        token="dummy-token",
+        broadcast=BroadcastConfig(
+            auth="secreto-compartido",
+            server=BroadcastServerConfig(port=9099),
+            emit=BroadcastEmitConfig(assistant_response=emit_flag),
+        ),
+    )
+
+
 def _app_con_broadcast_emitter(
     mock_agent_container: MagicMock,
     emit_flag: bool = True,
@@ -456,9 +480,9 @@ def _app_con_broadcast_emitter(
     """
     mock_emitter = AsyncMock()
 
-    mock_agent_container.agent_config.channels = {
-        "telegram": {"broadcast": {"emit": {"assistant_response": emit_flag}}}
-    }
+    tg_cfg = _telegram_cfg_con_emit(emit_flag)
+    mock_agent_container.agent_config.channels = {"telegram": tg_cfg}
+    mock_agent_container.agent_config.telegram = tg_cfg
 
     app_container = MagicMock()
     app_container.agents = {"foo": mock_agent_container}
@@ -588,9 +612,9 @@ async def test_send_broadcast_sin_emitter_no_falla(
 ) -> None:
     """emitter=None (no wired) → broadcasted=False, sin error, 200 OK."""
     # app_container sin broadcast_adapter
-    mock_agent_container.agent_config.channels = {
-        "telegram": {"broadcast": {"emit": {"assistant_response": True}}}
-    }
+    tg_cfg = _telegram_cfg_con_emit(True)
+    mock_agent_container.agent_config.channels = {"telegram": tg_cfg}
+    mock_agent_container.agent_config.telegram = tg_cfg
     app_container = MagicMock()
     app_container.agents = {"foo": mock_agent_container}
     del app_container.broadcast_adapter

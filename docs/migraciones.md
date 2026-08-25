@@ -29,7 +29,8 @@ Orden: **cronológico inverso** (la más reciente primero).
 ### Migración automática en caliente — sin acción
 
 `persist-tool-calls`, `groups-vs-broadcast`, `tool-config-own-file`,
-`agent-state-scoped-by-channel-chat`, `secrets-layer-eradication`.
+`agent-state-scoped-by-channel-chat`, `secrets-layer-eradication`,
+`channels-validados-al-cargar`.
 
 ### Sin migración — pero cambian comportamiento observable
 
@@ -44,6 +45,7 @@ Orden: **cronológico inverso** (la más reciente primero).
 | [`background-delegation`](#background-delegation) | `delegate` es **async por default** (`wait=false`) |
 | [`drop-per-agent-rest`](#drop-per-agent-rest) | Bloques `channels.rest` se ignoran en silencio |
 | [`secrets-layer-eradication`](#secrets-layer-eradication) | Desaparece la pantalla SECRETS del setup; borrar provider/agente se lleva sus credenciales |
+| [`channels-validados-al-cargar`](#channels-validados-al-cargar) | Un canal desconocido o una topología de broadcast inválida se reportan con su path en vez de ignorarse |
 | [`broadcast-topology-config`](#broadcast-topology-config) | Rol explícito `server` XOR `client`; config vieja falla al cargar |
 | [`broadcast-arranque-observable`](#broadcast-arranque-observable) | El fallo de `bind()` y la config de broadcast que no valida ahora salen como `ERROR` en el log |
 | [`formato-en-el-borde-del-transporte`](#formato-en-el-borde-del-transporte) | Todo lo que Telegram manda fuera del turno conversacional (scheduler, `bg-N`, intermedios, media) sale **formateado** y troceado, no en markdown crudo |
@@ -55,7 +57,8 @@ Orden: **cronológico inverso** (la más reciente primero).
   `in-flight-message-injection`, `turn-kill-switch`
 - **Retención y alcance del registro**: `trim-cuenta-conversacion`,
   `search-history-retention-horizon`
-- **Telegram y canales**: `attachment-grammar`, `formato-en-el-borde-del-transporte`,
+- **Telegram y canales**: `channels-validados-al-cargar`, `attachment-grammar`,
+  `formato-en-el-borde-del-transporte`,
   `groups-vs-broadcast`,
   `broadcast-topology-config`, `broadcast-arranque-observable`,
   `broadcast-cross-agent-events`,
@@ -69,6 +72,69 @@ Orden: **cronológico inverso** (la más reciente primero).
 - **Tools y config**: `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`, `secrets-layer-eradication`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `channels-validados-al-cargar`
+
+**El 14% del schema no se validaba nunca.** `AgentConfig.channels` era un
+`dict[str, dict[str, Any]]`: un dict opaco cuyos 26 campos —los de
+`TelegramChannelConfig`, `TelegramGroupsConfig` y las cuatro clases de
+broadcast— **no pasaban por Pydantic al cargar la config**. El tipado laxo tenía
+una razón declarada en el propio código ("para sobrevivir el merge sin
+validación estricta"), y esa razón se cobró tres consecuencias:
+
+| Consecuencia | Dónde se veía |
+|---|---|
+| Un typo o un tipo mal puesto viajaba hasta el primer uso en runtime | cualquier campo de `channels.telegram` |
+| Cada consumidor re-declaraba los defaults del schema | `bot.py` los repetía con ~30 `.get()`: tercera copia |
+| El mismo campo llegaba como modelo o como dict según el camino | `hasattr(x, "model_dump")` defensivo en el bot y en el admin |
+| La referencia "exhaustiva" no podía descender por el dict | 6 clases ausentes de `config-reference.md` |
+| El setup TUI necesitaba un registry propio, inyectado a mano | `setup_cli.py` + un `if name == "channels"` hardcodeado |
+
+Y una cuarta, la peor: `_wire_broadcast_for_agent` **revalidaba el bloque en un
+try/except** porque no podía confiar en que estuviera validado. Cuando fallaba,
+el `return` se llevaba puestos el transporte de broadcast Y el rate limiter de
+grupos, con el daemon arrancando sano. Ese es literalmente el bug de
+[`broadcast-arranque-observable`](#broadcast-arranque-observable), que se pudo
+mitigar pero no eliminar mientras el bloque siguiera sin validarse en el borde.
+
+**El cambio.** Un registry único, `CHANNEL_SCHEMAS`, declara qué canal existe y
+con qué schema (`telegram` → `TelegramChannelConfig`, `cli` →
+`CliChannelConfig`, este último tipado por primera vez). `AgentConfig.channels`
+lo consume en un `field_validator(mode="before")` que valida cada bloque y lo
+**coerciona a su modelo**. Vive en el schema, y no en el loader, porque así es
+la ÚNICA puerta: cubre por igual los cuatro caminos que construyen un
+`AgentConfig` (loader, builder efímero del flujo delegate, admin server y tests).
+
+Con el bloque ya tipado, `AgentConfig.telegram` / `.cli` dan acceso por
+atributo, y el mapeo a lo que consume el bot vive en un único builder del
+composition root (`build_telegram_channel_settings` → `TelegramChannelSettings`,
+VO del adapter). El bot dejó de parsear: desaparecieron sus `.get()` con
+defaults y sus dos ramas `hasattr(model_dump)`.
+
+**Cambios observables.**
+
+- Un canal desconocido, un tipo inválido o una topología de broadcast mal
+  formada **se reportan con su path exacto** (`channels.slack: canal
+  desconocido. Canales soportados: cli, telegram.`) en vez de ignorarse. Un
+  `broadcast:` colgado de `channels` —en vez de `channels.telegram`— ahora es un
+  error de validación, no un warning sobre un bloque inerte.
+- `docs/config-reference.md` pasó de 311 a 375 líneas: los canales entran como
+  raíces propias del generador, porque `channels` es un dict indexado por nombre
+  y la recursión por anotaciones no podía descubrirlos.
+
+**Lo que esta nota NO cambia.** `TelegramChannelConfig` conserva
+`extra="allow"`: un campo *desconocido* dentro de un canal conocido sigue
+pasando sin ruido. El endurecimiento a `extra="forbid"` y el aborto del arranque
+ante un agente inválido (hoy todavía desaparece con WARNING) son la Fase 4 de
+[`config-refactor-plan.md`](config-refactor-plan.md).
+
+**Invariante.** **NUNCA** dejes un bloque de config sin tipar "para que el merge
+no se queje": el merge opera sobre dicts crudos ANTES de validar, así que
+tipar el destino no le cuesta nada — y sin tipo, ese bloque no se valida jamás,
+sus defaults se duplican en cada consumidor y ninguna herramienta que lea el
+schema puede verlo.
 
 ---
 

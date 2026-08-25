@@ -55,7 +55,7 @@ def _lanzar_tui() -> None:
     """
     from adapters.inbound.setup_tui.app import SetupApp
     from adapters.inbound.setup_tui.di import build_setup_container
-    from infrastructure.config import AgentConfig, GlobalConfig, TelegramChannelConfig
+    from infrastructure.config import CHANNEL_SCHEMAS, AgentConfig, GlobalConfig
     from infrastructure.factories.embedding_factory import EmbeddingProviderFactory
     from infrastructure.factories.llm_factory import LLMProviderFactory
     from infrastructure.factories.transcription_factory import TranscriptionProviderFactory
@@ -77,8 +77,9 @@ def _lanzar_tui() -> None:
         global_schema=GlobalConfig,
         agent_schema=AgentConfig,
         # Registry de canales para introspeccionar el dict ``channels`` del agente.
-        # Al sumar un canal nuevo (slack, etc.) agregar su modelo acá.
-        channel_schemas={"telegram": TelegramChannelConfig},
+        # Es el MISMO que valida el loader (``CHANNEL_SCHEMAS``): sumar un canal
+        # es una sola entrada allá, no una lista que mantener sincronizada acá.
+        channel_schemas=dict(CHANNEL_SCHEMAS),
         provider_adapters=provider_choices,
     )
     app = SetupApp(container)

@@ -151,8 +151,8 @@ def _build_channel_tasks(app_container, registry) -> tuple[list[asyncio.Task], l
 
     # Telegram bots
     for agent_cfg in registry.agents_with_channel("telegram"):
-        tg_cfg = agent_cfg.channels.get("telegram", {})
-        if not tg_cfg.get("token"):
+        tg_cfg = agent_cfg.telegram
+        if tg_cfg is None or not tg_cfg.token:
             logger.warning(
                 "Agente '%s': channels.telegram.token no configurado — bot Telegram no levantado",
                 agent_cfg.id,

@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from adapters.inbound.telegram.ports import TelegramChannelSettings, TelegramGroupSettings
 from core.ports.outbound.broadcast_port import BroadcastMessage
 
 
@@ -36,20 +37,20 @@ def agent_cfg_autonomous() -> MagicMock:
     cfg.id = "inaki"
     cfg.name = "Inaki"
     cfg.description = "Asistente"
-    cfg.telegram = {
-        "token": "dummy-token",
-        "allowed_user_ids": [],
+    cfg.telegram = TelegramChannelSettings(
+        token="dummy-token",
+        allowed_user_ids=(),
         # El chat de los broadcasts de prueba (-100123) debe estar autorizado,
         # o el guard de ``_on_broadcast_received`` los descarta (ver
         # ``telegram-group-auth``: allowed_chat_ids vacío = ignora todo broadcast).
-        "allowed_chat_ids": [-100123],
-        "reactions": False,
-        "groups": {
-            "behavior": "autonomous",
-            "bot_username": "inaki_bot",
-            "rate_limiter": 5,
-        },
-    }
+        allowed_chat_ids=("-100123",),
+        reactions=False,
+        groups=TelegramGroupSettings(
+            behavior="autonomous",
+            bot_username="inaki_bot",
+            rate_limiter=5,
+        ),
+    )
     return cfg
 
 
@@ -128,14 +129,14 @@ async def test_subscribe_broadcast_trigger_mention_noop(mock_container, mock_rec
     cfg.id = "inaki"
     cfg.name = "Inaki"
     cfg.description = ""
-    cfg.telegram = {
-        "token": "dummy-token",
-        "allowed_user_ids": [],
-        "groups": {
-            "behavior": "mention",
-            "bot_username": "inaki_bot",
-        },
-    }
+    cfg.telegram = TelegramChannelSettings(
+        token="dummy-token",
+        allowed_user_ids=(),
+        groups=TelegramGroupSettings(
+            behavior="mention",
+            bot_username="inaki_bot",
+        ),
+    )
     bot = _build_bot(cfg, mock_container, receiver=mock_receiver)
     await bot.subscribe_broadcast_trigger()
     mock_receiver.subscribe.assert_not_awaited()
@@ -474,16 +475,16 @@ async def test_on_broadcast_allowed_chat_ids_vacio_ignora_todo(
     cfg.id = "inaki"
     cfg.name = "Inaki"
     cfg.description = "Asistente"
-    cfg.telegram = {
-        "token": "dummy-token",
-        "allowed_user_ids": [],
-        "allowed_chat_ids": [],  # sin grupos autorizados
-        "groups": {
-            "behavior": "autonomous",
-            "bot_username": "inaki_bot",
-            "rate_limiter": 5,
-        },
-    }
+    cfg.telegram = TelegramChannelSettings(
+        token="dummy-token",
+        allowed_user_ids=(),
+        allowed_chat_ids=(),  # sin grupos autorizados
+        groups=TelegramGroupSettings(
+            behavior="autonomous",
+            bot_username="inaki_bot",
+            rate_limiter=5,
+        ),
+    )
     bot = _build_bot(
         cfg,
         mock_container,

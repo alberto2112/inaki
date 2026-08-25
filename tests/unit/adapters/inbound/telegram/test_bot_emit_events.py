@@ -13,6 +13,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from adapters.inbound.telegram.ports import (
+    TelegramChannelSettings,
+    TelegramEmitFlags,
+    TelegramGroupSettings,
+)
+
 
 def _mk_agent_cfg(
     *,
@@ -20,31 +26,29 @@ def _mk_agent_cfg(
     emit_user_input_voice: bool = False,
     emit_user_input_photo: bool = False,
 ) -> MagicMock:
-    """Construye un AgentConfig mock con flags emit configurables.
+    """Construye un TelegramBotSettings mock con flags emit configurables.
 
-    El bloque telegram.broadcast.emit usa un MagicMock con model_dump() para
-    simular el Pydantic BroadcastConfig real.
+    Los flags llegan al bot ya resueltos en ``TelegramEmitFlags``: el mapeo
+    desde ``channels.telegram.broadcast.emit`` lo hace el builder del container.
     """
     cfg = MagicMock()
     cfg.id = "agente_a"
     cfg.name = "Inaki"
     cfg.description = "Asistente"
-    cfg.telegram = {
-        "token": "dummy-token",
-        "allowed_user_ids": [],
-        "voice_enabled": True,
-        "groups": {
-            "behavior": "mention",
-            "rate_limiter": 5,
-        },
-        "broadcast": {
-            "emit": {
-                "assistant_response": emit_assistant_response,
-                "user_input_voice": emit_user_input_voice,
-                "user_input_photo": emit_user_input_photo,
-            },
-        },
-    }
+    cfg.telegram = TelegramChannelSettings(
+        token="dummy-token",
+        allowed_user_ids=(),
+        voice_enabled=True,
+        groups=TelegramGroupSettings(
+            behavior="mention",
+            rate_limiter=5,
+        ),
+        emit=TelegramEmitFlags(
+            assistant_response=emit_assistant_response,
+            user_input_voice=emit_user_input_voice,
+            user_input_photo=emit_user_input_photo,
+        ),
+    )
     cfg.transcription = MagicMock()
     cfg.transcription.max_audio_mb = 25
     cfg.transcription.language = None

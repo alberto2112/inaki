@@ -29,6 +29,9 @@ from adapters.outbound.delegation.background_queue_adapter import (
 from adapters.inbound.telegram.ports import (
     TelegramBotPorts,
     TelegramBotSettings,
+    TelegramChannelSettings,
+    TelegramEmitFlags,
+    TelegramGroupSettings,
     TranscriptionLimits,
 )
 from adapters.outbound.history.sqlite_history_store import (
@@ -140,9 +143,11 @@ def build_memory_settings(memories_cfg: MemoriesConfig) -> MemorySettings:
 
 
 def build_run_agent_settings(cfg: AgentConfig) -> RunAgentSettings:
-    tg_cfg = cfg.channels.get("telegram", {}) or {}
+    tg_cfg = cfg.telegram
     timestamp_channels = (
-        frozenset({"telegram"}) if tg_cfg.get("add_llm_timestamp", False) else frozenset()
+        frozenset({"telegram"})
+        if tg_cfg is not None and tg_cfg.add_llm_timestamp
+        else frozenset()
     )
     return RunAgentSettings(
         agent_id=cfg.id,
@@ -183,6 +188,57 @@ def build_photos_settings(photos_cfg: PhotosConfig) -> PhotosSettings:
     )
 
 
+def build_telegram_channel_settings(
+    tg_cfg: TelegramChannelConfig | None,
+) -> TelegramChannelSettings:
+    """Mapea el bloque ``channels.telegram`` ya validado → VO del adapter.
+
+    Único punto donde se traduce config → slice del bot. Resuelve acá dos
+    herencias que antes se rehacían dentro del bot: el ``reactions`` de grupos
+    (override si existe, si no el del canal) y los flags de ``broadcast.emit``.
+    """
+    if tg_cfg is None:
+        return TelegramChannelSettings()
+
+    grupos = tg_cfg.groups
+    group_settings = (
+        TelegramGroupSettings(
+            behavior=grupos.behavior,
+            bot_username=grupos.bot_username,
+            rate_limiter=grupos.rate_limiter,
+            rate_limiter_window=grupos.rate_limiter_window,
+            min_delay=grupos.min_delay_response,
+            max_delay=grupos.max_delay_response,
+            reactions=(
+                tg_cfg.reactions if grupos.reactions is None else bool(grupos.reactions)
+            ),
+        )
+        if grupos is not None
+        else TelegramGroupSettings(reactions=tg_cfg.reactions)
+    )
+
+    emit_cfg = tg_cfg.broadcast.emit if tg_cfg.broadcast is not None else None
+    emit_flags = (
+        TelegramEmitFlags(
+            assistant_response=emit_cfg.assistant_response,
+            user_input_voice=emit_cfg.user_input_voice,
+            user_input_photo=emit_cfg.user_input_photo,
+        )
+        if emit_cfg is not None
+        else TelegramEmitFlags()
+    )
+
+    return TelegramChannelSettings(
+        token=tg_cfg.token,
+        allowed_user_ids=tuple(str(uid) for uid in tg_cfg.allowed_user_ids),
+        allowed_chat_ids=tuple(str(cid) for cid in tg_cfg.allowed_chat_ids),
+        reactions=tg_cfg.reactions,
+        voice_enabled=tg_cfg.voice_enabled,
+        groups=group_settings,
+        emit=emit_flags,
+    )
+
+
 def build_telegram_bot_settings(cfg: AgentConfig) -> TelegramBotSettings:
     """Mapea AgentConfig → slice de config que consume el TelegramBot."""
     transcription = None
@@ -197,7 +253,7 @@ def build_telegram_bot_settings(cfg: AgentConfig) -> TelegramBotSettings:
         description=cfg.description,
         workspace_path=cfg.workspace.path,
         transcription=transcription,
-        telegram=cfg.channels.get("telegram") or {},
+        telegram=build_telegram_channel_settings(cfg.telegram),
     )
 
 
@@ -697,12 +753,11 @@ class AgentContainer:
         - Si `voice_enabled` está activo y `cfg.transcription` es `None` →
           error claro en bootstrap (no degradamos silenciosamente).
         """
-        tg_cfg = cfg.channels.get("telegram")
+        tg_cfg = cfg.telegram
         if tg_cfg is None:
             return None
 
-        voice_enabled = tg_cfg.get("voice_enabled", True)
-        if voice_enabled is False:
+        if tg_cfg.voice_enabled is False:
             return None
 
         if cfg.transcription is None:
@@ -948,8 +1003,8 @@ class AgentContainer:
         if self._telegram_tools_wired:
             return
 
-        tg_cfg = self.agent_config.channels.get("telegram")
-        if tg_cfg is None or not tg_cfg.get("token"):
+        tg_cfg = self.agent_config.telegram
+        if tg_cfg is None or not tg_cfg.token:
             self._telegram_tools_wired = True
             return
         if telegram_file_repo is None:
@@ -1710,8 +1765,7 @@ class AppContainer:
         # DB en la misma carpeta que history.db / faces.db.
         self._telegram_file_repo = None
         if any(
-            (cfg.channels.get("telegram", {}) or {}).get("token")
-            for cfg in self.registry.list_regular()
+            cfg.telegram is not None and cfg.telegram.token for cfg in self.registry.list_regular()
         ):
             from pathlib import Path
 
@@ -1865,27 +1919,13 @@ class AppContainer:
         if container is None:
             return
 
-        tg_raw = agent_cfg.channels.get("telegram")
-        if tg_raw is None:
-            return
-
-        # Coercionar a TelegramChannelConfig para acceso tipado.
-        try:
-            tg_cfg = TelegramChannelConfig.model_validate(tg_raw)
-        except Exception as exc:
-            # ERROR, no WARNING: este return se lleva puestos el transporte de
-            # broadcast Y el rate limiter de grupos, y el daemon sigue arrancando
-            # como si nada. Un bloque `broadcast:` en formato viejo (`port:` suelto,
-            # `remote:`) o sin `auth` cae acá — el operador ve el bot online, el
-            # puerto cerrado, y ninguna pista de por qué.
-            logger.error(
-                "Agente '%s': channels.telegram NO valida — se omiten el transporte de "
-                "broadcast y el rate limiter de grupos. Revisá la topología "
-                "(broadcast.server.port XOR broadcast.client.host+port, broadcast.auth "
-                "obligatorio, puertos 1024..65535). Detalle: %s",
-                agent_cfg.id,
-                exc,
-            )
+        # El bloque llega validado desde ``AgentConfig``: una topología inválida
+        # (formato viejo con `port:` suelto, `remote:`, o sin `auth`) ya abortó el
+        # arranque con ConfigError. Antes se revalidaba acá dentro de un
+        # try/except que, al fallar, se llevaba en silencio el transporte de
+        # broadcast Y el rate limiter de grupos con el daemon arrancando sano.
+        tg_cfg = agent_cfg.telegram
+        if tg_cfg is None:
             return
 
         # (1) Rate limiter de grupos — solo behavior=autonomous lo necesita

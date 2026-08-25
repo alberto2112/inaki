@@ -76,8 +76,8 @@ async def chat_turn(body: ChatTurnRequest, request: Request) -> ChatTurnResponse
     # ``context_id`` (= chat_id or user_id) resuelve al usuario configurado y el fichero
     # de contexto ``~/.inaki/users/{channel_type}/{context_id}.md`` queda pre-escribible.
     # También puebla ``{{CHANNEL.USERNAME}}``. Un ``chat_id`` explícito del cliente gana.
-    cli_cfg = agent_container.agent_config.channels.get(channel_type, {})
-    cli_user = cli_cfg.get("user") if isinstance(cli_cfg, dict) else None
+    cli_cfg = agent_container.agent_config.channels.get(channel_type)
+    cli_user = getattr(cli_cfg, "user", None)
     ctx = ChannelContext(
         channel_type=channel_type,
         user_id=cli_user or body.session_id,

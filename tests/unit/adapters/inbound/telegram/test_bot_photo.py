@@ -17,6 +17,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from adapters.inbound.telegram.ports import (
+    TelegramChannelSettings,
+    TelegramEmitFlags,
+    TelegramGroupSettings,
+)
 from core.domain.entities.face import ProcessPhotoResult
 
 
@@ -30,15 +35,15 @@ def _mk_agent_cfg(*, allowed_user_ids: list[int] | None = None) -> MagicMock:
     cfg.id = "dev"
     cfg.name = "Inaki"
     cfg.description = "Asistente"
-    tg = {
-        "token": "dummy-token",
-        "allowed_user_ids": allowed_user_ids or [],
+    tg = TelegramChannelSettings(
+        token="dummy-token",
+        allowed_user_ids=tuple(str(uid) for uid in allowed_user_ids or []),
         # 99 = chat_id default de _mk_update — autoriza los tests de grupo
         # (en grupos la auth es por allowed_chat_ids, no por allowed_user_ids).
-        "allowed_chat_ids": [99],
-        "reactions": True,
-        "voice_enabled": False,  # deshabilitar voz para simplificar
-    }
+        allowed_chat_ids=("99",),
+        reactions=True,
+        voice_enabled=False,  # deshabilitar voz para simplificar
+    )
     cfg.telegram = tg
     cfg.transcription = None
     # Workspace real bajo /tmp: _save_bytes_to_workspace escribe los bytes acá.
@@ -682,24 +687,22 @@ def _mk_agent_cfg_con_emit_photo(allowed_user_ids: list[int]) -> MagicMock:
     cfg.id = "agente_a"
     cfg.name = "Inaki"
     cfg.description = "Asistente"
-    cfg.telegram = {
-        "token": "dummy-token",
-        "allowed_user_ids": allowed_user_ids,
+    cfg.telegram = TelegramChannelSettings(
+        token="dummy-token",
+        allowed_user_ids=tuple(str(uid) for uid in allowed_user_ids),
         # 99 = chat_id default de _mk_update — autoriza los tests de grupo.
-        "allowed_chat_ids": [99],
-        "reactions": True,
-        "voice_enabled": False,
-        "groups": {
-            "behavior": "mention",
-        },
-        "broadcast": {
-            "emit": {
-                "assistant_response": True,
-                "user_input_photo": True,
-                "user_input_voice": False,
-            },
-        },
-    }
+        allowed_chat_ids=("99",),
+        reactions=True,
+        voice_enabled=False,
+        groups=TelegramGroupSettings(
+            behavior="mention",
+        ),
+        emit=TelegramEmitFlags(
+            assistant_response=True,
+            user_input_photo=True,
+            user_input_voice=False,
+        ),
+    )
     cfg.transcription = None
     cfg.workspace_path = "/tmp/inaki-test-ws-photo"
     cfg.delegation = MagicMock()

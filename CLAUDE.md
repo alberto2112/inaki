@@ -57,7 +57,9 @@ Resumen operativo. El texto completo, con el porqué y los antipatrones, está e
    y se expone por tres superficies que comparten lógica: use case en `core/` → tool del
    LLM → gateway admin único (`POST /admin/tool/invoke`, cliente `inaki tool <name>`). Un
    **canal** (Telegram, mañana Slack) es un inbound adapter que solo traduce su I/O a un
-   turno. **Antipatrón**: que cada canal implemente pasarelas de los CLI — es una
+   turno. Un canal nuevo se declara en **una** línea: su modelo en el schema + su entrada
+   en `CHANNEL_SCHEMAS` (`infrastructure/config_schema.py`). De ahí lo leen el loader (que
+   lo valida), el setup TUI y el generador de `config-reference.md`. **Antipatrón**: que cada canal implemente pasarelas de los CLI — es una
    explosión N×M. Excepción CERRADA: los slash commands de Telegram son el panel del
    OPERADOR (admin-only, deterministas, sin LLM); extender uno existente es aceptable,
    crear uno nuevo para una capacidad nueva NO, y **NUNCA replicarlos en un canal nuevo**.
@@ -174,6 +176,11 @@ Cada una salió de un fallo en producción. El caso completo está en
 - **NUNCA** agregar `index()` a `IKnowledgeSource`: rompería las fuentes read-only.
 - **NUNCA** inventar un formato de persistencia por tipo de media o por canal — la
   gramática se extiende en `core/domain/value_objects/attachment.py`. → `attachment-grammar`
+- **NUNCA** dejar un bloque de config sin tipar "para que el merge no se queje": el
+  merge opera sobre dicts crudos ANTES de validar, así que tipar el destino no le
+  cuesta nada. Sin tipo no se valida jamás, sus defaults se duplican en cada
+  consumidor, y ninguna herramienta que lea el schema puede verlo.
+  → `channels-validados-al-cargar`
 - **NUNCA** volver al rol implícito por presencia de campo en la config de broadcast, ni
   duplicar `auth` por rol. → `broadcast-topology-config`
 - **NUNCA** dejar el `bind()` de un puerto dentro de una tarea de fondo mientras el caller

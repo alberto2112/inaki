@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from adapters.inbound.telegram.ports import TelegramChannelSettings
 from core.domain.errors import TranscriptionError
 
 
@@ -39,12 +40,12 @@ def _mk_agent_cfg(
     cfg.id = "dev"
     cfg.name = "Inaki"
     cfg.description = "Asistente"
-    tg = {
-        "token": "dummy-token",
-        "allowed_user_ids": allowed_user_ids or [],
-        "reactions": reactions,
-        "voice_enabled": voice_enabled,
-    }
+    tg = TelegramChannelSettings(
+        token="dummy-token",
+        allowed_user_ids=tuple(str(uid) for uid in allowed_user_ids or []),
+        reactions=reactions,
+        voice_enabled=voice_enabled,
+    )
     cfg.telegram = tg
     # Workspace real bajo /tmp: _save_bytes_to_workspace escribe los bytes acá.
     cfg.workspace_path = "/tmp/inaki-test-ws-voice"

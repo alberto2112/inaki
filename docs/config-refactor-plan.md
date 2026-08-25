@@ -1,6 +1,6 @@
 # Plan de refactorización — Sistema de configuración
 
-> Estado: EN PROGRESO — Fases 1 y 2 implementadas. Documento vivo.
+> Estado: EN PROGRESO — Fases 1, 2 y 3 implementadas. Documento vivo.
 > Origen: auditoría del 2026-08-25 (Engram `architecture/config-system-audit` y
 > `architecture/config-secrets-layer`).
 > Última actualización: 2026-08-25.
@@ -104,7 +104,7 @@ misma fuente de verdad que ya usa el TUI. Un typo en `channels.telegram` FALLA.
 7. Revisar si `_filter_channel_adapters` (contaminación global↔agente por la colisión
    de nombre `channels`) sigue siendo necesario; si sí, dejar comentario con el porqué.
 
-## Fase 3 — Motor de merge ÚNICO
+## Fase 3 — Motor de merge ÚNICO ✅ HECHA
 
 **Objetivo**: una sola semántica de merge/herencia/borrado, usada por el loader, el
 carril de edición del TUI y los sub-agentes efímeros.
@@ -128,8 +128,10 @@ carril de edición del TUI y los sub-agentes efímeros.
      los primitivos del motor: ausente/null/sentinel)
    - `container.py::build_ephemeral_child` (la 5ª capa runtime usa el mismo motor —
      deja de ser un mundo aparte)
-4. `merged_llm_config` (`config_schema.py:365-383`, mecanismo field-by-field sobre
-   modelos validados): evaluar si el patrón ausente-vs-null de `MemoryLLMConfig` se
+4. `merged_llm_config`: se CONSERVA como excepción única y declarada (opera sobre
+   modelos ya validados, no sobre dicts crudos; absorberlo rompería el tri-estado que
+   el TUI edita sobre `memories.llm.*`). Documentado en su docstring. Texto original:
+   evaluar si el patrón ausente-vs-null de `MemoryLLMConfig` se
    puede expresar con los primitivos del motor ANTES de validar. Si el costo es alto,
    se conserva pero documentado como excepción única, con referencia al motor.
 5. La fachada `infrastructure/config.py` reexporta desde el módulo nuevo (sin romper
@@ -227,7 +229,7 @@ tres carriles — ir consumidor por consumidor), Fases 4-7 mecánicas y troceabl
 
 - [x] Fase 1 — erradicar `*.secrets.yaml` — nota `secrets-layer-eradication` en `docs/migraciones.md`
 - [x] Fase 2 — validar `channels` al cargar — nota `channels-validados-al-cargar` en `docs/migraciones.md`
-- [ ] Fase 3 — motor de merge único
+- [x] Fase 3 — motor de merge único — nota `motor-de-merge-unico` en `docs/migraciones.md`
 - [ ] Fase 4 — fallos ruidosos
 - [ ] Fase 5 — `inaki config show --effective --origin`
 - [ ] Fase 6 — docs fuente única

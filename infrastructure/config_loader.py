@@ -18,6 +18,7 @@ from typing import Any, Iterable, Protocol
 
 import yaml
 
+from core.domain.config_merge import deep_merge, resolver_inherit
 from infrastructure.config_schema import (
     AdminConfig,
     AgentConfig,
@@ -54,18 +55,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _deep_merge(base: dict, override: dict) -> dict:
-    """
-    Merge recursivo campo a campo. Los campos ausentes en override se heredan de base.
-    Nunca elimina campos. override tiene prioridad sobre base.
-    """
-    result = dict(base)
-    for key, value in override.items():
-        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = _deep_merge(result[key], value)
-        else:
-            result[key] = value
-    return result
+# El merge y la herencia los define UN solo motor (``core/domain/config_merge``).
+# Estos alias preservan los nombres históricos que importan ``container.py``, la
+# fachada ``infrastructure/config.py`` y los tests.
+_deep_merge = deep_merge
+resolve_inherit = resolver_inherit
 
 
 SUBAGENT_DEFAULTS: dict = {
@@ -87,32 +81,6 @@ Defaults de rol para sub-agentes (one-shot, sin canales propios).
 
 Resto de bloques: SIN `inherit` — el YAML del sub-agente opta in por bloque con `inherit: true`.
 """
-
-
-def resolve_inherit(child_raw: dict, parent_raw: dict) -> dict:
-    """
-    Resuelve el primitivo `inherit` por bloque top-level antes de validar con pydantic.
-
-    Por cada bloque de `child_raw` que sea un dict con `inherit: True`, el resultado
-    es `_deep_merge(parent_raw.get(block, {}), child_block_sin_inherit)` — el bloque
-    del padre como base, con los campos del hijo (si los hay) pisando encima. Bloques
-    sin `inherit` (o con `inherit: False`) quedan tal cual vinieron en `child_raw`.
-    La clave `inherit` siempre se strippea del resultado: no es dato de dominio, así
-    que nunca debe llegar a un modelo pydantic.
-    """
-    result: dict = {}
-    for key, value in child_raw.items():
-        if isinstance(value, dict) and value.get("inherit") is True:
-            child_block = {k: v for k, v in value.items() if k != "inherit"}
-            parent_block = parent_raw.get(key, {})
-            if not isinstance(parent_block, dict):
-                parent_block = {}
-            result[key] = _deep_merge(parent_block, child_block)
-        elif isinstance(value, dict) and "inherit" in value:
-            result[key] = {k: v for k, v in value.items() if k != "inherit"}
-        else:
-            result[key] = value
-    return result
 
 
 def _load_yaml_safe(path: Path) -> dict:

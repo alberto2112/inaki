@@ -89,10 +89,15 @@ Resumen operativo. El texto completo, con el porqué y los antipatrones, está e
 Config en **`~/.inaki/`** (no en el repo). El primer arranque hace bootstrap desde
 `config/global.example.yaml`. Relocalizable entera con `--home DIR` / `INAKI_HOME`.
 
-**Merge de 2 capas** (cada capa pisa solo los campos que declara):
+**Merge de 2 capas** — `global.yaml` es la **base** y cada capa siguiente completa o
+pisa solo los campos que declara (nunca al revés):
 
 1. `~/.inaki/config/global.yaml`
 2. `~/.inaki/agents/{id}.yaml`
+
+La semántica completa (listas, `null`, borrado, conflictos de forma) la define
+`core/domain/config_merge.py` — motor único de los cuatro carriles: carga, edición del
+setup TUI, `get_effective_config` y sub-agentes efímeros.
 
 Las credenciales viven en esas mismas capas (solo YAML, sin env vars): los ficheros se
 crean con permisos **600** y están gitignoreados — **nunca commitearlos**. Un campo es
@@ -181,6 +186,10 @@ Cada una salió de un fallo en producción. El caso completo está en
   cuesta nada. Sin tipo no se valida jamás, sus defaults se duplican en cada
   consumidor, y ninguna herramienta que lea el schema puede verlo.
   → `channels-validados-al-cargar`
+- **NUNCA** escribir un segundo merge de config. La semántica vive UNA vez en
+  `core/domain/config_merge.py` (dict⊕dict funde, lista reemplaza, `null` pisa,
+  sentinel borra, cambiar de forma entre capas es error). Si no alcanza para un caso
+  nuevo, **extendé el motor**; no nazca otro al lado. → `motor-de-merge-unico`
 - **NUNCA** volver al rol implícito por presencia de campo en la config de broadcast, ni
   duplicar `auth` por rol. → `broadcast-topology-config`
 - **NUNCA** dejar el `bind()` de un puerto dentro de una tarea de fondo mientras el caller

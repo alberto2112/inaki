@@ -90,6 +90,7 @@ from core.domain.value_objects.agent_settings import (
     ReconciliationSettings,
     RunAgentSettings,
 )
+from core.domain.config_merge import deep_merge, resolver_inherit
 from infrastructure.config import (
     AgentConfig,
     AgentRegistry,
@@ -99,10 +100,8 @@ from infrastructure.config import (
     PhotosConfig,
     SUBAGENT_DEFAULTS,
     TelegramChannelConfig,
-    _deep_merge,
     assemble_agent_config,
     migrate_tool_config_to_own_file,
-    resolve_inherit,
 )
 from infrastructure.daemon_reloader import DaemonReloader
 from infrastructure.factories.embedding_factory import EmbeddingProviderFactory
@@ -145,9 +144,7 @@ def build_memory_settings(memories_cfg: MemoriesConfig) -> MemorySettings:
 def build_run_agent_settings(cfg: AgentConfig) -> RunAgentSettings:
     tg_cfg = cfg.telegram
     timestamp_channels = (
-        frozenset({"telegram"})
-        if tg_cfg is not None and tg_cfg.add_llm_timestamp
-        else frozenset()
+        frozenset({"telegram"}) if tg_cfg is not None and tg_cfg.add_llm_timestamp else frozenset()
     )
     return RunAgentSettings(
         agent_id=cfg.id,
@@ -209,9 +206,7 @@ def build_telegram_channel_settings(
             rate_limiter_window=grupos.rate_limiter_window,
             min_delay=grupos.min_delay_response,
             max_delay=grupos.max_delay_response,
-            reactions=(
-                tg_cfg.reactions if grupos.reactions is None else bool(grupos.reactions)
-            ),
+            reactions=(tg_cfg.reactions if grupos.reactions is None else bool(grupos.reactions)),
         )
         if grupos is not None
         else TelegramGroupSettings(reactions=tg_cfg.reactions)
@@ -908,7 +903,7 @@ class AgentContainer:
         su padre). Es one-shot y se descarta al terminar (no persiste estado).
 
         Resolución de config:
-          ``merged = resolve_inherit(_deep_merge(SUBAGENT_DEFAULTS, definition_raw), parent_raw)``
+          ``merged = resolver_inherit(deep_merge(SUBAGENT_DEFAULTS, definition_raw), parent_raw)``
         con ``parent_raw`` = config EFECTIVA del caller. El hijo hereda el registry
         ``providers`` del caller (corre con sus credenciales; un sub con providers propios
         los pisa) para que un override de ``llm.provider`` resuelva.
@@ -921,10 +916,10 @@ class AgentContainer:
             → reusar la instancia ``self._llm``; si difiere → instancia nueva vía factory.
         """
         parent_raw = self.agent_config.model_dump()
-        merged = resolve_inherit(_deep_merge(SUBAGENT_DEFAULTS, definition_raw), parent_raw)
+        merged = resolver_inherit(deep_merge(SUBAGENT_DEFAULTS, definition_raw), parent_raw)
         # Credenciales: el hijo hereda el registry `providers` del caller como base; un
         # sub que declare providers propios los pisa (deep-merge child sobre parent).
-        merged["providers"] = _deep_merge(
+        merged["providers"] = deep_merge(
             parent_raw.get("providers") or {}, merged.get("providers") or {}
         )
         child_cfg = assemble_agent_config(merged)

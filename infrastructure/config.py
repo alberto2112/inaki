@@ -1,7 +1,8 @@
 """Fachada de configuración de Inaki — punto de import único.
 
-El schema (modelos Pydantic) vive en ``config_schema`` y la carga/merge en
-``config_loader``. Este módulo los reexporta para preservar el contrato
+El schema (modelos Pydantic) vive en ``config_schema`` y la carga en
+``config_loader``; la semántica de merge la define el motor del dominio
+(``core/domain/config_merge``), del que ``config_loader`` reexporta alias. Este módulo los reexporta para preservar el contrato
 histórico ``from infrastructure.config import X`` sin que el resto del código
 tenga que conocer el split. NO agregar lógica acá: schema → config_schema,
 carga → config_loader.

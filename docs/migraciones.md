@@ -30,7 +30,7 @@ Orden: **cronológico inverso** (la más reciente primero).
 
 `persist-tool-calls`, `groups-vs-broadcast`, `tool-config-own-file`,
 `agent-state-scoped-by-channel-chat`, `secrets-layer-eradication`,
-`channels-validados-al-cargar`.
+`channels-validados-al-cargar`, `motor-de-merge-unico`.
 
 ### Sin migración — pero cambian comportamiento observable
 
@@ -46,6 +46,7 @@ Orden: **cronológico inverso** (la más reciente primero).
 | [`drop-per-agent-rest`](#drop-per-agent-rest) | Bloques `channels.rest` se ignoran en silencio |
 | [`secrets-layer-eradication`](#secrets-layer-eradication) | Desaparece la pantalla SECRETS del setup; borrar provider/agente se lleva sus credenciales |
 | [`channels-validados-al-cargar`](#channels-validados-al-cargar) | Un canal desconocido o una topología de broadcast inválida se reportan con su path en vez de ignorarse |
+| [`motor-de-merge-unico`](#motor-de-merge-unico) | Una clave que cambia de forma entre capas aborta con su path; antes se reemplazaba en silencio |
 | [`broadcast-topology-config`](#broadcast-topology-config) | Rol explícito `server` XOR `client`; config vieja falla al cargar |
 | [`broadcast-arranque-observable`](#broadcast-arranque-observable) | El fallo de `bind()` y la config de broadcast que no valida ahora salen como `ERROR` en el log |
 | [`formato-en-el-borde-del-transporte`](#formato-en-el-borde-del-transporte) | Todo lo que Telegram manda fuera del turno conversacional (scheduler, `bg-N`, intermedios, media) sale **formateado** y troceado, no en markdown crudo |
@@ -70,8 +71,81 @@ Orden: **cronológico inverso** (la más reciente primero).
   `agent-state-scoped-by-channel-chat`
 - **Scheduler**: `scheduler-trigger-type-mutable`, `channel-send-history-persist`
 - **Tools y config**: `write-file-explicit-mode`, `tool-config-protocol`,
-  `tool-config-own-file`, `secrets-layer-eradication`
+  `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `motor-de-merge-unico`
+
+**Había cinco motores de merge, y ninguno sabía de los otros.** No eran cinco
+capas: eran cinco *implementaciones* de "qué significa mergear config", con
+semánticas parecidas pero no idénticas, cada una nacida cuando la anterior no
+alcanzaba para un caso nuevo.
+
+| Mecanismo | Dónde vivía | Qué sabía de más / de menos |
+|---|---|---|
+| `_deep_merge` | `infrastructure/config_loader.py` | carril de carga; **no sabía borrar claves** |
+| `_deep_merge` | `core/use_cases/config/get_effective_config.py` | copia literal del anterior, con su propio rastreo de orígenes |
+| `deep_merge_con_eliminaciones` | `core/use_cases/config/_merge.py` | carril de edición; sí borra, vía sentinel |
+| `resolve_inherit` | `infrastructure/config_loader.py` | herencia opt-in por bloque |
+| `build_ephemeral_child` | `infrastructure/container.py` | 5ª capa en runtime, invisible a toda UI |
+
+**El síntoma que lo delató.** El setup TUI tuvo que inventar un tri-estado
+propio (`INHERIT` / `OVERRIDE_VALOR` / `OVERRIDE_NULL`) con su modal de 148
+líneas para poder decir "borrá esta clave". ¿Por qué? Porque el carril de carga
+**no tenía forma de expresar el borrado**: "ausente" y "borrado" se decían
+distinto según el carril. El tri-estado no era complejidad de la UI; era la UI
+reconstruyendo semántica que el sistema de abajo no ofrecía.
+
+**El cambio.** Un módulo de dominio puro, `core/domain/config_merge.py`, con la
+tabla de semántica documentada en un solo lugar:
+
+| Caso | Resultado |
+|---|---|
+| dict ⊕ dict | merge recursivo |
+| clave ausente en override | hereda de base |
+| lista ⊕ lista | **reemplazo total** — nunca concatena |
+| `None` explícito | pisa (es "desactivar", no "ausente") |
+| `SENTINEL_ELIMINAR` | borra la clave |
+| escalar ⊕ dict (o al revés) | **error ruidoso** |
+
+Los cuatro carriles pasan a apuntar al mismo objeto: el loader y el carril de
+edición vía alias que conservan sus nombres históricos, y `build_ephemeral_child`
+importándolo explícitamente para que la quinta capa deje de ser un mundo aparte.
+El tri-estado sobrevive, pero degradado a lo que siempre debió ser: **una
+traducción** de la intención de la UI a los tres primitivos que el motor ya
+entiende (sentinel / `None` / valor).
+
+La dirección del merge queda escrita como invariante en el módulo:
+`global.yaml` es la **base** y cada capa siguiente completa o pisa solo los
+campos que declara. Nunca al revés, y lo mismo vale para el padre en la
+herencia de sub-agentes.
+
+**Cambios observables.**
+
+- Una clave que cambia de forma entre capas (escalar donde antes había un
+  bloque, o al revés) **aborta con su path y el nombre de la capa culpable**:
+  `Conflicto de tipos en 'llm': una capa declara un bloque de config (mapa) y
+  otra un valor`. Antes era un reemplazo silencioso. `None` está exento a
+  propósito: apagar un bloque (`transcription: null`) es legítimo y explícito.
+- `merge_capas` devuelve, además del resultado, la **procedencia de cada hoja**
+  (`llm.model` → `agent`). `get_effective_config` dejó de calcularla por su
+  cuenta, y es el insumo directo del `inaki config show --origin` de la Fase 5.
+
+**Lo que NO cambió.** `merged_llm_config` (el override de `memories.llm`) queda
+como **excepción única y declarada**: opera sobre modelos ya validados, no sobre
+dicts crudos. Su semántica es la misma —`model_fields_set` es el equivalente
+pydantic de "la clave está escrita en el YAML"— pero absorberlo obligaría a
+mergear en crudo antes de validar, lo que convertiría `MemoriesConfig.llm` en un
+`LLMConfig` y rompería el tri-estado que el TUI edita sobre `memories.llm.*`.
+Está documentado en su docstring, con la regla: cualquier ajuste a la semántica
+se hace en el motor y se replica ahí.
+
+**Invariante.** **NUNCA** escribas un segundo merge de config. Si el que hay no
+alcanza para un caso nuevo, **extendé el motor** — no nazcas otro al lado. Cinco
+veces se hizo lo contrario, y el precio fue que la UI tuviera que reinventar el
+borrado de claves porque el carril de carga no sabía expresarlo.
 
 ---
 

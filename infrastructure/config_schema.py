@@ -379,6 +379,18 @@ class MemoriesConfig(_ConfigBaseModel):
         en ``memories.llm.*`` (incluso ``null``) pisan al ``base``; el resto hereda.
         Si no hay override, devuelve el ``base`` tal cual.
 
+        ÚNICA excepción declarada al motor de merge del dominio
+        (``core/domain/config_merge``), y a propósito: el motor opera sobre dicts
+        CRUDOS antes de validar, y este merge ocurre DESPUÉS, entre dos modelos ya
+        validados. La semántica es la misma —``model_fields_set`` es el
+        equivalente pydantic de "la clave está escrita en el YAML", así que
+        ausente hereda y ``null`` explícito pisa— pero expresada en el mundo de
+        los modelos. Absorberlo obligaría a mergear ``llm`` y ``memories.llm`` en
+        crudo antes de validar, lo que convertiría ``MemoriesConfig.llm`` en un
+        ``LLMConfig`` y rompería el tri-estado que el setup TUI edita sobre
+        ``memories.llm.*``. No vale el cambio: cualquier ajuste a la semántica de
+        merge se hace en el motor y se replica acá.
+
         Las credenciales se resuelven aparte contra el registry ``providers``
         — la composición del ``ResolvedLLMConfig`` (DTO de adapters) vive en
         ``AgentContainer._resolve_memories_llm``.

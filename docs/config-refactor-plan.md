@@ -1,6 +1,6 @@
 # Plan de refactorización — Sistema de configuración
 
-> Estado: EN PROGRESO — Fases 1 a 5 implementadas. Documento vivo.
+> Estado: EN PROGRESO — Fases 1 a 6 implementadas. Documento vivo.
 > Origen: auditoría del 2026-08-25 (Engram `architecture/config-system-audit` y
 > `architecture/config-secrets-layer`).
 > Última actualización: 2026-08-25.
@@ -178,7 +178,7 @@ fácil; sobre N ficheros crudos + semántica de merge, el imposible que el TUI l
 5. Actualizar `docs/setup-tui-redesign-plan.md`: el árbol del TUI pasa a alimentarse
    de este use case en vez de reconstruir el merge por su cuenta.
 
-## Fase 6 — Documentación: una fuente de verdad
+## Fase 6 — Documentación: una fuente de verdad ✅ HECHA
 
 1. Autogenerar `config/global.example.yaml` desde el schema (extender
    `config_docs.py`, mismo truco que `config-reference.md`) + test de drift. Mueren
@@ -198,7 +198,14 @@ fácil; sobre N ficheros crudos + semántica de merge, el imposible que el TUI l
 - Renombrados gratuitos en Settings VOs: alinear nombres con el schema
   (`digest_template` → `digest_filename`, `tools_top_k` →
   `tools_semantic_routing_top_k`, etc.) o documentar por qué difieren.
-- Campos muertos: `knowledge.token_budget_warn_threshold` (cero usos) — borrar o usar.
+- Campos muertos — la auditoría inicial se equivocó con
+  `knowledge.token_budget_warn_threshold`: **está vivo** (`container.py:523` →
+  `KnowledgeOrchestrator.token_budget_threshold` → `warn_if_token_budget_exceeded`).
+  Los realmente inertes, hallados al documentar el schema (Fase 6):
+  `app.name` (cero lecturas en runtime; el nombre que llega al prompt es
+  `AgentConfig.name`) y `photos.faces.provider` (`Literal` de un solo valor que
+  nadie lee — el adapter se construye directo). Decidir por cada uno: borrar o
+  cablear. Ambos quedaron documentados como declarativos, así que no mienten.
 - `ChannelsGlobalConfig` (un solo campo, existe para colisionar de nombre): evaluar
   renombrar el bloque global a algo que no choque con `AgentConfig.channels`
   (breaking menor, migración one-shot).
@@ -232,5 +239,5 @@ tres carriles — ir consumidor por consumidor), Fases 4-7 mecánicas y troceabl
 - [x] Fase 3 — motor de merge único — nota `motor-de-merge-unico` en `docs/migraciones.md`
 - [x] Fase 4 — fallos ruidosos — nota `config-falla-ruidoso` en `docs/migraciones.md`
 - [x] Fase 5 — `inaki config show` — nota `config-show-effective` en `docs/migraciones.md`
-- [ ] Fase 6 — docs fuente única
+- [x] Fase 6 — docs fuente única — nota `docs-de-config-autogeneradas` en `docs/migraciones.md`
 - [ ] Fase 7 — limpieza menor

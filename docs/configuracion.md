@@ -736,7 +736,7 @@ keep decrypting — no reconfiguration needed.
 id: "general"                    # Unique agent identifier (= filename)
 name: "Inaki-g"                  # Display name
 description: "Asistente general" # Short description
-system_prompt: |                 # Agent base prompt (required)
+system_prompt: |                 # Agent base prompt (optional, defaults to "")
   Eres Inaki, un asistente personal inteligente.
   Eres conciso, directo y útil.
 
@@ -1268,24 +1268,45 @@ The file is created with `600` permissions and **must never be committed**.
 
 ---
 
-## Field merge rules
+## Merge semantics
 
-| Field | Behavior |
-|-------|----------|
-| `llm` (block) | Field-by-field merge. Absent fields are inherited. No `api_key`/`base_url` (they live in `providers`). |
-| `providers` (block) | Field-by-field merge by key. A lower layer can complete an entry declared above. |
-| `providers.<name>.api_key` | Merged like any other field. An agent can redefine an entire provider. |
-| `embedding` | Field-by-field merge if defined. No `api_key`/`base_url`. |
-| `transcription` (block) | Field-by-field merge. No `api_key`/`base_url` (they live in `providers`). |
-| `channels.telegram.voice_enabled` | Per-agent. Default `true`. If `true`, requires a `transcription:` block. |
-| `memories.db_filename` / `digest_filename` / `digest_size` | **Only in `global.yaml`**. The memory store is globally shared. |
-| `memories.consolidation.schedule` / `delay_seconds` / `keep_last_messages` / `min_relevance_score` | **Only in `global.yaml`**. Consolidation is a single global nightly job that iterates all agents. |
-| `memories.consolidation.enabled` | **Per-agent in `agents/{id}.yaml`**. Default `true`. Filters which agents participate in the global nightly consolidation. |
-| `memories.reconciliation.*` (`enabled` / `schedule` / `similarity_threshold` / `top_k` / `agent_id`) | **Per-agent in `agents/{id}.yaml`**. Default `false` for `enabled`. Activating it auto-creates a builtin task `reconcile_memory_{id}` in `scheduler.db`. |
-| `channels` | Only in the agent. Does not exist in global. |
-| `channels.*.token` / `auth_key` | In the agent's own `agents/{id}.yaml`. Marked `kind == "secret"` in the schema → masked in the setup TUI. |
-| `system_prompt` | Required on each agent. No default value. |
-| `id`, `name`, `description` | Required on each agent. |
+There are no per-field merge rules: **every** field merges with the same
+semantics, defined once in `core/domain/config_merge.py`.
+
+| Case | Result |
+|------|--------|
+| block ⊕ block | recursive merge — a field absent from the agent is inherited |
+| list ⊕ list | **whole replacement** — never concatenated or merged by index |
+| explicit `null` | overrides (it means "disable", not "absent") |
+| scalar where a block was declared (or vice versa) | **error**, naming the path and the offending layer |
+
+The list rule is a real footgun worth repeating: `knowledge.sources` is a list
+of dicts, so an agent redefining it loses *every* source declared globally —
+there is no merge by `id`.
+
+> This table used to list per-field rules, several of which the code never
+> enforced (`memories.db_filename` was documented as "only in `global.yaml`"
+> while `AgentContainer` reads it from the agent's own layer, giving each agent
+> its own memory DB). They were removed rather than implemented: see
+> `motor-de-merge-unico` in `migraciones.md`.
+
+### Cases that are genuinely special
+
+| Field | Why it is not just a plain merge |
+|-------|----------------------------------|
+| `channels` | The **same key means two different things** per layer: in `global.yaml` it is `ChannelsGlobalConfig` (cross-cutting flags such as `thinking_indicator`); in `agents/{id}.yaml` it is the dict of channel adapters. The loader filters the global scalars out of the agent's dict so they do not leak in as an unknown channel. |
+| `providers.<name>` | Merges by key, so a layer can complete an entry declared above (e.g. global sets `base_url`, the agent adds `api_key`). |
+| `memories.llm.*` | Tri-state: absent inherits from the agent's `llm`, explicit `null` overrides with nothing, a value overrides. This is the one merge that happens *after* validation — see `merged_llm_config`. |
+| `memories.consolidation.delay_seconds` | Read by **two** consumers from their own layer: per-agent it is the delay between scopes inside that agent; globally it is the delay between agents in the nightly job. Setting it per-agent does have an effect. |
+| `channels.*.token`, `admin.auth_key`, `providers.*.api_key` | Marked `kind == "secret"` in the schema → masked in the setup TUI and redacted by `inaki config show`. The mark does **not** pick a file: all layers are private (mode 600). |
+
+Required fields on an agent: `id`, `name`, `description`. Note that
+`system_prompt` is **not** required — it defaults to an empty string, and a
+memory sub-agent that omits it inherits the use case's built-in prompt.
+
+**The exhaustive per-field reference is `config-reference.md`**, generated from
+the schema. This document keeps the prose: concepts, examples, and the cases
+above where the plain merge is not the whole story.
 
 ---
 

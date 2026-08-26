@@ -105,7 +105,9 @@ _GLOBAL_YAML_HEADER = """\
 # valores por defecto del sistema. Podés editarlo a mano.
 #
 # Referencia completa de todos los parámetros disponibles:
-#   config.example.yaml (en el repo de Inaki)
+#   config/global.example.yaml (en el repo) — autogenerado desde el schema
+#   docs/config-reference.md   (ídem)
+#   inaki config show --origin  — la config EFECTIVA de esta instancia
 #
 # Layout:
 #   ~/.inaki/config/global.yaml  ← este archivo (config base + credenciales)

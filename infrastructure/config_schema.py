@@ -140,10 +140,41 @@ class _ConfigBaseModel(BaseModel):
 
 
 class AppConfig(_ConfigBaseModel):
+    """Arranque del proceso: identidad, logging, agente por defecto y extensiones.
+
+    Bloque SOLO global (``global.yaml`` → ``app:``). No admite override
+    per-agente: lo consumen el composition root (``inaki/cli.py``) y el
+    ``AppContainer`` antes de que exista ningún agente.
+    """
+
     name: str = "Inaki"
+    """Nombre de la instancia del asistente.
+
+    DECLARATIVO: ningún componente del runtime lo lee hoy — queda como etiqueta
+    del despliegue para el operador. El nombre con el que el agente se presenta
+    ante el LLM es ``AgentConfig.name``, no este."""
+
     log_level: str = "INFO"
+    """Nivel mínimo de log del proceso: ``DEBUG``, ``INFO``, ``WARNING``, ``ERROR`` o ``CRITICAL``.
+
+    Se resuelve contra el módulo ``logging`` sin distinguir mayúsculas; un valor
+    no reconocido cae a ``INFO`` sin fallar. ``DEBUG`` agrega el detalle de los
+    requests al provider, los embeddings y las tool calls."""
+
     ext_dirs: ExpandedPathList = ["ext", "~/.inaki/ext"]
+    """Directorios donde se auto-descubren las extensiones de usuario, en orden.
+
+    Cada directorio se escanea buscando ``*/manifest.py``, que registra tools,
+    skills y fuentes de knowledge propias. Los paths relativos se resuelven
+    contra el cwd del proceso; ``~`` se expande al cargar la config. Un
+    directorio inexistente se saltea sin error."""
+
     default_agent: str = "general"
+    """Agente que usan los comandos de CLI cuando no se pasa ``--agent``.
+
+    Debe corresponder a un fichero ``agents/{id}.yaml`` existente. El validador
+    de referencias cruzadas del TUI (``inaki setup``) avisa si apunta a un
+    agente que no existe."""
 
 
 class ProviderConfig(_ConfigBaseModel):
@@ -155,34 +186,89 @@ class ProviderConfig(_ConfigBaseModel):
     `transcription`, `memories.llm`) referencian entradas por nombre vía su
     campo ``provider: <key>``, eliminando duplicación de ``api_key``/``base_url``.
 
-    Campos:
-      - ``type``: nombre del adapter. Si es ``None``, se resuelve a la key del
-        dict (``providers.groq`` → ``type == "groq"``). Solo se explicita cuando
-        se quieren múltiples entradas del mismo adapter con creds distintas
-        (p. ej. ``providers.groq-work: {type: groq, api_key: K2}``).
-      - ``api_key``: credencial. Opcional para providers locales que no la
-        requieren (ollama, e5_onnx).
-      - ``base_url``: override del default del adapter. Opcional.
-
     ``extra="forbid"`` atrapa typos temprano (``api_ky``).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     type: str | None = None
+    """Nombre del adapter que implementa este vendor. ``null`` → se usa la key del dict.
+
+    Con ``providers.groq: {...}`` el tipo se resuelve solo a ``"groq"``. Solo se
+    explicita para tener DOS entradas del mismo adapter con credenciales
+    distintas: ``providers.groq-work: {type: groq, api_key: K2}`` deja que
+    ``llm.provider: groq-work`` apunte al adapter groq con otra cuenta."""
+
     api_key: str | None = Field(default=None, json_schema_extra={"secret": True})
+    """Credencial del vendor. Es un SECRETO: la TUI lo enmascara al editarlo.
+
+    Opcional para los providers locales que no la piden (``ollama``, ``e5_onnx``);
+    los adapters que sí la requieren fallan al construirse si falta."""
+
     base_url: str | None = None
+    """Endpoint del vendor. ``null`` → el default hardcodeado del adapter.
+
+    Obligatorio para servidores de inferencia propios OpenAI-compat (vLLM,
+    llama.cpp), que no tienen default posible."""
 
 
 _LLM_TIMEOUT_FALLBACK = 60
 
 
 class LLMConfig(_ConfigBaseModel):
+    """Cerebro conversacional del agente: qué modelo responde y con qué parámetros.
+
+    Bloque per-agente: se declara en ``global.yaml`` como default de todos y se
+    pisa campo a campo en ``agents/{id}.yaml``. NO lleva credenciales — ``provider``
+    referencia una entrada del registry ``providers:``, de donde salen ``api_key``
+    y ``base_url``.
+
+    Los jobs de memoria pueden usar otro modelo sin tocar este bloque: ver
+    ``memories.llm`` (``MemoryLLMConfig``), que lo hereda y lo override campo a campo.
+    """
+
     provider: str = "openrouter"
+    """KEY del registry ``providers:`` que aporta las credenciales y el endpoint.
+
+    Adapters incluidos: ``openrouter``, ``openai``, ``openai_responses``,
+    ``anthropic``, ``deepseek``, ``groq``, ``ollama``, ``custom``. Se
+    auto-descubren por la constante ``PROVIDER_NAME`` del módulo, así que agregar
+    uno nuevo es crear ``adapters/outbound/providers/{name}.py`` y declarar
+    ``providers.{name}``."""
+
     model: str = "anthropic/claude-3-5-haiku"
+    """Identificador del modelo, en el formato que espera el provider elegido.
+
+    OpenRouter exige el prefijo del vendor (``anthropic/claude-3-5-haiku``); el
+    adapter ``anthropic`` nativo NO lo lleva (``claude-sonnet-4-5``). Ollama usa
+    el nombre local del modelo (``llama3.2``)."""
+
     temperature: float = 0.7
+    """Aleatoriedad del muestreo: ``0.0`` determinista, valores altos más creativo.
+
+    Orientativo: 0.3-0.5 para tareas de código o extracción, 0.7-0.9 para
+    conversación. El adapter ``openai_responses`` la OMITE cuando
+    ``reasoning_effort`` está seteado (la API devuelve 400 si van juntas)."""
+
     max_tokens: int = 2048
+    """Techo de tokens que el modelo puede GENERAR en una respuesta.
+
+    No acota el prompt de entrada. Subirlo para respuestas largas (código,
+    análisis). Cuidado con servidores locales OpenAI-compat: muchos validan
+    ``prompt + max_tokens > n_ctx`` y devuelven HTTP 400 — contra una ventana
+    chica hay que bajarlo junto con ``chat_history.max_messages``, y hacerlo en
+    el AGENTE que usa ese provider, no en el global."""
+
     reasoning_effort: str | None = None
+    """Intensidad del modo razonamiento (thinking). ``null`` = desactivado.
+
+    Cada adapter lo traduce a su dialecto: Groq lo manda tal cual y cambia
+    ``max_tokens`` por ``max_completion_tokens``; ``anthropic`` lo convierte en
+    el ``budget_tokens`` del extended thinking; ``openai_responses`` lo manda
+    como ``reasoning.effort`` y omite ``temperature``. Con thinking activo
+    conviene subir ``timeout_seconds``, y es el flag del que depende
+    ``channels.thinking_indicator``."""
+
     timeout_seconds: int = Field(default=_LLM_TIMEOUT_FALLBACK, gt=0)
     """Timeout HTTP del request al provider, en segundos.
 
@@ -212,23 +298,84 @@ class LLMConfig(_ConfigBaseModel):
 
 
 class EmbeddingConfig(_ConfigBaseModel):
+    """Modelo de embeddings que alimenta todo el retrieval del sistema.
+
+    Un solo vectorizador sirve a tres consumidores: el semantic routing de tools
+    y skills, la búsqueda de memoria y el pre-fetch de knowledge. Bloque
+    per-agente, con registry ``providers:`` para las credenciales (el default
+    ``e5_onnx`` es local y no necesita ninguna).
+
+    ⚠ Cambiar de modelo (o de ``dimension``) invalida TODOS los vectores ya
+    persistidos: no hay auto-migración — hay que borrar y recrear la DB de
+    memoria y los índices de knowledge.
+    """
+
     model_config = ConfigDict(validate_default=True)  # RuntimePath en los defaults
 
     provider: str = "e5_onnx"
-    model_dirname: RuntimePath = "models/e5-small"  # solo e5_onnx — relativo a ~/.inaki/
-    model: str = "text-embedding-3-small"  # solo openai
+    """KEY del registry ``providers:`` que vectoriza. ``e5_onnx`` (local) u ``openai``.
+
+    ``e5_onnx`` corre multilingual-e5-small con ONNX Runtime en la propia
+    máquina: sin red, sin costo y sin entrada en ``providers:`` — es lo
+    recomendado en la Pi 5. ``openai`` requiere ``providers.openai.api_key``."""
+
+    model_dirname: RuntimePath = "models/e5-small"
+    """Directorio con los ficheros del modelo ONNX. SOLO lo usa ``e5_onnx``.
+
+    Espera adentro ``model.onnx`` y ``tokenizer.json`` (descargables de
+    HuggingFace: ``intfloat/multilingual-e5-small``). Relativo al home de
+    instancia; se reancla con ``--home`` / ``INAKI_HOME``. Un path absoluto se
+    usa tal cual."""
+
+    model: str = "text-embedding-3-small"
+    """Nombre del modelo remoto. SOLO lo usa el provider ``openai``; ``e5_onnx`` lo ignora."""
+
     dimension: int = 384
-    cache_filename: RuntimePath = "data/embedding_cache.db"  # relativo a ~/.inaki/
+    """Dimensión del vector de embedding. Debe coincidir con la del modelo.
+
+    ``multilingual-e5-small`` produce 384 y no admite otro valor. Con el provider
+    ``openai`` viaja como parámetro ``dimensions`` del request, que sí recorta el
+    vector. Forma parte de la clave del cache
+    ``(content_hash, provider, dimension)``, así que cambiarla invalida las
+    entradas viejas sin colisionar — pero NO migra las DB de vectores ya escritas."""
+
+    cache_filename: RuntimePath = "data/embedding_cache.db"
+    """Fichero SQLite del cache de embeddings, para no re-vectorizar texto repetido.
+
+    Relativo al home de instancia; se reancla con ``--home`` / ``INAKI_HOME``. Es
+    un cache puro: borrarlo solo cuesta recalcular."""
 
 
 class TranscriptionConfig(_ConfigBaseModel):
     """Config del provider de transcripción de audio (opcional)."""
 
     provider: str = "groq"
+    """KEY del registry ``providers:`` que transcribe (endpoint Whisper OpenAI-compat).
+
+    El bloque entero es opcional, pero si un canal tiene ``voice_enabled: true``
+    y no hay ``transcription:`` (ni en el agente ni en el global), el arranque
+    del agente falla con un error explícito en vez de ignorar los audios."""
+
     model: str = "whisper-large-v3-turbo"
-    language: str | None = None  # None → auto-detect por el modelo
-    timeout_seconds: int = 60  # segundos para el request HTTP
-    max_audio_mb: int = 25  # límite de tamaño de audio (MB) — Groq Whisper: 25
+    """Modelo de transcripción, en el nombre que espera el provider."""
+
+    language: str | None = None
+    """Idioma esperado del audio en ISO-639-1 (``"es"``, ``"en"``). ``null`` → autodetect.
+
+    Es solo el default: el canal puede pasar un idioma por llamada y ese gana.
+    Fijarlo mejora la precisión cuando se sabe que el audio siempre viene en un
+    idioma; una cadena vacía no se manda al provider."""
+
+    timeout_seconds: int = 60
+    """Timeout HTTP del request de transcripción, en segundos."""
+
+    max_audio_mb: int = 25
+    """Tamaño máximo del audio en MB. Un fichero mayor se rechaza ANTES de subirlo.
+
+    El límite se chequea localmente y levanta ``TranscriptionFileTooLargeError``
+    sin gastar red ni cuota. El default ``25`` es el techo del endpoint de Groq
+    Whisper — subirlo por encima de lo que acepta el provider solo cambia dónde
+    falla."""
 
 
 # Los DTOs ``Resolved*Config`` (feature + creds compuestas) viven en la capa
@@ -262,11 +409,36 @@ class MemoryLLMConfig(_ConfigBaseModel):
     """
 
     provider: str | None = None
+    """Override de ``llm.provider`` para los jobs de memoria. Ausente → hereda del agente.
+
+    Cambiarlo basta para mover los jobs a otro vendor: las credenciales se
+    resuelven solas desde ``providers.{provider}``, no van acá."""
+
     model: str | None = None
+    """Override de ``llm.model`` para los jobs de memoria. Ausente → hereda del agente.
+
+    El caso típico del bloque: chatear con un modelo caro y extraer/reconciliar
+    recuerdos con uno barato."""
+
     temperature: float | None = None
+    """Override de ``llm.temperature`` para los jobs de memoria. Ausente → hereda del agente.
+
+    La extracción devuelve JSON estructurado, así que suele convenir bajarla
+    respecto de la del chat."""
+
     max_tokens: int | None = None
+    """Override de ``llm.max_tokens`` para los jobs de memoria. Ausente → hereda del agente."""
+
     reasoning_effort: str | None = None
+    """Override de ``llm.reasoning_effort`` para los jobs de memoria. Ausente → hereda del agente.
+
+    Es el campo donde más se nota el tri-estado: escribir ``reasoning_effort: null``
+    APAGA el thinking en los jobs de memoria sin tocar el LLM conversacional,
+    mientras que omitir la clave hereda el del agente."""
+
     timeout_seconds: int | None = None
+    """Override de ``llm.timeout_seconds`` (segundos) para los jobs de memoria.
+    Ausente → hereda del agente."""
 
 
 class ConsolidationConfig(_ConfigBaseModel):
@@ -371,11 +543,24 @@ class MemoriesConfig(_ConfigBaseModel):
 
     model_config = ConfigDict(validate_default=True)  # RuntimePath en los defaults
 
-    db_filename: RuntimePath = "data/inaki.db"  # relativo a ~/.inaki/
-    # Template del digest markdown — admite los placeholders ``{channel}`` y
-    # ``{chat_id}``, sustituidos sanitizados en ``resolved_digest_path``. El digest
-    # se aísla por (channel, chat_id): consolidación lo regenera, run_agent lo lee.
-    digest_filename: RuntimePath = "mem/digest_{channel}_{chat_id}.md"  # relativo a ~/.inaki/
+    db_filename: RuntimePath = "data/inaki.db"
+    """Fichero SQLite del store de recuerdos (tablas ``memories`` y ``memory_embeddings``).
+
+    Relativo al home de instancia; se reancla con ``--home`` / ``INAKI_HOME``. Un
+    path absoluto se usa tal cual. Los agentes que comparten fichero se aíslan
+    por columna ``agent_id``; para aislamiento FÍSICO, dale a cada agente un
+    ``db_filename`` distinto."""
+
+    digest_filename: RuntimePath = "mem/digest_{channel}_{chat_id}.md"
+    """Template del fichero markdown del digest, con los placeholders ``{channel}`` y ``{chat_id}``.
+
+    El digest es el resumen de recuerdos que ``RunAgentUseCase`` inyecta en el
+    prompt y que la consolidación regenera. Se aísla por scope: los placeholders
+    se sustituyen sanitizados (todo lo que no sea ``[a-zA-Z0-9_-]`` pasa a ``_``,
+    vacío a ``default``), así que los recuerdos de un grupo no se filtran a otro.
+    Un template SIN placeholders devuelve la misma ruta para todos los scopes.
+    Relativo al home de instancia; se reancla con ``--home`` / ``INAKI_HOME``."""
+
     digest_size: int = 14
     """Nº de recuerdos más recientes volcados al digest markdown. Orden: created_at DESC."""
 
@@ -387,7 +572,16 @@ class MemoriesConfig(_ConfigBaseModel):
     """
 
     consolidation: ConsolidationConfig = ConsolidationConfig()
+    """Job nocturno que extrae recuerdos del historial, regenera el digest y lo recorta.
+
+    Trae su propio ``enabled`` (per-agente), su cron y su ``agent_id`` de
+    sub-agente extractor. Es INDEPENDIENTE de ``reconciliation``."""
+
     reconciliation: ReconciliationConfig = ReconciliationConfig()
+    """Job de «reflection» que agrupa recuerdos similares y resuelve los contradictorios.
+
+    Trae su propio ``enabled`` (per-agente, opt-in), su cron y su ``agent_id`` de
+    sub-agente reconciliador. Corre aunque la consolidación esté apagada."""
 
     # La resolución del digest path y de keep_last_messages (lógica de dominio
     # que solo core consume) vive en core/domain/value_objects/agent_settings.py
@@ -427,12 +621,43 @@ class MemoriesConfig(_ConfigBaseModel):
 
 
 class ChatHistoryConfig(_ConfigBaseModel):
+    """Memoria a CORTO plazo: qué conversación previa ve el LLM en cada turno.
+
+    Bloque per-agente. Es la ventana deslizante que se inyecta al prompt, distinta
+    de ``memories`` (memoria a largo plazo, destilada por el job nocturno).
+
+    Los dos knobs de acá gobiernan el costo de contexto de cada turno: cuánto
+    historial entra (``max_messages``) y cuánto rastro de tools se guarda
+    (``persist_tool_calls`` / ``persist_tool_result_max_chars``).
+    """
+
     model_config = ConfigDict(validate_default=True)  # RuntimePath en los defaults
 
-    db_filename: RuntimePath = "data/history.db"  # relativo a ~/.inaki/
-    max_messages: int = 0  # 0 = sin límite; N = últimos N mensajes al LLM
-    merge_chats: bool = False  # False = aislar historial por (channel, chat_id);
-    # True = compartir todo el historial del agente entre canales/chats
+    db_filename: RuntimePath = "data/history.db"
+    """Fichero SQLite del historial de conversación.
+
+    Relativo al home de instancia; se reancla con ``--home`` / ``INAKI_HOME``. Un
+    path absoluto se usa tal cual. Los agentes que comparten fichero se aíslan por
+    ``agent_id``; para aislamiento FÍSICO, dale a cada agente su propio
+    ``db_filename``."""
+
+    max_messages: int = 0
+    """Últimos N mensajes del scope que se inyectan al LLM. ``0`` = sin límite.
+
+    Es una ventana deslizante sobre la lectura, no una política de borrado: los
+    mensajes viejos siguen en la DB. Bajarlo es la palanca directa para recortar
+    tokens de prompt contra modelos con ventana chica. OJO: el conteo dentro de
+    una ventana llena no sirve para detectar mensajes nuevos — el drain in-flight
+    cursa por rowid monotónico justamente por eso."""
+
+    merge_chats: bool = False
+    """Política de aislamiento del historial. ``False`` = un hilo por ``(channel, chat_id)``.
+
+    Con ``False`` (default) el agente solo ve los mensajes de la conversación
+    actual: privado de Telegram, grupo y CLI quedan separados. Con ``True``
+    comparte un único historial entre todos sus canales y chats — útil para que
+    lo hablado en privado esté disponible al responder en grupo, a costa de
+    filtrar contexto entre conversaciones."""
 
     persist_tool_calls: bool = True
     """Persistir el par assistant+tool_calls ↔ tool_results en el historial.
@@ -482,50 +707,205 @@ class ChannelFallbackConfig(_ConfigBaseModel):
       2. Entry en ``overrides`` para el ``channel_type`` del target.
       3. ``default`` global (si está configurado).
       4. Fallback hardcoded: ``file://~/.inaki/data/scheduler-fallback.log``.
-
-    Atributos:
-        default: Target string (p. ej. ``"file:///var/log/x.log"``,
-            ``"telegram:12345"``, ``"null:"``) usado cuando no hay override
-            específico. ``None`` delega al fallback hardcoded.
-        overrides: Mapa ``channel_type → target string`` para redirigir
-            canales concretos. Ejemplo: ``{"cli": "telegram:123"}`` envía
-            los mensajes que nacieron desde CLI hacia ese chat de Telegram.
     """
 
     default: str | None = None
+    """Target al que van los canales sin sink nativo ni override. ``null`` → log de fallback.
+
+    Es un target string con prefijo: ``"telegram:12345"``, ``"file:///var/log/x.log"``
+    o ``"null:"`` para descartar. Se aplica DESPUÉS de ``overrides``, así que
+    funciona como red general; con ``null`` el envío cae al
+    ``scheduler.fallback_log_filename``."""
+
     overrides: dict[str, str] = {}
+    """Redirecciones ``channel_type → target string``, evaluadas antes que ``default``.
+
+    Solo se consultan para prefijos SIN sink nativo registrado — un target de un
+    canal vivo nunca se redirige. Ejemplo: ``{"cli": "telegram:123"}`` manda a ese
+    chat las salidas de tareas que nacieron en la CLI, que si no nadie leería."""
 
 
 class SchedulerConfig(_ConfigBaseModel):
+    """Motor de tareas programadas: cron, one-shots, reintentos y routing de la salida.
+
+    Recurso HARNESS-GLOBAL: se declara SOLO en ``global.yaml`` y el
+    ``AppContainer`` construye una única instancia compartida por todos los
+    agentes — no hay ni puede haber un scheduler per-agente. Para aislar
+    agendas hay que levantar otra instancia del arnés con su propio
+    ``--home`` / ``INAKI_HOME``.
+
+    Solo corre bajo ``inaki daemon``: en la CLI interactiva no hay proceso vivo
+    que dispare nada. Los límites de acá (``max_retries``, ``max_tasks_per_agent``,
+    ``output_truncation_size``) son las barandas contra un agente que programa
+    de más o contra una tarea que falla en loop.
+    """
+
     model_config = ConfigDict(validate_default=True)  # RuntimePath en los defaults
 
     enabled: bool = True
-    db_filename: RuntimePath = "data/scheduler.db"  # relativo a ~/.inaki/
+    """Kill-switch del scheduler. ``False`` = el daemon no arranca el loop de tareas.
+
+    Con ``False`` tampoco se reconcilian las tareas builtin (consolidación,
+    reconciliación, dedup de caras): quedan declaradas pero nadie las dispara."""
+
+    db_filename: RuntimePath = "data/scheduler.db"
+    """Fichero SQLite con las tareas programadas y su estado de ejecución.
+
+    Relativo al home de instancia; se reancla con ``--home`` / ``INAKI_HOME``. Un
+    path absoluto se usa tal cual. Es el mismo fichero que lee ``inaki scheduler``
+    desde la CLI."""
+
     fallback_log_filename: RuntimePath = "data/scheduler-fallback.log"
     """Fallback de último recurso del router de dispatch (cascada). Relativo al home de
     instancia; se reancla con ``--home`` / ``INAKI_HOME``. El composition root lo envuelve
     en ``file://`` y lo inyecta al ``ChannelRouter`` (por privacidad, bajo ``<home>/data/``)."""
     max_retries: int = 3
-    retry_backoff_seconds: float = 10.0  # espera lineal entre reintentos (1x, 2x, 3x...)
-    max_tasks_per_agent: int = 20  # tareas activas (pending/running) por agente
+    """Reintentos de una tarea que falla, ADEMÁS del intento inicial.
+
+    Con el default ``3``, una tarea rota se ejecuta hasta 4 veces. ``0`` =
+    un solo intento. Los negativos se saturan a ``0``."""
+
+    retry_backoff_seconds: float = 10.0
+    """Base de la espera entre reintentos, en segundos. La progresión es LINEAL.
+
+    El intento N espera ``retry_backoff_seconds * N``: con el default ``10.0``,
+    las esperas son 10s, 20s, 30s. ``0`` reintenta sin pausa. Los negativos se
+    saturan a ``0``."""
+
+    max_tasks_per_agent: int = 20
+    """Techo de tareas ACTIVAS (pending o running) que un agente puede tener a la vez.
+
+    Al llegar al límite, crear otra falla con ``TooManyActiveTasksError`` en vez
+    de aceptarla — es la baranda contra un LLM que programa en loop. No cuenta
+    las tareas ya completadas ni las canceladas, y no aplica a las tareas sin
+    agente creador. El mínimo efectivo es ``1``."""
+
     output_truncation_size: int = 65536
+    """Truncación (en chars) del output de una tarea al guardarlo en su registro de ejecución.
+
+    Acota lo que un ``shell_exec`` verborrágico puede escribir en la DB del
+    scheduler. Solo afecta a la copia persistida."""
+
     channel_fallback: ChannelFallbackConfig = ChannelFallbackConfig()
+    """Adónde va la salida de una tarea cuyo canal destino no tiene sink vivo.
+
+    Agrupa el ``default`` global y los ``overrides`` por tipo de canal. Sin
+    configurar, todo cae al ``fallback_log_filename``."""
 
 
 class SkillsConfig(_ConfigBaseModel):
+    """Selección RAG de SKILLS: qué instrucciones se inyectan al prompt en cada turno.
+
+    Una skill es un bloque de instrucciones en markdown. Cuando el agente tiene
+    pocas, entran todas; a partir de ``semantic_routing_min_skills`` se
+    seleccionan por similitud contra el embedding de la consulta del usuario, y
+    ``sticky_ttl`` evita que una skill recién elegida desaparezca al turno
+    siguiente porque el usuario escribió "dale".
+
+    Bloque hermano de ``tools``, con la MISMA mecánica pero presupuesto propio: acá
+    se paga en tokens de prompt, allá en schemas ofrecidos al LLM. Las políticas
+    comunes a ambos pipelines viven en ``semantic_routing``.
+    """
+
     semantic_routing_min_skills: int = 10
+    """Nº de skills a partir del cual se ACTIVA el routing. Con menos o igual, entran todas.
+
+    Es un umbral de activación, no un mínimo de resultados: con
+    ``len(skills) <= min_skills`` el agente recibe el catálogo completo y no se
+    calcula ningún embedding. Subirlo posterga el routing; bajarlo lo enciende
+    antes."""
+
     semantic_routing_top_k: int = 3
+    """Máximo de skills que el retrieval devuelve por turno (default más chico que en ``tools``).
+
+    Cada skill inyecta su texto de instrucciones al system prompt, así que este
+    número se paga directo en tokens: por eso el default es 3 y no 5 como el de
+    tools. Las que sigan vivas por ``sticky_ttl`` se SUMAN a estas — el techo real
+    del turno es mayor que ``top_k``."""
+
     semantic_routing_min_score: float = 0.0
-    sticky_ttl: int = 3  # Turnos que una skill seleccionada sobrevive; 0 = disabled
+    """Similitud coseno mínima para que una skill entre en la selección. ``0.0`` = sin piso.
+
+    Con el default, ``top_k`` manda solo y siempre se devuelven las mejores
+    aunque encajen poco. Subirlo hace que un turno sin skill relevante no
+    arrastre ninguna."""
+
+    sticky_ttl: int = 3
+    """Turnos que una skill seleccionada sigue viva sin volver a ser elegida. ``0`` = desactivado.
+
+    Al ser reseleccionada, el contador vuelve al valor completo; si no, decrementa
+    y a cero se cae. Es lo que sostiene el hilo cuando el usuario responde con una
+    frase corta que ya no matchea la skill. Con ``0`` no se guarda estado sticky y
+    cada turno arranca de cero."""
 
 
 class ToolsConfig(_ConfigBaseModel):
+    """Qué herramientas ve el LLM en cada turno y hasta dónde puede encadenarlas.
+
+    Dos responsabilidades en un mismo bloque:
+
+    - **Selección** (``semantic_routing_*``, ``sticky_ttl``, ``pinned``,
+      ``allowed``): qué schemas se le ofrecen al modelo. Mecánica idéntica a la
+      de ``skills``, pero acá el costo no es solo de tokens: ofrecerle ~25
+      schemas de golpe DEGRADA la elección del modelo, que es la razón de fondo
+      del routing.
+    - **Ejecución** (``tool_call_max_iterations``, ``circuit_breaker_threshold``):
+      las dos barandas del tool loop, para que un turno no se vaya en llamadas
+      encadenadas ni se quede pegado reintentando una tool rota.
+
+    Bloque per-agente. Las políticas comunes con ``skills`` viven en
+    ``semantic_routing``.
+    """
+
     semantic_routing_min_tools: int = 10
+    """Nº de tools a partir del cual se ACTIVA el routing. Con menos o igual, entran todas.
+
+    Umbral de activación, no mínimo de resultados: con
+    ``len(tools) <= min_tools`` el LLM ve el registry completo y no se calcula
+    embedding. Cuenta los schemas REGISTRADOS en el agente, no los builtins del
+    sistema."""
+
     semantic_routing_top_k: int = 5
+    """Máximo de tools que el retrieval devuelve por turno.
+
+    Default 5 (mayor que el de skills): un schema pesa menos que un bloque de
+    instrucciones, y el modelo suele necesitar varias tools para una misma
+    tarea. Las vivas por ``sticky_ttl`` y las de ``pinned`` se SUMAN a estas, así
+    que el set visible del turno puede superar ``top_k``."""
+
     semantic_routing_min_score: float = 0.0
+    """Similitud coseno mínima para que una tool entre en la selección. ``0.0`` = sin piso.
+
+    Con el default manda solo ``top_k``. Subirlo evita ofrecerle al modelo tools
+    que no vienen al caso en turnos de charla."""
+
     tool_call_max_iterations: int = 5
+    """Vueltas máximas del tool loop en un turno antes de cortar con error.
+
+    Cada iteración es un ``llm.complete()`` más el batch de tools que pida: es el
+    techo de cuánto puede encadenar el modelo para resolver un pedido. Al
+    agotarse se levanta ``ToolLoopMaxIterationsError``, conservando el último
+    texto del LLM. Subirlo habilita tareas más largas a costa de latencia y
+    tokens. No es un techo absoluto de tiempo: un drain de mensajes in-flight
+    puede resetear el contador, pero solo hasta 3 veces por turno — justamente
+    para que el turno termine."""
+
     circuit_breaker_threshold: int = 2
-    sticky_ttl: int = 3  # Turnos que una tool seleccionada sobrevive; 0 = disabled
+    """Fallos NO-retryable de una misma tool, en el mismo turno, antes de bloquearla.
+
+    Al alcanzarlo, las siguientes llamadas a esa tool no se ejecutan: el loop
+    devuelve un resultado ``CIRCUIT OPEN`` que le dice al modelo que deje de
+    insistir y responda con lo que tiene. Un fallo marcado como retryable NO
+    cuenta, y una ejecución exitosa REINICIA el contador. El estado es por turno:
+    el turno siguiente arranca con el circuito cerrado."""
+
+    sticky_ttl: int = 3
+    """Turnos que una tool seleccionada sigue visible sin volver a ser elegida. ``0`` = desactivado.
+
+    Al ser reseleccionada vuelve al valor completo; si no, decrementa y a cero se
+    cae. Evita que una tool desaparezca del set justo cuando el usuario da el
+    siguiente paso de la misma tarea con una frase corta. No aplica a las tools
+    de ``pinned``, que están siempre visibles y no consumen TTL."""
     pinned: list[str] = Field(default_factory=lambda: ["delegate"])
     """Tools SIEMPRE visibles para el LLM, por fuera del semantic routing.
 
@@ -553,14 +933,20 @@ class ToolsConfig(_ConfigBaseModel):
 class SemanticRoutingConfig(_ConfigBaseModel):
     """Políticas transversales al pipeline de semantic routing (skills + tools).
 
-    ``min_words_threshold``: si el user_input tiene MENOS palabras que este
-    umbral Y existe una selección sticky previa (skills o tools), el turno
-    saltea el cálculo del embedding y hereda la selección del turno anterior
-    intacta (no decrementa TTL, no persiste estado). ``0`` desactiva la
-    feature y mantiene el comportamiento histórico (routing corre siempre).
+    Lo que se configura acá vale para AMBOS pipelines a la vez. Los parámetros
+    propios de cada uno (umbrales, ``top_k``, TTL) viven en ``skills`` y ``tools``.
     """
 
     min_words_threshold: int = 0
+    """Palabras por debajo de las cuales un turno hereda la selección previa sin re-rutear.
+    ``0`` = desactivado.
+
+    Pensado para los "dale", "sí", "y eso?": si el input tiene MENOS palabras que
+    este umbral Y hay selección sticky previa (de skills o de tools), el turno
+    saltea el cálculo del embedding y reusa la selección anterior intacta — no
+    decrementa TTL ni persiste estado. Sin sticky previo (primer turno, o TTL ya
+    expirado) el routing corre igual, porque no hay nada que heredar. Con ``0``
+    el routing corre siempre."""
 
 
 ContainmentMode = Literal["strict", "warn", "off"]
@@ -570,15 +956,26 @@ class WorkspaceConfig(_ConfigBaseModel):
     """
     Workspace sobre el que operan las tools de filesystem.
 
-    `path` — directorio raíz donde se resuelven los paths relativos.
-    `containment` — guard de contención para paths absolutos y escapes via `..`:
-      - "strict"  → bloquea cualquier path fuera del workspace (recomendado en prod)
-      - "warn"    → loggea warning pero permite el acceso
-      - "off"     → sin check (útil en desarrollo)
+    Define el sandbox de ``read_file``, ``write_file``, ``patch_file`` y
+    ``edit_file``: dónde resuelven los paths relativos y qué pasa cuando el LLM
+    pide uno que se sale. Bloque per-agente — darle a cada agente su propio
+    ``path`` los mantiene separados en disco.
     """
 
     path: ExpandedPath = "~/inaki-workspace"
+    """Directorio raíz contra el que las tools de filesystem resuelven los paths relativos.
+
+    Es también la frontera que aplica ``containment``. ``~`` se expande al cargar
+    la config."""
+
     containment: ContainmentMode = "strict"
+    """Qué hacer cuando un path resuelto se sale del workspace (absoluto o vía ``..``).
+
+    - ``strict`` (default, recomendado en producción) → aborta con
+      ``WorkspaceEscapeError``; la tool nunca toca el fichero.
+    - ``warn`` → permite el acceso y deja un WARNING en el log.
+    - ``off`` → sin chequeo; las tools pueden leer y escribir en cualquier lado
+      al que llegue el proceso."""
 
     def model_post_init(self, __context: object) -> None:
         # Expand ~ in the default value (BeforeValidator no corre en defaults de clase).
@@ -900,22 +1297,66 @@ class DelegationConfig(_ConfigBaseModel):
     """Config global de delegación (aplica a todos los agentes como valores por defecto)."""
 
     max_iterations_per_sub: int = 10
+    """Vueltas máximas del tool loop que puede gastar UNA llamada delegada.
+
+    Equivalente de ``tools.tool_call_max_iterations`` para el turno one-shot del
+    sub-agente, y con default más generoso (10 vs 5): al sub se le delega una
+    tarea completa, no un intercambio conversacional."""
+
     timeout_seconds: int = 60
+    """Presupuesto de reloj de una llamada delegada, en segundos.
+
+    Se aplica como ``asyncio.wait_for`` sobre el turno del sub-agente: al
+    vencerse, la delegación se corta y el caller recibe el timeout como
+    resultado. Es un techo de tiempo real, independiente de
+    ``max_iterations_per_sub``, que cuenta vueltas."""
 
 
 class AgentDelegationConfig(_ConfigBaseModel):
     """Config de delegación por agente."""
 
     enabled: bool = False
+    """Habilita la tool ``delegate`` para ESTE agente. Opt-in.
+
+    Con ``False`` (default) la tool no se registra siquiera: no aparece en los
+    schemas y el modelo no puede razonar sobre ella. Encenderlo también inyecta
+    al system prompt el bloque de descubrimiento con los agentes disponibles y
+    sus tools."""
+
     allowed_targets: list[str] = []
+    """Allow-list de sub-agentes a los que delegar. Lista vacía = todos los disponibles.
+
+    Se INTERSECA con los sub-agentes registrados (``agents/sub-agents/*.yaml``):
+    nunca amplía el universo, solo lo recorta — un id que no existe se ignora.
+    Filtra a la vez los destinos que la tool acepta y los que se anuncian en el
+    bloque de descubrimiento del prompt. Si la intersección queda vacía, la tool
+    ``delegate`` no se registra."""
 
 
 class AdminConfig(_ConfigBaseModel):
     """Configuración del admin server del daemon."""
 
     port: int = 6497
+    """Puerto TCP en el que escucha el admin server del daemon.
+
+    Es también el puerto al que apunta la CLI para hablar con el daemon local
+    (``inaki chat``, ``inaki tool``, ``inaki scheduler``)."""
+
     host: str = "127.0.0.1"
+    """Interfaz en la que bindea el admin server.
+
+    El default ``127.0.0.1`` lo deja accesible SOLO desde la propia máquina.
+    Ponerlo en ``0.0.0.0`` lo expone a la LAN: hacelo únicamente con ``auth_key``
+    configurada."""
+
     auth_key: str | None = Field(default=None, json_schema_extra={"secret": True})
+    """Credencial del header ``X-Admin-Key`` que protege los endpoints de gestión.
+
+    Es un SECRETO: la TUI lo enmascara. Con ``null`` (default) el daemon arranca
+    igual pero loggea un WARNING y los endpoints protegidos responden 403 — o
+    sea, sin clave no se administra. La CLI la toma de acá salvo que se le pase
+    ``--remote-key``."""
+
     chat_timeout: float = 300.0
     """Timeout en segundos para turnos de chat vía REST (POST /admin/chat/turn)."""
 
@@ -988,24 +1429,98 @@ y una entrada acá; **no** hay más lugares que tocar.
 
 
 class AgentConfig(_ConfigBaseModel):
+    """Config completa y RESUELTA de un agente — el resultado del merge, no un fichero.
+
+    Lo que el operador escribe en ``agents/{id}.yaml`` es un DELTA: cada bloque
+    que declara pisa campo a campo al homónimo de ``global.yaml``, y lo que no
+    menciona se hereda. Este modelo es lo que queda después de ese merge, y es lo
+    único que ve el ``AgentContainer`` al construir el agente.
+
+    Solo ``id``, ``name`` y ``description`` son obligatorios y exclusivos del
+    agente: no tienen contraparte global de la que heredar.
+
+    Acá viven únicamente los recursos del tier PER-AGENTE (``llm``, ``embedding``,
+    ``memories``, ``chat_history``, ``channels``). Los harness-global
+    (``scheduler``, ``knowledge``, ``photos``) no tienen campo en este modelo a
+    propósito: declararlos en el YAML de un agente es un error de clave, no un
+    override silencioso.
+
+    Los use cases NO reciben este objeto: ``container.py`` lo traduce a Settings
+    VOs (``core/domain/value_objects/agent_settings.py``) para que el dominio no
+    dependa del schema de infraestructura.
+    """
+
     id: str
+    """Identificador técnico del agente. Debe coincidir con el nombre del fichero YAML.
+
+    El registry indexa por el NOMBRE DEL FICHERO (``agents/general.yaml`` →
+    ``general``), pero este campo es el que viaja como ``agent_id`` a todo el
+    runtime: scoping del historial y la memoria, ``created_by`` de las tareas del
+    scheduler y target de las delegaciones. Si difiere del nombre del fichero,
+    la config se carga por un id y los datos se guardan bajo otro."""
+
     name: str
+    """Nombre visible del agente, para humanos.
+
+    Va al prompt del propio agente (así sabe cómo se llama) y aparece junto al id
+    en el bloque de descubrimiento de los agentes que pueden delegarle."""
+
     description: str
+    """Qué hace el agente y en qué se especializa — en una frase.
+
+    NO es un comentario: se INYECTA en el system prompt de los OTROS agentes, en
+    el bloque «Available agents for delegation», y es lo único que el caller lee
+    para decidir a quién delegarle una tarea. Una descripción vaga produce
+    delegaciones al agente equivocado. Se colapsa a una sola línea, así que un
+    bloque multilínea (``|``) igual termina plano."""
+
     system_prompt: str = ""
     """Prompt de sistema del agente. Opcional: si se omite, los sub-agentes de
     memoria (extractor/reconciliador) heredan el prompt hardcodeado por defecto
     del use case correspondiente. Un agente regular sin prompt corre con base
     vacía (responde sin instrucciones de sistema)."""
     llm: LLMConfig
+    """Modelo conversacional de este agente. Hereda del ``llm`` global campo a campo."""
+
     embedding: EmbeddingConfig
+    """Vectorizador de este agente (routing, memoria, knowledge). Hereda del global campo a campo."""
+
     memories: MemoriesConfig
+    """Memoria a largo plazo de este agente: store, digest y los dos jobs nocturnos.
+
+    Recurso per-agente: acá viven los flags ``enabled`` de consolidación y
+    reconciliación, que SOLO tienen efecto declarados en el agente."""
+
     chat_history: ChatHistoryConfig
+    """Historial de conversación a corto plazo de este agente y su ventana hacia el LLM."""
+
     skills: SkillsConfig = SkillsConfig()
+    """Selección RAG de las skills de este agente. Hereda del bloque global campo a campo."""
+
     tools: ToolsConfig = ToolsConfig()
+    """Selección y ejecución de tools de este agente.
+
+    Además de heredar el bloque global, es donde un SUB-agente declara
+    ``tools.allowed`` para restringir qué tools del caller puede usar."""
+
     semantic_routing: SemanticRoutingConfig = SemanticRoutingConfig()
+    """Políticas de routing comunes a skills y tools de este agente."""
+
     workspace: WorkspaceConfig = WorkspaceConfig()
+    """Sandbox de filesystem de este agente. Un ``path`` propio lo aísla de los demás."""
+
     delegation: AgentDelegationConfig = AgentDelegationConfig()
+    """Si este agente puede delegar y a qué sub-agentes. Opt-in, per-agente.
+
+    Los presupuestos de una delegación (iteraciones, timeout) NO viven acá: son
+    globales (``GlobalConfig.delegation``)."""
+
     transcription: TranscriptionConfig | None = None
+    """Provider de transcripción de audio de este agente. ``None`` → hereda el global.
+
+    Si un canal del agente tiene ``voice_enabled: true`` y no hay bloque ni acá
+    ni en el global, el agente falla al construirse en vez de ignorar los audios."""
+
     channels: dict[str, Any] = {}
     """Adapters de canal del agente, indexados por su clave en ``channels:``.
 
@@ -1082,7 +1597,21 @@ class FacesConfig(_ConfigBaseModel):
     """Configuración del proveedor de reconocimiento facial (InsightFace)."""
 
     provider: Literal["insightface"] = "insightface"
+    """Motor de detección y embedding facial. ``insightface`` es el único soportado.
+
+    DECLARATIVO: al haber una sola opción, ningún componente lo lee — el adapter
+    de visión se instancia directo. Existe para que agregar un segundo motor no
+    sea un breaking change de config."""
+
     model: Literal["buffalo_sc", "buffalo_s", "buffalo_l"] = "buffalo_sc"
+    """Pack de modelos de InsightFace, de más liviano a más preciso.
+
+    ``buffalo_sc`` (default, ~200MB) es el indicado para la Pi 5; ``buffalo_s`` y
+    ``buffalo_l`` ganan precisión a costa de RAM y descarga (``buffalo_l`` ~1GB).
+    ⚠ Cambiarlo INVALIDA ``faces.db``: los embeddings guardados son de otro
+    espacio vectorial. Hay que parar el daemon, borrar la DB y volver a enrolar
+    todas las caras."""
+
     match_threshold: float = 0.55
     """Score mínimo de similitud coseno para considerar una cara como MATCHED."""
     ambiguous_threshold: float = 0.40
@@ -1102,7 +1631,19 @@ class SceneConfig(_ConfigBaseModel):
     """Configuración del proveedor de descripción de escena (LLM multimodal)."""
 
     provider: Literal["anthropic", "openai", "groq"] = "anthropic"
+    """Vendor del LLM multimodal que describe la foto: ``anthropic``, ``openai`` o ``groq``.
+
+    Registry PROPIO, independiente del de ``llm``: cada opción tiene su adapter
+    de escena. Si ``api_key`` está vacío, la credencial se busca en
+    ``providers:`` por esta misma key (o por una entrada cuyo ``type`` coincida).
+    Un valor fuera de los tres soportados aborta el arranque del pipeline."""
+
     model: str = "claude-sonnet-4-6"
+    """Modelo multimodal a usar, en el nombre que espera el ``provider`` elegido.
+
+    Tiene que soportar visión: ``claude-sonnet-4-6`` para anthropic, ``gpt-4o``
+    para openai, un scout de llama-4 para groq."""
+
     prompt_template: str | None = None
     """Prompt personalizado en español. None = usar el prompt built-in del adaptador."""
     api_key: str | None = Field(default=None, json_schema_extra={"secret": True})
@@ -1113,6 +1654,12 @@ class DedupConfig(_ConfigBaseModel):
     """Configuración del job nocturno de deduplicación de personas."""
 
     enabled: bool = True
+    """Habilita el job nocturno de deduplicación de personas.
+
+    Con ``False`` la tarea builtin no se registra en el scheduler. Requiere
+    además ``photos.enabled: true`` y un scheduler activo — el job vive en el
+    daemon."""
+
     schedule: str = "0 3 * * *"
     """Expresión cron para el job de deduplicación. Validada por croniter."""
     similarity_threshold: float = 0.70
@@ -1132,35 +1679,112 @@ class PhotosConfig(_ConfigBaseModel):
     procesamiento y el prompt completo enviado al LLM. Útil para diagnosticar
     comportamientos extraños en grupos."""
     faces: FacesConfig = FacesConfig()
+    """Reconocimiento facial local (InsightFace): qué modelo y con qué umbrales decide."""
+
     scene: SceneConfig = SceneConfig()
+    """Descripción de la escena vía LLM multimodal: vendor, modelo, prompt y credencial."""
+
     dedup: DedupConfig = DedupConfig()
+    """Job nocturno que detecta personas registradas dos veces y reporta los pares."""
 
 
 class GlobalConfig(_ConfigBaseModel):
+    """Config del sistema (``config/global.yaml``) — sin agentes.
+
+    Cumple dos roles que conviene no confundir:
+
+    1. **Base del merge**: los bloques que también existen en ``AgentConfig``
+       (``llm``, ``embedding``, ``memories``, ``chat_history``, ``skills``,
+       ``tools``, ``semantic_routing``, ``workspace``, ``transcription``) son
+       DEFAULTS — cada agente los hereda y pisa solo los campos que declara.
+    2. **Config exclusivamente global**: ``app``, ``scheduler``, ``knowledge``,
+       ``photos``, ``admin``, ``user``, ``channels``, ``delegation`` y
+       ``providers`` no tienen contraparte per-agente. Son recursos del arnés o
+       políticas del proceso; escribirlos en ``agents/{id}.yaml`` no los
+       override — según el caso se rechaza como clave desconocida o se filtra.
+
+    Las credenciales viven en este mismo fichero (registry ``providers``,
+    ``admin.auth_key``), que se crea con permisos 600 y NUNCA se commitea. La
+    marca ``secret`` del schema sirve para enmascarar el campo en la TUI, no
+    para separarlo en otro archivo.
+    """
+
     app: AppConfig
+    """Arranque del proceso: logging, agente por defecto y extensiones. Sin override per-agente."""
+
     llm: LLMConfig
+    """Modelo conversacional por DEFECTO. Cada agente lo hereda y lo pisa campo a campo."""
+
     embedding: EmbeddingConfig
+    """Vectorizador por DEFECTO para routing, memoria y knowledge. Heredable por agente."""
+
     memories: MemoriesConfig
+    """Defaults de la memoria a largo plazo: store, digest y los dos jobs nocturnos.
+
+    Los flags ``enabled`` de consolidación y reconciliación son PER-AGENTE:
+    declararlos acá no enciende nada, van en ``agents/{id}.yaml``."""
+
     chat_history: ChatHistoryConfig
+    """Defaults del historial de conversación a corto plazo. Heredable por agente."""
+
     channels: ChannelsGlobalConfig = ChannelsGlobalConfig()
     """Flags de presentación transversales a todos los canales. Solo global."""
     skills: SkillsConfig = SkillsConfig()
+    """Defaults de la selección RAG de skills. Heredable por agente."""
+
     tools: ToolsConfig = ToolsConfig()
+    """Defaults de selección y ejecución de tools. Heredable por agente."""
+
     semantic_routing: SemanticRoutingConfig = SemanticRoutingConfig()
+    """Defaults de las políticas de routing comunes a skills y tools. Heredable por agente."""
+
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
+    """Motor de tareas programadas. Recurso HARNESS-GLOBAL: una sola instancia, sin per-agente.
+
+    Solo corre bajo ``inaki daemon``. Para aislar agendas hay que levantar otra
+    instancia del arnés con su propio ``--home`` / ``INAKI_HOME``."""
+
     # default_factory (no `= SchedulerConfig()`): los campos RuntimePath se resuelven
     # contra `get_inaki_home()` en CADA instanciación de GlobalConfig (runtime, ya con el
     # home seteado), no al importar el módulo. Sin esto, `--home` no relocaliza la db si
     # el bloque `scheduler` falta del YAML. Vale para todo config con RuntimePath usado
     # como default de GlobalConfig/AgentConfig.
     workspace: WorkspaceConfig = WorkspaceConfig()
+    """Sandbox de filesystem por DEFECTO para las tools. Heredable por agente."""
+
     delegation: DelegationConfig = DelegationConfig()
+    """Presupuestos de una llamada delegada: iteraciones y timeout. Solo global.
+
+    QUIÉN puede delegar y a quién se decide per-agente
+    (``AgentConfig.delegation``); acá van únicamente los límites, iguales para
+    todas las delegaciones del arnés."""
+
     admin: AdminConfig = AdminConfig()
+    """Admin server HTTP del daemon: dónde escucha y con qué clave se protege.
+
+    Es la puerta por la que la CLI habla con el daemon y por la que se expone el
+    gateway ``POST /admin/tool/invoke``."""
+
     user: UserConfig = UserConfig()
+    """Preferencias del dueño de la instancia (hoy: la timezone del cron y los timestamps)."""
+
     transcription: TranscriptionConfig | None = None
+    """Provider de transcripción de audio por DEFECTO. ``None`` = sin transcripción global.
+
+    Un agente puede declarar el suyo y pisarlo. Si un canal tiene
+    ``voice_enabled: true`` y no hay bloque en ninguno de los dos niveles, ese
+    agente falla al construirse."""
+
     knowledge: KnowledgeConfig = Field(
         default_factory=KnowledgeConfig
     )  # default_factory: ver nota en `scheduler` (RuntimePath en T7)
+    """Pipeline de RAG sobre fuentes externas (documentos, SQLite) y sus índices.
+
+    Recurso HARNESS-GLOBAL: se declara SOLO acá — no existe ``knowledge`` en
+    ``AgentConfig``, así que todos los agentes comparten el mismo corpus y los
+    mismos umbrales. Para aislar corpus hay que levantar otra instancia del arnés
+    con su propio ``--home`` / ``INAKI_HOME``."""
+
     photos: PhotosConfig | None = None
     """Configuración del pipeline de fotos. None = feature desactivada (no se carga nada)."""
     providers: dict[str, ProviderConfig] = {}

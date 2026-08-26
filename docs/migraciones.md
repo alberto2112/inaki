@@ -46,6 +46,7 @@ Orden: **cronológico inverso** (la más reciente primero).
 | [`background-delegation`](#background-delegation) | `delegate` es **async por default** (`wait=false`) |
 | [`drop-per-agent-rest`](#drop-per-agent-rest) | Bloques `channels.rest` se ignoran en silencio |
 | [`config-show-effective`](#config-show-effective) | Comando nuevo `inaki config show`: config efectiva con origen y secretos redactados |
+| [`docs-de-config-autogeneradas`](#docs-de-config-autogeneradas) | `global.example.yaml` pasa a autogenerarse; `inaki gen-docs` regenera los dos artefactos |
 | [`secrets-layer-eradication`](#secrets-layer-eradication) | Desaparece la pantalla SECRETS del setup; borrar provider/agente se lleva sus credenciales |
 | [`channels-validados-al-cargar`](#channels-validados-al-cargar) | Un canal desconocido o una topología de broadcast inválida se reportan con su path en vez de ignorarse |
 | [`motor-de-merge-unico`](#motor-de-merge-unico) | Una clave que cambia de forma entre capas aborta con su path; antes se reemplazaba en silencio |
@@ -74,8 +75,57 @@ Orden: **cronológico inverso** (la más reciente primero).
 - **Scheduler**: `scheduler-trigger-type-mutable`, `channel-send-history-persist`
 - **Tools y config**: `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
-  `config-falla-ruidoso`, `config-show-effective`
+  `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `docs-de-config-autogeneradas`
+
+**Había cuatro fuentes describiendo los mismos parámetros, y tres estaban
+desactualizadas.** `docs/configuracion.md` (1.733 líneas de prosa),
+`docs/config-reference.md` (autogenerada), `config/global.example.yaml` (607
+líneas escritas a mano) y los docstrings del schema. Cuatro sitios que
+mantener, y ninguna garantía de que dijeran lo mismo.
+
+Lo que estaba roto, medido:
+
+| Artefacto | Estado |
+|---|---|
+| `config-reference.md` | **100 de 184 filas sin descripción** (54%) |
+| `global.example.yaml` | le faltaban **5 bloques enteros** del schema (`scheduler`, `transcription`, `delegation`, `photos`, `knowledge`) |
+| `configuracion.md` | una tabla de reglas de merge que el código **no imponía**, y varias afirmaciones falsas |
+
+**El cambio.** Una sola fuente: los docstrings del schema. Se escribieron los
+100 que faltaban (más 7 docstrings de clase), y `global.example.yaml` pasó a
+**autogenerarse** como ya lo hacía la referencia — cabecera de cada bloque desde
+el docstring de su clase, cada campo con su default y su descripción. `inaki
+gen-docs` regenera los dos artefactos y el test de drift cubre ambos.
+
+**La tabla de "field merge rules" se borró, no se implementó.** Varias filas
+eran directamente falsas, y la más grave decía que `memories.db_filename` es
+"solo global porque el store es compartido" — cuando `AgentContainer` lo lee de
+la capa del agente, o sea que cada agente puede tener su propia DB de memoria,
+que es justo lo que declara `CLAUDE.md`. La doc contradecía al código *y* a las
+reglas del proyecto. En su lugar quedó la semántica única del motor de merge
+([`motor-de-merge-unico`](#motor-de-merge-unico)) más una tabla de los casos que
+son genuinamente especiales, cada uno verificado contra el código.
+
+Otras dos contradicciones corregidas: `system_prompt` figuraba como *required*
+cuando tiene default `""`, y `channels` como "no existe en global" cuando sí
+existe con **otro significado** (la colisión de nombre con `ChannelsGlobalConfig`).
+
+**Un guard nuevo que vale la pena.** El drift test ya no se conforma con que el
+ejemplo parsee como YAML: verifica que **el propio schema lo acepte**, bloque a
+bloque. Cazó `knowledge.sources` emitido como bloque anidado cuando el schema
+espera una lista. Desde [`config-falla-ruidoso`](#config-falla-ruidoso) esto
+importa el doble: un ejemplo que el runtime rechazaría hace que el operador
+copie el bloque y el daemon no arranque.
+
+**Invariante.** **NUNCA** documentes un parámetro fuera de su docstring en el
+schema. De ahí salen la referencia, el YAML de ejemplo y la ayuda del setup TUI;
+cualquier otra copia nace condenada a divergir — y una doc que miente cuesta más
+que una que falta, porque se le cree.
 
 ---
 

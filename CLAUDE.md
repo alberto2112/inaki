@@ -243,9 +243,8 @@ Cada una salió de un fallo en producción. El caso completo está en
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Texto completo de las reglas estructurales: capas, canal THIN, tiers de recursos, wiring/DI y delegación con herencia |
 | [`docs/convenciones.md`](docs/convenciones.md) | Invariantes por subsistema: turno/RunAgent, tools, routing, knowledge, scheduler, canales, setup TUI, fotos |
 | [`docs/migraciones.md`](docs/migraciones.md) | Historial de migraciones: breaking changes, acciones del operador, cambios de comportamiento observable |
-| [`docs/inaki_spec.md`](docs/inaki_spec.md) | Spec técnica de referencia del sistema completo |
 | [`docs/modelo_de_datos.md`](docs/modelo_de_datos.md) | Entidades, value objects, jerarquía de errores, ports y `ToolResult` |
-| [`docs/flujo_ejecucion.md`](docs/flujo_ejecucion.md) | Flujo de ejecución de un turno, extremo a extremo |
+| [`docs/flujo_ejecucion.md`](docs/flujo_ejecucion.md) | El turno extremo a extremo (`RunAgentUseCase`, tool loop, fotos), arranque y bootstrap, ciclo de vida del container, consolidación y reconciliación |
 
 ### Subsistemas
 

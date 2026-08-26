@@ -226,23 +226,37 @@ InakiError
 
 Ports are contracts (ABC) that the core defines and adapters implement.
 
+> **The authoritative list is the directory itself** — `core/ports/outbound/` and
+> `core/ports/inbound/` (27 ports today), each with its docstrings. The table below
+> is an orientation map of the ones you meet first, not an inventory: a
+> hand-maintained copy of every signature rots, and this one did.
+
 ### Outbound (what the core needs from the outside)
 
 | Port | File | Main Methods |
 |------|------|--------------|
-| `ILLMProvider` | `llm_port.py` | `complete(messages, system_prompt, tools?)`, `stream(...)` |
-| `IMemoryRepository` | `memory_port.py` | `store(entry)`, `search(embedding, top_k)`, `get_recent(limit)` |
+| `ILLMProvider` | `llm_port.py` | `complete(messages, system_prompt, tools?)` |
+| `IMemoryRepository` | `memory_port.py` | `store`, `search`, `search_with_scores`, `get_recent`, `delete`, `update`, `load_unreconciled`, `mark_reconciled` |
 | `IEmbeddingProvider` | `embedding_port.py` | `embed_query(text)`, `embed_passage(text)` |
-| `IToolExecutor` | `tool_port.py` | `register(tool)`, `execute(name, **kwargs)`, `get_schemas()` |
-| `ISkillRepository` | `skill_port.py` | `retrieve(embedding, top_k)` |
-| `IHistoryStore` | `history_port.py` | `append(agent_id, msg)`, `load(agent_id)`, `load_full(agent_id)`, `archive(agent_id)`, `clear(agent_id)` |
+| `ITool` / `IToolExecutor` | `tool_port.py` | `execute(**kwargs) -> ToolResult`, `get_schemas_relevant(...)` |
+| `ISkillRepository` | `skill_port.py` | `list_all`, `retrieve`, `retrieve_with_scores` |
+| `IHistoryStore` | `history_port.py` | Scoped by `(agent_id, channel, chat_id)`: `append`, `load`, `load_full`, `clear`, `trim`, `search`, `update_content`, `retention_horizon`, `load_uninfused`, `mark_infused`, `load_state`, `save_state` — plus the in-flight drainage pair `last_row_id` / `load_user_messages_since` |
+| `IScopeRegistry` | `scope_registry_port.py` | `try_mark_busy`, `mark_idle`, `request_cancel`, `is_cancel_requested` |
+| `IVisionPort` | `vision_port.py` | `detect_and_embed(image_bytes) -> list[FaceDetection]` |
+
+`Scope = tuple[str, str, str]` — `(agent_id, channel, chat_id)`. `IScopeRegistry` is
+implemented with `asyncio.Lock` in `InMemoryScopeRegistryAdapter`; a single instance
+is shared across all agents (scopes are disjoint by `agent_id`).
+
+`IVisionPort` is implemented by `InsightFaceAdapter`; the model is **lazily** loaded
+on the first call and uses ~400 MB of RAM.
 
 ### Inbound (what the core exposes to the outside)
 
 | Port | File | Methods |
 |------|------|---------|
 | `IAgentUseCase` | `agent_port.py` | `execute(agent_id, user_input) -> str` |
-| `ISchedulerUseCase` | `scheduler_port.py` | `schedule(task)`, `cancel(task_id)`, `list_tasks(agent_id)` |
+| `IManualTaskRunner` | `scheduler_port.py` | `run_task_now`, plus task CRUD (`create_task`, `update_task`, `delete_task`, `list_tasks`, `list_logs`, …) |
 
 ---
 

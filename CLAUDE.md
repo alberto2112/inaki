@@ -259,7 +259,6 @@ Cada una salió de un fallo en producción. El caso completo está en
 | [`docs/knowledge.md`](docs/knowledge.md) | Fuentes de conocimiento, ingest y extensiones |
 | [`docs/tools_y_skills.md`](docs/tools_y_skills.md) | Cómo escribir una tool y una skill, con ejemplos completos |
 | [`docs/face-recognition.md`](docs/face-recognition.md) | Reconocimiento facial: `faces.db`, enrolado, cambio de modelo |
-| [`docs/tool_exchange_calendar.md`](docs/tool_exchange_calendar.md) | Tool `exchange_calendar`: operaciones, resolución de calendarios, seguridad |
 
 ### Operación y pruebas manuales
 
@@ -267,6 +266,10 @@ Cada una salió de un fallo en producción. El caso completo está en
 |---|---|
 | [`docs/broadcast-smoke.md`](docs/broadcast-smoke.md) | Smoke test del broadcast TCP entre Pis + bootstrap |
 | [`docs/setup-tui-smoke.md`](docs/setup-tui-smoke.md) | Smoke test manual del TUI `inaki setup` |
-| [`docs/setup-tui-redesign-plan.md`](docs/setup-tui-redesign-plan.md) | Plan de rediseño del setup TUI (split-pane, add/remove por schema) |
+
+> Los subdirectorios de `docs/` están gitignoreados: son material de trabajo
+> local (planes de refactor, borradores), no documentación del repo. Los planes
+> viven en `docs/plans/` y **no se versionan** — no los enlaces desde un fichero
+> tracked, que el enlace nace roto para cualquiera que clone.
 
 **GitHub**: https://github.com/alberto2112/inaki

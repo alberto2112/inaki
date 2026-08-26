@@ -13,6 +13,11 @@ config/agents/*
 # Backups / directorios renombrados con prefijo "_" — nunca commitear
 _*/
 
+# Docs: solo se versiona el primer nivel. Los subdirectorios son material de
+# trabajo (planes de refactor, borradores) que no ensucia el repo. Los docs de
+# referencia van en `docs/` a secas, nunca en un subdirectorio.
+docs/*/
+
 # Datos y modelos
 data/
 models/

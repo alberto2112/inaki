@@ -443,8 +443,9 @@ defaults y sus dos ramas `hasattr(model_dump)`.
 **Lo que esta nota NO cambia.** `TelegramChannelConfig` conserva
 `extra="allow"`: un campo *desconocido* dentro de un canal conocido sigue
 pasando sin ruido. El endurecimiento a `extra="forbid"` y el aborto del arranque
-ante un agente inválido (hoy todavía desaparece con WARNING) son la Fase 4 de
-[`config-refactor-plan.md`](config-refactor-plan.md).
+ante un agente inválido (hoy todavía desaparece con WARNING) son la Fase 4 del
+plan de refactor de config (`docs/plans/config-refactor-plan.md`, local — los
+subdirectorios de `docs/` no se versionan).
 
 **Invariante.** **NUNCA** dejes un bloque de config sin tipar "para que el merge
 no se queje": el merge opera sobre dicts crudos ANTES de validar, así que
@@ -516,8 +517,8 @@ segunda pregunta, porque ya no hay un segundo fichero que dejar huérfano.
    mano.
 
 Los dos los cubre la misma pieza pendiente: `inaki config show --effective
---origin` con redacción de campos secretos (Fase 5 de
-[`config-refactor-plan.md`](config-refactor-plan.md)) — un dump que enmascara
+--origin` con redacción de campos secretos (Fase 5 del plan de refactor de
+config, `docs/plans/config-refactor-plan.md`) — un dump que enmascara
 también responde "qué tengo configurado y qué me falta". Hasta entonces, los
 huecos existían al escribirse esta nota; la Fase 5
 ([`config-show-effective`](#config-show-effective)) los cerró — `inaki config

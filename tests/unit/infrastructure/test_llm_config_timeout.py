@@ -5,7 +5,7 @@ Reglas:
   - Valor positivo (int o string numérico) → se respeta tal cual.
   - Valor ``<= 0`` o no parseable → **error de validación**.
 
-CAMBIO DE CRITERIO (Fase 4 del refactor de config, `docs/config-refactor-plan.md`).
+CAMBIO DE CRITERIO (Fase 4 del refactor de config, `docs/plans/config-refactor-plan.md`).
 Hasta acá el campo se sanitizaba al fallback de 60s con la regla explícita de
 "que el bootstrap del daemon no muera por un dedazo en el YAML". El problema de
 esa red es que ``timeout_seconds: "sesenta"`` corría con 60 **sin decir nada**:

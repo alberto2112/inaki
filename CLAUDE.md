@@ -200,6 +200,12 @@ Cada una salió de un fallo en producción. El caso completo está en
   ahí salen `config-reference.md`, `global.example.yaml` y la ayuda del setup TUI
   (`inaki gen-docs` los regenera, y un drift test los guarda). Cualquier otra copia
   nace condenada a divergir. → `docs-de-config-autogeneradas`
+- **NUNCA** escribir una nota de `migraciones.md` en presente sobre el estado
+  actual ("hoy todavía X", "queda pendiente Y"). Una nota es una instantánea del
+  pasado: en pasado no puede caducar, en presente empieza a mentir el día que
+  alguien cierra eso — y nadie relee una bitácora para corregirla. Si se cierra
+  después, se agrega `*Cerrado después:*` abajo; **no se reescribe la nota**.
+  → cabecera de [`migraciones.md`](docs/migraciones.md)
 - **NUNCA** construir una interfaz de config sobre los ficheros crudos: se construye
   sobre la config EFECTIVA con origen (`ShowEffectiveConfigUseCase`, `inaki config
   show`). Sobre ficheros crudos + semántica de merge es el problema que el setup TUI

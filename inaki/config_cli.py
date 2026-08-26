@@ -140,9 +140,11 @@ def _recolectar_secretos_anidados(
 def _construir_use_case():
     from adapters.outbound.config_repository import YamlRepository
     from core.use_cases.config.show_effective import ShowEffectiveConfigUseCase
+    from infrastructure.home import get_inaki_home
 
+    home = get_inaki_home()
     return ShowEffectiveConfigUseCase(
-        repo=YamlRepository(),
+        repo=YamlRepository(config_dir=home / "config", agents_dir=home / "agents"),
         defaults=_defaults_del_schema(),
         paths_secretos=_paths_secretos(),
     )

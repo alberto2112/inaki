@@ -8,10 +8,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from infrastructure.config import (
-    _render_default_global_yaml,
-    ensure_user_config,
-)
+from infrastructure.config import ensure_user_config
+from infrastructure.config_loader import _render_default_global_yaml
 
 
 def test_first_run_creates_all_artifacts(tmp_path: Path) -> None:

@@ -12,6 +12,25 @@ embedding y credenciales irrelevantes para pasar la validación.
 Los defaults espejan los de ``infrastructure/config.py`` (fuente user-facing).
 En runtime no hay riesgo de drift: el container siempre pasa valores explícitos
 leídos de la config — los defaults de acá solo alivianan la construcción en tests.
+
+## Por qué algunos nombres NO coinciden con los del schema
+
+Los renombrados del mapeo son deliberados, no accidentes. Los dos patrones:
+
+1. **Aplanado con prefijo de namespace.** El schema anida
+   (``skills.semantic_routing_top_k``); estos VOs son planos de un solo nivel,
+   así que el bloque de origen sobrevive como prefijo: ``skills_top_k`` y
+   ``tools_top_k``. Sin el prefijo, dos campos homónimos de bloques distintos
+   colisionarían en el mismo VO.
+2. **El VO nombra mejor que el schema.** ``memories.digest_filename`` no es un
+   nombre de fichero: es un TEMPLATE con placeholders ``{channel}`` y
+   ``{chat_id}``, y por eso acá se llama ``digest_template``. Alinear el VO
+   sería perder precisión; alinear el schema sería un breaking change en la
+   config del usuario (desde ``config-falla-ruidoso``, una clave desconocida
+   aborta el arranque, así que renombrar un campo del schema exige migración).
+
+La tabla completa del mapeo vive donde se ejecuta: los builders
+``build_*_settings`` de ``infrastructure/container.py``.
 """
 
 from __future__ import annotations

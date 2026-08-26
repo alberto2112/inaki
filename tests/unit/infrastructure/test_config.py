@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 
+from infrastructure.config_loader import _render_default_global_yaml
 from infrastructure.config import (
     AppConfig,
     ChatHistoryConfig,
@@ -310,7 +311,6 @@ from infrastructure.config import (  # noqa: E402
     AgentDelegationConfig,
     DelegationConfig,
     GlobalConfig,
-    _render_default_global_yaml,
 )
 
 

@@ -19,12 +19,12 @@ from pathlib import Path
 
 import yaml
 
+from infrastructure.config_loader import _render_default_global_yaml
 from infrastructure.config import (
     EmbeddingConfig,
     GlobalConfig,
     LLMConfig,
     TranscriptionConfig,
-    _render_default_global_yaml,
     load_agent_config,
     load_global_config,
 )

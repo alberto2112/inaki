@@ -56,6 +56,7 @@ def _lanzar_tui() -> None:
     from adapters.inbound.setup_tui.app import SetupApp
     from adapters.inbound.setup_tui.di import build_setup_container
     from infrastructure.config import CHANNEL_SCHEMAS, AgentConfig, GlobalConfig
+    from infrastructure.home import get_inaki_home
     from infrastructure.factories.embedding_factory import EmbeddingProviderFactory
     from infrastructure.factories.llm_factory import LLMProviderFactory
     from infrastructure.factories.transcription_factory import TranscriptionProviderFactory
@@ -72,8 +73,10 @@ def _lanzar_tui() -> None:
         )
     )
 
+    home = get_inaki_home()
     container = build_setup_container(
-        config_dir=None,
+        config_dir=home / "config",
+        agents_dir=home / "agents",
         global_schema=GlobalConfig,
         agent_schema=AgentConfig,
         # Registry de canales para introspeccionar el dict ``channels`` del agente.

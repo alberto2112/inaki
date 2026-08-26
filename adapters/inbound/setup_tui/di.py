@@ -67,7 +67,8 @@ class SetupContainer:
 
 
 def build_setup_container(
-    config_dir: Path | None,
+    config_dir: Path,
+    agents_dir: Path,
     global_schema: type[BaseModel],
     agent_schema: type[BaseModel],
     channel_schemas: dict[str, type[BaseModel]] | None = None,
@@ -77,8 +78,9 @@ def build_setup_container(
     Construye el contenedor offline para la TUI de setup.
 
     Args:
-        config_dir: Directorio raíz de config. ``None`` → usa el default
-                    (``~/.inaki/config/`` o ``$INAKI_HOME/config/`` por env var).
+        config_dir: Directorio raíz de config (``<home>/config/``), resuelto
+                       por el composition root.
+        agents_dir: Directorio de configs de agente (``<home>/agents/``), ídem.
         global_schema: clase Pydantic ``GlobalConfig`` — la inyecta el
                        composition root (el setup_tui no importa infrastructure).
         agent_schema: clase Pydantic ``AgentConfig`` — ídem.
@@ -94,7 +96,7 @@ def build_setup_container(
     Returns:
         ``SetupContainer`` con todos los use cases cableados.
     """
-    repo = YamlRepository(config_dir=config_dir)
+    repo = YamlRepository(config_dir=config_dir, agents_dir=agents_dir)
 
     return SetupContainer(
         repo=repo,

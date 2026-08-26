@@ -1,6 +1,7 @@
 # Plan de refactorización — Sistema de configuración
 
-> Estado: EN PROGRESO — Fases 1 a 6 implementadas. Documento vivo.
+> Estado: **COMPLETO** — las 7 fases implementadas. Documento vivo (queda como
+> registro del porqué; las notas de cada fase viven en `docs/migraciones.md`).
 > Origen: auditoría del 2026-08-25 (Engram `architecture/config-system-audit` y
 > `architecture/config-secrets-layer`).
 > Última actualización: 2026-08-25.
@@ -193,7 +194,7 @@ fácil; sobre N ficheros crudos + semántica de merge, el imposible que el TUI l
 4. Resolver contradicciones docs↔schema detectadas (`system_prompt` "required" en la
    doc vs default `""` en el schema).
 
-## Fase 7 — Limpieza menor
+## Fase 7 — Limpieza menor ✅ HECHA
 
 - Renombrados gratuitos en Settings VOs: alinear nombres con el schema
   (`digest_template` → `digest_filename`, `tools_top_k` →
@@ -240,4 +241,4 @@ tres carriles — ir consumidor por consumidor), Fases 4-7 mecánicas y troceabl
 - [x] Fase 4 — fallos ruidosos — nota `config-falla-ruidoso` en `docs/migraciones.md`
 - [x] Fase 5 — `inaki config show` — nota `config-show-effective` en `docs/migraciones.md`
 - [x] Fase 6 — docs fuente única — nota `docs-de-config-autogeneradas` en `docs/migraciones.md`
-- [ ] Fase 7 — limpieza menor
+- [x] Fase 7 — limpieza menor — nota `config-limpieza-final` en `docs/migraciones.md`

@@ -47,6 +47,7 @@ Orden: **cronológico inverso** (la más reciente primero).
 | [`drop-per-agent-rest`](#drop-per-agent-rest) | Bloques `channels.rest` se ignoran en silencio |
 | [`config-show-effective`](#config-show-effective) | Comando nuevo `inaki config show`: config efectiva con origen y secretos redactados |
 | [`docs-de-config-autogeneradas`](#docs-de-config-autogeneradas) | `global.example.yaml` pasa a autogenerarse; `inaki gen-docs` regenera los dos artefactos |
+| [`config-limpieza-final`](#config-limpieza-final) | Sin cambios observables: el adapter deja de resolver el home y la fachada de exponer internals |
 | [`secrets-layer-eradication`](#secrets-layer-eradication) | Desaparece la pantalla SECRETS del setup; borrar provider/agente se lleva sus credenciales |
 | [`channels-validados-al-cargar`](#channels-validados-al-cargar) | Un canal desconocido o una topología de broadcast inválida se reportan con su path en vez de ignorarse |
 | [`motor-de-merge-unico`](#motor-de-merge-unico) | Una clave que cambia de forma entre capas aborta con su path; antes se reemplazaba en silencio |
@@ -75,8 +76,52 @@ Orden: **cronológico inverso** (la más reciente primero).
 - **Scheduler**: `scheduler-trigger-type-mutable`, `channel-send-history-persist`
 - **Tools y config**: `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
-  `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`
+  `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
+  `config-limpieza-final`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `config-limpieza-final`
+
+Cierre del refactor de config: la deuda menor que las seis fases anteriores
+fueron dejando anotada. Sin cambios observables para el operador — todo lo de
+acá es interno.
+
+**Lo que se hizo.**
+
+1. **El adapter de config dejó de resolver el home.** `config_repository/paths.py`
+   reimplementaba la resolución de `INAKI_HOME` porque `adapters/` no puede
+   importar `infrastructure/home.py`: dos resoluciones sincronizadas solo por un
+   comentario, y la del adapter **ni siquiera veía el override de `--home`** —
+   de ahí que el CLI tuviera que reexportar la variable de entorno para
+   compensar. Ahora `YamlRepository` recibe `config_dir` y `agents_dir` ya
+   resueltos del composition root, y `paths.py` desapareció.
+2. **La fachada `infrastructure/config.py` dejó de exponer internals.**
+   Reexportaba 16 símbolos privados "para preservar el contrato histórico"; al
+   revisarlos, **15 no los importaba nadie** fuera de la propia fachada. Era
+   reexportación muerta que convertía privados en públicos de facto.
+3. **Se documentó por qué los Settings VOs no se llaman igual que el schema.**
+   Los renombrados son deliberados: o aplanan con prefijo de namespace
+   (`skills.semantic_routing_top_k` → `skills_top_k`, porque el VO es de un solo
+   nivel y sin prefijo colisionarían dos campos homónimos), o **nombran mejor
+   que el schema** (`memories.digest_filename` no es un fichero sino un template
+   con placeholders, y por eso el VO lo llama `digest_template`).
+
+**Lo que se decidió NO hacer, y por qué.** Las dos limpiezas restantes del plan
+dejaron de ser gratis cuando [`config-falla-ruidoso`](#config-falla-ruidoso)
+puso `extra="forbid"` en todo el schema:
+
+| Pendiente | Por qué no |
+|---|---|
+| Borrar los campos inertes `app.name` y `photos.faces.provider` | El bootstrap escribe `app:` completo en **toda** instalación. Con `extra="forbid"`, borrar el campo del schema haría que cualquier `global.yaml` existente aborte el arranque. Quedan documentados como declarativos. |
+| Renombrar `channels` en global para deshacer la colisión con `AgentConfig.channels` | Mismo problema: `channels: {thinking_indicator: …}` está en todas las instalaciones. Exigiría una migración one-shot, y el beneficio es solo borrar un filtro de tres líneas. |
+
+**Invariante.** **NUNCA** borres ni renombres un campo del schema sin migración:
+desde que las claves desconocidas abortan el arranque, quitar un campo que el
+bootstrap escribió alguna vez rompe todas las instalaciones existentes. El costo
+de eliminar config cambió de gratis a breaking, y no hay aviso que lo recuerde
+salvo este.
 
 ---
 

@@ -192,6 +192,9 @@ Cada una salió de un fallo en producción. El caso completo está en
   `core/domain/config_merge.py` (dict⊕dict funde, lista reemplaza, `null` pisa,
   sentinel borra, cambiar de forma entre capas es error). Si no alcanza para un caso
   nuevo, **extendé el motor**; no nazca otro al lado. → `motor-de-merge-unico`
+- **NUNCA** borrar ni renombrar un campo del schema sin migración: desde que las
+  claves desconocidas abortan el arranque, quitar un campo que el bootstrap escribió
+  alguna vez rompe TODAS las instalaciones existentes. → `config-limpieza-final`
 - **NUNCA** documentar un parámetro de config fuera de su docstring en el schema: de
   ahí salen `config-reference.md`, `global.example.yaml` y la ayuda del setup TUI
   (`inaki gen-docs` los regenera, y un drift test los guarda). Cualquier otra copia

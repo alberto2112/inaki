@@ -64,24 +64,23 @@ class YamlRepository:
     llamada a ``write_layer`` hace una escritura atómica con ``os.replace()``
     y preserva comentarios, orden de claves y anchors YAML.
 
+    El adapter NO resuelve el home de la instancia: lo recibe ya resuelto del
+    composition root. Antes lo reimplementaba en un ``paths.py`` propio —leyendo
+    ``INAKI_HOME`` a mano porque ``adapters/`` no puede importar
+    ``infrastructure/home.py``—, dos resoluciones sincronizadas solo por un
+    comentario, y la del adapter ni siquiera veía el override de ``--home``
+    (de ahí que el CLI tuviera que reexportar la env var).
+
     Args:
-        config_dir: Directorio raíz de configuración. Si es ``None``, se
-            resuelve automáticamente via ``paths.get_config_dir()``.
+        config_dir: Directorio raíz de configuración (``<home>/config/``).
+        agents_dir: Directorio de configs de agente. En el layout real es
+            ``<home>/agents/`` — **sibling** de ``config/``, no subcarpeta.
+            ``None`` cae a ``config_dir/agents`` para simplificar los tests.
     """
 
-    def __init__(self, config_dir: Path | None = None) -> None:
-        if config_dir is None:
-            # Layout default del runtime: ~/.inaki/config/global*.yaml +
-            # ~/.inaki/agents/{id}.yaml (sibling, NO subcarpeta de config/).
-            from .paths import get_agents_dir, get_config_dir
-
-            self._config_dir = get_config_dir()
-            self._agents_dir = get_agents_dir()
-        else:
-            # Override explícito (tests con tmp_path o legacy --config DIR):
-            # agentes bajo config_dir/agents/, layout unificado.
-            self._config_dir = config_dir
-            self._agents_dir = config_dir / "agents"
+    def __init__(self, config_dir: Path, agents_dir: Path | None = None) -> None:
+        self._config_dir = config_dir
+        self._agents_dir = agents_dir if agents_dir is not None else config_dir / "agents"
         # Sub-agentes viven en un subdirectorio reservado por el runtime
         # (mismo layout que el config_loader: ``agents/sub-agents/``).
         self._sub_agents_dir = self._agents_dir / "sub-agents"

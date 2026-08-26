@@ -464,6 +464,39 @@ async def test_error_en_use_case_reply_error_y_reaccion_x(agent_cfg, mock_contai
     assert "👎" in reactions_sent
 
 
+async def test_sin_vision_local_avisa_por_el_canal_y_no_tumba_el_bot(
+    agent_cfg, mock_container
+) -> None:
+    """Escenario: inferencia remota, sin ONNX/InsightFace en el host.
+
+    Requisito del operador: mientras no crashee y se le avise al usuario POR EL
+    CANAL QUE LO PIDIÓ, está bien que el análisis no ande. Este test fija ese
+    contrato — el ``except`` de ``_handle_photo_message`` es lo único que lo
+    sostiene, y sin este guard alguien podría "limpiarlo" sin enterarse.
+
+    Es distinto del error genérico de arriba en dos cosas: usa el ``VisionError``
+    real que produce la falta de la librería, y exige que el aviso mencione la
+    causa (no un "algo falló" mudo).
+    """
+    from core.domain.errors import VisionError
+
+    mock_container.process_photo.execute.side_effect = VisionError(
+        "Error en detección facial (modelo 'buffalo_sc'): No module named 'insightface.app'"
+    )
+    bot = _build_bot(agent_cfg, mock_container)
+    update = _mk_update()
+
+    # No debe propagar: si esto levanta, el handler tumba el turno del usuario.
+    await bot._handle_photo_message(update, MagicMock())
+
+    update.message.reply_text.assert_awaited()
+    aviso = update.message.reply_text.await_args.args[0]
+    assert "foto" in aviso.lower(), f"el aviso debe hablar de la foto; dijo: {aviso!r}"
+    assert "insightface" in aviso.lower(), (
+        f"el aviso debe arrastrar la causa para que el operador sepa qué falta; dijo: {aviso!r}"
+    )
+
+
 def test_bot_registra_handler_photo(agent_cfg, mock_container) -> None:
     """El __init__ del bot debe registrar un MessageHandler para filters.PHOTO."""
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:

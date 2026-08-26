@@ -45,6 +45,7 @@ Orden: **cronológico inverso** (la más reciente primero).
 | [`in-flight-message-injection`](#in-flight-message-injection) | Dos mensajes seguidos → **una** respuesta combinada, no dos turnos |
 | [`background-delegation`](#background-delegation) | `delegate` es **async por default** (`wait=false`) |
 | [`drop-per-agent-rest`](#drop-per-agent-rest) | Bloques `channels.rest` se ignoran en silencio |
+| [`config-show-effective`](#config-show-effective) | Comando nuevo `inaki config show`: config efectiva con origen y secretos redactados |
 | [`secrets-layer-eradication`](#secrets-layer-eradication) | Desaparece la pantalla SECRETS del setup; borrar provider/agente se lleva sus credenciales |
 | [`channels-validados-al-cargar`](#channels-validados-al-cargar) | Un canal desconocido o una topología de broadcast inválida se reportan con su path en vez de ignorarse |
 | [`motor-de-merge-unico`](#motor-de-merge-unico) | Una clave que cambia de forma entre capas aborta con su path; antes se reemplazaba en silencio |
@@ -73,8 +74,68 @@ Orden: **cronológico inverso** (la más reciente primero).
 - **Scheduler**: `scheduler-trigger-type-mutable`, `channel-send-history-persist`
 - **Tools y config**: `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
-  `config-falla-ruidoso`
+  `config-falla-ruidoso`, `config-show-effective`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `config-show-effective`
+
+**No había forma de preguntarle al sistema qué config estaba usando.** Para
+responder "¿de dónde sale este valor?" había que abrir `global.yaml`, abrir
+`agents/{id}.yaml`, recordar la semántica del merge y, para los campos que
+nadie declaró, ir a buscar el default al schema. Tres fuentes y un merge mental.
+
+**El cambio.** `inaki config show [--agent ID] [--origin] [--json] [--secrets]`
+entrega la config **efectiva** —la que ve el runtime, no la que está escrita—
+campo a campo, con la capa que aportó cada valor:
+
+```
+   llm.model         modelo-propio   [agent]
+   llm.provider      groq            [global]
+   llm.temperature   0.7             [default]
+🔒 providers.groq.api_key   ********        [global]
+```
+
+Las tres capas del dump son `default` (el schema), `global` y `agent`. La de
+`default` importa más de lo que parece: sin ella el comando mostraría lo
+escrito, no lo que el runtime usa. Incluye los bloques que el schema marca como
+requeridos (`llm`, `memories`, …) porque el loader los materializa siempre con
+`Modelo(**merged.get(x, {}))` — su obligatoriedad es estructural y nunca llega
+al operador.
+
+**Los secretos salen redactados, siempre.** El output está pensado para pegarse
+en un issue, así que un valor marcado como credencial en el schema se emite como
+`********` y jamás en claro. Esto tapa el agujero que dejó
+[`secrets-layer-eradication`](#secrets-layer-eradication): desde que las
+credenciales viven en la capa principal, `cat global.yaml` dejó de ser pegable.
+
+**Y recupera la vista transversal de credenciales.** `--secrets` responde "qué
+tengo puesto y qué me falta" sin navegar el árbol — la capacidad que se perdió
+al borrar la `SecretsPage`:
+
+```
+🔒 admin.auth_key            ********           [global]
+🔒 channels.telegram.token   ********           [agent]
+🔒 providers.groq.api_key    ********           [global]
+🔒 providers.openai.api_key  (sin configurar)   [default]
+```
+
+Solo se reportan pendientes de **secciones que el operador ya declaró**: listar
+el `auth` de un broadcast que nadie configuró convierte la vista en ruido de
+features no usadas. Es el mismo criterio que tenía la `SecretsPage`.
+
+**Dónde se apoya.** En dos piezas que las fases anteriores dejaron listas: la
+procedencia por hoja que devuelve `merge_capas`
+([`motor-de-merge-unico`](#motor-de-merge-unico)) y la marca `kind == "secret"`
+del schema, que `secrets-layer-eradication` conservó al erradicar los ficheros.
+El use case no conoce el schema: el composition root (`inaki/config_cli.py`) le
+pasa los defaults y el set de paths secretos ya resueltos.
+
+**Invariante.** **NUNCA** construyas una interfaz de configuración sobre los
+ficheros crudos. Se construye sobre la **config efectiva con origen**: una UI
+sobre eso es un problema simple; sobre N ficheros más la semántica de merge es
+el problema que el setup TUI lleva 5.000 líneas peleando.
 
 ---
 

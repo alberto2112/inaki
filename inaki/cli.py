@@ -39,6 +39,7 @@ from typing import Any, Optional
 
 import typer
 
+from inaki.config_cli import config_app
 from inaki.knowledge_cli import knowledge_app
 from inaki.scheduler_cli import scheduler_app
 from inaki.setup_cli import setup_app
@@ -62,6 +63,7 @@ def _version_callback(value: bool) -> None:
 app.add_typer(scheduler_app, name="scheduler", help="Manage scheduled tasks")
 app.add_typer(knowledge_app, name="knowledge", help="Manage document knowledge sources")
 app.add_typer(setup_app, name="setup", help="Configuración del sistema (TUI offline)")
+app.add_typer(config_app, name="config", help="Inspeccionar la configuración efectiva")
 
 
 def _get_config_dir() -> Path:

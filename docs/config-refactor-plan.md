@@ -1,6 +1,6 @@
 # Plan de refactorización — Sistema de configuración
 
-> Estado: EN PROGRESO — Fases 1 a 4 implementadas. Documento vivo.
+> Estado: EN PROGRESO — Fases 1 a 5 implementadas. Documento vivo.
 > Origen: auditoría del 2026-08-25 (Engram `architecture/config-system-audit` y
 > `architecture/config-secrets-layer`).
 > Última actualización: 2026-08-25.
@@ -155,7 +155,7 @@ arranque que no se puede diagnosticar") al subsistema de config.
    los de visión y extensiones quedan degradados a propósito, nombrando la capacidad
    que se pierde; los de shutdown y `adapter.start()` no se tocan.
 
-## Fase 5 — `inaki config show --effective --origin`
+## Fase 5 — `inaki config show --effective --origin` ✅ HECHA
 
 **Objetivo**: la config efectiva mergeada, anotando de qué capa salió cada valor
 (estilo `git config --show-origin`), con secretos redactados. Es LA base para
@@ -231,6 +231,6 @@ tres carriles — ir consumidor por consumidor), Fases 4-7 mecánicas y troceabl
 - [x] Fase 2 — validar `channels` al cargar — nota `channels-validados-al-cargar` en `docs/migraciones.md`
 - [x] Fase 3 — motor de merge único — nota `motor-de-merge-unico` en `docs/migraciones.md`
 - [x] Fase 4 — fallos ruidosos — nota `config-falla-ruidoso` en `docs/migraciones.md`
-- [ ] Fase 5 — `inaki config show --effective --origin`
+- [x] Fase 5 — `inaki config show` — nota `config-show-effective` en `docs/migraciones.md`
 - [ ] Fase 6 — docs fuente única
 - [ ] Fase 7 — limpieza menor

@@ -1,5 +1,34 @@
 # Configuration — Inaki v2
 
+## Inspecting the effective config — `inaki config show`
+
+Before editing anything, this is how you ask the system **what config it is
+actually using**, and where each value comes from:
+
+```bash
+inaki config show --agent dev --origin   # effective config + originating layer
+inaki config show --secrets              # which credentials are set, which are missing
+inaki config show --json                 # machine-readable
+```
+
+```
+   llm.model                modelo-propio   [agent]
+   llm.provider             groq            [global]
+   llm.temperature          0.7             [default]
+🔒 providers.groq.api_key   ********        [global]
+```
+
+Three layers show up as origins: `default` (what the schema applies when nobody
+declares anything), `global` and `agent`. Note that a value with origin
+`default` is never written in any YAML — that is precisely why reading the
+files by hand does not answer the question.
+
+**Secrets are always redacted.** Fields marked as credentials in the schema are
+emitted as `********`, never in clear text: the output is meant to be pasted
+into an issue. `--secrets` narrows it to the credentials only, marking those
+still `(sin configurar)` — but only for sections you already declared, so it
+does not fill up with pending fields of features you do not use.
+
 ## Interactive editing with `inaki setup`
 
 The recommended way to edit the configuration is through the interactive TUI:

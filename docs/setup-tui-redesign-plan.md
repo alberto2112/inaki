@@ -11,6 +11,18 @@
 > a "capa secrets" en las fases de abajo quedan como registro de lo que se hizo
 > entonces; el código actual escribe siempre en la capa principal.
 
+> **Nota posterior (Fase 5 del refactor de config)** — Ya existe
+> `inaki config show [--origin]`, que entrega la **config efectiva** campo a
+> campo: el valor que el runtime realmente usa, la capa de la que sale
+> (`default` / `global` / `agent`) y los secretos redactados. El árbol de este
+> rediseño debería alimentarse de ese use case (`ShowEffectiveConfigUseCase`)
+> en vez de releer las capas y rehacer el merge por su cuenta.
+>
+> El porqué es el diagnóstico de este mismo plan visto desde otro ángulo: una
+> UI sobre config-efectiva-con-origen es un problema simple; sobre N ficheros
+> crudos más la semántica de merge, es el problema que acá se pelea desde hace
+> 5.000 líneas. Ver `docs/config-refactor-plan.md` (Fase 5).
+
 ## Por qué este rediseño (el problema raíz)
 
 La TUI actual (`GlobalPage`, `AgentDetailPage`) **renderiza TODAS las secciones del

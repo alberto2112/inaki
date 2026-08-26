@@ -21,6 +21,8 @@ pytest                           # all tests
 pytest tests/unit/               # unit only
 pytest tests/integration/        # integration only
 pytest -k test_name              # single test
+inaki config show --origin       # config efectiva con la capa de cada valor
+inaki config show --secrets      # qué credenciales están puestas y cuáles faltan
 inaki                            # interactive chat (default agent)
 inaki chat --agent dev           # specific agent
 inaki daemon                     # systemd service mode
@@ -190,6 +192,10 @@ Cada una salió de un fallo en producción. El caso completo está en
   `core/domain/config_merge.py` (dict⊕dict funde, lista reemplaza, `null` pisa,
   sentinel borra, cambiar de forma entre capas es error). Si no alcanza para un caso
   nuevo, **extendé el motor**; no nazca otro al lado. → `motor-de-merge-unico`
+- **NUNCA** construir una interfaz de config sobre los ficheros crudos: se construye
+  sobre la config EFECTIVA con origen (`ShowEffectiveConfigUseCase`, `inaki config
+  show`). Sobre ficheros crudos + semántica de merge es el problema que el setup TUI
+  lleva 5.000 líneas peleando. → `config-show-effective`
 - **NUNCA** sanitizar un valor de config a un default "para no romper el arranque":
   un default silencioso que contradice el YAML es un bug que no se puede diagnosticar.
   La única degradación legítima es la de una **dependencia externa** (no de la config),

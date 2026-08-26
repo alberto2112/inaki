@@ -99,72 +99,47 @@ class TelegramBot(
         # Opcional: en tests o arranques sueltos puede ser None y /reload responde sin efecto.
         self._reloader = reloader
 
+        # El bloque llega validado y tipado (``TelegramChannelSettings``): el
+        # schema ya aplicó los defaults y el builder del container resolvió las
+        # herencias. Acá solo se desempaqueta.
         tg_cfg = settings.telegram
-        self._token: str = tg_cfg.get("token", "")
-        self._allowed_ids: list[str] = [str(uid) for uid in tg_cfg.get("allowed_user_ids", [])]
-        self._reactions: bool = tg_cfg.get("reactions", False)
-        self._voice_enabled: bool = tg_cfg.get("voice_enabled", True)
-
-        self._allowed_chat_ids: list[str] = [str(cid) for cid in tg_cfg.get("allowed_chat_ids", [])]
-
-        # Config específica de grupos: timing/reacciones + política de respuesta
-        # (behavior, bot_username, rate_limiter). Soporta Pydantic model o dict crudo.
-        groups_raw = tg_cfg.get("groups") or {}
-        if hasattr(groups_raw, "model_dump"):
-            groups_dict: dict = groups_raw.model_dump()
-        elif isinstance(groups_raw, dict):
-            groups_dict = groups_raw
-        else:
-            groups_dict = {}
+        self._token: str = tg_cfg.token
+        self._allowed_ids: list[str] = list(tg_cfg.allowed_user_ids)
+        self._reactions: bool = tg_cfg.reactions
+        self._voice_enabled: bool = tg_cfg.voice_enabled
+        self._allowed_chat_ids: list[str] = list(tg_cfg.allowed_chat_ids)
 
         # Política de respuesta en grupos. Antes vivía en el bloque ``broadcast``,
         # lo que obligaba a levantar el transporte TCP solo para configurarla; ahora
         # cuelga de ``groups`` y aplica con o sin broadcast (migración groups-vs-broadcast).
-        self._behavior: str = groups_dict.get("behavior", "mention")
-        self._bot_username: str | None = groups_dict.get("bot_username")
-        self._rate_limit_max: int = int(groups_dict.get("rate_limiter", 5))
+        grupos = tg_cfg.groups
+        self._behavior: str = grupos.behavior
+        self._bot_username: str | None = grupos.bot_username
+        self._rate_limit_max: int = grupos.rate_limiter
         # Defaults preservados desde config para soportar `/ratelimit reset`.
         # Las mutaciones en runtime (vía comando) NO se persisten — al reiniciar
         # el daemon se vuelven a leer estos valores.
         self._rate_limit_max_default: int = self._rate_limit_max
-        self._rate_limit_window_default: int = int(groups_dict.get("rate_limiter_window", 30))
+        self._rate_limit_window_default: int = grupos.rate_limiter_window
 
-        # Config de broadcast (transporte TCP): el bot solo necesita los flags
-        # ``emit.*``. La topología (port/remote/auth) la consume el container al
-        # wirear el adapter — el bot no la lee.
-        broadcast_raw = tg_cfg.get("broadcast") or {}
-        if hasattr(broadcast_raw, "model_dump"):
-            broadcast_dict: dict = broadcast_raw.model_dump()
-        elif isinstance(broadcast_raw, dict):
-            broadcast_dict = broadcast_raw
-        else:
-            broadcast_dict = {}
-
-        # Flags por event_type para emisión al canal de broadcast.
-        # Defaults: solo assistant_response activo (backward-compat).
-        emit_dict: dict = broadcast_dict.get("emit") or {}
-        if not isinstance(emit_dict, dict):
-            emit_dict = {}
+        # Flags por event_type para emisión al canal de broadcast. La topología
+        # (port/remote/auth) la consume el container al wirear el adapter — el
+        # bot solo necesita saber QUÉ emitir.
         self._emit_flags: dict[str, bool] = {
-            "assistant_response": bool(emit_dict.get("assistant_response", True)),
-            "user_input_voice": bool(emit_dict.get("user_input_voice", False)),
-            "user_input_photo": bool(emit_dict.get("user_input_photo", False)),
+            "assistant_response": tg_cfg.emit.assistant_response,
+            "user_input_voice": tg_cfg.emit.user_input_voice,
+            "user_input_photo": tg_cfg.emit.user_input_photo,
         }
 
-        min_delay_cfg = groups_dict.get("min_delay_response")
-        max_delay_cfg = groups_dict.get("max_delay_response")
+        # Los delays sin declarar caen al default del módulo: la constante es del
+        # adapter, así que la resuelve el adapter (el VO los deja en None).
         self._group_min_delay: float = (
-            float(min_delay_cfg) if min_delay_cfg is not None else GROUP_RESPONSE_DELAY_MIN_SEC
+            grupos.min_delay if grupos.min_delay is not None else GROUP_RESPONSE_DELAY_MIN_SEC
         )
         self._group_max_delay: float = (
-            float(max_delay_cfg) if max_delay_cfg is not None else GROUP_RESPONSE_DELAY_MAX_SEC
+            grupos.max_delay if grupos.max_delay is not None else GROUP_RESPONSE_DELAY_MAX_SEC
         )
-
-        # reactions específico de grupos: si está seteado override, sino hereda del padre.
-        reactions_override = groups_dict.get("reactions")
-        self._group_reactions: bool = (
-            bool(reactions_override) if reactions_override is not None else self._reactions
-        )
+        self._group_reactions: bool = grupos.reactions
 
         # Tasks de flush por chat_id. Cada chat tiene a lo sumo uno corriendo:
         # mientras está vivo, los mensajes que lleguen se acumulan en el historial

@@ -36,6 +36,9 @@ def _container(tmp_path: Path, monkeypatch):
     (tmp_path / "setup_welcome_seen").touch()  # saltar el modal de bienvenida
     return build_setup_container(
         config_dir=cfg,
+        # El repo ya no resuelve el home: recibe ambos dirs del composition root.
+        # Este test usa el layout unificado (agents bajo config/), no el real.
+        agents_dir=cfg / "agents",
         global_schema=GlobalConfig,
         agent_schema=AgentConfig,
         channel_schemas={"telegram": TelegramChannelConfig},

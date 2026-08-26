@@ -11,6 +11,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from adapters.inbound.telegram.ports import TelegramChannelSettings
+
 
 @pytest.fixture
 def mock_container() -> MagicMock:
@@ -27,7 +29,9 @@ def agent_cfg() -> MagicMock:
     cfg.id = "dev"
     cfg.name = "Inaki"
     cfg.description = "Asistente"
-    cfg.telegram = {"token": "dummy-token", "allowed_user_ids": [], "reactions": False}
+    cfg.telegram = TelegramChannelSettings(
+        token="dummy-token", allowed_user_ids=(), reactions=False
+    )
     return cfg
 
 

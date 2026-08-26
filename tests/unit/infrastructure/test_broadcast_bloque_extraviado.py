@@ -23,6 +23,7 @@ import logging
 import pytest
 import yaml
 
+from core.domain.errors import ConfigError
 from infrastructure.config import load_agent_config
 
 
@@ -41,28 +42,33 @@ def _escribir_agente(agents_dir, cuerpo: dict) -> None:
 
 
 @pytest.mark.parametrize(
-    "cuerpo, esperado",
+    "cuerpo, esperado, sigue_cargando",
     [
         pytest.param(
             {"channels": {"telegram": {"token": "t"}}, "broadcast": BLOQUE},
             "broadcast (raíz del agente)",
+            True,
             id="raiz-del-agente",
         ),
         pytest.param(
             {"channels": {"telegram": {"token": "t"}, "broadcast": BLOQUE}},
             "channels.broadcast",
+            False,
             id="channels-broadcast",
         ),
     ],
 )
-def test_bloque_extraviado_avisa(tmp_path, caplog, cuerpo, esperado):
+def test_bloque_extraviado_avisa(tmp_path, caplog, cuerpo, esperado, sigue_cargando):
     caplog.set_level(logging.WARNING, logger="infrastructure.config_loader")
     agents_dir = tmp_path / "agents"
     _escribir_agente(agents_dir, cuerpo)
 
-    cfg = load_agent_config("inaki", agents_dir, dict(GLOBAL_MINIMO))
-
-    assert cfg is not None, "el agente debe seguir cargando — el aviso no rompe el arranque"
+    # Desde el chequeo top-level, AMBAS ubicaciones abortan: la raíz del agente
+    # es una clave desconocida y ``channels.broadcast`` un canal desconocido.
+    # El aviso corre ANTES del abort: el operador lee el path válido Y el error.
+    del sigue_cargando  # el parámetro documenta la conducta vieja; hoy ninguno carga
+    with pytest.raises(ConfigError):
+        load_agent_config("inaki", agents_dir, dict(GLOBAL_MINIMO))
     assert esperado in caplog.text
     assert "channels.telegram.broadcast" in caplog.text, (
         f"el aviso debe nombrar el path válido; dijo: {caplog.text!r}"

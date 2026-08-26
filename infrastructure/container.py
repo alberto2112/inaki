@@ -29,6 +29,9 @@ from adapters.outbound.delegation.background_queue_adapter import (
 from adapters.inbound.telegram.ports import (
     TelegramBotPorts,
     TelegramBotSettings,
+    TelegramChannelSettings,
+    TelegramEmitFlags,
+    TelegramGroupSettings,
     TranscriptionLimits,
 )
 from adapters.outbound.history.sqlite_history_store import (
@@ -63,7 +66,7 @@ from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRep
 from adapters.outbound.embedding.sqlite_embedding_cache import SqliteEmbeddingCache
 from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
 from adapters.outbound.tools.tool_registry import ToolRegistry
-from core.domain.errors import AgentNotFoundError, InakiError
+from core.domain.errors import AgentNotFoundError, ConfigError, InakiError
 from core.domain.services.broadcast_buffer import BroadcastBuffer
 from core.domain.value_objects.channel_context import current_channel_context
 from core.domain.services.rate_limiter import FixedWindowRateLimiter
@@ -87,6 +90,7 @@ from core.domain.value_objects.agent_settings import (
     ReconciliationSettings,
     RunAgentSettings,
 )
+from core.domain.config_merge import deep_merge, resolver_inherit
 from infrastructure.config import (
     AgentConfig,
     AgentRegistry,
@@ -96,10 +100,8 @@ from infrastructure.config import (
     PhotosConfig,
     SUBAGENT_DEFAULTS,
     TelegramChannelConfig,
-    _deep_merge,
     assemble_agent_config,
     migrate_tool_config_to_own_file,
-    resolve_inherit,
 )
 from infrastructure.daemon_reloader import DaemonReloader
 from infrastructure.factories.embedding_factory import EmbeddingProviderFactory
@@ -140,9 +142,9 @@ def build_memory_settings(memories_cfg: MemoriesConfig) -> MemorySettings:
 
 
 def build_run_agent_settings(cfg: AgentConfig) -> RunAgentSettings:
-    tg_cfg = cfg.channels.get("telegram", {}) or {}
+    tg_cfg = cfg.telegram
     timestamp_channels = (
-        frozenset({"telegram"}) if tg_cfg.get("add_llm_timestamp", False) else frozenset()
+        frozenset({"telegram"}) if tg_cfg is not None and tg_cfg.add_llm_timestamp else frozenset()
     )
     return RunAgentSettings(
         agent_id=cfg.id,
@@ -183,6 +185,55 @@ def build_photos_settings(photos_cfg: PhotosConfig) -> PhotosSettings:
     )
 
 
+def build_telegram_channel_settings(
+    tg_cfg: TelegramChannelConfig | None,
+) -> TelegramChannelSettings:
+    """Mapea el bloque ``channels.telegram`` ya validado → VO del adapter.
+
+    Único punto donde se traduce config → slice del bot. Resuelve acá dos
+    herencias que antes se rehacían dentro del bot: el ``reactions`` de grupos
+    (override si existe, si no el del canal) y los flags de ``broadcast.emit``.
+    """
+    if tg_cfg is None:
+        return TelegramChannelSettings()
+
+    grupos = tg_cfg.groups
+    group_settings = (
+        TelegramGroupSettings(
+            behavior=grupos.behavior,
+            bot_username=grupos.bot_username,
+            rate_limiter=grupos.rate_limiter,
+            rate_limiter_window=grupos.rate_limiter_window,
+            min_delay=grupos.min_delay_response,
+            max_delay=grupos.max_delay_response,
+            reactions=(tg_cfg.reactions if grupos.reactions is None else bool(grupos.reactions)),
+        )
+        if grupos is not None
+        else TelegramGroupSettings(reactions=tg_cfg.reactions)
+    )
+
+    emit_cfg = tg_cfg.broadcast.emit if tg_cfg.broadcast is not None else None
+    emit_flags = (
+        TelegramEmitFlags(
+            assistant_response=emit_cfg.assistant_response,
+            user_input_voice=emit_cfg.user_input_voice,
+            user_input_photo=emit_cfg.user_input_photo,
+        )
+        if emit_cfg is not None
+        else TelegramEmitFlags()
+    )
+
+    return TelegramChannelSettings(
+        token=tg_cfg.token,
+        allowed_user_ids=tuple(str(uid) for uid in tg_cfg.allowed_user_ids),
+        allowed_chat_ids=tuple(str(cid) for cid in tg_cfg.allowed_chat_ids),
+        reactions=tg_cfg.reactions,
+        voice_enabled=tg_cfg.voice_enabled,
+        groups=group_settings,
+        emit=emit_flags,
+    )
+
+
 def build_telegram_bot_settings(cfg: AgentConfig) -> TelegramBotSettings:
     """Mapea AgentConfig → slice de config que consume el TelegramBot."""
     transcription = None
@@ -197,7 +248,7 @@ def build_telegram_bot_settings(cfg: AgentConfig) -> TelegramBotSettings:
         description=cfg.description,
         workspace_path=cfg.workspace.path,
         transcription=transcription,
-        telegram=cfg.channels.get("telegram") or {},
+        telegram=build_telegram_channel_settings(cfg.telegram),
     )
 
 
@@ -697,12 +748,11 @@ class AgentContainer:
         - Si `voice_enabled` está activo y `cfg.transcription` es `None` →
           error claro en bootstrap (no degradamos silenciosamente).
         """
-        tg_cfg = cfg.channels.get("telegram")
+        tg_cfg = cfg.telegram
         if tg_cfg is None:
             return None
 
-        voice_enabled = tg_cfg.get("voice_enabled", True)
-        if voice_enabled is False:
+        if tg_cfg.voice_enabled is False:
             return None
 
         if cfg.transcription is None:
@@ -853,7 +903,7 @@ class AgentContainer:
         su padre). Es one-shot y se descarta al terminar (no persiste estado).
 
         Resolución de config:
-          ``merged = resolve_inherit(_deep_merge(SUBAGENT_DEFAULTS, definition_raw), parent_raw)``
+          ``merged = resolver_inherit(deep_merge(SUBAGENT_DEFAULTS, definition_raw), parent_raw)``
         con ``parent_raw`` = config EFECTIVA del caller. El hijo hereda el registry
         ``providers`` del caller (corre con sus credenciales; un sub con providers propios
         los pisa) para que un override de ``llm.provider`` resuelva.
@@ -866,10 +916,10 @@ class AgentContainer:
             → reusar la instancia ``self._llm``; si difiere → instancia nueva vía factory.
         """
         parent_raw = self.agent_config.model_dump()
-        merged = resolve_inherit(_deep_merge(SUBAGENT_DEFAULTS, definition_raw), parent_raw)
+        merged = resolver_inherit(deep_merge(SUBAGENT_DEFAULTS, definition_raw), parent_raw)
         # Credenciales: el hijo hereda el registry `providers` del caller como base; un
         # sub que declare providers propios los pisa (deep-merge child sobre parent).
-        merged["providers"] = _deep_merge(
+        merged["providers"] = deep_merge(
             parent_raw.get("providers") or {}, merged.get("providers") or {}
         )
         child_cfg = assemble_agent_config(merged)
@@ -948,8 +998,8 @@ class AgentContainer:
         if self._telegram_tools_wired:
             return
 
-        tg_cfg = self.agent_config.channels.get("telegram")
-        if tg_cfg is None or not tg_cfg.get("token"):
+        tg_cfg = self.agent_config.telegram
+        if tg_cfg is None or not tg_cfg.token:
             self._telegram_tools_wired = True
             return
         if telegram_file_repo is None:
@@ -1090,7 +1140,17 @@ class AgentContainer:
                 photos_cfg.scene.provider,
             )
         except Exception as exc:
-            logger.error("Error en wire_photos para agente '%s': %s", self.agent_config.id, exc)
+            # DEGRADACIÓN DELIBERADA, no descuido: el stack de visión (InsightFace,
+            # modelos ONNX) es una dependencia externa pesada que puede faltar en el
+            # host sin que el resto de la config esté mal. Se degrada esta capacidad
+            # y solo esta — a diferencia del wiring de canales/scheduler/delegación,
+            # que son fatales porque dejarían muda una capacidad declarada.
+            logger.error(
+                "Agente '%s': el procesamiento de fotos QUEDA DESHABILITADO — %s. "
+                "El resto del agente arranca normal; las fotos entrantes no se analizan.",
+                self.agent_config.id,
+                exc,
+            )
             self._photos_wired = True
 
     def _build_scene_describer(self, photos_cfg):
@@ -1484,7 +1544,12 @@ class AppContainer:
                 )
                 logger.info("AgentContainer creado para '%s'", agent_cfg.id)
             except Exception as exc:
-                logger.error("Error creando container para agente '%s': %s", agent_cfg.id, exc)
+                # Mismo criterio que ``load_agent_config``: un agente que no se
+                # construye es indistinguible de uno que nunca se configuró.
+                raise ConfigError(
+                    f"Agente '{agent_cfg.id}': no se pudo construir su container. "
+                    f"El agente quedaría declarado pero inexistente. Detalle: {exc}"
+                ) from exc
 
     def _build_channel_router(self) -> None:
         # Router de canales — construido ANTES que la cola de background-delegation
@@ -1561,7 +1626,10 @@ class AppContainer:
                     get_sub_agent_raw=self.registry.get_sub_agent_raw,
                 )
             except Exception as exc:
-                logger.error("Error en wire_delegation para agente '%s': %s", agent_id, exc)
+                raise ConfigError(
+                    f"Agente '{agent_id}': falló el wiring de delegación. El agente "
+                    f"declara 'delegation' pero no podría delegar. Detalle: {exc}"
+                ) from exc
 
     def _build_consolidation(self) -> None:
         # Global consolidation use case — itera agentes habilitados con delay.
@@ -1642,7 +1710,10 @@ class AppContainer:
                     self.schedule_task_uc, self.scheduler_service, user_timezone
                 )
             except Exception as exc:
-                logger.error("Error en wire_scheduler para agente '%s': %s", agent_id, exc)
+                raise ConfigError(
+                    f"Agente '{agent_id}': falló el wiring del scheduler. Sus tareas "
+                    f"programadas no se ejecutarían. Detalle: {exc}"
+                ) from exc
 
     def _wire_broadcast_adapters(self) -> None:
         # Wire de recursos telegram per-agente — requiere todos los containers ya
@@ -1655,7 +1726,12 @@ class AppContainer:
             try:
                 self._wire_broadcast_for_agent(agent_cfg)
             except Exception as exc:
-                logger.error("Error en wire_broadcast para agente '%s': %s", agent_cfg.id, exc)
+                # Ver nota `broadcast-arranque-observable`: este wiring resuelve el
+                # transporte TCP Y el rate limiter de grupos. Degradarlo dejaba al
+                # daemon arrancando sano con el puerto cerrado.
+                raise ConfigError(
+                    f"Agente '{agent_cfg.id}': falló el wiring de broadcast/grupos. Detalle: {exc}"
+                ) from exc
 
     def _wire_photos(self) -> None:
         # Wire photos — singletons compartidos (vision lazy, face registry)
@@ -1690,7 +1766,14 @@ class AppContainer:
                     "Photos singletons inicializados (faces.db=%s, vision=lazy)", faces_db_path
                 )
             except Exception as exc:
-                logger.error("Error inicializando photos singletons: %s", exc)
+                # Ídem: dependencia externa pesada. Sin estos singletons ningún
+                # agente analiza fotos, pero el daemon sigue siendo útil.
+                logger.error(
+                    "Reconocimiento facial y descripción de escena QUEDAN DESHABILITADOS "
+                    "para TODOS los agentes — no se pudieron inicializar los singletons "
+                    "de photos: %s",
+                    exc,
+                )
 
         for agent_id, container in self.agents.items():
             if self.registry.is_sub_agent(agent_id):
@@ -1702,7 +1785,11 @@ class AppContainer:
                     self.global_config,
                 )
             except Exception as exc:
-                logger.error("Error en wire_photos para agente '%s': %s", agent_id, exc)
+                logger.error(
+                    "Agente '%s': el procesamiento de fotos QUEDA DESHABILITADO — %s",
+                    agent_id,
+                    exc,
+                )
 
     def _wire_telegram_tools(self) -> None:
         # Wire telegram tools (send_to_telegram + download_from_telegram).
@@ -1710,8 +1797,7 @@ class AppContainer:
         # DB en la misma carpeta que history.db / faces.db.
         self._telegram_file_repo = None
         if any(
-            (cfg.channels.get("telegram", {}) or {}).get("token")
-            for cfg in self.registry.list_regular()
+            cfg.telegram is not None and cfg.telegram.token for cfg in self.registry.list_regular()
         ):
             from pathlib import Path
 
@@ -1741,7 +1827,10 @@ class AppContainer:
                     self._telegram_file_repo,
                 )
             except Exception as exc:
-                logger.error("Error en wire_telegram_tools para agente '%s': %s", agent_id, exc)
+                raise ConfigError(
+                    f"Agente '{agent_id}': falló el wiring de las tools de Telegram. "
+                    f"El agente tiene canal telegram pero no podría usarlas. Detalle: {exc}"
+                ) from exc
 
     def _wire_memory_extractors(self) -> None:
         # Wire memory extractor sub-agents.
@@ -1865,27 +1954,13 @@ class AppContainer:
         if container is None:
             return
 
-        tg_raw = agent_cfg.channels.get("telegram")
-        if tg_raw is None:
-            return
-
-        # Coercionar a TelegramChannelConfig para acceso tipado.
-        try:
-            tg_cfg = TelegramChannelConfig.model_validate(tg_raw)
-        except Exception as exc:
-            # ERROR, no WARNING: este return se lleva puestos el transporte de
-            # broadcast Y el rate limiter de grupos, y el daemon sigue arrancando
-            # como si nada. Un bloque `broadcast:` en formato viejo (`port:` suelto,
-            # `remote:`) o sin `auth` cae acá — el operador ve el bot online, el
-            # puerto cerrado, y ninguna pista de por qué.
-            logger.error(
-                "Agente '%s': channels.telegram NO valida — se omiten el transporte de "
-                "broadcast y el rate limiter de grupos. Revisá la topología "
-                "(broadcast.server.port XOR broadcast.client.host+port, broadcast.auth "
-                "obligatorio, puertos 1024..65535). Detalle: %s",
-                agent_cfg.id,
-                exc,
-            )
+        # El bloque llega validado desde ``AgentConfig``: una topología inválida
+        # (formato viejo con `port:` suelto, `remote:`, o sin `auth`) ya abortó el
+        # arranque con ConfigError. Antes se revalidaba acá dentro de un
+        # try/except que, al fallar, se llevaba en silencio el transporte de
+        # broadcast Y el rate limiter de grupos con el daemon arrancando sano.
+        tg_cfg = agent_cfg.telegram
+        if tg_cfg is None:
             return
 
         # (1) Rate limiter de grupos — solo behavior=autonomous lo necesita

@@ -1,14 +1,18 @@
-"""Primitivas de merge de capas de configuración con soporte de eliminación.
+"""Traducción de la intención de la UI a los primitivos del motor de merge.
 
-Compartido por ``UpdateAgentLayerUseCase`` y ``UpdateGlobalLayerUseCase`` para
-que el borrado de claves (vía el tri-estado ``INHERIT``) funcione UNIFORME en
-las capas de agente y globales — antes solo el carril de agente lo soportaba.
+El merge en sí vive en ``core/domain/config_merge`` — acá solo se traduce lo
+que el setup TUI quiere decir sobre un campo a los tres primitivos que el motor
+ya entiende:
 
-El tri-estado (``CampoTriestado`` / ``TristadoValor``) distingue tres
-intenciones sobre un campo:
-- ``INHERIT`` → eliminar la clave del YAML (ausente = heredar de la capa previa).
-- ``OVERRIDE_VALOR`` → escribir un valor explícito.
-- ``OVERRIDE_NULL`` → escribir la clave con ``null`` explícito.
+| Intención de la UI | Primitivo del motor |
+|---|---|
+| ``INHERIT`` — "que lo herede de la capa previa" | ``SENTINEL_ELIMINAR`` (saca la clave) |
+| ``OVERRIDE_NULL`` — "quiero un null explícito" | ``None`` |
+| ``OVERRIDE_VALOR`` — "quiero este valor" | el valor |
+
+El tri-estado existe porque en un YAML "ausente" y "null" NO son lo mismo:
+ausente hereda, null pisa con nada. La UI necesita poder pedir las dos cosas —
+y también borrar, que es cómo se vuelve a "ausente".
 """
 
 from __future__ import annotations
@@ -16,15 +20,22 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-# Sentinel que diferencia "no tocar este campo" de "borrar este campo".
-SENTINEL_ELIMINAR = object()
+from core.domain.config_merge import SENTINEL_ELIMINAR, deep_merge
+
+__all__ = [
+    "SENTINEL_ELIMINAR",
+    "CampoTriestado",
+    "TristadoValor",
+    "deep_merge_con_eliminaciones",
+    "resolver_tristados",
+]
 
 
 class TristadoValor(str, Enum):
     """
     Tri-estado para campos que distinguen ausente vs null vs valor explícito.
 
-    Aplica a ``memory.llm.*`` en la config de agentes y, de forma general, a
+    Aplica a ``memories.llm.*`` en la config de agentes y, de forma general, a
     cualquier borrado de clave por path (ver ``setup_tui/_cambios.py``):
     - ``INHERIT`` → campo ausente del YAML (hereda de la capa previa).
     - ``OVERRIDE_VALOR`` → campo presente con valor explícito.
@@ -65,20 +76,7 @@ def resolver_tristados(cambios: dict[str, Any]) -> dict[str, Any]:
     return resultado
 
 
-def deep_merge_con_eliminaciones(base: dict, override: dict) -> dict:
-    """
-    Merge recursivo que respeta el sentinel de eliminación.
-
-    - Si el valor en override es ``SENTINEL_ELIMINAR`` → elimina la clave de base.
-    - Si es dict en ambos → merge recursivo.
-    - Caso contrario → override pisa base.
-    """
-    result = dict(base)
-    for key, value in override.items():
-        if value is SENTINEL_ELIMINAR:
-            result.pop(key, None)
-        elif isinstance(value, dict) and isinstance(result.get(key), dict):
-            result[key] = deep_merge_con_eliminaciones(result[key], value)
-        else:
-            result[key] = value
-    return result
+# El carril de edición usa exactamente el mismo merge que el de carga: el
+# sentinel de borrado ya es parte de la semántica del motor, no un añadido de
+# esta capa. El alias conserva el nombre histórico de los use cases.
+deep_merge_con_eliminaciones = deep_merge

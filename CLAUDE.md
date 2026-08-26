@@ -21,6 +21,8 @@ pytest                           # all tests
 pytest tests/unit/               # unit only
 pytest tests/integration/        # integration only
 pytest -k test_name              # single test
+inaki config show --origin       # config efectiva con la capa de cada valor
+inaki config show --secrets      # qué credenciales están puestas y cuáles faltan
 inaki                            # interactive chat (default agent)
 inaki chat --agent dev           # specific agent
 inaki daemon                     # systemd service mode
@@ -57,7 +59,9 @@ Resumen operativo. El texto completo, con el porqué y los antipatrones, está e
    y se expone por tres superficies que comparten lógica: use case en `core/` → tool del
    LLM → gateway admin único (`POST /admin/tool/invoke`, cliente `inaki tool <name>`). Un
    **canal** (Telegram, mañana Slack) es un inbound adapter que solo traduce su I/O a un
-   turno. **Antipatrón**: que cada canal implemente pasarelas de los CLI — es una
+   turno. Un canal nuevo se declara en **una** línea: su modelo en el schema + su entrada
+   en `CHANNEL_SCHEMAS` (`infrastructure/config_schema.py`). De ahí lo leen el loader (que
+   lo valida), el setup TUI y el generador de `config-reference.md`. **Antipatrón**: que cada canal implemente pasarelas de los CLI — es una
    explosión N×M. Excepción CERRADA: los slash commands de Telegram son el panel del
    OPERADOR (admin-only, deterministas, sin LLM); extender uno existente es aceptable,
    crear uno nuevo para una capacidad nueva NO, y **NUNCA replicarlos en un canal nuevo**.
@@ -84,19 +88,28 @@ Resumen operativo. El texto completo, con el porqué y los antipatrones, está e
 
 ## Configuration
 
-Config en **`~/.inaki/`** (no en el repo). El primer arranque hace bootstrap desde
-`config/global.example.yaml`. Relocalizable entera con `--home DIR` / `INAKI_HOME`.
+Config en **`~/.inaki/`** (no en el repo). El primer arranque renderiza `global.yaml`
+desde los defaults del schema (`config/global.example.yaml` es referencia autogenerada,
+no se copia ni se lee). Relocalizable entera con `--home DIR` / `INAKI_HOME`.
 
-**Merge de 4 capas** (cada capa pisa solo los campos que declara):
+**Merge de 2 capas** — `global.yaml` es la **base** y cada capa siguiente completa o
+pisa solo los campos que declara (nunca al revés):
 
 1. `~/.inaki/config/global.yaml`
-2. `~/.inaki/config/global.secrets.yaml`
-3. `~/.inaki/agents/{id}.yaml`
-4. `~/.inaki/agents/{id}.secrets.yaml`
+2. `~/.inaki/agents/{id}.yaml`
 
-Los secretos son solo YAML (sin env vars). Los `*.secrets.yaml` están gitignoreados —
-**nunca commitearlos**. `config/tool_config.yaml` es del daemon y **no participa** del
-merge (ver Tool Config Protocol en [`docs/convenciones.md`](docs/convenciones.md)).
+La semántica completa (listas, `null`, borrado, conflictos de forma) la define
+`core/domain/config_merge.py` — motor único de los cuatro carriles: carga, edición del
+setup TUI, `get_effective_config` y sub-agentes efímeros.
+
+Las credenciales viven en esas mismas capas (solo YAML, sin env vars): los ficheros se
+crean con permisos **600** y están gitignoreados — **nunca commitearlos**. Un campo es
+secreto por su marca en el schema (`kind == "secret"`, que enmascara en la TUI), **no**
+por el fichero donde se escribe: **NUNCA** vuelvas a expresar la sensibilidad de un dato
+como un split de ficheros. → `secrets-layer-eradication`
+
+`config/tool_config.yaml` es del daemon y **no participa** del merge (ver Tool Config
+Protocol en [`docs/convenciones.md`](docs/convenciones.md)).
 
 ## Testing
 
@@ -171,6 +184,30 @@ Cada una salió de un fallo en producción. El caso completo está en
 - **NUNCA** agregar `index()` a `IKnowledgeSource`: rompería las fuentes read-only.
 - **NUNCA** inventar un formato de persistencia por tipo de media o por canal — la
   gramática se extiende en `core/domain/value_objects/attachment.py`. → `attachment-grammar`
+- **NUNCA** dejar un bloque de config sin tipar "para que el merge no se queje": el
+  merge opera sobre dicts crudos ANTES de validar, así que tipar el destino no le
+  cuesta nada. Sin tipo no se valida jamás, sus defaults se duplican en cada
+  consumidor, y ninguna herramienta que lea el schema puede verlo.
+  → `channels-validados-al-cargar`
+- **NUNCA** escribir un segundo merge de config. La semántica vive UNA vez en
+  `core/domain/config_merge.py` (dict⊕dict funde, lista reemplaza, `null` pisa,
+  sentinel borra, cambiar de forma entre capas es error). Si no alcanza para un caso
+  nuevo, **extendé el motor**; no nazca otro al lado. → `motor-de-merge-unico`
+- **NUNCA** borrar ni renombrar un campo del schema sin migración: desde que las
+  claves desconocidas abortan el arranque, quitar un campo que el bootstrap escribió
+  alguna vez rompe TODAS las instalaciones existentes. → `config-limpieza-final`
+- **NUNCA** documentar un parámetro de config fuera de su docstring en el schema: de
+  ahí salen `config-reference.md`, `global.example.yaml` y la ayuda del setup TUI
+  (`inaki gen-docs` los regenera, y un drift test los guarda). Cualquier otra copia
+  nace condenada a divergir. → `docs-de-config-autogeneradas`
+- **NUNCA** construir una interfaz de config sobre los ficheros crudos: se construye
+  sobre la config EFECTIVA con origen (`ShowEffectiveConfigUseCase`, `inaki config
+  show`). Sobre ficheros crudos + semántica de merge es el problema que el setup TUI
+  lleva 5.000 líneas peleando. → `config-show-effective`
+- **NUNCA** sanitizar un valor de config a un default "para no romper el arranque":
+  un default silencioso que contradice el YAML es un bug que no se puede diagnosticar.
+  La única degradación legítima es la de una **dependencia externa** (no de la config),
+  y el log tiene que nombrar qué capacidad queda muda. → `config-falla-ruidoso`
 - **NUNCA** volver al rol implícito por presencia de campo en la config de broadcast, ni
   duplicar `auth` por rol. → `broadcast-topology-config`
 - **NUNCA** dejar el `bind()` de un puerto dentro de una tarea de fondo mientras el caller

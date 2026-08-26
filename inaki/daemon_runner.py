@@ -41,7 +41,7 @@ async def _run_admin_server(app_container, admin_cfg, servers: list) -> None:
     if admin_cfg.auth_key is None:
         logger.warning(
             "Admin auth_key no configurada — endpoints protegidos devolverán 403. "
-            "Configurala en global.secrets.yaml: admin.auth_key"
+            "Configurala en global.yaml: admin.auth_key"
         )
 
     app = create_admin_app(app_container, admin_auth_key=admin_cfg.auth_key)
@@ -151,8 +151,8 @@ def _build_channel_tasks(app_container, registry) -> tuple[list[asyncio.Task], l
 
     # Telegram bots
     for agent_cfg in registry.agents_with_channel("telegram"):
-        tg_cfg = agent_cfg.channels.get("telegram", {})
-        if not tg_cfg.get("token"):
+        tg_cfg = agent_cfg.telegram
+        if tg_cfg is None or not tg_cfg.token:
             logger.warning(
                 "Agente '%s': channels.telegram.token no configurado — bot Telegram no levantado",
                 agent_cfg.id,

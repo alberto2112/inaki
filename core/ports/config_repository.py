@@ -15,17 +15,18 @@ from typing import Protocol, runtime_checkable
 class LayerName(str, Enum):
     """Identifica cada una de las capas de configuración.
 
-    Las capas ``SUB_AGENT*`` apuntan a ``agents/sub-agents/{id}.yaml`` —
-    mismo formato que un agente regular pero en el subdirectorio que el
-    runtime reserva para agentes de solo-delegación (sin canales).
+    La capa ``SUB_AGENT`` apunta a ``agents/sub-agents/{id}.yaml`` — mismo
+    formato que un agente regular pero en el subdirectorio que el runtime
+    reserva para agentes de solo-delegación (sin canales).
+
+    No hay capas de secrets: las credenciales viven en estas mismas capas
+    (ficheros con permisos 600). Un campo es secreto por su marca en el schema
+    (``kind == "secret"``), no por el archivo donde está escrito.
     """
 
     GLOBAL = "global"
-    GLOBAL_SECRETS = "global.secrets"
     AGENT = "agent"
-    AGENT_SECRETS = "agent.secrets"
     SUB_AGENT = "sub_agent"
-    SUB_AGENT_SECRETS = "sub_agent.secrets"
 
 
 @runtime_checkable
@@ -33,7 +34,7 @@ class IConfigRepository(Protocol):
     """
     Abstracción de R/W de las capas YAML de ``~/.inaki/config/``.
 
-    Cada método trabaja sobre UNA capa a la vez. El merge de 4 capas
+    Cada método trabaja sobre UNA capa a la vez. El merge de las capas
     es responsabilidad de los use cases (``get_effective_config``).
     """
 
@@ -45,7 +46,7 @@ class IConfigRepository(Protocol):
 
         Args:
             layer: Capa a leer.
-            agent_id: Requerido para capas de agente (``AGENT``, ``AGENT_SECRETS``, ``SUB_AGENT``, ``SUB_AGENT_SECRETS``).
+            agent_id: Requerido para capas de agente (``AGENT``, ``SUB_AGENT``).
         """
         ...
 
@@ -59,7 +60,7 @@ class IConfigRepository(Protocol):
         Args:
             layer: Capa de destino.
             data: Contenido completo a escribir (CommentedMap o dict plano).
-            agent_id: Requerido para capas de agente (``AGENT``, ``AGENT_SECRETS``, ``SUB_AGENT``, ``SUB_AGENT_SECRETS``).
+            agent_id: Requerido para capas de agente (``AGENT``, ``SUB_AGENT``).
         """
         ...
 
@@ -68,7 +69,7 @@ class IConfigRepository(Protocol):
         Enumera los ids de agentes regulares disponibles en ``agents_dir``.
 
         Retorna una lista ordenada de ids (stems de ``{id}.yaml``),
-        excluyendo ``*.secrets.yaml`` y ``*.example.yaml``.
+        excluyendo ``*.example.yaml``.
         Lista vacía si no existe ningún agente.
 
         NO incluye los sub-agentes (``agents/sub-agents/``) — usar
@@ -80,8 +81,8 @@ class IConfigRepository(Protocol):
         """
         Enumera los ids de sub-agentes en ``agents_dir/sub-agents/``.
 
-        Mismo contrato que ``list_agents`` (ids ordenados, excluye secrets y
-        example) pero sobre el subdirectorio de sub-agentes. Lista vacía si el
+        Mismo contrato que ``list_agents`` (ids ordenados, excluye example)
+        pero sobre el subdirectorio de sub-agentes. Lista vacía si el
         subdirectorio no existe.
         """
         ...
@@ -105,7 +106,7 @@ class IConfigRepository(Protocol):
 
         Args:
             layer: Capa a eliminar.
-            agent_id: Requerido para capas de agente (``AGENT``, ``AGENT_SECRETS``, ``SUB_AGENT``, ``SUB_AGENT_SECRETS``).
+            agent_id: Requerido para capas de agente (``AGENT``, ``SUB_AGENT``).
         """
         ...
 

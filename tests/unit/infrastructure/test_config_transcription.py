@@ -4,7 +4,7 @@ Tras el refactor a providers top-level:
 - ``TranscriptionConfig`` ya NO tiene ``api_key`` / ``base_url``. Las creds
   viven en el registry ``providers:`` nivel superior.
 - El merge 4-layer del agente aporta el registry ``providers`` (global + override
-  del agente + secrets).
+  del agente).
 
 Cubre:
 - Defaults de TranscriptionConfig (sin creds).
@@ -19,12 +19,12 @@ from pathlib import Path
 
 import yaml
 
+from infrastructure.config_loader import _render_default_global_yaml
 from infrastructure.config import (
     EmbeddingConfig,
     GlobalConfig,
     LLMConfig,
     TranscriptionConfig,
-    _render_default_global_yaml,
     load_agent_config,
     load_global_config,
 )
@@ -107,8 +107,8 @@ def test_load_global_config_parsea_bloque_transcription(tmp_path: Path) -> None:
     assert raw["providers"]["groq"]["api_key"] == "sk-g"
 
 
-def test_load_agent_config_mergea_transcription_y_providers_4_layers(tmp_path: Path) -> None:
-    """Global define provider+model; el agente overridea model; secrets aporta api_key al registry."""
+def test_load_agent_config_mergea_transcription_y_providers(tmp_path: Path) -> None:
+    """Global define provider+model; el agente overridea model y aporta api_key al registry."""
     cfg_dir = tmp_path / "config"
     cfg_dir.mkdir()
     agents_dir = tmp_path / "agents"
@@ -130,10 +130,7 @@ def test_load_agent_config_mergea_transcription_y_providers_4_layers(tmp_path: P
         "name: Dev\n"
         "description: d\n"
         "system_prompt: p\n"
-        "transcription: {model: whisper-large-v3}\n",
-        encoding="utf-8",
-    )
-    (agents_dir / "dev.secrets.yaml").write_text(
+        "transcription: {model: whisper-large-v3}\n"
         "providers:\n  groq: {api_key: sk-agent}\n",
         encoding="utf-8",
     )
@@ -144,7 +141,7 @@ def test_load_agent_config_mergea_transcription_y_providers_4_layers(tmp_path: P
     # provider heredado, model overrideado por agente
     assert agent.transcription.provider == "groq"
     assert agent.transcription.model == "whisper-large-v3"
-    # api_key vive en el registry — mergeado desde los secrets del agente.
+    # api_key vive en el registry — declarada en la capa del agente.
     assert "groq" in agent.providers
     assert agent.providers["groq"].api_key == "sk-agent"
 
@@ -169,7 +166,6 @@ def test_agent_config_sin_transcription_queda_en_none(tmp_path: Path) -> None:
         "id: dev\nname: Dev\ndescription: d\nsystem_prompt: p\n",
         encoding="utf-8",
     )
-    (agents_dir / "dev.secrets.yaml").write_text("", encoding="utf-8")
 
     agent = load_agent_config("dev", agents_dir, global_raw)
     assert agent is not None

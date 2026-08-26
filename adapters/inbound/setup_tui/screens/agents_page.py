@@ -164,11 +164,12 @@ class _CloneAgentModal(ModalScreen[str | None]):
 # ---------------------------------------------------------------------------
 
 
-class _ConfirmDeleteAgentModal(ModalScreen[str | None]):
+class _ConfirmDeleteAgentModal(ModalScreen[bool]):
     """Modal de confirmación para eliminar un agente.
 
-    Retorna ``"solo_yaml"`` para eliminar solo el YAML principal,
-    ``"con_secrets"`` para eliminar YAML + secrets, o ``None`` para cancelar.
+    Retorna ``True`` para eliminar ``agents/{id}.yaml`` (que desde la
+    erradicación de los ``*.secrets.yaml`` incluye sus credenciales), o
+    ``False`` para cancelar.
     """
 
     DEFAULT_CSS = (
@@ -187,14 +188,12 @@ class _ConfirmDeleteAgentModal(ModalScreen[str | None]):
 
     BINDINGS = [
         Binding("escape", "cancel", show=False),
-        Binding("y", "solo_yaml", show=False),
-        Binding("s", "con_secrets", show=False),
+        Binding("y", "confirmar", show=False),
     ]
 
-    def __init__(self, agent_id: str, tiene_secrets: bool) -> None:
+    def __init__(self, agent_id: str) -> None:
         super().__init__()
         self._agent_id = agent_id
-        self._tiene_secrets = tiene_secrets
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
@@ -203,27 +202,19 @@ class _ConfirmDeleteAgentModal(ModalScreen[str | None]):
                 classes="titulo",
             )
             yield Label(
-                "[bold]y[/bold]  [dim]eliminar solo agents/{id}.yaml[/dim]",
+                "[bold]y[/bold]  [dim]eliminar el YAML del agente (con sus credenciales)[/dim]",
                 classes="opcion",
             )
-            if self._tiene_secrets:
-                yield Label(
-                    "[bold]s[/bold]  [dim]eliminar yaml + secrets.yaml[/dim]",
-                    classes="opcion",
-                )
             yield Label(
                 "[bold]esc[/bold] [dim]cancelar[/dim]",
                 classes="footer",
             )
 
-    def action_solo_yaml(self) -> None:
-        self.dismiss("solo_yaml")
-
-    def action_con_secrets(self) -> None:
-        self.dismiss("con_secrets")
+    def action_confirmar(self) -> None:
+        self.dismiss(True)
 
     def action_cancel(self) -> None:
-        self.dismiss(None)
+        self.dismiss(False)
 
 
 # ---------------------------------------------------------------------------
@@ -262,10 +253,6 @@ class AgentsPage(BasePage):
     @property
     def _main_layer(self) -> LayerName:
         return LayerName.SUB_AGENT if self._is_sub_agent else LayerName.AGENT
-
-    @property
-    def _secrets_layer(self) -> LayerName:
-        return LayerName.SUB_AGENT_SECRETS if self._is_sub_agent else LayerName.AGENT_SECRETS
 
     @property
     def _kind_label(self) -> str:
@@ -417,23 +404,17 @@ class AgentsPage(BasePage):
         if self._container is None:
             return
 
-        tiene_secrets = self._container.repo.layer_exists(self._secrets_layer, agent_id=agent_id)
-
         self.app.push_screen(
-            _ConfirmDeleteAgentModal(agent_id, tiene_secrets),
-            lambda resultado: self._after_delete(agent_id, resultado),
+            _ConfirmDeleteAgentModal(agent_id),
+            lambda confirmado: self._after_delete(agent_id, confirmado),
         )
 
-    def _after_delete(self, agent_id: str, resultado: str | None) -> None:
-        if resultado is None or self._container is None:
+    def _after_delete(self, agent_id: str, confirmado: bool | None) -> None:
+        if not confirmado or self._container is None:
             return
 
         try:
             self._container.delete_agent.execute(agent_id, layer=self._main_layer)
-            if resultado == "con_secrets":
-                self._container.delete_agent.execute_secrets(
-                    agent_id, secrets_layer=self._secrets_layer
-                )
             self.app.notify(
                 f"{self._kind_label} '{agent_id}' eliminado",
                 title=self._section_title.lower(),

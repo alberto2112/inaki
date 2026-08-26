@@ -36,7 +36,7 @@ def check_admin_auth(request: Request) -> None:
     if auth_key is None:
         raise HTTPException(
             status_code=403,
-            detail="Admin auth_key no configurada. Agregala en global.secrets.yaml.",
+            detail="Admin auth_key no configurada. Agregala en global.yaml.",
         )
     provista = request.headers.get("X-Admin-Key")
     # compare_digest: comparación en tiempo constante — un `!=` corta en el

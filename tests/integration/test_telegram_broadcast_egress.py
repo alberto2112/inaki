@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from adapters.inbound.telegram.bot import TelegramBot
+from adapters.inbound.telegram.ports import TelegramChannelSettings, TelegramGroupSettings
 from core.domain.services.rate_limiter import FixedWindowRateLimiter
 
 
@@ -33,17 +34,17 @@ def _make_agent_cfg(behavior: str = "mention") -> MagicMock:
     cfg.id = "agente_test"
     cfg.name = "Inaki Test"
     cfg.description = "Asistente de test"
-    cfg.telegram = {
-        "token": "fake-token",
-        "allowed_user_ids": [],
-        "reactions": False,
-        "allowed_chat_ids": [],
-        "groups": {
-            "behavior": behavior,
-            "bot_username": "inaki_test_bot",
-            "rate_limiter": 5,
-        },
-    }
+    cfg.telegram = TelegramChannelSettings(
+        token="fake-token",
+        allowed_user_ids=(),
+        reactions=False,
+        allowed_chat_ids=(),
+        groups=TelegramGroupSettings(
+            behavior=behavior,
+            bot_username="inaki_test_bot",
+            rate_limiter=5,
+        ),
+    )
     return cfg
 
 

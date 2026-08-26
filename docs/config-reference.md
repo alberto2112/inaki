@@ -5,29 +5,29 @@
 > El test `tests/unit/infrastructure/test_config_docs_drift.py` falla si este
 > archivo queda desincronizado del schema.
 >
-> Narrativa (merge de 4 capas, flujos, ejemplos) vive en `configuracion.md`;
+> Narrativa (merge de capas, flujos, ejemplos) vive en `configuracion.md`;
 > acá vive solo la referencia exhaustiva de campos.
 
 ## GlobalConfig — `config/global.yaml`
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
-| `app` | `AppConfig` | **required** |  |  |
-| `llm` | `LLMConfig` | **required** |  |  |
-| `embedding` | `EmbeddingConfig` | **required** |  |  |
-| `memories` | `MemoriesConfig` | **required** |  |  |
-| `chat_history` | `ChatHistoryConfig` | **required** |  |  |
+| `app` | `AppConfig` | **required** |  | Arranque del proceso: logging, agente por defecto y extensiones. Sin override per-agente. |
+| `llm` | `LLMConfig` | **required** |  | Modelo conversacional por DEFECTO. Cada agente lo hereda y lo pisa campo a campo. |
+| `embedding` | `EmbeddingConfig` | **required** |  | Vectorizador por DEFECTO para routing, memoria y knowledge. Heredable por agente. |
+| `memories` | `MemoriesConfig` | **required** |  | Defaults de la memoria a largo plazo: store, digest y los dos jobs nocturnos. |
+| `chat_history` | `ChatHistoryConfig` | **required** |  | Defaults del historial de conversación a corto plazo. Heredable por agente. |
 | `channels` | `ChannelsGlobalConfig` | _(sub-config)_ |  | Flags de presentación transversales a todos los canales. Solo global. |
-| `skills` | `SkillsConfig` | _(sub-config)_ |  |  |
-| `tools` | `ToolsConfig` | _(sub-config)_ |  |  |
-| `semantic_routing` | `SemanticRoutingConfig` | _(sub-config)_ |  |  |
-| `scheduler` | `SchedulerConfig` | _(default factory)_ |  |  |
-| `workspace` | `WorkspaceConfig` | _(sub-config)_ |  |  |
-| `delegation` | `DelegationConfig` | _(sub-config)_ |  |  |
-| `admin` | `AdminConfig` | _(sub-config)_ |  |  |
-| `user` | `UserConfig` | _(sub-config)_ |  |  |
-| `transcription` | `TranscriptionConfig \| None` | `null` |  |  |
-| `knowledge` | `KnowledgeConfig` | _(default factory)_ |  |  |
+| `skills` | `SkillsConfig` | _(sub-config)_ |  | Defaults de la selección RAG de skills. Heredable por agente. |
+| `tools` | `ToolsConfig` | _(sub-config)_ |  | Defaults de selección y ejecución de tools. Heredable por agente. |
+| `semantic_routing` | `SemanticRoutingConfig` | _(sub-config)_ |  | Defaults de las políticas de routing comunes a skills y tools. Heredable por agente. |
+| `scheduler` | `SchedulerConfig` | _(default factory)_ |  | Motor de tareas programadas. Recurso HARNESS-GLOBAL: una sola instancia, sin per-agente. |
+| `workspace` | `WorkspaceConfig` | _(sub-config)_ |  | Sandbox de filesystem por DEFECTO para las tools. Heredable por agente. |
+| `delegation` | `DelegationConfig` | _(sub-config)_ |  | Presupuestos de una llamada delegada: iteraciones y timeout. Solo global. |
+| `admin` | `AdminConfig` | _(sub-config)_ |  | Admin server HTTP del daemon: dónde escucha y con qué clave se protege. |
+| `user` | `UserConfig` | _(sub-config)_ |  | Preferencias del dueño de la instancia (hoy: la timezone del cron y los timestamps). |
+| `transcription` | `TranscriptionConfig \| None` | `null` |  | Provider de transcripción de audio por DEFECTO. ``None`` = sin transcripción global. |
+| `knowledge` | `KnowledgeConfig` | _(default factory)_ |  | Pipeline de RAG sobre fuentes externas (documentos, SQLite) y sus índices. |
 | `photos` | `PhotosConfig \| None` | `null` |  | Configuración del pipeline de fotos. None = feature desactivada (no se carga nada). |
 | `providers` | `dict[str, ProviderConfig]` | `{}` |  | Registry top-level de proveedores — credenciales compartidas por vendor. |
 
@@ -35,54 +35,54 @@
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
-| `name` | `str` | `'Inaki'` |  |  |
-| `log_level` | `str` | `'INFO'` |  |  |
-| `ext_dirs` | `list[str]` | `['ext', '~/.inaki/ext']` |  |  |
-| `default_agent` | `str` | `'general'` |  |  |
+| `name` | `str` | `'Inaki'` |  | Nombre de la instancia del asistente. |
+| `log_level` | `str` | `'INFO'` |  | Nivel mínimo de log del proceso: ``DEBUG``, ``INFO``, ``WARNING``, ``ERROR`` o ``CRITICAL``. |
+| `ext_dirs` | `list[str]` | `['ext', '~/.inaki/ext']` |  | Directorios donde se auto-descubren las extensiones de usuario, en orden. |
+| `default_agent` | `str` | `'general'` |  | Agente que usan los comandos de CLI cuando no se pasa ``--agent``. |
 
 ### `LLMConfig`
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
-| `provider` | `str` | `'openrouter'` |  |  |
-| `model` | `str` | `'anthropic/claude-3-5-haiku'` |  |  |
-| `temperature` | `float` | `0.7` |  |  |
-| `max_tokens` | `int` | `2048` |  |  |
-| `reasoning_effort` | `str \| None` | `null` |  |  |
+| `provider` | `str` | `'openrouter'` |  | KEY del registry ``providers:`` que aporta las credenciales y el endpoint. |
+| `model` | `str` | `'anthropic/claude-3-5-haiku'` |  | Identificador del modelo, en el formato que espera el provider elegido. |
+| `temperature` | `float` | `0.7` |  | Aleatoriedad del muestreo: ``0.0`` determinista, valores altos más creativo. |
+| `max_tokens` | `int` | `2048` |  | Techo de tokens que el modelo puede GENERAR en una respuesta. |
+| `reasoning_effort` | `str \| None` | `null` |  | Intensidad del modo razonamiento (thinking). ``null`` = desactivado. |
 | `timeout_seconds` | `int` | `60` |  | Timeout HTTP del request al provider, en segundos. |
-| `request_delay_seconds` | `float` | `2.0` |  | Espera mínima (segundos) ANTES de cada llamada al provider dentro del |
+| `request_delay_seconds` | `float` | `2.0` |  | Espera mínima (segundos) ANTES de cada llamada al provider dentro del loop agéntico, EXCEPTO la primera del turno. |
 
 ### `EmbeddingConfig`
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
-| `provider` | `str` | `'e5_onnx'` |  |  |
-| `model_dirname` | `str` | `'models/e5-small'` |  |  |
-| `model` | `str` | `'text-embedding-3-small'` |  |  |
-| `dimension` | `int` | `384` |  |  |
-| `cache_filename` | `str` | `'data/embedding_cache.db'` |  |  |
+| `provider` | `str` | `'e5_onnx'` |  | KEY del registry ``providers:`` que vectoriza. ``e5_onnx`` (local) u ``openai``. |
+| `model_dirname` | `str` | `'models/e5-small'` |  | Directorio con los ficheros del modelo ONNX. SOLO lo usa ``e5_onnx``. |
+| `model` | `str` | `'text-embedding-3-small'` |  | Nombre del modelo remoto. SOLO lo usa el provider ``openai``; ``e5_onnx`` lo ignora. |
+| `dimension` | `int` | `384` |  | Dimensión del vector de embedding. Debe coincidir con la del modelo. |
+| `cache_filename` | `str` | `'data/embedding_cache.db'` |  | Fichero SQLite del cache de embeddings, para no re-vectorizar texto repetido. |
 
 ### `MemoriesConfig`
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
-| `db_filename` | `str` | `'data/inaki.db'` |  |  |
-| `digest_filename` | `str` | `'mem/digest_{channel}_{chat_id}.md'` |  |  |
+| `db_filename` | `str` | `'data/inaki.db'` |  | Fichero SQLite del store de recuerdos (tablas ``memories`` y ``memory_embeddings``). |
+| `digest_filename` | `str` | `'mem/digest_{channel}_{chat_id}.md'` |  | Template del fichero markdown del digest, con los placeholders ``{channel}`` y ``{chat_id}``. |
 | `digest_size` | `int` | `14` |  | Nº de recuerdos más recientes volcados al digest markdown. Orden: created_at DESC. |
-| `llm` | `MemoryLLMConfig \| None` | `null` |  | LLM base COMPARTIDO por consolidación y reconciliación (modo directo). |
-| `consolidation` | `ConsolidationConfig` | _(sub-config)_ |  |  |
-| `reconciliation` | `ReconciliationConfig` | _(sub-config)_ |  |  |
+| `llm` | `MemoryLLMConfig \| None` | `null` |  | LLM base COMPARTIDO por consolidación y reconciliación (modo directo). ``None`` → ambos jobs reusan el LLM del agente. La delegación a sub-agente (por job) se declara en ``consolidation.agent_id`` / ``reconciliation.agent_id``. |
+| `consolidation` | `ConsolidationConfig` | _(sub-config)_ |  | Job nocturno que extrae recuerdos del historial, regenera el digest y lo recorta. |
+| `reconciliation` | `ReconciliationConfig` | _(sub-config)_ |  | Job de «reflection» que agrupa recuerdos similares y resuelve los contradictorios. |
 
 ### `MemoryLLMConfig`
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
-| `provider` | `str \| None` | `null` |  |  |
-| `model` | `str \| None` | `null` |  |  |
-| `temperature` | `float \| None` | `null` |  |  |
-| `max_tokens` | `int \| None` | `null` |  |  |
-| `reasoning_effort` | `str \| None` | `null` |  |  |
-| `timeout_seconds` | `int \| None` | `null` |  |  |
+| `provider` | `str \| None` | `null` |  | Override de ``llm.provider`` para los jobs de memoria. Ausente → hereda del agente. |
+| `model` | `str \| None` | `null` |  | Override de ``llm.model`` para los jobs de memoria. Ausente → hereda del agente. |
+| `temperature` | `float \| None` | `null` |  | Override de ``llm.temperature`` para los jobs de memoria. Ausente → hereda del agente. |
+| `max_tokens` | `int \| None` | `null` |  | Override de ``llm.max_tokens`` para los jobs de memoria. Ausente → hereda del agente. |
+| `reasoning_effort` | `str \| None` | `null` |  | Override de ``llm.reasoning_effort`` para los jobs de memoria. Ausente → hereda del agente. |
+| `timeout_seconds` | `int \| None` | `null` |  | Override de ``llm.timeout_seconds`` (segundos) para los jobs de memoria. Ausente → hereda del agente. |
 
 ### `ConsolidationConfig`
 
@@ -90,7 +90,7 @@
 |---|---|---|---|---|
 | `enabled` | `bool` | `True` |  | Habilita la consolidación para ESTE agente. Flag PER-AGENT (agents/{id}.yaml). |
 | `schedule` | `str` | `'0 3 * * *'` |  | Cron de la consolidación global nocturna (una tarea que itera todos los agentes). |
-| `delay_seconds` | `int` | `2` |  | Pausa (segundos) entre llamadas al LLM extractor. Aplica TANTO entre agentes |
+| `delay_seconds` | `int` | `2` |  | Pausa (segundos) entre llamadas al LLM extractor. Aplica TANTO entre agentes como entre scopes ``(channel, chat_id)`` del mismo agente. Evita rate-limits. |
 | `keep_last_messages` | `int` | `0` |  | Mensajes CONVERSACIONALES a preservar por scope tras consolidar. |
 | `min_relevance_score` | `float` | `0.5` |  | Umbral mínimo (0.0-1.0) para persistir un recuerdo extraído por el LLM. |
 | `channels_infused` | `list[str] \| None` | `null` |  | Canales cuyo historial se incluye en la consolidación. |
@@ -102,19 +102,19 @@
 |---|---|---|---|---|
 | `enabled` | `bool` | `False` |  | Habilita el job de reconciliación para ESTE agente. Flag PER-AGENT. |
 | `schedule` | `str` | `'0 4 * * 1'` |  | Cron de la tarea builtin por agente. Evaluado en tz del usuario. Default: lunes 04:00. |
-| `similarity_threshold` | `float` | `0.8` |  | Umbral de similitud coseno (0.0-1.0) para agrupar dos recuerdos en un cluster. |
-| `top_k` | `int` | `10` |  | Vecinos máximos por seed al armar un cluster. Un valor generoso compensa que |
+| `similarity_threshold` | `float` | `0.8` |  | Umbral de similitud coseno (0.0-1.0) para agrupar dos recuerdos en un cluster. Default ``0.80`` (conservador — solo recuerdos muy similares se agrupan). |
+| `top_k` | `int` | `10` |  | Vecinos máximos por seed al armar un cluster. Un valor generoso compensa que ``search_with_scores`` no filtra por scope nativamente (limitación V1). |
 | `agent_id` | `str \| None` | `null` |  | Sub-agente RECONCILIADOR opcional (debe existir en ``agents/sub-agents/``). |
 
 ### `ChatHistoryConfig`
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
-| `db_filename` | `str` | `'data/history.db'` |  |  |
-| `max_messages` | `int` | `0` |  |  |
-| `merge_chats` | `bool` | `False` |  |  |
+| `db_filename` | `str` | `'data/history.db'` |  | Fichero SQLite del historial de conversación. |
+| `max_messages` | `int` | `0` |  | Últimos N mensajes del scope que se inyectan al LLM. ``0`` = sin límite. |
+| `merge_chats` | `bool` | `False` |  | Política de aislamiento del historial. ``False`` = un hilo por ``(channel, chat_id)``. |
 | `persist_tool_calls` | `bool` | `True` |  | Persistir el par assistant+tool_calls ↔ tool_results en el historial. |
-| `persist_tool_result_max_chars` | `int` | `2000` |  | Truncación (en chars) de cada tool result al persistirlo con |
+| `persist_tool_result_max_chars` | `int` | `2000` |  | Truncación (en chars) de cada tool result al persistirlo con ``persist_tool_calls``. Acota el costo de contexto y disco cuando una tool devuelve un volcado grande (web_search, RAG). ``0`` = sin truncar. El turno en curso siempre ve el result completo; solo la copia persistida se recorta. |
 
 ### `ChannelsGlobalConfig`
 
@@ -126,21 +126,21 @@
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
-| `semantic_routing_min_skills` | `int` | `10` |  |  |
-| `semantic_routing_top_k` | `int` | `3` |  |  |
-| `semantic_routing_min_score` | `float` | `0.0` |  |  |
-| `sticky_ttl` | `int` | `3` |  |  |
+| `semantic_routing_min_skills` | `int` | `10` |  | Nº de skills a partir del cual se ACTIVA el routing. Con menos o igual, entran todas. |
+| `semantic_routing_top_k` | `int` | `3` |  | Máximo de skills que el retrieval devuelve por turno (default más chico que en ``tools``). |
+| `semantic_routing_min_score` | `float` | `0.0` |  | Similitud coseno mínima para que una skill entre en la selección. ``0.0`` = sin piso. |
+| `sticky_ttl` | `int` | `3` |  | Turnos que una skill seleccionada sigue viva sin volver a ser elegida. ``0`` = desactivado. |
 
 ### `ToolsConfig`
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
-| `semantic_routing_min_tools` | `int` | `10` |  |  |
-| `semantic_routing_top_k` | `int` | `5` |  |  |
-| `semantic_routing_min_score` | `float` | `0.0` |  |  |
-| `tool_call_max_iterations` | `int` | `5` |  |  |
-| `circuit_breaker_threshold` | `int` | `2` |  |  |
-| `sticky_ttl` | `int` | `3` |  |  |
+| `semantic_routing_min_tools` | `int` | `10` |  | Nº de tools a partir del cual se ACTIVA el routing. Con menos o igual, entran todas. |
+| `semantic_routing_top_k` | `int` | `5` |  | Máximo de tools que el retrieval devuelve por turno. |
+| `semantic_routing_min_score` | `float` | `0.0` |  | Similitud coseno mínima para que una tool entre en la selección. ``0.0`` = sin piso. |
+| `tool_call_max_iterations` | `int` | `5` |  | Vueltas máximas del tool loop en un turno antes de cortar con error. |
+| `circuit_breaker_threshold` | `int` | `2` |  | Fallos NO-retryable de una misma tool, en el mismo turno, antes de bloquearla. |
+| `sticky_ttl` | `int` | `3` |  | Turnos que una tool seleccionada sigue visible sin volver a ser elegida. ``0`` = desactivado. |
 | `pinned` | `list[str]` | _(default factory)_ |  | Tools SIEMPRE visibles para el LLM, por fuera del semantic routing. |
 | `allowed` | `list[str] \| None` | `null` |  | Allow-list de nombres de tools. ``None`` (default) = sin restricción. |
 
@@ -148,49 +148,49 @@
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
-| `min_words_threshold` | `int` | `0` |  |  |
+| `min_words_threshold` | `int` | `0` |  | Palabras por debajo de las cuales un turno hereda la selección previa sin re-rutear. ``0`` = desactivado. |
 
 ### `SchedulerConfig`
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
-| `enabled` | `bool` | `True` |  |  |
-| `db_filename` | `str` | `'data/scheduler.db'` |  |  |
-| `fallback_log_filename` | `str` | `'data/scheduler-fallback.log'` |  | Fallback de último recurso del router de dispatch (cascada). Relativo al home de |
-| `max_retries` | `int` | `3` |  |  |
-| `retry_backoff_seconds` | `float` | `10.0` |  |  |
-| `max_tasks_per_agent` | `int` | `20` |  |  |
-| `output_truncation_size` | `int` | `65536` |  |  |
-| `channel_fallback` | `ChannelFallbackConfig` | _(sub-config)_ |  |  |
+| `enabled` | `bool` | `True` |  | Kill-switch del scheduler. ``False`` = el daemon no arranca el loop de tareas. |
+| `db_filename` | `str` | `'data/scheduler.db'` |  | Fichero SQLite con las tareas programadas y su estado de ejecución. |
+| `fallback_log_filename` | `str` | `'data/scheduler-fallback.log'` |  | Fallback de último recurso del router de dispatch (cascada). Relativo al home de instancia; se reancla con ``--home`` / ``INAKI_HOME``. El composition root lo envuelve en ``file://`` y lo inyecta al ``ChannelRouter`` (por privacidad, bajo ``<home>/data/``). |
+| `max_retries` | `int` | `3` |  | Reintentos de una tarea que falla, ADEMÁS del intento inicial. |
+| `retry_backoff_seconds` | `float` | `10.0` |  | Base de la espera entre reintentos, en segundos. La progresión es LINEAL. |
+| `max_tasks_per_agent` | `int` | `20` |  | Techo de tareas ACTIVAS (pending o running) que un agente puede tener a la vez. |
+| `output_truncation_size` | `int` | `65536` |  | Truncación (en chars) del output de una tarea al guardarlo en su registro de ejecución. |
+| `channel_fallback` | `ChannelFallbackConfig` | _(sub-config)_ |  | Adónde va la salida de una tarea cuyo canal destino no tiene sink vivo. |
 
 ### `ChannelFallbackConfig`
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
-| `default` | `str \| None` | `null` |  |  |
-| `overrides` | `dict[str, str]` | `{}` |  |  |
+| `default` | `str \| None` | `null` |  | Target al que van los canales sin sink nativo ni override. ``null`` → log de fallback. |
+| `overrides` | `dict[str, str]` | `{}` |  | Redirecciones ``channel_type → target string``, evaluadas antes que ``default``. |
 
 ### `WorkspaceConfig`
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
-| `path` | `str` | `'~/inaki-workspace'` |  |  |
-| `containment` | `Literal['strict', 'warn', 'off']` | `'strict'` |  |  |
+| `path` | `str` | `'~/inaki-workspace'` |  | Directorio raíz contra el que las tools de filesystem resuelven los paths relativos. |
+| `containment` | `Literal['strict', 'warn', 'off']` | `'strict'` |  | Qué hacer cuando un path resuelto se sale del workspace (absoluto o vía ``..``). |
 
 ### `DelegationConfig`
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
-| `max_iterations_per_sub` | `int` | `10` |  |  |
-| `timeout_seconds` | `int` | `60` |  |  |
+| `max_iterations_per_sub` | `int` | `10` |  | Vueltas máximas del tool loop que puede gastar UNA llamada delegada. |
+| `timeout_seconds` | `int` | `60` |  | Presupuesto de reloj de una llamada delegada, en segundos. |
 
 ### `AdminConfig`
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
-| `port` | `int` | `6497` |  |  |
-| `host` | `str` | `'127.0.0.1'` |  |  |
-| `auth_key` | `str \| None` | `null` | 🔒 |  |
+| `port` | `int` | `6497` |  | Puerto TCP en el que escucha el admin server del daemon. |
+| `host` | `str` | `'127.0.0.1'` |  | Interfaz en la que bindea el admin server. |
+| `auth_key` | `str \| None` | `null` | 🔒 | Credencial del header ``X-Admin-Key`` que protege los endpoints de gestión. |
 | `chat_timeout` | `float` | `300.0` |  | Timeout en segundos para turnos de chat vía REST (POST /admin/chat/turn). |
 
 ### `UserConfig`
@@ -203,23 +203,23 @@
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
-| `provider` | `str` | `'groq'` |  |  |
-| `model` | `str` | `'whisper-large-v3-turbo'` |  |  |
-| `language` | `str \| None` | `null` |  |  |
-| `timeout_seconds` | `int` | `60` |  |  |
-| `max_audio_mb` | `int` | `25` |  |  |
+| `provider` | `str` | `'groq'` |  | KEY del registry ``providers:`` que transcribe (endpoint Whisper OpenAI-compat). |
+| `model` | `str` | `'whisper-large-v3-turbo'` |  | Modelo de transcripción, en el nombre que espera el provider. |
+| `language` | `str \| None` | `null` |  | Idioma esperado del audio en ISO-639-1 (``"es"``, ``"en"``). ``null`` → autodetect. |
+| `timeout_seconds` | `int` | `60` |  | Timeout HTTP del request de transcripción, en segundos. |
+| `max_audio_mb` | `int` | `25` |  | Tamaño máximo del audio en MB. Un fichero mayor se rechaza ANTES de subirlo. |
 
 ### `KnowledgeConfig`
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
 | `enabled` | `bool` | `True` |  | Si False, el pre-fetch se saltea completamente en cada turno. |
-| `db_dirname` | `str` | `'knowledge'` |  | Directorio (relativo al home de instancia) de las DBs de índice por fuente: |
+| `db_dirname` | `str` | `'knowledge'` |  | Directorio (relativo al home de instancia) de las DBs de índice por fuente: ``<home>/knowledge/{source_id}.db``. Se reancla con ``--home`` / ``INAKI_HOME``. |
 | `include_memory` | `bool` | `True` |  | Si True, la memoria SQLite del agente se registra como fuente automáticamente. |
 | `top_k_per_source` | `int` | `3` |  | top_k global por fuente cuando no se override por fuente individual. |
 | `min_score` | `float` | `0.5` |  | min_score global cuando no se override por fuente individual. |
 | `max_total_chunks` | `int` | `10` |  | Límite duro de chunks totales tras el fan-out (ordenados por score desc). |
-| `token_budget_warn_threshold` | `int` | `4000` |  | Umbral estimado de tokens totales (chunks + digest + skills). Si se supera, |
+| `token_budget_warn_threshold` | `int` | `4000` |  | Umbral estimado de tokens totales (chunks + digest + skills). Si se supera, se emite un WARNING con el desglose. 0 = deshabilita la advertencia. |
 | `sources` | `list[KnowledgeSourceConfig]` | `[]` |  | Lista de fuentes de conocimiento externas configuradas. |
 
 ### `KnowledgeSourceConfig`
@@ -242,18 +242,18 @@
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
 | `enabled` | `bool` | `True` |  | Si False, el bot ignora todas las fotos con warning. No se carga ningún modelo. |
-| `enrollment_chats` | `Literal['private', 'none']` | `'private'` |  | Tipos de chat donde el agente ofrecerá registrar caras nuevas. |
-| `debug` | `bool` | `False` |  | Si True, escribe /tmp/inaki.photo-debug.<timestamp>.log con el resultado del |
-| `faces` | `FacesConfig` | _(sub-config)_ |  |  |
-| `scene` | `SceneConfig` | _(sub-config)_ |  |  |
-| `dedup` | `DedupConfig` | _(sub-config)_ |  |  |
+| `enrollment_chats` | `Literal['private', 'none']` | `'private'` |  | Tipos de chat donde el agente ofrecerá registrar caras nuevas. 'private' = solo chats privados. 'none' = el agente nunca ofrece enrolar. |
+| `debug` | `bool` | `False` |  | Si True, escribe /tmp/inaki.photo-debug.<timestamp>.log con el resultado del procesamiento y el prompt completo enviado al LLM. Útil para diagnosticar comportamientos extraños en grupos. |
+| `faces` | `FacesConfig` | _(sub-config)_ |  | Reconocimiento facial local (InsightFace): qué modelo y con qué umbrales decide. |
+| `scene` | `SceneConfig` | _(sub-config)_ |  | Descripción de la escena vía LLM multimodal: vendor, modelo, prompt y credencial. |
+| `dedup` | `DedupConfig` | _(sub-config)_ |  | Job nocturno que detecta personas registradas dos veces y reporta los pares. |
 
 ### `FacesConfig`
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
-| `provider` | `Literal['insightface']` | `'insightface'` |  |  |
-| `model` | `Literal['buffalo_sc', 'buffalo_s', 'buffalo_l']` | `'buffalo_sc'` |  |  |
+| `provider` | `Literal['insightface']` | `'insightface'` |  | Motor de detección y embedding facial. ``insightface`` es el único soportado. |
+| `model` | `Literal['buffalo_sc', 'buffalo_s', 'buffalo_l']` | `'buffalo_sc'` |  | Pack de modelos de InsightFace, de más liviano a más preciso. |
 | `match_threshold` | `float` | `0.55` |  | Score mínimo de similitud coseno para considerar una cara como MATCHED. |
 | `ambiguous_threshold` | `float` | `0.4` |  | Score entre ambiguous_threshold y match_threshold → cara AMBIGUOUS. |
 
@@ -261,16 +261,16 @@
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
-| `provider` | `Literal['anthropic', 'openai', 'groq']` | `'anthropic'` |  |  |
-| `model` | `str` | `'claude-sonnet-4-6'` |  |  |
+| `provider` | `Literal['anthropic', 'openai', 'groq']` | `'anthropic'` |  | Vendor del LLM multimodal que describe la foto: ``anthropic``, ``openai`` o ``groq``. |
+| `model` | `str` | `'claude-sonnet-4-6'` |  | Modelo multimodal a usar, en el nombre que espera el ``provider`` elegido. |
 | `prompt_template` | `str \| None` | `null` |  | Prompt personalizado en español. None = usar el prompt built-in del adaptador. |
-| `api_key` | `str \| None` | `null` | 🔒 | API key del proveedor. Conviene en global.secrets.yaml bajo photos.scene.api_key. |
+| `api_key` | `str \| None` | `null` | 🔒 | API key del proveedor. Conviene referenciar una entrada de ``providers:`` bajo photos.scene.api_key. |
 
 ### `DedupConfig`
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
-| `enabled` | `bool` | `True` |  |  |
+| `enabled` | `bool` | `True` |  | Habilita el job nocturno de deduplicación de personas. |
 | `schedule` | `str` | `'0 3 * * *'` |  | Expresión cron para el job de deduplicación. Validada por croniter. |
 | `similarity_threshold` | `float` | `0.7` |  | Score mínimo de similitud coseno entre centroides para reportar par duplicado. |
 
@@ -278,34 +278,98 @@
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
-| `type` | `str \| None` | `null` |  |  |
-| `api_key` | `str \| None` | `null` | 🔒 |  |
-| `base_url` | `str \| None` | `null` |  |  |
+| `type` | `str \| None` | `null` |  | Nombre del adapter que implementa este vendor. ``null`` → se usa la key del dict. |
+| `api_key` | `str \| None` | `null` | 🔒 | Credencial del vendor. Es un SECRETO: la TUI lo enmascara al editarlo. |
+| `base_url` | `str \| None` | `null` |  | Endpoint del vendor. ``null`` → el default hardcodeado del adapter. |
 
-## AgentConfig — `config/agents/{id}.yaml`
+## AgentConfig — `agents/{id}.yaml`
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
-| `id` | `str` | **required** |  |  |
-| `name` | `str` | **required** |  |  |
-| `description` | `str` | **required** |  |  |
-| `system_prompt` | `str` | `''` |  | Prompt de sistema del agente. Opcional: si se omite, los sub-agentes de |
-| `llm` | `LLMConfig` | **required** |  |  |
-| `embedding` | `EmbeddingConfig` | **required** |  |  |
-| `memories` | `MemoriesConfig` | **required** |  |  |
-| `chat_history` | `ChatHistoryConfig` | **required** |  |  |
-| `skills` | `SkillsConfig` | _(sub-config)_ |  |  |
-| `tools` | `ToolsConfig` | _(sub-config)_ |  |  |
-| `semantic_routing` | `SemanticRoutingConfig` | _(sub-config)_ |  |  |
-| `workspace` | `WorkspaceConfig` | _(sub-config)_ |  |  |
-| `delegation` | `AgentDelegationConfig` | _(sub-config)_ |  |  |
-| `transcription` | `TranscriptionConfig \| None` | `null` |  |  |
-| `channels` | `dict[str, dict[str, Any]]` | `{}` |  |  |
+| `id` | `str` | **required** |  | Identificador técnico del agente. Debe coincidir con el nombre del fichero YAML. |
+| `name` | `str` | **required** |  | Nombre visible del agente, para humanos. |
+| `description` | `str` | **required** |  | Qué hace el agente y en qué se especializa — en una frase. |
+| `system_prompt` | `str` | `''` |  | Prompt de sistema del agente. Opcional: si se omite, los sub-agentes de memoria (extractor/reconciliador) heredan el prompt hardcodeado por defecto del use case correspondiente. Un agente regular sin prompt corre con base vacía (responde sin instrucciones de sistema). |
+| `llm` | `LLMConfig` | **required** |  | Modelo conversacional de este agente. Hereda del ``llm`` global campo a campo. |
+| `embedding` | `EmbeddingConfig` | **required** |  | Vectorizador de este agente (routing, memoria, knowledge). Hereda del global campo a campo. |
+| `memories` | `MemoriesConfig` | **required** |  | Memoria a largo plazo de este agente: store, digest y los dos jobs nocturnos. |
+| `chat_history` | `ChatHistoryConfig` | **required** |  | Historial de conversación a corto plazo de este agente y su ventana hacia el LLM. |
+| `skills` | `SkillsConfig` | _(sub-config)_ |  | Selección RAG de las skills de este agente. Hereda del bloque global campo a campo. |
+| `tools` | `ToolsConfig` | _(sub-config)_ |  | Selección y ejecución de tools de este agente. |
+| `semantic_routing` | `SemanticRoutingConfig` | _(sub-config)_ |  | Políticas de routing comunes a skills y tools de este agente. |
+| `workspace` | `WorkspaceConfig` | _(sub-config)_ |  | Sandbox de filesystem de este agente. Un ``path`` propio lo aísla de los demás. |
+| `delegation` | `AgentDelegationConfig` | _(sub-config)_ |  | Si este agente puede delegar y a qué sub-agentes. Opt-in, per-agente. |
+| `transcription` | `TranscriptionConfig \| None` | `null` |  | Provider de transcripción de audio de este agente. ``None`` → hereda el global. |
+| `channels` | `dict[str, Any]` | `{}` |  | Adapters de canal del agente, indexados por su clave en ``channels:``. |
 | `providers` | `dict[str, ProviderConfig]` | `{}` |  | Registry de proveedores post-merge. Heredado del global + overrides del agente. |
 
 ### `AgentDelegationConfig`
 
 | Field | Type | Default | Secret | Description |
 |---|---|---|---|---|
-| `enabled` | `bool` | `False` |  |  |
-| `allowed_targets` | `list[str]` | `[]` |  |  |
+| `enabled` | `bool` | `False` |  | Habilita la tool ``delegate`` para ESTE agente. Opt-in. |
+| `allowed_targets` | `list[str]` | `[]` |  | Allow-list de sub-agentes a los que delegar. Lista vacía = todos los disponibles. |
+
+## Channels — `agents/{id}.yaml` → `channels.<nombre>`
+
+### `channels.cli`
+
+| Field | Type | Default | Secret | Description |
+|---|---|---|---|---|
+| `user` | `str \| None` | `null` |  | Identidad ESTABLE del turno CLI/REST. Se usa como ``user_id`` y como ``context_id`` (nombra ``~/.inaki/users/cli/{user}.md``) y puebla ``{{CHANNEL.USERNAME}}``. ``None`` → el ``context_id`` es el ``session_id`` (UUID efímero por proceso, sin fichero pre-escribible). |
+
+### `channels.telegram`
+
+| Field | Type | Default | Secret | Description |
+|---|---|---|---|---|
+| `token` | `str` | `''` | 🔒 | Token del bot de Telegram (BotFather). Requerido para que el canal levante. |
+| `allowed_user_ids` | `list[int]` | _(default factory)_ |  | IDs de usuarios autorizados en CHATS PRIVADOS. Lista vacía = sin restricción. NO aplica en grupos (los grupos se controlan solo por ``allowed_chat_ids``). |
+| `allowed_chat_ids` | `list[int]` | _(default factory)_ |  | IDs de grupos autorizados. Lista vacía = el bot NO responde en grupos (solo chats privados). En un grupo autorizado cualquier usuario puede interactuar: ``allowed_user_ids`` no se evalúa en grupos. |
+| `reactions` | `bool` | `False` |  | Si True, el bot envía una reacción emoji tras procesar un mensaje. |
+| `voice_enabled` | `bool` | `True` |  | Si True, el bot acepta mensajes de voz y los transcribe. |
+| `add_llm_timestamp` | `bool` | `False` |  | Si True, ``RunAgentUseCase`` antepone ``[YYYY-MM-DD HH:MM:SS TZ] `` al ``content`` de cada mensaje USER/ASSISTANT (privados y grupos) antes de armar el prompt para el LLM. Default ``False`` para mantener compatibilidad. El timestamp sale del ``Message.timestamp`` ya persistido en la DB; no se duplica en el ``content`` almacenado. |
+| `broadcast` | `BroadcastConfig \| None` | `null` |  | Config del canal de broadcast entre instancias. None = broadcast inactivo. |
+| `groups` | `TelegramGroupsConfig \| None` | `null` |  | Config específica para chats grupales (delays, override de reactions). None = todos los defaults. |
+
+### `BroadcastConfig`
+
+| Field | Type | Default | Secret | Description |
+|---|---|---|---|---|
+| `enabled` | `bool` | `True` |  | Kill-switch del transporte. ``False`` = el bloque queda escrito pero no se levanta ningún adapter TCP (y no se exige topología ni auth). |
+| `auth` | `str \| None` | `null` | 🔒 | Secreto HMAC-SHA256 compartido entre server y clients. Obligatorio cuando ``enabled=True`` (default). |
+| `server` | `BroadcastServerConfig \| None` | `null` |  | Rol server: esta instancia escucha en ``server.port``. XOR con ``client``. |
+| `client` | `BroadcastClientConfig \| None` | `null` |  | Rol client: esta instancia se conecta a ``client.host:client.port``. XOR con ``server``. |
+| `emit` | `BroadcastEmitConfig` | _(sub-config)_ |  | Flags que controlan qué tipos de eventos se emiten al broadcast. Sin override usa los defaults: solo ``assistant_response`` activo. |
+
+### `BroadcastServerConfig`
+
+| Field | Type | Default | Secret | Description |
+|---|---|---|---|---|
+| `port` | `int` | **required** |  | Puerto TCP en el que escucha el servidor (1024..65535). Escucha en todas las interfaces de la LAN (``0.0.0.0``). |
+
+### `BroadcastClientConfig`
+
+| Field | Type | Default | Secret | Description |
+|---|---|---|---|---|
+| `host` | `str` | **required** |  | Dirección IP o hostname del servidor (sin puerto — ese va en ``port``). |
+| `port` | `int` | **required** |  | Puerto TCP del servidor remoto (1024..65535). |
+
+### `BroadcastEmitConfig`
+
+| Field | Type | Default | Secret | Description |
+|---|---|---|---|---|
+| `assistant_response` | `bool` | `True` |  | Si ``True``, emite ``event_type="assistant_response"`` tras cada turno LLM en grupos. |
+| `user_input_voice` | `bool` | `False` |  | Si ``True``, emite ``event_type="user_input_voice"`` tras transcribir un audio. |
+| `user_input_photo` | `bool` | `False` |  | Si ``True``, emite ``event_type="user_input_photo"`` tras procesar una foto. |
+
+### `TelegramGroupsConfig`
+
+| Field | Type | Default | Secret | Description |
+|---|---|---|---|---|
+| `min_delay_response` | `float \| None` | `null` |  | Delay mínimo (segundos) antes de flushar el buffer de grupo al LLM. ``None`` → default del módulo. |
+| `max_delay_response` | `float \| None` | `null` |  | Delay máximo (segundos) antes de flushar el buffer. ``None`` → default del módulo. |
+| `reactions` | `bool \| None` | `null` |  | Override del flag ``channels.telegram.reactions`` para chats grupales. ``None`` → hereda del padre. |
+| `behavior` | `Literal['listen', 'mention', 'autonomous']` | `'mention'` |  | Modo de comportamiento en grupos: - ``listen`` → nunca invoca el LLM, solo escucha. - ``mention`` → invoca el LLM solo si el mensaje menciona al bot (requiere ``bot_username``). - ``autonomous`` → invoca el LLM ante cualquier mensaje (sujeto a rate limiter). |
+| `bot_username` | `str \| None` | `null` |  | Username del bot Telegram (sin ``@``) para detección de menciones en modo ``mention``. |
+| `rate_limiter` | `int` | `5` |  | Máximo de respuestas proactivas (modo ``autonomous``) por ventana por chat. |
+| `rate_limiter_window` | `int` | `30` |  | Duración de la ventana del rate limiter en segundos. Default 30s. |

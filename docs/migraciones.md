@@ -25,11 +25,13 @@ Orden: **cronológico inverso** (la más reciente primero).
 | [`telegram-group-auth`](#telegram-group-auth) | Agregar `chat_id` a `allowed_chat_ids` o el bot deja de responder en grupos |
 | [`channel-contextid`](#channel-contextid) | `mv` de los ficheros de contexto a `{context_id}.md` + cambiar la variable del prompt |
 | [`per-user-context-files`](#per-user-context-files) | *(superseded)* `mv` de `USER.md` a `users/{channel}/…` |
+| [`config-falla-ruidoso`](#config-falla-ruidoso) | **Puede impedir el arranque**: corregir el typo/valor que el error nombra (antes se ignoraba en silencio) |
 
 ### Migración automática en caliente — sin acción
 
 `persist-tool-calls`, `groups-vs-broadcast`, `tool-config-own-file`,
-`agent-state-scoped-by-channel-chat`.
+`agent-state-scoped-by-channel-chat`, `secrets-layer-eradication`,
+`channels-validados-al-cargar`, `motor-de-merge-unico`.
 
 ### Sin migración — pero cambian comportamiento observable
 
@@ -43,6 +45,12 @@ Orden: **cronológico inverso** (la más reciente primero).
 | [`in-flight-message-injection`](#in-flight-message-injection) | Dos mensajes seguidos → **una** respuesta combinada, no dos turnos |
 | [`background-delegation`](#background-delegation) | `delegate` es **async por default** (`wait=false`) |
 | [`drop-per-agent-rest`](#drop-per-agent-rest) | Bloques `channels.rest` se ignoran en silencio |
+| [`config-show-effective`](#config-show-effective) | Comando nuevo `inaki config show`: config efectiva con origen y secretos redactados |
+| [`docs-de-config-autogeneradas`](#docs-de-config-autogeneradas) | `global.example.yaml` pasa a autogenerarse; `inaki gen-docs` regenera los dos artefactos |
+| [`config-limpieza-final`](#config-limpieza-final) | Sin cambios observables: el adapter deja de resolver el home y la fachada de exponer internals |
+| [`secrets-layer-eradication`](#secrets-layer-eradication) | Desaparece la pantalla SECRETS del setup; borrar provider/agente se lleva sus credenciales |
+| [`channels-validados-al-cargar`](#channels-validados-al-cargar) | Un canal desconocido o una topología de broadcast inválida se reportan con su path en vez de ignorarse |
+| [`motor-de-merge-unico`](#motor-de-merge-unico) | Una clave que cambia de forma entre capas aborta con su path; antes se reemplazaba en silencio |
 | [`broadcast-topology-config`](#broadcast-topology-config) | Rol explícito `server` XOR `client`; config vieja falla al cargar |
 | [`broadcast-arranque-observable`](#broadcast-arranque-observable) | El fallo de `bind()` y la config de broadcast que no valida ahora salen como `ERROR` en el log |
 | [`formato-en-el-borde-del-transporte`](#formato-en-el-borde-del-transporte) | Todo lo que Telegram manda fuera del turno conversacional (scheduler, `bg-N`, intermedios, media) sale **formateado** y troceado, no en markdown crudo |
@@ -54,7 +62,8 @@ Orden: **cronológico inverso** (la más reciente primero).
   `in-flight-message-injection`, `turn-kill-switch`
 - **Retención y alcance del registro**: `trim-cuenta-conversacion`,
   `search-history-retention-horizon`
-- **Telegram y canales**: `attachment-grammar`, `formato-en-el-borde-del-transporte`,
+- **Telegram y canales**: `channels-validados-al-cargar`, `attachment-grammar`,
+  `formato-en-el-borde-del-transporte`,
   `groups-vs-broadcast`,
   `broadcast-topology-config`, `broadcast-arranque-observable`,
   `broadcast-cross-agent-events`,
@@ -66,8 +75,474 @@ Orden: **cronológico inverso** (la más reciente primero).
   `agent-state-scoped-by-channel-chat`
 - **Scheduler**: `scheduler-trigger-type-mutable`, `channel-send-history-persist`
 - **Tools y config**: `write-file-explicit-mode`, `tool-config-protocol`,
-  `tool-config-own-file`
+  `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
+  `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
+  `config-limpieza-final`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `config-limpieza-final`
+
+Cierre del refactor de config: la deuda menor que las seis fases anteriores
+fueron dejando anotada. Sin cambios observables para el operador — todo lo de
+acá es interno.
+
+**Lo que se hizo.**
+
+1. **El adapter de config dejó de resolver el home.** `config_repository/paths.py`
+   reimplementaba la resolución de `INAKI_HOME` porque `adapters/` no puede
+   importar `infrastructure/home.py`: dos resoluciones sincronizadas solo por un
+   comentario, y la del adapter **ni siquiera veía el override de `--home`** —
+   de ahí que el CLI tuviera que reexportar la variable de entorno para
+   compensar. Ahora `YamlRepository` recibe `config_dir` y `agents_dir` ya
+   resueltos del composition root, y `paths.py` desapareció.
+2. **La fachada `infrastructure/config.py` dejó de exponer internals.**
+   Reexportaba 16 símbolos privados "para preservar el contrato histórico"; al
+   revisarlos, **15 no los importaba nadie** fuera de la propia fachada. Era
+   reexportación muerta que convertía privados en públicos de facto.
+3. **Se documentó por qué los Settings VOs no se llaman igual que el schema.**
+   Los renombrados son deliberados: o aplanan con prefijo de namespace
+   (`skills.semantic_routing_top_k` → `skills_top_k`, porque el VO es de un solo
+   nivel y sin prefijo colisionarían dos campos homónimos), o **nombran mejor
+   que el schema** (`memories.digest_filename` no es un fichero sino un template
+   con placeholders, y por eso el VO lo llama `digest_template`).
+
+**Lo que se decidió NO hacer, y por qué.** Las dos limpiezas restantes del plan
+dejaron de ser gratis cuando [`config-falla-ruidoso`](#config-falla-ruidoso)
+puso `extra="forbid"` en todo el schema:
+
+| Pendiente | Por qué no |
+|---|---|
+| Borrar los campos inertes `app.name` y `photos.faces.provider` | El bootstrap escribe `app:` completo en **toda** instalación. Con `extra="forbid"`, borrar el campo del schema haría que cualquier `global.yaml` existente aborte el arranque. Quedan documentados como declarativos. |
+| Renombrar `channels` en global para deshacer la colisión con `AgentConfig.channels` | Mismo problema: `channels: {thinking_indicator: …}` está en todas las instalaciones. Exigiría una migración one-shot, y el beneficio es solo borrar un filtro de tres líneas. |
+
+**Invariante.** **NUNCA** borres ni renombres un campo del schema sin migración:
+desde que las claves desconocidas abortan el arranque, quitar un campo que el
+bootstrap escribió alguna vez rompe todas las instalaciones existentes. El costo
+de eliminar config cambió de gratis a breaking, y no hay aviso que lo recuerde
+salvo este.
+
+---
+
+### `docs-de-config-autogeneradas`
+
+**Había cuatro fuentes describiendo los mismos parámetros, y tres estaban
+desactualizadas.** `docs/configuracion.md` (1.733 líneas de prosa),
+`docs/config-reference.md` (autogenerada), `config/global.example.yaml` (607
+líneas escritas a mano) y los docstrings del schema. Cuatro sitios que
+mantener, y ninguna garantía de que dijeran lo mismo.
+
+Lo que estaba roto, medido:
+
+| Artefacto | Estado |
+|---|---|
+| `config-reference.md` | **100 de 184 filas sin descripción** (54%) |
+| `global.example.yaml` | le faltaban **5 bloques enteros** del schema (`scheduler`, `transcription`, `delegation`, `photos`, `knowledge`) |
+| `configuracion.md` | una tabla de reglas de merge que el código **no imponía**, y varias afirmaciones falsas |
+
+**El cambio.** Una sola fuente: los docstrings del schema. Se escribieron los
+100 que faltaban (más 7 docstrings de clase), y `global.example.yaml` pasó a
+**autogenerarse** como ya lo hacía la referencia — cabecera de cada bloque desde
+el docstring de su clase, cada campo con su default y su descripción. `inaki
+gen-docs` regenera los dos artefactos y el test de drift cubre ambos.
+
+**La tabla de "field merge rules" se borró, no se implementó.** Varias filas
+eran directamente falsas, y la más grave decía que `memories.db_filename` es
+"solo global porque el store es compartido" — cuando `AgentContainer` lo lee de
+la capa del agente, o sea que cada agente puede tener su propia DB de memoria,
+que es justo lo que declara `CLAUDE.md`. La doc contradecía al código *y* a las
+reglas del proyecto. En su lugar quedó la semántica única del motor de merge
+([`motor-de-merge-unico`](#motor-de-merge-unico)) más una tabla de los casos que
+son genuinamente especiales, cada uno verificado contra el código.
+
+Otras dos contradicciones corregidas: `system_prompt` figuraba como *required*
+cuando tiene default `""`, y `channels` como "no existe en global" cuando sí
+existe con **otro significado** (la colisión de nombre con `ChannelsGlobalConfig`).
+
+**Un guard nuevo que vale la pena.** El drift test ya no se conforma con que el
+ejemplo parsee como YAML: verifica que **el propio schema lo acepte**, bloque a
+bloque. Cazó `knowledge.sources` emitido como bloque anidado cuando el schema
+espera una lista. Desde [`config-falla-ruidoso`](#config-falla-ruidoso) esto
+importa el doble: un ejemplo que el runtime rechazaría hace que el operador
+copie el bloque y el daemon no arranque.
+
+**Invariante.** **NUNCA** documentes un parámetro fuera de su docstring en el
+schema. De ahí salen la referencia, el YAML de ejemplo y la ayuda del setup TUI;
+cualquier otra copia nace condenada a divergir — y una doc que miente cuesta más
+que una que falta, porque se le cree.
+
+---
+
+### `config-show-effective`
+
+**No había forma de preguntarle al sistema qué config estaba usando.** Para
+responder "¿de dónde sale este valor?" había que abrir `global.yaml`, abrir
+`agents/{id}.yaml`, recordar la semántica del merge y, para los campos que
+nadie declaró, ir a buscar el default al schema. Tres fuentes y un merge mental.
+
+**El cambio.** `inaki config show [--agent ID] [--origin] [--json] [--secrets]`
+entrega la config **efectiva** —la que ve el runtime, no la que está escrita—
+campo a campo, con la capa que aportó cada valor:
+
+```
+   llm.model         modelo-propio   [agent]
+   llm.provider      groq            [global]
+   llm.temperature   0.7             [default]
+🔒 providers.groq.api_key   ********        [global]
+```
+
+Las tres capas del dump son `default` (el schema), `global` y `agent`. La de
+`default` importa más de lo que parece: sin ella el comando mostraría lo
+escrito, no lo que el runtime usa. Incluye los bloques que el schema marca como
+requeridos (`llm`, `memories`, …) porque el loader los materializa siempre con
+`Modelo(**merged.get(x, {}))` — su obligatoriedad es estructural y nunca llega
+al operador.
+
+**Los secretos salen redactados, siempre.** El output está pensado para pegarse
+en un issue, así que un valor marcado como credencial en el schema se emite como
+`********` y jamás en claro. Esto tapa el agujero que dejó
+[`secrets-layer-eradication`](#secrets-layer-eradication): desde que las
+credenciales viven en la capa principal, `cat global.yaml` dejó de ser pegable.
+
+**Y recupera la vista transversal de credenciales.** `--secrets` responde "qué
+tengo puesto y qué me falta" sin navegar el árbol — la capacidad que se perdió
+al borrar la `SecretsPage`:
+
+```
+🔒 admin.auth_key            ********           [global]
+🔒 channels.telegram.token   ********           [agent]
+🔒 providers.groq.api_key    ********           [global]
+🔒 providers.openai.api_key  (sin configurar)   [default]
+```
+
+Solo se reportan pendientes de **secciones que el operador ya declaró**: listar
+el `auth` de un broadcast que nadie configuró convierte la vista en ruido de
+features no usadas. Es el mismo criterio que tenía la `SecretsPage`.
+
+**Dónde se apoya.** En dos piezas que las fases anteriores dejaron listas: la
+procedencia por hoja que devuelve `merge_capas`
+([`motor-de-merge-unico`](#motor-de-merge-unico)) y la marca `kind == "secret"`
+del schema, que `secrets-layer-eradication` conservó al erradicar los ficheros.
+El use case no conoce el schema: el composition root (`inaki/config_cli.py`) le
+pasa los defaults y el set de paths secretos ya resueltos.
+
+**Ajustes posteriores (review adversarial).** La redacción por paths del schema
+solo cubre la config VÁLIDA — y `config show` es la herramienta de diagnóstico
+justo cuando la config NO valida (shapes legacy, bloques varados). Se sumó una
+red por NOMBRE de hoja (`api_key`, `token`, `auth`, `password`, sufijos
+`_key`/`_token`/`_secret`…) para que esas credenciales también salgan
+redactadas. Además: `--agent` acepta sub-agentes, y un id inexistente da error
+en vez de la vista global-only en silencio (un diagnóstico convincente y
+equivocado). Límite conocido: una credencial bajo una clave con typo
+(`api_ky`) no tiene red posible.
+
+**Invariante.** **NUNCA** construyas una interfaz de configuración sobre los
+ficheros crudos. Se construye sobre la **config efectiva con origen**: una UI
+sobre eso es un problema simple; sobre N ficheros más la semántica de merge es
+el problema que el setup TUI lleva 5.000 líneas peleando.
+
+---
+
+### `config-falla-ruidoso`
+
+> **Nota para el operador**: esta es la única fase del refactor de config que
+> puede impedir que el daemon arranque con una config que antes "funcionaba".
+> Si el arranque falla tras actualizar, el mensaje nombra el fichero, el bloque
+> y la clave a corregir. **Es a propósito**: lo que arrancaba, arrancaba mal.
+
+**El subsistema de config tenía tres formas distintas de mentir.** Ninguna era
+un bug puntual; las tres eran decisiones de "no molestar al operador" que
+terminaban costándole mucho más caro que un error al arrancar:
+
+| Mentira | Qué veía el operador |
+|---|---|
+| Claves desconocidas ignoradas (33 de 37 modelos) | `temperatura: 0.9` no hacía nada; el modelo corría con `temperature: 0.7` |
+| Valores basura sanitizados a un default | `timeout_seconds: "sesenta"` corría con 60; creía tener 300 para thinking mode |
+| Un agente inválido desaparecía con WARNING | El bot no responde y el daemon dice estar sano |
+
+**El cambio.**
+
+1. **`extra="forbid"` para TODO el schema**, puesto en la clase base en vez de
+   modelo por modelo. Un validador propio se adelanta al genérico de Pydantic
+   para nombrar el bloque, la clave sobrante y —vía `difflib`— la que se quiso
+   escribir: `LLMConfig: clave(s) desconocida(s): 'temperatura' ¿Quisiste decir
+   'temperature'?`. Los tres canales pierden su `extra="allow"`: existía
+   mientras el bloque no se validaba al cargar, y desde
+   [`channels-validados-al-cargar`](#channels-validados-al-cargar) ya no aplica.
+2. **`timeout_seconds` y `request_delay_seconds` dejan de sanitizarse** —
+   `gt=0` y `ge=0` declarativos, sin validador propio.
+3. **Un agente con config inválida aborta el arranque** con `ConfigError`
+   nombrando el fichero. Un agente que NO EXISTE sigue devolviendo `None`: no
+   es lo mismo "no está" que "está roto".
+4. **Cinco wirings del container pasan de degradar a ser fatales**: construcción
+   del `AgentContainer`, delegación, scheduler, broadcast y tools de Telegram.
+   Todos comparten la misma forma: el operador declaró una capacidad y el
+   `except Exception → logger.error → continuar` la dejaba muda.
+
+**Lo que se degrada, se degrada a propósito y lo dice.** El stack de visión
+(InsightFace, modelos ONNX) es una dependencia externa pesada que puede faltar
+en el host sin que la config esté mal, así que sigue degradando — pero el log
+pasó de `Error en wire_photos para agente 'x'` a nombrar la capacidad perdida:
+`el procesamiento de fotos QUEDA DESHABILITADO`. Ídem las extensiones de
+`ext/`: código de terceros del usuario, que una rota tumbe el daemon sería peor
+que saltearla con aviso.
+
+**Reversión de un criterio anterior — leer esto.** `timeout_seconds` y
+`request_delay_seconds` tenían fallback explícito por pedido del operador, con
+la regla escrita en sus tests: *"nada de fail-fast acá: priorizamos que el
+bootstrap del daemon no muera por un dedazo en el YAML"*. Esta nota **revierte
+esa decisión**, y la razón es que la red resultó peor que el problema que
+evitaba: un default silencioso que contradice lo escrito en el YAML no es
+robustez, es un bug que no se puede diagnosticar. El daemon que no arranca se
+arregla en diez segundos leyendo el error; el que arranca con un timeout que no
+pediste puede pasar meses sin que lo notes.
+
+**Ajuste posterior (review adversarial).** El `extra="forbid"` de los modelos
+nunca veía el nivel TOP: el loader arma la config sección por sección con
+`merged.get(...)`, así que un typo de sección (`schedulr:`) o un bloque entero
+en el nivel equivocado seguían ignorándose. `_check_top_level` cierra ese
+hueco: valida las claves top-level del global y del fichero CRUDO de cada
+agente (antes del merge — después ya no se distingue lo declarado de lo
+heredado), distinguiendo el typo ("¿Quisiste decir…?") del bloque de nivel
+global escrito en un agente ("va en config/global.yaml, acá no tiene efecto").
+El barrido sobre la instalación real encontró 16 sub-agentes declarando
+`memory:` — el nombre PREVIO al refactor memory→memories — sin efecto desde
+junio: exactamente la clase de mentira que este chequeo elimina.
+
+**Invariante.** **NUNCA** sanitizar un valor de config a un default "para no
+romper el arranque". Un valor mal escrito es un error del operador, y el
+arranque es el único momento en que se puede señalar con precisión. La única
+degradación legítima es la de una **dependencia externa** (no de la config), y
+tiene que nombrar en el log qué capacidad queda muda.
+
+---
+
+### `motor-de-merge-unico`
+
+**Había cinco motores de merge, y ninguno sabía de los otros.** No eran cinco
+capas: eran cinco *implementaciones* de "qué significa mergear config", con
+semánticas parecidas pero no idénticas, cada una nacida cuando la anterior no
+alcanzaba para un caso nuevo.
+
+| Mecanismo | Dónde vivía | Qué sabía de más / de menos |
+|---|---|---|
+| `_deep_merge` | `infrastructure/config_loader.py` | carril de carga; **no sabía borrar claves** |
+| `_deep_merge` | `core/use_cases/config/get_effective_config.py` | copia literal del anterior, con su propio rastreo de orígenes |
+| `deep_merge_con_eliminaciones` | `core/use_cases/config/_merge.py` | carril de edición; sí borra, vía sentinel |
+| `resolve_inherit` | `infrastructure/config_loader.py` | herencia opt-in por bloque |
+| `build_ephemeral_child` | `infrastructure/container.py` | 5ª capa en runtime, invisible a toda UI |
+
+**El síntoma que lo delató.** El setup TUI tuvo que inventar un tri-estado
+propio (`INHERIT` / `OVERRIDE_VALOR` / `OVERRIDE_NULL`) con su modal de 148
+líneas para poder decir "borrá esta clave". ¿Por qué? Porque el carril de carga
+**no tenía forma de expresar el borrado**: "ausente" y "borrado" se decían
+distinto según el carril. El tri-estado no era complejidad de la UI; era la UI
+reconstruyendo semántica que el sistema de abajo no ofrecía.
+
+**El cambio.** Un módulo de dominio puro, `core/domain/config_merge.py`, con la
+tabla de semántica documentada en un solo lugar:
+
+| Caso | Resultado |
+|---|---|
+| dict ⊕ dict | merge recursivo |
+| clave ausente en override | hereda de base |
+| lista ⊕ lista | **reemplazo total** — nunca concatena |
+| `None` explícito | pisa (es "desactivar", no "ausente") |
+| `SENTINEL_ELIMINAR` | borra la clave |
+| escalar ⊕ dict (o al revés) | **error ruidoso** |
+
+Los cuatro carriles pasan a apuntar al mismo objeto: el loader y el carril de
+edición vía alias que conservan sus nombres históricos, y `build_ephemeral_child`
+importándolo explícitamente para que la quinta capa deje de ser un mundo aparte.
+El tri-estado sobrevive, pero degradado a lo que siempre debió ser: **una
+traducción** de la intención de la UI a los tres primitivos que el motor ya
+entiende (sentinel / `None` / valor).
+
+La dirección del merge queda escrita como invariante en el módulo:
+`global.yaml` es la **base** y cada capa siguiente completa o pisa solo los
+campos que declara. Nunca al revés, y lo mismo vale para el padre en la
+herencia de sub-agentes.
+
+**Cambios observables.**
+
+- Una clave que cambia de forma entre capas (escalar donde antes había un
+  bloque, o al revés) **aborta con su path y el nombre de la capa culpable**:
+  `Conflicto de tipos en 'llm': una capa declara un bloque de config (mapa) y
+  otra un valor`. Antes era un reemplazo silencioso. `None` está exento a
+  propósito: apagar un bloque (`transcription: null`) es legítimo y explícito.
+- `merge_capas` devuelve, además del resultado, la **procedencia de cada hoja**
+  (`llm.model` → `agent`). `get_effective_config` dejó de calcularla por su
+  cuenta, y es el insumo directo del `inaki config show --origin` de la Fase 5.
+
+**Lo que NO cambió.** `merged_llm_config` (el override de `memories.llm`) queda
+como **excepción única y declarada**: opera sobre modelos ya validados, no sobre
+dicts crudos. Su semántica es la misma —`model_fields_set` es el equivalente
+pydantic de "la clave está escrita en el YAML"— pero absorberlo obligaría a
+mergear en crudo antes de validar, lo que convertiría `MemoriesConfig.llm` en un
+`LLMConfig` y rompería el tri-estado que el TUI edita sobre `memories.llm.*`.
+Está documentado en su docstring, con la regla: cualquier ajuste a la semántica
+se hace en el motor y se replica ahí.
+
+**Invariante.** **NUNCA** escribas un segundo merge de config. Si el que hay no
+alcanza para un caso nuevo, **extendé el motor** — no nazcas otro al lado. Cinco
+veces se hizo lo contrario, y el precio fue que la UI tuviera que reinventar el
+borrado de claves porque el carril de carga no sabía expresarlo.
+
+---
+
+### `channels-validados-al-cargar`
+
+**El 14% del schema no se validaba nunca.** `AgentConfig.channels` era un
+`dict[str, dict[str, Any]]`: un dict opaco cuyos 26 campos —los de
+`TelegramChannelConfig`, `TelegramGroupsConfig` y las cuatro clases de
+broadcast— **no pasaban por Pydantic al cargar la config**. El tipado laxo tenía
+una razón declarada en el propio código ("para sobrevivir el merge sin
+validación estricta"), y esa razón se cobró tres consecuencias:
+
+| Consecuencia | Dónde se veía |
+|---|---|
+| Un typo o un tipo mal puesto viajaba hasta el primer uso en runtime | cualquier campo de `channels.telegram` |
+| Cada consumidor re-declaraba los defaults del schema | `bot.py` los repetía con ~30 `.get()`: tercera copia |
+| El mismo campo llegaba como modelo o como dict según el camino | `hasattr(x, "model_dump")` defensivo en el bot y en el admin |
+| La referencia "exhaustiva" no podía descender por el dict | 6 clases ausentes de `config-reference.md` |
+| El setup TUI necesitaba un registry propio, inyectado a mano | `setup_cli.py` + un `if name == "channels"` hardcodeado |
+
+Y una cuarta, la peor: `_wire_broadcast_for_agent` **revalidaba el bloque en un
+try/except** porque no podía confiar en que estuviera validado. Cuando fallaba,
+el `return` se llevaba puestos el transporte de broadcast Y el rate limiter de
+grupos, con el daemon arrancando sano. Ese es literalmente el bug de
+[`broadcast-arranque-observable`](#broadcast-arranque-observable), que se pudo
+mitigar pero no eliminar mientras el bloque siguiera sin validarse en el borde.
+
+**El cambio.** Un registry único, `CHANNEL_SCHEMAS`, declara qué canal existe y
+con qué schema (`telegram` → `TelegramChannelConfig`, `cli` →
+`CliChannelConfig`, este último tipado por primera vez). `AgentConfig.channels`
+lo consume en un `field_validator(mode="before")` que valida cada bloque y lo
+**coerciona a su modelo**. Vive en el schema, y no en el loader, porque así es
+la ÚNICA puerta: cubre por igual los cuatro caminos que construyen un
+`AgentConfig` (loader, builder efímero del flujo delegate, admin server y tests).
+
+Con el bloque ya tipado, `AgentConfig.telegram` / `.cli` dan acceso por
+atributo, y el mapeo a lo que consume el bot vive en un único builder del
+composition root (`build_telegram_channel_settings` → `TelegramChannelSettings`,
+VO del adapter). El bot dejó de parsear: desaparecieron sus `.get()` con
+defaults y sus dos ramas `hasattr(model_dump)`.
+
+**Cambios observables.**
+
+- Un canal desconocido, un tipo inválido o una topología de broadcast mal
+  formada **se reportan con su path exacto** (`channels.slack: canal
+  desconocido. Canales soportados: cli, telegram.`) en vez de ignorarse. Un
+  `broadcast:` colgado de `channels` —en vez de `channels.telegram`— ahora es un
+  error de validación, no un warning sobre un bloque inerte.
+- `docs/config-reference.md` pasó de 311 a 375 líneas: los canales entran como
+  raíces propias del generador, porque `channels` es un dict indexado por nombre
+  y la recursión por anotaciones no podía descubrirlos.
+
+**Lo que esta nota NO cambia.** `TelegramChannelConfig` conserva
+`extra="allow"`: un campo *desconocido* dentro de un canal conocido sigue
+pasando sin ruido. El endurecimiento a `extra="forbid"` y el aborto del arranque
+ante un agente inválido (hoy todavía desaparece con WARNING) son la Fase 4 de
+[`config-refactor-plan.md`](config-refactor-plan.md).
+
+**Invariante.** **NUNCA** dejes un bloque de config sin tipar "para que el merge
+no se queje": el merge opera sobre dicts crudos ANTES de validar, así que
+tipar el destino no le cuesta nada — y sin tipo, ese bloque no se valida jamás,
+sus defaults se duplican en cada consumidor y ninguna herramienta que lea el
+schema puede verlo.
+
+---
+
+### `secrets-layer-eradication`
+
+**Los `*.secrets.yaml` prometían una separación que nadie usaba, y cobraban el
+precio en todas las superficies de edición.** La config eran **4 capas**:
+`global.yaml` → `global.secrets.yaml` → `agents/{id}.yaml` →
+`agents/{id}.secrets.yaml`. La idea original era poder compartir o commitear la
+config sin arrastrar credenciales. Nunca se usó así, y no iba a usarse.
+
+**El diagnóstico.** La premisa que sostenía el diseño era falsa: los
+`*.secrets.yaml` **nunca estuvieron cifrados**. Eran YAML plano con permisos
+600 — exactamente lo mismo que su capa principal. El único cifrado real del
+sistema (Fernet, valores `enc:`, clave en `~/.inaki/secret.key`) vive en
+`tool_config.yaml`, que ni siquiera participa del merge. Con eso, el beneficio
+neto de la separación era **compartir sin credenciales**, y el costo era:
+
+| Costo | Dónde |
+|---|---|
+| 6 valores de `LayerName` en vez de 3 | `core/ports/config_repository.py` |
+| Una pantalla entera de la TUI (191 líneas) | `setup_tui/screens/secrets_page.py` |
+| Routing `kind == "secret"` → capa, en cada persistencia | `global_page.py`, `agent_detail_page.py` |
+| Poda de claves duplicada sobre dos capas | `persist_delete` de ambas páginas |
+| Dos preguntas al operador que solo existían por el split | borrar agente / borrar provider |
+
+Y sobre todo: **una decisión no obvia por cada edición** ("¿esto va al fichero
+principal o al de secrets?") en un sistema que ya tenía demasiadas.
+
+**El cambio.** Dos capas: `config/global.yaml` → `agents/{id}.yaml`. Las
+credenciales viven ahí, y **todas** las capas se crean y se reparan con permisos
+600 (antes solo las de secrets). La sensibilidad de un dato dejó de ser una
+propiedad del *fichero* para ser lo que siempre debió ser: una propiedad del
+**schema** (`kind == "secret"`), que es lo que enmascara el valor en la TUI y lo
+que permitirá redactarlo en el futuro `inaki config show`.
+
+**Migración automática, sin acción del operador.**
+`migrate_secrets_into_main_layers` corre en el bootstrap y pliega cada
+`*.secrets.yaml` dentro de su capa principal (el secrets **pisa**, mismo orden
+de precedencia que tenía el merge eliminado), aplica `chmod 600` y recién
+entonces borra el secrets. Orden deliberado — escribir lo nuevo antes de borrar
+lo viejo: en el peor caso quedan duplicados (benignos, el loader ya no los lee),
+nunca pérdida de datos. Alcanza a global, agentes y sub-agentes. Es idempotente.
+Corre **después** de `migrate_tool_config_to_own_file`, que necesita leer
+`global.secrets.yaml` antes de que desaparezca; si ese bloque sobrevive porque
+`tool_config.yaml` ya existía, se descarta en vez de ensuciar la capa principal.
+
+**Cambios observables.** Desaparece la entrada `SECRETS` del menú de `inaki
+setup` (queda GLOBAL CONFIG / AGENTS / SUBAGENTS / PROVIDERS). Borrar un
+provider ahora se lleva su `api_key` en la misma operación, y borrar un agente
+se lleva su único YAML con las credenciales adentro: en ambos casos se acabó la
+segunda pregunta, porque ya no hay un segundo fichero que dejar huérfano.
+
+**Los dos costos que se aceptan.** Ambos conocidos, ninguno accidental:
+
+1. **Se pierde la vista transversal de credenciales.** La `SecretsPage` listaba
+   *todos* los secretos declarados por el schema marcando cuáles estaban
+   configurados y cuáles pendientes (`iter_declared_secrets`, borrada con
+   ella). Esa vista no dependía del split de ficheros — era una feature propia
+   que cayó con la página. Hoy hay que navegar el árbol de global/agente para
+   ver una credencial.
+2. **`cat global.yaml` deja de ser pegable** en un issue sin filtrar llaves a
+   mano.
+
+Los dos los cubre la misma pieza pendiente: `inaki config show --effective
+--origin` con redacción de campos secretos (Fase 5 de
+[`config-refactor-plan.md`](config-refactor-plan.md)) — un dump que enmascara
+también responde "qué tengo configurado y qué me falta". Hasta entonces, los
+huecos existían al escribirse esta nota; la Fase 5
+([`config-show-effective`](#config-show-effective)) los cerró — `inaki config
+show` redacta y `--secrets` da la vista transversal. `get_effective_config`
+(el use case del TUI) sigue devolviendo valores en claro: alimenta un editor,
+no un dump.
+
+**Ajustes posteriores (review adversarial).** Tres guardas que el diseño
+original no tenía:
+
+1. Un `agents/{id}.secrets.yaml` **huérfano** (su agente fue borrado — la TUI
+   vieja eliminaba solo el YAML principal) NO se pliega: fundaría un agente sin
+   `id` que abortaría el arranque. Queda en disco con un WARNING que dice qué
+   hacer.
+2. El bloque `tool_config` **nunca** se pliega a `global.yaml`: si su migración
+   propia falló al escribir, el secrets se conserva SOLO con ese bloque (con
+   aviso) en vez de varar credenciales donde nadie las lee.
+3. `inaki setup` corre `ensure_user_config` (bootstrap + migraciones) ANTES de
+   abrir. Sin eso, sobre una instalación sin migrar la TUI mostraba las
+   credenciales "(sin configurar)", y una key nueva tipeada ahí era PISADA por
+   el fold del siguiente arranque — pérdida silenciosa de la edición.
+
+**Invariante.** **NUNCA** expresar "este dato es sensible" como un split de
+ficheros: es metadato del schema. Un split de ficheros por sensibilidad
+multiplica capas, decisiones de escritura y superficie de UI, y no cifra nada.
 
 ---
 

@@ -301,10 +301,10 @@ def test_campo_marcado_secret_se_infiere_kind_secret():
     )
     token = _hijo(tree, "token")
     assert token.field.kind == "secret"  # type: ignore[union-attr]
-    # 'token' ausente → addable marcado is_secret (decide la capa al añadirlo).
+    # 'token' ausente → sigue ofreciéndose como addable; al añadirlo vuelve a
+    # entrar por la rama de arriba y se enmascara por su kind, no por su nombre.
     tree2 = build_schema_tree(TelegramChannelConfig, {}, root_label="telegram")
-    token_opt = next(o for o in tree2.addable if o.key == "token")
-    assert token_opt.is_secret is True
+    assert any(o.key == "token" for o in tree2.addable)
 
 
 def test_integracion_con_agentconfig_real():

@@ -29,6 +29,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from adapters.inbound.telegram.bot import BACK_ONLINE_NOTICE, TelegramBot
+from adapters.inbound.telegram.ports import TelegramChannelSettings
 
 
 # ---------------------------------------------------------------------------
@@ -47,11 +48,11 @@ def _make_bot(allowed_user_ids: list | None = None) -> TelegramBot:
     """Construye un TelegramBot con Application parcheada (sin token real)."""
     settings = MagicMock()
     settings.id = "test-agent"
-    settings.telegram = {
-        "token": "fake-token",
-        "allowed_user_ids": allowed_user_ids or [],
-        "reactions": False,
-    }
+    settings.telegram = TelegramChannelSettings(
+        token="fake-token",
+        allowed_user_ids=tuple(str(uid) for uid in allowed_user_ids or []),
+        reactions=False,
+    )
     ports = MagicMock()
 
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:

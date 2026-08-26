@@ -39,6 +39,7 @@ from typing import Any, Optional
 
 import typer
 
+from inaki.config_cli import config_app
 from inaki.knowledge_cli import knowledge_app
 from inaki.scheduler_cli import scheduler_app
 from inaki.setup_cli import setup_app
@@ -62,6 +63,7 @@ def _version_callback(value: bool) -> None:
 app.add_typer(scheduler_app, name="scheduler", help="Manage scheduled tasks")
 app.add_typer(knowledge_app, name="knowledge", help="Manage document knowledge sources")
 app.add_typer(setup_app, name="setup", help="Configuración del sistema (TUI offline)")
+app.add_typer(config_app, name="config", help="Inspeccionar la configuración efectiva")
 
 
 def _get_config_dir() -> Path:
@@ -463,22 +465,31 @@ def reload(
 
 @app.command(name="gen-docs", hidden=True)
 def gen_docs() -> None:
-    """[dev] Regenera docs/config-reference.md desde el schema de configuración.
+    """[dev] Regenera la documentación derivada del schema de configuración.
+
+    Dos artefactos, una sola fuente (los docstrings del schema):
+      - `docs/config-reference.md`   — referencia exhaustiva de campos.
+      - `config/global.example.yaml` — referencia comentada en formato YAML.
 
     Tooling de desarrollo: solo tiene sentido desde el repo. El test de drift
-    `test_config_docs_drift.py` falla si el .md quedó desincronizado del schema —
-    correr esto lo resuelve.
+    `test_config_docs_drift.py` falla si alguno quedó desincronizado del
+    schema — correr esto lo resuelve.
     """
     from pathlib import Path
 
-    from infrastructure.config_docs import generate_config_reference
+    from infrastructure.config_docs import generate_config_reference, generate_global_example
 
-    destino = Path(__file__).resolve().parent.parent / "docs" / "config-reference.md"
-    if not destino.parent.is_dir():
-        typer.echo(f"error: no existe {destino.parent} (¿fuera del repo?)", err=True)
-        raise typer.Exit(1)
-    destino.write_text(generate_config_reference(), encoding="utf-8")
-    typer.echo(f"✓ regenerado {destino}")
+    raiz = Path(__file__).resolve().parent.parent
+    artefactos = (
+        (raiz / "docs" / "config-reference.md", generate_config_reference),
+        (raiz / "config" / "global.example.yaml", generate_global_example),
+    )
+    for destino, generar in artefactos:
+        if not destino.parent.is_dir():
+            typer.echo(f"error: no existe {destino.parent} (¿fuera del repo?)", err=True)
+            raise typer.Exit(1)
+        destino.write_text(generar(), encoding="utf-8")
+        typer.echo(f"✓ regenerado {destino}")
 
 
 @app.command()

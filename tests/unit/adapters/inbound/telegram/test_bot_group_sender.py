@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from adapters.inbound.telegram.ports import TelegramChannelSettings, TelegramGroupSettings
 from core.domain.value_objects.channel_context import ChannelContext
 
 
@@ -40,15 +41,15 @@ def agent_cfg_autonomous() -> MagicMock:
     cfg.id = "inaki"
     cfg.name = "Inaki"
     cfg.description = "Asistente"
-    cfg.telegram = {
-        "token": "dummy-token",
-        "allowed_user_ids": [],
-        "reactions": False,
-        "groups": {
-            "behavior": "autonomous",
-            "bot_username": "inaki_bot",
-        },
-    }
+    cfg.telegram = TelegramChannelSettings(
+        token="dummy-token",
+        allowed_user_ids=(),
+        reactions=False,
+        groups=TelegramGroupSettings(
+            behavior="autonomous",
+            bot_username="inaki_bot",
+        ),
+    )
     return cfg
 
 

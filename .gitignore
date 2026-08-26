@@ -1,6 +1,12 @@
-# Secrets — nunca commitear
-config/*.secrets.yaml
-config/agents/*.secrets.yaml
+# Credenciales — nunca commitear.
+# La config real vive en ~/.inaki/ (fuera del repo); estos patrones cubren
+# copias locales dentro del árbol. `global.example.yaml` sí se versiona.
+config/global.yaml
+# Contenido y no el directorio: ignorar `config/agents/` entero impediría que
+# git descienda, y la negación de los examples no aplicaría nunca.
+config/agents/*
+!config/agents/*.example.yaml
+# Restos de la capa de secrets erradicada (ver migraciones.md).
 *.secrets.yaml
 *.secrets.yml
 

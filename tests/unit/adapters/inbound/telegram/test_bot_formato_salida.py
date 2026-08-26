@@ -22,6 +22,8 @@ import pytest
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
 
+from adapters.inbound.telegram.ports import TelegramChannelSettings
+
 
 @pytest.fixture
 def agent_cfg() -> MagicMock:
@@ -29,7 +31,7 @@ def agent_cfg() -> MagicMock:
     cfg.id = "inaki"
     cfg.name = "Inaki"
     cfg.description = "Asistente"
-    cfg.telegram = {"token": "dummy-token", "allowed_user_ids": []}
+    cfg.telegram = TelegramChannelSettings(token="dummy-token", allowed_user_ids=())
     return cfg
 
 

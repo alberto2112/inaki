@@ -125,7 +125,7 @@ Before the prompt is assembled, `RunAgentUseCase` expands `@include(<file>)` dir
 1. The agent's **base system prompt** (from its YAML).
 2. The **per-user context** file (`~/.inaki/users/{channel}/...`, see `core/use_cases/run_agent.py::_read_user_context`).
 
-It is deliberately **never** applied to the memory digest, retrieved knowledge (RAG), skill blocks, or `extra_sections`. If it were, an `@include(~/.inaki/config/global.secrets.yaml)` planted inside a RAG document or a consolidated memory would exfiltrate that file straight into the prompt — a prompt-injection-to-arbitrary-file-read vector. Keeping inclusion on operator-authored text only closes that hole.
+It is deliberately **never** applied to the memory digest, retrieved knowledge (RAG), skill blocks, or `extra_sections`. If it were, an `@include(~/.inaki/config/global.yaml)` planted inside a RAG document or a consolidated memory would exfiltrate that file — credentials included — straight into the prompt — a prompt-injection-to-arbitrary-file-read vector. Keeping inclusion on operator-authored text only closes that hole.
 
 **Rules:**
 

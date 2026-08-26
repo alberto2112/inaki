@@ -7,23 +7,24 @@
 ```
 inaki (cli.py → app)
 │
+├── _resolve_dirs() → ensure_user_config(config_dir, agents_dir)
+│   └── bootstrap + one-shot migrations (idempotent): tool_config → own file,
+│       telegram group fields, *.secrets.yaml folded into their main layer
+│
 ├── _bootstrap(config_dir, agents_dir)
 │   ├── load_global_config(config_dir)
-│   │   ├── _load_yaml_safe("~/.inaki/config/global.yaml")
-│   │   ├── _load_yaml_safe("~/.inaki/config/global.secrets.yaml")
-│   │   ├── _deep_merge(global, secrets) → merged_dict
+│   │   ├── _load_yaml_safe("~/.inaki/config/global.yaml")  — credentials included
 │   │   └── return GlobalConfig, global_raw
 │   │
 │   ├── setup_logging(log_level)
 │   │
 │   └── AgentRegistry(agents_dir, global_raw)
-│       ├── glob("~/.inaki/config/agents/*.yaml") — excludes .secrets and .example
+│       ├── glob("~/.inaki/config/agents/*.yaml") — excludes .example
 │       ├── For each agent:
 │       │   ├── load_agent_config(id, agents_dir, global_raw)
 │       │   │   ├── _load_yaml_safe("~/.inaki/config/agents/{id}.yaml")
-│       │   │   ├── _load_yaml_safe("~/.inaki/config/agents/{id}.secrets.yaml")  [WARNING if missing]
 │       │   │   ├── _deep_merge(global_raw, agent_raw)
-│       │   │   └── return resolved AgentConfig (4 layers merged)
+│       │   │   └── return resolved AgentConfig (2 layers merged)
 │       │   └── registry[id] = AgentConfig
 │       └── log "N agent(s) loaded"
 │

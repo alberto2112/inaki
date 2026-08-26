@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 
 from adapters.inbound.telegram.bot import TelegramBot
+from adapters.inbound.telegram.ports import TelegramChannelSettings
 from core.domain.value_objects.channel_context import ChannelContext
 
 
@@ -44,11 +45,11 @@ def _make_bot(run_agent_response: str = "ok") -> tuple[TelegramBot, MagicMock]:
     """Crea un TelegramBot con container mockeado. Devuelve (bot, container_mock)."""
     agent_cfg = MagicMock()
     agent_cfg.id = "test-agent"
-    agent_cfg.telegram = {
-        "token": "fake-token",
-        "allowed_user_ids": [],
-        "reactions": False,
-    }
+    agent_cfg.telegram = TelegramChannelSettings(
+        token="fake-token",
+        allowed_user_ids=(),
+        reactions=False,
+    )
 
     container = MagicMock()
     container.run_agent = MagicMock()

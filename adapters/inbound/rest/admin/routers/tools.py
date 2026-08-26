@@ -225,16 +225,12 @@ async def send_message(body: SendRequest, request: Request) -> SendResponse:
         # Resolver flag del config del agente:
         # agent_config.channels.telegram.broadcast.emit.assistant_response
         agente = resolver_agente(request, body.agent_id)
-        tg_cfg = agente.agent_config.channels.get("telegram", {}) or {}
-        if hasattr(tg_cfg, "model_dump"):
-            tg_dict = tg_cfg.model_dump()
-        elif isinstance(tg_cfg, dict):
-            tg_dict = tg_cfg
-        else:
-            tg_dict = {}
-        broadcast_cfg = tg_dict.get("broadcast") or {}
-        emit_cfg = broadcast_cfg.get("emit") or {}
-        emit_assistant = bool(emit_cfg.get("assistant_response", True))
+        tg_cfg = agente.agent_config.telegram
+        broadcast_cfg = tg_cfg.broadcast if tg_cfg is not None else None
+        # Sin bloque broadcast declarado rige el default del schema (emitir).
+        emit_assistant = (
+            broadcast_cfg.emit.assistant_response if broadcast_cfg is not None else True
+        )
 
         if emit_assistant:
             emitter = getattr(request.app.state.app_container, "broadcast_adapter", None)

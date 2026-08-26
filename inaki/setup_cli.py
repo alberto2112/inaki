@@ -55,7 +55,8 @@ def _lanzar_tui() -> None:
     """
     from adapters.inbound.setup_tui.app import SetupApp
     from adapters.inbound.setup_tui.di import build_setup_container
-    from infrastructure.config import AgentConfig, GlobalConfig, TelegramChannelConfig
+    from infrastructure.config import CHANNEL_SCHEMAS, AgentConfig, GlobalConfig
+    from infrastructure.home import get_inaki_home
     from infrastructure.factories.embedding_factory import EmbeddingProviderFactory
     from infrastructure.factories.llm_factory import LLMProviderFactory
     from infrastructure.factories.transcription_factory import TranscriptionProviderFactory
@@ -72,13 +73,24 @@ def _lanzar_tui() -> None:
         )
     )
 
+    home = get_inaki_home()
+    # Bootstrap + migraciones ANTES de construir el container: la TUI solo lee
+    # las capas actuales, así que sobre una instalación sin migrar mostraría
+    # credenciales "sin configurar" (viven en un secrets aún no plegado), un
+    # valor nuevo tipeado ahí sería pisado por el fold del siguiente arranque,
+    # y un secrets huérfano de un agente borrado resucitaría como agente roto.
+    from infrastructure.config import ensure_user_config
+
+    ensure_user_config(home / "config", home / "agents")
     container = build_setup_container(
-        config_dir=None,
+        config_dir=home / "config",
+        agents_dir=home / "agents",
         global_schema=GlobalConfig,
         agent_schema=AgentConfig,
         # Registry de canales para introspeccionar el dict ``channels`` del agente.
-        # Al sumar un canal nuevo (slack, etc.) agregar su modelo acá.
-        channel_schemas={"telegram": TelegramChannelConfig},
+        # Es el MISMO que valida el loader (``CHANNEL_SCHEMAS``): sumar un canal
+        # es una sola entrada allá, no una lista que mantener sincronizada acá.
+        channel_schemas=dict(CHANNEL_SCHEMAS),
         provider_adapters=provider_choices,
     )
     app = SetupApp(container)

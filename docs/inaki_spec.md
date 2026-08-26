@@ -30,7 +30,7 @@ Inaki is a personal agentic AI assistant designed to run as a systemd service on
 | Embeddings | `multilingual-e5-small` (ONNX) · OpenAI (alternative) |
 | Vector store | `sqlite-vec` + SQLite3 |
 | History | SQLite3 (`aiosqlite`) |
-| Config | YAML · 4-layer merge · `pydantic` v2 |
+| Config | YAML · 2-layer merge · `pydantic` v2 |
 | Tests | `pytest` + `pytest-asyncio` (`auto` mode) |
 | CLI | `typer` + `rich` |
 | Config TUI | `textual` + `ruamel.yaml` |
@@ -247,7 +247,7 @@ inaki/                                  ← repository root
 │
 ├── infrastructure/
 │   ├── container.py                   # AgentContainer + AppContainer (single wiring)
-│   ├── config.py                      # Pydantic v2 models + 4-layer loader
+│   ├── config.py                      # Pydantic v2 models + 2-layer loader
 │   ├── logging_setup.py
 │   ├── daemon_reloader.py             # DaemonReloader (hot-reload)
 │   └── factories/
@@ -286,12 +286,10 @@ inaki/                                  ← repository root
 ```
 ~/.inaki/
 ├── config/
-│   ├── global.yaml
-│   ├── global.secrets.yaml            # gitignored — never commit
-│   ├── tool_config.yaml               # daemon-owned; tool credentials (enc: inside); not in 4-layer merge
+│   ├── global.yaml                    # credentials included — mode 600, never commit
+│   ├── tool_config.yaml               # daemon-owned; tool credentials (enc: inside); not in the merge
 │   └── agents/
-│       ├── {id}.yaml
-│       └── {id}.secrets.yaml          # gitignored
+│       └── {id}.yaml                  # tokens included — mode 600, never commit
 ├── data/
 │   ├── inaki.db                       # Memories (sqlite-vec)
 │   ├── history.db                     # Conversation history
@@ -516,22 +514,25 @@ YAML configuration CRUD through `IConfigRepository`. Used by the TUI and admin R
 
 ## 7. Configuration System
 
-### 4-layer merge (field by field)
+### 2-layer merge (field by field)
 
 ```
 ~/.inaki/config/global.yaml
         ↓ field-by-field merge
-~/.inaki/config/global.secrets.yaml
-        ↓ field-by-field merge
 ~/.inaki/config/agents/{id}.yaml
-        ↓ field-by-field merge
-~/.inaki/config/agents/{id}.secrets.yaml
         ↓
 Resolved AgentConfig
 ```
 
 - Each layer only overrides the fields it defines. Absent fields are inherited.
-- `*.secrets.yaml` files are in `.gitignore` and **must never be committed**.
+- Credentials (`providers.*.api_key`, channel tokens, `admin.auth_key`) live in
+  these same two files. Both are created with mode `600` and **must never be
+  committed**. "Secret" is a **schema mark** (`kind == "secret"`), not a file:
+  it is what masks the field in the `inaki setup` TUI.
+- Installs that still have the old `*.secrets.yaml` sidecars are migrated
+  automatically on startup (`migrate_secrets_into_main_layers`): the sidecar is
+  folded into its main layer (secrets wins on conflict), `chmod 600` is applied
+  and the sidecar is deleted. No operator action needed.
 - The canonical, commented reference for all parameters is `config/global.example.yaml`.
 
 ### Provider registry

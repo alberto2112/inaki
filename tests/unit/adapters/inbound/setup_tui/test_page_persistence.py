@@ -2,7 +2,7 @@
 
 Verifican que ``persist_field_saved`` / ``persist_tristate_saved`` / ``persist_add``
 / ``persist_delete`` de ``AgentDetailPage`` y ``GlobalPage`` construyen el dict
-``cambios`` por path correcto y eligen la capa adecuada (principal vs secrets).
+``cambios`` por path correcto y escriben en la capa del contexto editado.
 Patrón de ``test_base_page_helpers.py``: página con ``__new__`` + container mock.
 """
 
@@ -52,14 +52,15 @@ class TestAgentPersistField:
         assert cambios == {"channels": {"telegram": {"groups": {"behavior": "autonomous"}}}}
         assert layer == LayerName.AGENT
 
-    def test_campo_secret_va_a_capa_secrets(self):
+    def test_campo_secret_va_a_la_misma_capa_que_el_resto(self):
+        """La marca ``kind="secret"`` ya no rutea capa: solo enmascara en la UI."""
         page = _agent_page()
         leaf = _leaf(("channels", "telegram", "token"), kind="secret", value="TKN")
         _run(page, page.persist_field_saved, leaf, leaf.field)
 
         cambios, layer = _call(page._container.update_agent_layer.execute)
         assert cambios == {"channels": {"telegram": {"token": "TKN"}}}
-        assert layer == LayerName.AGENT_SECRETS
+        assert layer == LayerName.AGENT
 
 
 class TestAgentPersistTristate:
@@ -107,16 +108,15 @@ class TestAgentPersistAdd:
         cambios, _ = _call(page._container.update_agent_layer.execute)
         assert cambios == {"channels": {"telegram": {"groups": {"rate_limiter": 5}}}}
 
-    def test_anadir_campo_secret_va_a_secrets(self):
+    def test_anadir_campo_secret_va_a_la_capa_del_agente(self):
         page = _agent_page()
         parent = SchemaNode(path=("channels", "telegram"), label="telegram", is_section=True)
-        # is_secret=True lo deriva el builder del marcador del schema (token está
-        # marcado). La capa se elige por ese flag, NO por el nombre del campo.
-        opt = AddableOption("token", "token", is_section=False, default_value="", is_secret=True)
+        opt = AddableOption("token", "token", is_section=False, default_value="")
         _run(page, page.persist_add, parent, opt)
 
-        _, layer = _call(page._container.update_agent_layer.execute)
-        assert layer == LayerName.AGENT_SECRETS
+        cambios, layer = _call(page._container.update_agent_layer.execute)
+        assert cambios == {"channels": {"telegram": {"token": ""}}}
+        assert layer == LayerName.AGENT
 
 
 class TestAgentPersistDelete:
@@ -125,7 +125,6 @@ class TestAgentPersistDelete:
         node = SchemaNode(path=("channels", "telegram", "groups"), label="groups", is_section=True)
 
         def _read(layer, agent_id=None):
-            # groups existe solo en la capa principal, no en secrets.
             if layer == LayerName.AGENT:
                 return {"channels": {"telegram": {"groups": {"behavior": "x"}}}}
             return {}
@@ -133,7 +132,6 @@ class TestAgentPersistDelete:
         page._container.repo.read_layer.side_effect = _read
         _run(page, page.persist_delete, node)
 
-        # update se llamó UNA sola vez (capa AGENT), no en secrets.
         assert page._container.update_agent_layer.execute.call_count == 1
         cambios, layer = _call(page._container.update_agent_layer.execute)
         assert layer == LayerName.AGENT
@@ -157,13 +155,15 @@ class TestGlobalPersist:
         assert cambios == {"llm": {"model": "claude-x"}}
         assert layer == LayerName.GLOBAL
 
-    def test_campo_secret_va_a_global_secrets(self):
+    def test_campo_secret_va_a_global(self):
+        """``kind="secret"`` no elige capa: la credencial vive en global.yaml."""
         page = self._global_page()
         leaf = _leaf(("admin", "auth_key"), kind="secret", value="k")
         _run(page, page.persist_field_saved, leaf, leaf.field)
 
-        _, layer = _call(page._container.update_global_layer.execute, kw=True)
-        assert layer == LayerName.GLOBAL_SECRETS
+        cambios, layer = _call(page._container.update_global_layer.execute, kw=True)
+        assert cambios == {"admin": {"auth_key": "k"}}
+        assert layer == LayerName.GLOBAL
 
 
 def _call(mock, kw: bool = False) -> tuple:

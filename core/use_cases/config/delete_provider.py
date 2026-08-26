@@ -1,9 +1,10 @@
 """
 DeleteProviderUseCase — elimina un provider del registry.
 
-Siempre elimina la entrada de ``global.yaml``.
-La ``api_key`` en ``global.secrets.yaml`` se elimina solo si ``borrar_api_key=True``.
-La TUI confirma con el usuario antes de pasar ``borrar_api_key=True``.
+Elimina la entrada completa de ``global.yaml``, credencial incluida: desde la
+erradicación de los ``*.secrets.yaml`` la ``api_key`` vive en la misma entrada,
+así que no hay forma (ni sentido) de borrar el provider dejándola huérfana.
+La TUI confirma con el usuario antes de llamar.
 """
 
 from __future__ import annotations
@@ -22,29 +23,17 @@ class DeleteProviderUseCase:
     def __init__(self, repo: "IConfigRepository") -> None:
         self._repo = repo
 
-    def execute(self, key: str, borrar_api_key: bool = False) -> None:
+    def execute(self, key: str) -> None:
         """
-        Elimina el provider ``key`` del registry.
+        Elimina el provider ``key`` del registry (con su ``api_key``).
 
         Args:
             key: Nombre del provider a eliminar (ej: ``"groq"``).
-            borrar_api_key: Si ``True``, también elimina la entrada de ``global.secrets.yaml``.
-                             Por defecto ``False`` — la TUI pregunta al usuario primero.
 
-        Nota: Si el provider no existe en una de las capas, esa capa se ignora
-        silenciosamente (operación idempotente por capa).
+        Nota: si el provider no existe, es no-op (idempotente).
         """
-        # Eliminar de global.yaml
         datos_globales = self._repo.read_layer(LayerName.GLOBAL)
         providers_globales: dict = dict(datos_globales.get("providers") or {})
         providers_globales.pop(key, None)
         datos_globales["providers"] = providers_globales
         self._repo.write_layer(LayerName.GLOBAL, datos_globales)
-
-        # Eliminar api_key de secrets solo si se pide explícitamente
-        if borrar_api_key:
-            datos_secrets = self._repo.read_layer(LayerName.GLOBAL_SECRETS)
-            providers_secrets: dict = dict(datos_secrets.get("providers") or {})
-            providers_secrets.pop(key, None)
-            datos_secrets["providers"] = providers_secrets
-            self._repo.write_layer(LayerName.GLOBAL_SECRETS, datos_secrets)

@@ -1,4 +1,4 @@
-"""GlobalPage — edición de la config global (global.yaml + global.secrets.yaml).
+"""GlobalPage — edición de la config global (``global.yaml``).
 
 Hereda ``TreeEditorPage`` (split-pane TUI v3). El árbol cuelga las secciones
 presentes en los YAML globales; el panel edita los campos hoja. Solo se pinta lo
@@ -17,11 +17,7 @@ from adapters.inbound.setup_tui.domain.schema_node import SchemaNode
 from adapters.inbound.setup_tui.screens._tree_editor import TreeEditorPage
 from adapters.inbound.setup_tui.screens._warnings import warn_on_invalid_refs
 from core.ports.config_repository import LayerName
-from core.use_cases.config._merge import (
-    CampoTriestado,
-    TristadoValor,
-    deep_merge_con_eliminaciones,
-)
+from core.use_cases.config._merge import CampoTriestado, TristadoValor
 
 if TYPE_CHECKING:
     from adapters.inbound.setup_tui.di import SetupContainer
@@ -53,9 +49,7 @@ class GlobalPage(TreeEditorPage):
         if self._container is None:
             return SchemaNode(path=(), label="global", is_section=True)
         try:
-            base = self._container.repo.read_layer(LayerName.GLOBAL)
-            secrets = self._container.repo.read_layer(LayerName.GLOBAL_SECRETS)
-            datos = deep_merge_con_eliminaciones(base, secrets)
+            datos = self._container.repo.read_layer(LayerName.GLOBAL)
         except Exception:
             datos = {}
         return build_schema_tree(
@@ -67,8 +61,7 @@ class GlobalPage(TreeEditorPage):
         )
 
     def persist_field_saved(self, leaf: SchemaNode, field: "Field") -> None:
-        layer = LayerName.GLOBAL_SECRETS if field.kind == "secret" else LayerName.GLOBAL
-        self._aplicar(cambios_anidados(leaf.path, field.value), layer)
+        self._aplicar(cambios_anidados(leaf.path, field.value), LayerName.GLOBAL)
 
     def persist_tristate_saved(
         self, leaf: SchemaNode, field: "Field", result: "TristateResult"
@@ -85,20 +78,19 @@ class GlobalPage(TreeEditorPage):
 
     def persist_add(self, parent: SchemaNode, option: "AddableOption") -> None:
         valor: Any = {} if option.is_section else option.default_value
-        layer = LayerName.GLOBAL_SECRETS if option.is_secret else LayerName.GLOBAL
-        self._aplicar(cambios_anidados(parent.path + (option.key,), valor), layer)
+        self._aplicar(cambios_anidados(parent.path + (option.key,), valor), LayerName.GLOBAL)
 
     def persist_delete(self, node: SchemaNode) -> None:
         if self._container is None:
             return
-        cambios = eliminar_en_path(node.path)
-        for layer in (LayerName.GLOBAL, LayerName.GLOBAL_SECRETS):
-            try:
-                datos = self._container.repo.read_layer(layer)
-            except Exception:
-                continue
-            if _existe_path(datos, node.path):
-                self._aplicar(cambios, layer)
+        try:
+            datos = self._container.repo.read_layer(LayerName.GLOBAL)
+        except Exception:
+            return
+        # Solo podamos si el path EXISTE — evita escribir el sentinel de borrado
+        # en una rama que el YAML no tiene.
+        if _existe_path(datos, node.path):
+            self._aplicar(eliminar_en_path(node.path), LayerName.GLOBAL)
 
     # ------------------------------------------------------------------
     # Helpers

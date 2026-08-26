@@ -17,17 +17,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 
 from adapters.inbound.telegram.bot import TelegramBot
+from adapters.inbound.telegram.ports import TelegramChannelSettings
 from core.domain.value_objects.telegram_file import FileContentType, TelegramFileRecord
 
 
 def _make_bot(*, has_repo: bool = True, voice_enabled: bool = True, tmp_path=None):
     agent_cfg = MagicMock()
     agent_cfg.id = "test-agent"
-    agent_cfg.telegram = {
-        "token": "fake-token",
-        "allowed_user_ids": [],
-        "voice_enabled": voice_enabled,
-    }
+    agent_cfg.telegram = TelegramChannelSettings(
+        token="fake-token",
+        allowed_user_ids=(),
+        voice_enabled=voice_enabled,
+    )
     agent_cfg.transcription.max_audio_mb = 10
     # workspace usado por _pre_download_media y _save_bytes_to_workspace
     agent_cfg.workspace_path = str(tmp_path) if tmp_path else "/tmp/test-ws"

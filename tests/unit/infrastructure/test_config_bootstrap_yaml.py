@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import yaml
 
-from infrastructure.config import _render_default_global_yaml
+from infrastructure.config_loader import _render_default_global_yaml
 
 
 def test_bootstrap_yaml_incluye_seccion_channel_fallback() -> None:

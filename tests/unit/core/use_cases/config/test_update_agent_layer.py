@@ -34,12 +34,14 @@ def test_escribe_en_capa_agent_por_defecto(repo: MagicMock) -> None:
     assert layer_escrita == LayerName.AGENT
 
 
-def test_escribe_en_capa_agent_secrets(repo: MagicMock) -> None:
+def test_credenciales_van_a_la_capa_agent(repo: MagicMock) -> None:
+    """Las credenciales del agente se escriben en AGENT — ya no hay capa de secrets."""
     uc = UpdateAgentLayerUseCase(repo)
-    uc.execute("dev", {}, layer=LayerName.AGENT_SECRETS)
+    uc.execute("dev", {"channels": {"telegram": {"token": "T"}}})
 
-    layer_escrita = repo.write_layer.call_args[0][0]
-    assert layer_escrita == LayerName.AGENT_SECRETS
+    layer_escrita, datos_escritos, *_ = repo.write_layer.call_args[0]
+    assert layer_escrita == LayerName.AGENT
+    assert datos_escritos["channels"]["telegram"]["token"] == "T"
 
 
 def test_capa_global_lanza_error(repo: MagicMock) -> None:
@@ -55,11 +57,14 @@ def test_escribe_en_capa_sub_agent(repo: MagicMock) -> None:
     assert repo.write_layer.call_args[0][0] == LayerName.SUB_AGENT
 
 
-def test_escribe_en_capa_sub_agent_secrets(repo: MagicMock) -> None:
+def test_credenciales_van_a_la_capa_sub_agent(repo: MagicMock) -> None:
+    """Mismo carril para el sub-agente: las credenciales van a SUB_AGENT."""
     uc = UpdateAgentLayerUseCase(repo)
-    uc.execute("researcher", {}, layer=LayerName.SUB_AGENT_SECRETS)
+    uc.execute("researcher", {"llm": {"api_key": "sk"}}, layer=LayerName.SUB_AGENT)
 
-    assert repo.write_layer.call_args[0][0] == LayerName.SUB_AGENT_SECRETS
+    layer_escrita, datos_escritos, *_ = repo.write_layer.call_args[0]
+    assert layer_escrita == LayerName.SUB_AGENT
+    assert datos_escritos["llm"]["api_key"] == "sk"
 
 
 def test_pasa_agent_id_al_repo(repo: MagicMock) -> None:

@@ -1,594 +1,528 @@
 # =============================================================================
-# Inaki v2 — Configuración Global de Referencia
+# Inaki — Configuración Global de Referencia
 # =============================================================================
 #
-# Este fichero documenta TODOS los parámetros configurables del sistema.
-# No es leído directamente — sirve como referencia canónica.
+# GENERADO desde el schema Pydantic (`infrastructure/config_schema.py`) con
+# `inaki gen-docs`. NO editar a mano: los cambios se pierden al regenerar, y el
+# test `test_config_docs_drift.py` falla si queda desincronizado.
 #
-# Configuración real: config/global.yaml + agents/{id}.yaml
-# Secrets: config/global.secrets.yaml + agents/{id}.secrets.yaml
-#          (nunca commitear *.secrets.yaml — están en .gitignore)
+# Para documentar un parámetro, escribí su docstring en el schema: de ahí salen
+# los comentarios de este fichero, la columna Description de
+# `docs/config-reference.md` y la ayuda del setup TUI.
 #
-# Sistema de merge (4 capas, campo a campo):
-#   config/global.yaml
-#       ↓
-#   config/global.secrets.yaml
-#       ↓
-#   agents/{id}.yaml
-#       ↓
-#   agents/{id}.secrets.yaml
-#       ↓
-#   AgentConfig resuelto
+# Este fichero NO se lee en runtime — es la referencia canónica de qué se puede
+# configurar. La config real vive en:
+#
+#   ~/.inaki/config/global.yaml   ← capa base
+#   ~/.inaki/agents/{id}.yaml     ← completa o pisa lo que declara
+#
+# Credenciales: viven en esas MISMAS dos capas (`providers.*.api_key`, tokens de
+# canal, `admin.auth_key`). No hay ficheros `*.secrets.yaml`. Ambas capas se
+# crean con permisos 600 y NUNCA se commitean; el único fichero compartible es
+# este ejemplo, que no lleva valores reales.
 # =============================================================================
 
 
 # -----------------------------------------------------------------------------
-# [providers] — Registry top-level de proveedores (credenciales compartidas)
+# [app]
 # -----------------------------------------------------------------------------
 #
-# Single source of truth para `api_key` y `base_url` por vendor. Las features
-# (`llm`, `embedding`, `transcription`, `memories.llm`) NO declaran credenciales
-# — solo referencian una entrada de este registry por nombre vía `provider: <key>`.
+# Arranque del proceso: identidad, logging, agente por defecto y extensiones.
 #
-# Cada entrada soporta:
-#   type:     nombre del adapter. Si es ausente, se resuelve a la KEY del dict.
-#             Solo se explicita para multi-instance (p. ej. dos creds de Groq).
-#   api_key:  credencial del vendor. Opcional para providers locales
-#             (ollama, e5_onnx) que no la requieren.
-#   base_url: override del default hardcoded del adapter. Opcional.
-#
-# El bloque es strict (`extra="forbid"`) para atrapar typos temprano.
-#
-# Ejemplo típico — 3 vendors remotos + ollama local:
-#
-#   providers:
-#     groq:       { api_key: "gsk_...",  base_url: "https://api.groq.com/openai/v1" }
-#     openai:     { api_key: "sk-..." }
-#     openrouter: { api_key: "sk-or-..." }
-#     anthropic:  { api_key: "sk-ant-..." }   # Claude nativo (/v1/messages)
-#     # ollama: no requiere entrada, usa default http://localhost:11434
-#
-# Servidor de inferencia propio (OpenAI-compat clásico: vLLM, llama.cpp, GGUF
-# de unsloth en la LAN). `base_url` es OBLIGATORIO; `api_key` solo si tu server
-# la pide:
-#
-#   providers:
-#     custom: { base_url: "http://192.168.1.50:8000/v1" }
-#
-# OJO con el presupuesto de contexto: `llm.max_tokens` viaja como techo de
-# generación y muchos servers validan `prompt + max_tokens > n_ctx`. Bajalo en
-# el AGENTE que use este provider (junto con `chat_history.max_messages`), no
-# en el global — un `max_tokens` pensado para un modelo cloud contra una
-# ventana local chica es un HTTP 400 garantizado.
-#
-# Multi-instance (billing separado con el mismo adapter):
-#
-#   providers:
-#     groq:      { api_key: "gsk_personal..." }
-#     groq-work: { type: groq, api_key: "gsk_work..." }
-#
-# En este caso `llm.provider: groq-work` apunta al adapter groq con creds
-# corporativas. Las entradas coexisten sin pisarse.
-#
-# Las credenciales reales viven en `global.secrets.yaml` — este archivo es
-# solo referencia. Si definís `providers.groq.api_key: K` en `global.yaml`,
-# se mergea normalmente con los secrets (el secrets layer gana en conflicto).
-providers: {}
+# Bloque SOLO global (``global.yaml`` → ``app:``). No admite override
+# per-agente: lo consumen el composition root (``inaki/cli.py``) y el
+# ``AppContainer`` antes de que exista ningún agente.
 
-
-# -----------------------------------------------------------------------------
-# [app] — Configuración general del sistema
-# -----------------------------------------------------------------------------
 app:
-  name: "Inaki"               # Nombre del asistente (usado en logs y presentaciones)
-
-  log_level: "INFO"           # Nivel de log: DEBUG | INFO | WARNING | ERROR | CRITICAL
-                              # DEBUG muestra llamadas HTTP, embeddings, tool calls
-
-  default_agent: "general"    # Agente usado por CLI sin flag --agent
-                              # Debe coincidir con un archivo en agents/
-
-
-# -----------------------------------------------------------------------------
-# [llm] — Proveedor de lenguaje (LLM)
-# -----------------------------------------------------------------------------
-llm:
-  provider: "openrouter"      # KEY del `providers:` registry que provee las creds.
-                              # Adapters nativos: openrouter, openai, openai_responses,
-                              # anthropic, deepseek, groq, ollama, custom.
-                              # Añadir nuevo proveedor: crear
-                              # adapters/outbound/providers/{name}.py con
-                              # PROVIDER_NAME = "{name}" (descubrimiento automático)
-                              # y declarar `providers.{name}` con las creds.
-
-  model: "anthropic/claude-3-5-haiku"
-                              # Modelo a usar. Ejemplos:
-                              #   OpenRouter:  "anthropic/claude-3-5-haiku"
-                              #                "anthropic/claude-sonnet-4-5"
-                              #                "google/gemini-flash-1.5"
-                              #   Anthropic nativo (provider: anthropic):
-                              #                "claude-sonnet-4-5" (sin prefijo vendor)
-                              #                "meta-llama/llama-3.1-8b-instruct"
-                              #   OpenAI:      "gpt-4o-mini", "gpt-4o"
-                              #   Ollama:      "llama3.2", "mistral", "phi3"
-                              #   Groq:        "llama3-8b-8192", "mixtral-8x7b-32768"
-
-  temperature: 0.7            # Creatividad del modelo (0.0 = determinista, 1.0 = muy creativo)
-                              # Recomendado: 0.3-0.5 para tareas de código, 0.7-0.9 para conversación
-
-  max_tokens: 2048            # Máximo de tokens en la respuesta
-                              # Aumentar para respuestas largas (código, análisis)
-                              # Considerar coste en Pi 5 con modelos locales
-
-  request_delay_seconds: 2.0  # Espera (segundos) antes de cada llamada al provider
-                              # dentro del loop agéntico, EXCEPTO la primera del turno.
-                              # Evita saturar el rate limiter cuando el modelo encadena
-                              # varias tool calls (cada iteración = un request). La 1ª
-                              # llamada no se demora. 0 = desactivado.
-
-  # Las credenciales NO van acá — se resuelven desde `providers.{provider}`.
-
+  name: Inaki   # Nombre de la instancia del asistente.
+  # Nivel mínimo de log del proceso: ``DEBUG``, ``INFO``, ``WARNING``, ``ERROR`` o
+  # ``CRITICAL``.
+  log_level: INFO
+  # Directorios donde se auto-descubren las extensiones de usuario, en orden.
+  ext_dirs: [ext, ~/.inaki/ext]
+  # Agente que usan los comandos de CLI cuando no se pasa ``--agent``.
+  default_agent: general
 
 # -----------------------------------------------------------------------------
-# [embedding] — Modelo de embeddings para RAG
-# -----------------------------------------------------------------------------
-embedding:
-  provider: "e5_onnx"         # KEY del `providers:` registry. Opciones:
-                              #   "e5_onnx" — multilingual-e5-small via ONNX Runtime.
-                              #               Local, no requiere entrada en providers.
-                              #               Recomendado para Pi 5.
-                              #   "openai"  — text-embedding-3-small vía OpenAI.
-                              #               Requiere `providers.openai.api_key`.
-
-  model_dirname: "models/e5-small"
-                              # Directorio con los archivos del modelo ONNX, relativo
-                              # a ~/.inaki/. Si se pone absoluto, se usa tal cual.
-                              # Estructura esperada:
-                              #   ~/.inaki/models/e5-small/model.onnx
-                              #   ~/.inaki/models/e5-small/tokenizer.json
-                              # Descargar desde HuggingFace: intfloat/multilingual-e5-small
-
-  dimension: 384              # Dimensión del vector de embedding
-                              # multilingual-e5-small → 384 (no cambiar)
-                              # ⚠ Cambiar esto requiere borrar y recrear la DB de memorias
-
-  cache_filename: "data/embedding_cache.db"
-                              # Fichero SQLite del cache de embeddings, relativo a
-                              # ~/.inaki/. Si se pone absoluto, se usa tal cual.
-
-
-# -----------------------------------------------------------------------------
-# [memories] — Memoria a largo plazo (SQLite + sqlite-vec)
-# -----------------------------------------------------------------------------
-# Estructura:
-#   - raíz: store + digest COMPARTIDOS por ambos jobs.
-#   - memories.llm: LLM base COMPARTIDO por consolidación y reconciliación.
-#   - memories.consolidation / memories.reconciliation: secciones hermanas, cada
-#     una con su `enabled` (PER-AGENT), `schedule`, parámetros y `agent_id`.
-memories:
-  db_filename: "data/inaki.db"  # Fichero SQLite relativo a ~/.inaki/.
-                              # Si se pone absoluto, se usa tal cual.
-                              # Contiene tablas: memories, memory_embeddings (vec0).
-                              # Memoria GLOBAL: compartida entre todos los agentes.
-
-  digest_filename: "mem/digest_{channel}_{chat_id}.md"
-                              # Template del fichero markdown del digest, relativo a
-                              # ~/.inaki/. Los placeholders {channel} y {chat_id} se
-                              # sustituyen por scope en cada consolidación: cada
-                              # conversación produce su propio digest aislado, evitando
-                              # que recuerdos de un grupo se filtren a otro.
-                              # Sanitización: caracteres fuera de [a-zA-Z0-9_-] se
-                              # reemplazan por "_"; valores vacíos → "default".
-                              # Ejemplos de archivos generados:
-                              #   ~/.inaki/mem/digest_telegram_-1001234567.md
-                              #   ~/.inaki/mem/digest_cli_default.md
-
-  digest_size: 14             # Nº de recuerdos más recientes volcados al digest markdown
-                              # tras cada consolidación. Orden: created_at DESC.
-
-  # ---------------------------------------------------------------------------
-  # [memories.llm] — LLM base COMPARTIDO por ambos jobs (OPCIONAL)
-  # ---------------------------------------------------------------------------
-  # Permite usar un LLM DISTINTO al del agente (llm.*) para los jobs de memoria
-  # (consolidación Y reconciliación, en modo directo). Cada campo que definas acá
-  # pisa al de `llm.*`; los campos ausentes se heredan. Si cambiás `provider`, las
-  # credenciales se resuelven desde el registry `providers.{nuevo_provider}`.
-  #
-  # NO lleva `agent_id`: la delegación a sub-agente es POR JOB (extractor vs
-  # reconciler tienen prompts distintos) y se declara en
-  # consolidation.agent_id / reconciliation.agent_id. El sub-agente, vía el merge
-  # de 4 capas, sobreescribe esta config LLM base de forma individual.
-  #
-  # Semántica:
-  #   - clave AUSENTE → hereda el valor de `llm.*`.
-  #   - clave con valor `null` → override EXPLÍCITO (fuerza None).
-  #
-  # Ejemplo — chat con un reasoning model, jobs de memoria con uno no-reasoning:
-  #   memories:
-  #     llm:
-  #       provider: openai    # cambia vendor → creds resueltas desde providers.openai
-  #       model: gpt-4o-mini
-  #       reasoning_effort: null
-
-  # ---------------------------------------------------------------------------
-  # [memories.consolidation] — Extracción de recuerdos (digest → trim)
-  # ---------------------------------------------------------------------------
-  consolidation:
-    # enabled: true           # Flag PER-AGENT — va en agents/{id}.yaml, NO acá.
-    schedule: "0 3 * * *"     # Cron de la consolidación global nocturna
-                              # (una sola tarea que itera todos los agentes).
-    delay_seconds: 2          # Pausa (segundos) entre llamadas al LLM extractor.
-                              # Aplica entre agentes y entre scopes (channel, chat_id).
-    keep_last_messages: 0     # Mensajes a preservar por agente tras consolidar.
-                              # 0 = usar fallback del sistema (84).
-    min_relevance_score: 0.5  # Umbral mínimo (0.0-1.0) para persistir un recuerdo.
-    # channels_infused: null  # Canales cuyos mensajes SÍ se consolidan. null = todos.
-                              # Ej. multi-agente Telegram: ["telegram"].
-    # agent_id: memory_extractor  # Sub-agente extractor opcional (agents/sub-agents/).
-                              # Si se setea, la extracción delega a ese sub-agente.
-
-  # ---------------------------------------------------------------------------
-  # [memories.reconciliation] — Job de reflection (OPCIONAL, opt-in)
-  # ---------------------------------------------------------------------------
-  # Detecta recuerdos contradictorios o desactualizados y los fusiona, reemplaza
-  # o despondera usando un LLM. Opt-in (enabled: false) por ser más costoso que
-  # la consolidación (una llamada LLM por cluster). INDEPENDIENTE de consolidation:
-  # puede correr sobre recuerdos preexistentes aunque la consolidación esté off.
-  #
-  # Activación mínima (en agents/{id}.yaml):
-  #   memories:
-  #     reconciliation:
-  #       enabled: true
-  reconciliation:
-    # enabled: false          # Flag PER-AGENT — va en agents/{id}.yaml.
-    schedule: "0 4 * * 1"     # Cron de la tarea builtin. Default: lunes 04:00 (tz usuario).
-    similarity_threshold: 0.80  # Similitud coseno mínima (0.0-1.0) para agrupar
-                              # dos recuerdos en un cluster. 0.80 = conservador.
-    top_k: 10                 # Vecinos máximos a considerar por seed al armar un cluster.
-    # agent_id: memory_reconciler  # Sub-agente reconciliador opcional (agents/sub-agents/).
-                              # Si no resuelve a un sub-agente válido, el arranque
-                              # loggea ERROR y cae al prompt hardcodeado (graceful).
-
-
-# -----------------------------------------------------------------------------
-# [chat_history] — Historial de conversación a corto plazo (SQLite)
-# -----------------------------------------------------------------------------
-chat_history:
-  db_filename: "data/history.db"  # Fichero SQLite relativo a ~/.inaki/.
-
-  max_messages: 21            # Últimos N mensajes inyectados al LLM (0 = sin límite)
-
-  merge_chats: false          # Política de aislamiento del historial.
-                              #   false (default) — el agente solo ve los mensajes
-                              #     del par (channel, chat_id) actual. Privado de
-                              #     Telegram, grupo y CLI quedan aislados entre sí.
-                              #   true — el agente comparte un solo historial entre
-                              #     todos los canales y chats. Útil si querés que
-                              #     el contexto de una conversación privada esté
-                              #     disponible cuando el agente responde en grupo.
-
-
-# -----------------------------------------------------------------------------
-# [channels] — Flags de presentación transversales a todos los canales
+# [llm]
 # -----------------------------------------------------------------------------
 #
-# Solo configurable a nivel GLOBAL. No tiene override per-agent: la sección
-# `channels:` en `agents/{id}.yaml` es OTRA cosa (dict de adapters telegram/rest/
-# broadcast/…). Si por error ponés estos flags ahí, se filtran y se loggea.
+# Cerebro conversacional del agente: qué modelo responde y con qué parámetros.
+#
+# Bloque per-agente: se declara en ``global.yaml`` como default de todos y se
+# pisa campo a campo en ``agents/{id}.yaml``. NO lleva credenciales — ``provider``
+# referencia una entrada del registry ``providers:``, de donde salen ``api_key``
+# y ``base_url``.
+#
+# Los jobs de memoria pueden usar otro modelo sin tocar este bloque: ver
+# ``memories.llm`` (``MemoryLLMConfig``), que lo hereda y lo override campo a campo.
+
+llm:
+  # KEY del registry ``providers:`` que aporta las credenciales y el endpoint.
+  provider: openrouter
+  # Identificador del modelo, en el formato que espera el provider elegido.
+  model: anthropic/claude-3-5-haiku
+  # Aleatoriedad del muestreo: ``0.0`` determinista, valores altos más creativo.
+  temperature: 0.7
+  # Techo de tokens que el modelo puede GENERAR en una respuesta.
+  max_tokens: 2048
+  # Intensidad del modo razonamiento (thinking). ``null`` = desactivado.
+  reasoning_effort: null
+  timeout_seconds: 60   # Timeout HTTP del request al provider, en segundos.
+  # Espera mínima (segundos) ANTES de cada llamada al provider dentro del loop agéntico,
+  # EXCEPTO la primera del turno.
+  request_delay_seconds: 2.0
+
+# -----------------------------------------------------------------------------
+# [embedding]
+# -----------------------------------------------------------------------------
+#
+# Modelo de embeddings que alimenta todo el retrieval del sistema.
+#
+# Un solo vectorizador sirve a tres consumidores: el semantic routing de tools
+# y skills, la búsqueda de memoria y el pre-fetch de knowledge. Bloque
+# per-agente, con registry ``providers:`` para las credenciales (el default
+# ``e5_onnx`` es local y no necesita ninguna).
+#
+# ⚠ Cambiar de modelo (o de ``dimension``) invalida TODOS los vectores ya
+# persistidos: no hay auto-migración — hay que borrar y recrear la DB de
+# memoria y los índices de knowledge.
+
+embedding:
+  # KEY del registry ``providers:`` que vectoriza. ``e5_onnx`` (local) u ``openai``.
+  provider: e5_onnx
+  # Directorio con los ficheros del modelo ONNX. SOLO lo usa ``e5_onnx``.
+  model_dirname: models/e5-small
+  # Nombre del modelo remoto. SOLO lo usa el provider ``openai``; ``e5_onnx`` lo ignora.
+  model: text-embedding-3-small
+  # Dimensión del vector de embedding. Debe coincidir con la del modelo.
+  dimension: 384
+  # Fichero SQLite del cache de embeddings, para no re-vectorizar texto repetido.
+  cache_filename: data/embedding_cache.db
+
+# -----------------------------------------------------------------------------
+# [memories]
+# -----------------------------------------------------------------------------
+#
+# Configuración del subsistema de memoria a largo plazo.
+#
+# Estructura:
+#   - Campos de nivel raíz: store + digest COMPARTIDOS por ambos jobs.
+#   - ``llm``: LLM base COMPARTIDO (provider/model/...) para los dos jobs en modo
+#     directo. Sin ``agent_id`` — la delegación a sub-agente es por job.
+#   - ``consolidation`` / ``reconciliation``: secciones hermanas, cada una con su
+#     ``enabled``, ``schedule``, parámetros propios y ``agent_id`` de sub-agente.
+
+memories:
+  # Fichero SQLite del store de recuerdos (tablas ``memories`` y ``memory_embeddings``).
+  db_filename: data/inaki.db
+  # Template del fichero markdown del digest, con los placeholders ``{channel}`` y
+  # ``{chat_id}``.
+  digest_filename: mem/digest_{channel}_{chat_id}.md
+  # Nº de recuerdos más recientes volcados al digest markdown. Orden: created_at DESC.
+  digest_size: 14
+  # LLM base COMPARTIDO por consolidación y reconciliación (modo directo). ``None`` →
+  # ambos jobs reusan el LLM del agente. La delegación a sub-agente (por job) se declara
+  # en ``consolidation.agent_id`` / ``reconciliation.agent_id``.
+  llm:
+    # Override de ``llm.provider`` para los jobs de memoria. Ausente → hereda del
+    # agente.
+    provider: null
+    # Override de ``llm.model`` para los jobs de memoria. Ausente → hereda del agente.
+    model: null
+    # Override de ``llm.temperature`` para los jobs de memoria. Ausente → hereda del
+    # agente.
+    temperature: null
+    # Override de ``llm.max_tokens`` para los jobs de memoria. Ausente → hereda del
+    # agente.
+    max_tokens: null
+    # Override de ``llm.reasoning_effort`` para los jobs de memoria. Ausente → hereda
+    # del agente.
+    reasoning_effort: null
+    # Override de ``llm.timeout_seconds`` (segundos) para los jobs de memoria. Ausente →
+    # hereda del agente.
+    timeout_seconds: null
+  # Job nocturno que extrae recuerdos del historial, regenera el digest y lo recorta.
+  consolidation:
+    # Habilita la consolidación para ESTE agente. Flag PER-AGENT (agents/{id}.yaml).
+    enabled: true
+    # Cron de la consolidación global nocturna (una tarea que itera todos los agentes).
+    schedule: 0 3 * * *
+    # Pausa (segundos) entre llamadas al LLM extractor. Aplica TANTO entre agentes como
+    # entre scopes ``(channel, chat_id)`` del mismo agente. Evita rate-limits.
+    delay_seconds: 2
+    # Mensajes CONVERSACIONALES a preservar por scope tras consolidar.
+    keep_last_messages: 0
+    # Umbral mínimo (0.0-1.0) para persistir un recuerdo extraído por el LLM.
+    min_relevance_score: 0.5
+    channels_infused: null   # Canales cuyo historial se incluye en la consolidación.
+    # Sub-agente EXTRACTOR opcional (debe existir en ``agents/sub-agents/``).
+    agent_id: null
+  # Job de «reflection» que agrupa recuerdos similares y resuelve los contradictorios.
+  reconciliation:
+    # Habilita el job de reconciliación para ESTE agente. Flag PER-AGENT.
+    enabled: false
+    # Cron de la tarea builtin por agente. Evaluado en tz del usuario. Default: lunes
+    # 04:00.
+    schedule: 0 4 * * 1
+    # Umbral de similitud coseno (0.0-1.0) para agrupar dos recuerdos en un cluster.
+    # Default ``0.80`` (conservador — solo recuerdos muy similares se agrupan).
+    similarity_threshold: 0.8
+    # Vecinos máximos por seed al armar un cluster. Un valor generoso compensa que
+    # ``search_with_scores`` no filtra por scope nativamente (limitación V1).
+    top_k: 10
+    # Sub-agente RECONCILIADOR opcional (debe existir en ``agents/sub-agents/``).
+    agent_id: null
+
+# -----------------------------------------------------------------------------
+# [chat_history]
+# -----------------------------------------------------------------------------
+#
+# Memoria a CORTO plazo: qué conversación previa ve el LLM en cada turno.
+#
+# Bloque per-agente. Es la ventana deslizante que se inyecta al prompt, distinta
+# de ``memories`` (memoria a largo plazo, destilada por el job nocturno).
+#
+# Los dos knobs de acá gobiernan el costo de contexto de cada turno: cuánto
+# historial entra (``max_messages``) y cuánto rastro de tools se guarda
+# (``persist_tool_calls`` / ``persist_tool_result_max_chars``).
+
+chat_history:
+  db_filename: data/history.db   # Fichero SQLite del historial de conversación.
+  # Últimos N mensajes del scope que se inyectan al LLM. ``0`` = sin límite.
+  max_messages: 0
+  # Política de aislamiento del historial. ``False`` = un hilo por ``(channel,
+  # chat_id)``.
+  merge_chats: false
+  # Persistir el par assistant+tool_calls ↔ tool_results en el historial.
+  persist_tool_calls: true
+  # Truncación (en chars) de cada tool result al persistirlo con ``persist_tool_calls``.
+  # Acota el costo de contexto y disco cuando una tool devuelve un volcado grande
+  # (web_search, RAG). ``0`` = sin truncar. El turno en curso siempre ve el result
+  # completo; solo la copia persistida se recorta.
+  persist_tool_result_max_chars: 2000
+
+# -----------------------------------------------------------------------------
+# [channels]
+# -----------------------------------------------------------------------------
+#
+# Flags transversales de presentación al usuario en cualquier canal.
+#
+# Se configura SOLO a nivel global (``global.yaml`` → ``channels:``). No hay
+# override per-agent: ``AgentConfig.channels`` (dict de adapters telegram/cli/…)
+# es una estructura distinta y mantiene su rol. Si el usuario pone estos
+# flags en ``agents/{id}.yaml`` por error, el merge los filtra en
+# ``load_agent_config`` para no contaminar el dict de adapters.
+
 channels:
-  thinking_indicator: false   # Mostrar "Thinking..." en el canal mientras el modelo
-                              # razona. Solo aplica cuando `llm.reasoning_effort`
-                              # activa thinking mode en el provider.
-                              # true  → el usuario ve feedback visual inmediato.
-                              # false → el bot permanece silencioso durante el razonamiento.
-
+  # Mostrar "Thinking..." en el canal cuando el modelo está razonando.
+  thinking_indicator: false
 
 # -----------------------------------------------------------------------------
-# [tools] — Configuración de selección de tools vía semantic routing
+# [skills]
 # -----------------------------------------------------------------------------
-tools:
-  semantic_routing_min_tools: 10
-  semantic_routing_top_k: 5
-  semantic_routing_min_score: 0.0
-  sticky_ttl: 3
-  # Tools SIEMPRE visibles para el LLM (se unionan al resultado del routing sin
-  # contar contra top_k). Para tools de orquestación que el LLM elige por
-  # razonamiento — el routing solo las traería si el USUARIO habla de ellas.
-  # [] = sin pinning. Ver docs/semantic-routing.md → "Pinned Tools & Page-in".
-  pinned: [delegate]
-  tool_call_max_iterations: 5
-  circuit_breaker_threshold: 2
+#
+# Selección RAG de SKILLS: qué instrucciones se inyectan al prompt en cada turno.
+#
+# Una skill es un bloque de instrucciones en markdown. Cuando el agente tiene
+# pocas, entran todas; a partir de ``semantic_routing_min_skills`` se
+# seleccionan por similitud contra el embedding de la consulta del usuario, y
+# ``sticky_ttl`` evita que una skill recién elegida desaparezca al turno
+# siguiente porque el usuario escribió "dale".
+#
+# Bloque hermano de ``tools``, con la MISMA mecánica pero presupuesto propio: acá
+# se paga en tokens de prompt, allá en schemas ofrecidos al LLM. Las políticas
+# comunes a ambos pipelines viven en ``semantic_routing``.
 
-
-# -----------------------------------------------------------------------------
-# [skills] — Configuración de selección de skills vía semantic routing
-# -----------------------------------------------------------------------------
 skills:
+  # Nº de skills a partir del cual se ACTIVA el routing. Con menos o igual, entran
+  # todas.
   semantic_routing_min_skills: 10
+  # Máximo de skills que el retrieval devuelve por turno (default más chico que en
+  # ``tools``).
   semantic_routing_top_k: 3
+  # Similitud coseno mínima para que una skill entre en la selección. ``0.0`` = sin
+  # piso.
   semantic_routing_min_score: 0.0
+  # Turnos que una skill seleccionada sigue viva sin volver a ser elegida. ``0`` =
+  # desactivado.
   sticky_ttl: 3
 
+# -----------------------------------------------------------------------------
+# [tools]
+# -----------------------------------------------------------------------------
+#
+# Qué herramientas ve el LLM en cada turno y hasta dónde puede encadenarlas.
+#
+# Dos responsabilidades en un mismo bloque:
+#
+# - **Selección** (``semantic_routing_*``, ``sticky_ttl``, ``pinned``,
+#   ``allowed``): qué schemas se le ofrecen al modelo. Mecánica idéntica a la
+#   de ``skills``, pero acá el costo no es solo de tokens: ofrecerle ~25
+#   schemas de golpe DEGRADA la elección del modelo, que es la razón de fondo
+#   del routing.
+# - **Ejecución** (``tool_call_max_iterations``, ``circuit_breaker_threshold``):
+#   las dos barandas del tool loop, para que un turno no se vaya en llamadas
+#   encadenadas ni se quede pegado reintentando una tool rota.
+#
+# Bloque per-agente. Las políticas comunes con ``skills`` viven en
+# ``semantic_routing``.
+
+tools:
+  # Nº de tools a partir del cual se ACTIVA el routing. Con menos o igual, entran todas.
+  semantic_routing_min_tools: 10
+  semantic_routing_top_k: 5   # Máximo de tools que el retrieval devuelve por turno.
+  # Similitud coseno mínima para que una tool entre en la selección. ``0.0`` = sin piso.
+  semantic_routing_min_score: 0.0
+  # Vueltas máximas del tool loop en un turno antes de cortar con error.
+  tool_call_max_iterations: 5
+  # Fallos NO-retryable de una misma tool, en el mismo turno, antes de bloquearla.
+  circuit_breaker_threshold: 2
+  # Turnos que una tool seleccionada sigue visible sin volver a ser elegida. ``0`` =
+  # desactivado.
+  sticky_ttl: 3
+  # Tools SIEMPRE visibles para el LLM, por fuera del semantic routing.
+  pinned: [delegate]
+  # Allow-list de nombres de tools. ``None`` (default) = sin restricción.
+  allowed: null
 
 # -----------------------------------------------------------------------------
-# [semantic_routing] — Políticas transversales al pipeline
+# [semantic_routing]
 # -----------------------------------------------------------------------------
+#
+# Políticas transversales al pipeline de semantic routing (skills + tools).
+#
+# Lo que se configura acá vale para AMBOS pipelines a la vez. Los parámetros
+# propios de cada uno (umbrales, ``top_k``, TTL) viven en ``skills`` y ``tools``.
+
 semantic_routing:
+  # Palabras por debajo de las cuales un turno hereda la selección previa sin re-rutear.
+  # ``0`` = desactivado.
   min_words_threshold: 0
 
+# -----------------------------------------------------------------------------
+# [scheduler]
+# -----------------------------------------------------------------------------
+#
+# Motor de tareas programadas: cron, one-shots, reintentos y routing de la salida.
+#
+# Recurso HARNESS-GLOBAL: se declara SOLO en ``global.yaml`` y el
+# ``AppContainer`` construye una única instancia compartida por todos los
+# agentes — no hay ni puede haber un scheduler per-agente. Para aislar
+# agendas hay que levantar otra instancia del arnés con su propio
+# ``--home`` / ``INAKI_HOME``.
+#
+# Solo corre bajo ``inaki daemon``: en la CLI interactiva no hay proceso vivo
+# que dispare nada. Los límites de acá (``max_retries``, ``max_tasks_per_agent``,
+# ``output_truncation_size``) son las barandas contra un agente que programa
+# de más o contra una tarea que falla en loop.
+
+scheduler:
+  # Kill-switch del scheduler. ``False`` = el daemon no arranca el loop de tareas.
+  enabled: true
+  # Fichero SQLite con las tareas programadas y su estado de ejecución.
+  db_filename: data/scheduler.db
+  # Fallback de último recurso del router de dispatch (cascada). Relativo al home de
+  # instancia; se reancla con ``--home`` / ``INAKI_HOME``. El composition root lo
+  # envuelve en ``file://`` y lo inyecta al ``ChannelRouter`` (por privacidad, bajo
+  # ``<home>/data/``).
+  fallback_log_filename: data/scheduler-fallback.log
+  # Reintentos de una tarea que falla, ADEMÁS del intento inicial.
+  max_retries: 3
+  # Base de la espera entre reintentos, en segundos. La progresión es LINEAL.
+  retry_backoff_seconds: 10.0
+  # Techo de tareas ACTIVAS (pending o running) que un agente puede tener a la vez.
+  max_tasks_per_agent: 20
+  # Truncación (en chars) del output de una tarea al guardarlo en su registro de
+  # ejecución.
+  output_truncation_size: 65536
+  # Adónde va la salida de una tarea cuyo canal destino no tiene sink vivo.
+  channel_fallback:
+    # Target al que van los canales sin sink nativo ni override. ``null`` → log de
+    # fallback.
+    default: null
+    # Redirecciones ``channel_type → target string``, evaluadas antes que ``default``.
+    overrides: {}
 
 # -----------------------------------------------------------------------------
-# [workspace] — Directorio de trabajo del agente (sandbox de las tools de FS)
+# [workspace]
 # -----------------------------------------------------------------------------
+#
+# Workspace sobre el que operan las tools de filesystem.
+#
+# Define el sandbox de ``read_file``, ``write_file``, ``patch_file`` y
+# ``edit_file``: dónde resuelven los paths relativos y qué pasa cuando el LLM
+# pide uno que se sale. Bloque per-agente — darle a cada agente su propio
+# ``path`` los mantiene separados en disco.
+
 workspace:
-  path: "~/inaki-workspace"
-  containment: "strict"       # "strict" | "warn" | "off"
-
-
-# -----------------------------------------------------------------------------
-# [delegation] — Delegación agente-a-agente (defaults globales)
-# -----------------------------------------------------------------------------
-# delegation:
-#   max_iterations_per_sub: 10
-#   timeout_seconds: 60
-
+  # Directorio raíz contra el que las tools de filesystem resuelven los paths relativos.
+  path: ~/inaki-workspace
+  # Qué hacer cuando un path resuelto se sale del workspace (absoluto o vía ``..``).
+  containment: strict
 
 # -----------------------------------------------------------------------------
-# [admin] — Admin server del daemon (endpoints de gestión)
+# [delegation]
 # -----------------------------------------------------------------------------
+#
+# Config global de delegación (aplica a todos los agentes como valores por defecto).
+
+delegation:
+  # Vueltas máximas del tool loop que puede gastar UNA llamada delegada.
+  max_iterations_per_sub: 10
+  timeout_seconds: 60   # Presupuesto de reloj de una llamada delegada, en segundos.
+
+# -----------------------------------------------------------------------------
+# [admin]
+# -----------------------------------------------------------------------------
+#
+# Configuración del admin server del daemon.
+
 admin:
-  host: "127.0.0.1"
-  port: 6497
+  port: 6497   # Puerto TCP en el que escucha el admin server del daemon.
+  host: 127.0.0.1   # Interfaz en la que bindea el admin server.
+  # Credencial del header ``X-Admin-Key`` que protege los endpoints de gestión.
+  auth_key: null
+  # Timeout en segundos para turnos de chat vía REST (POST /admin/chat/turn).
   chat_timeout: 300.0
-  # auth_key: "clave-secreta"   # → global.secrets.yaml
-
 
 # -----------------------------------------------------------------------------
-# [transcription] — Proveedor de transcripción de audio (voz en Telegram)
+# [user]
 # -----------------------------------------------------------------------------
 #
-# Habilita la transcripción de mensajes de voz, audio y video_note en el canal
-# de Telegram. Se activa cuando `channels.telegram.voice_enabled: true` en el
-# agente (default).
-#
-# Las credenciales se resuelven desde `providers.{provider}` — no van acá.
-#
-# transcription:
-#   provider: "groq"            # KEY del `providers:` registry que provee creds.
-#   model: "whisper-large-v3-turbo"
-#   language: "es"              # ISO-639-1 opcional; null = autodetect
-#   timeout_seconds: 60
-#   max_audio_mb: 25
+# Preferencias del usuario.
 
-
-# -----------------------------------------------------------------------------
-# [user] — Preferencias del usuario
-# -----------------------------------------------------------------------------
 user:
-  # timezone: "America/Argentina/Buenos_Aires"
-                                # Vacío/omitido → autodetect desde host (tzlocal)
-
+  timezone: ''   # Timezone IANA (ej: "America/Argentina/Buenos_Aires").
 
 # -----------------------------------------------------------------------------
-# [knowledge] — Fuentes de conocimiento externas (RAG sobre documentos)
+# [transcription]
 # -----------------------------------------------------------------------------
 #
-# knowledge:
-#   enabled: true
-#   include_memory: true
-#   top_k_per_source: 3
-#   min_score: 0.5
-#   max_total_chunks: 10
-#   token_budget_warn_threshold: 4000
-#   sources:
-#     - id: docs-proyecto
-#       type: document
-#       enabled: true
-#       description: "Project documentation (markdown and PDF)"
-#       path: ~/proyecto/docs/
-#       glob: "**/*.md"
-#       chunk_size: 500
-#       chunk_overlap: 80
-#       top_k: 3
-#       min_score: 0.5
+# Config del provider de transcripción de audio (opcional).
+#
+# Bloque OPCIONAL: si se omite, la feature queda desactivada.
 
+transcription:
+  # KEY del registry ``providers:`` que transcribe (endpoint Whisper OpenAI-compat).
+  provider: groq
+  # Modelo de transcripción, en el nombre que espera el provider.
+  model: whisper-large-v3-turbo
+  # Idioma esperado del audio en ISO-639-1 (``"es"``, ``"en"``). ``null`` → autodetect.
+  language: null
+  timeout_seconds: 60   # Timeout HTTP del request de transcripción, en segundos.
+  # Tamaño máximo del audio en MB. Un fichero mayor se rechaza ANTES de subirlo.
+  max_audio_mb: 25
 
 # -----------------------------------------------------------------------------
-# [photos] — Pipeline de reconocimiento facial y descripción de escena
+# [knowledge]
 # -----------------------------------------------------------------------------
 #
-# Habilita el procesamiento de fotos enviadas al bot de Telegram:
-#   - Reconocimiento facial con InsightFace (local, no requiere API key)
-#   - Descripción de escena con un proveedor LLM multimodal (Anthropic/OpenAI/Groq)
-#   - Base de datos de personas en ~/.inaki/data/faces.db
-#   - Registro persistente de caras ("ignoradas" y conocidas)
-#
-# ⚠ ADVERTENCIA DE MEMORIA: InsightFace ocupa ~400MB de RAM una vez cargado.
-#   Se carga de forma lazy (en la primera foto recibida).
-#   Si el agente no procesa fotos por períodos prolongados, reiniciar el daemon
-#   para liberar memoria en Pi 5 (4GB RAM).
-#
-# ⚠ CAMBIO DE MODELO: Cambiar `faces.model` invalida faces.db.
-#   Procedimiento: detener daemon → borrar ~/.inaki/data/faces.db → reiniciar.
-#   Todas las caras registradas se pierden — volver a enrolar.
-#
-# photos:
-#   enabled: true                # false → bot ignora fotos, no carga modelos
-#
-#   enrollment_chats: private    # Dónde el agente ofrece registrar caras:
-#                                #   "private" → solo en chats privados
-#                                #   "none"    → nunca ofrece enrolar
-#
-#   faces:
-#     provider: insightface      # Único provider soportado actualmente
-#     model: buffalo_sc          # Modelo InsightFace:
-#                                #   buffalo_sc → rápido, liviano (~200MB descarga)
-#                                #   buffalo_s  → más preciso, algo más pesado
-#                                #   buffalo_l  → máxima precisión, ~1GB
-#     match_threshold: 0.55      # Similitud coseno mínima para → MATCHED
-#     ambiguous_threshold: 0.40  # Similitud entre ambos → AMBIGUOUS (pedir confirmación)
-#
-#   scene:
-#     provider: anthropic        # Proveedor LLM multimodal para describir la escena:
-#                                #   "anthropic" → Messages API con content type image
-#                                #   "openai"    → Chat Completions con image_url base64
-#                                #   "groq"      → OpenAI-compatible endpoint de Groq
-#     model: claude-sonnet-4-6   # Modelo a usar (según el provider)
-#                                #   anthropic: claude-sonnet-4-6, claude-opus-4-7, etc.
-#                                #   openai: gpt-4o, gpt-4o-mini
-#                                #   groq: llama-4-scout-17b-16e-instruct, etc.
-#     prompt_template: null      # Prompt personalizado. null = usar el prompt español
-#                                # built-in del adaptador.
-#     # api_key → global.secrets.yaml bajo photos.scene.api_key
-#
-#   dedup:
-#     enabled: true              # Habilita el job nocturno de deduplicación
-#     schedule: "0 3 * * *"      # Cron del job (expresión croniter)
-#     similarity_threshold: 0.70 # Score mínimo entre centroides para reportar par duplicado
+# Configuración global del pipeline de knowledge pre-fetch.
 
+knowledge:
+  # Si False, el pre-fetch se saltea completamente en cada turno.
+  enabled: true
+  # Directorio (relativo al home de instancia) de las DBs de índice por fuente:
+  # ``<home>/knowledge/{source_id}.db``. Se reancla con ``--home`` / ``INAKI_HOME``.
+  db_dirname: knowledge
+  # Si True, la memoria SQLite del agente se registra como fuente automáticamente.
+  include_memory: true
+  # top_k global por fuente cuando no se override por fuente individual.
+  top_k_per_source: 3
+  # min_score global cuando no se override por fuente individual.
+  min_score: 0.5
+  # Límite duro de chunks totales tras el fan-out (ordenados por score desc).
+  max_total_chunks: 10
+  # Umbral estimado de tokens totales (chunks + digest + skills). Si se supera, se emite
+  # un WARNING con el desglose. 0 = deshabilita la advertencia.
+  token_budget_warn_threshold: 4000
+  # Lista de fuentes de conocimiento externas configuradas.
+  sources: []
+  #   - forma de cada elemento:
+  #       # Identificador único de la fuente (usado para rutas de DB y CLI).
+  #       id: null
+  #       type: null   # Tipo de fuente: 'document' | 'sqlite'.
+  #       # Si False, la fuente se ignora al construir el KnowledgeOrchestrator.
+  #       enabled: true
+  #       description: ''   # Descripción de la fuente (inyectada en el system prompt).
+  #       # Ruta al directorio de documentos (solo para type='document').
+  #       path: null
+  #       # Glob pattern para seleccionar archivos (solo para type='document').
+  #       glob: '**/*.md'
+  #       # Tamaño de cada chunk en palabras (solo para type='document').
+  #       chunk_size: 500
+  #       # Solapamiento entre chunks en palabras (solo para type='document').
+  #       chunk_overlap: 80
+  #       top_k: 3   # Resultados máximos a recuperar de esta fuente por turno.
+  #       min_score: 0.5   # Score mínimo de coseno para incluir un chunk.
 
-# =============================================================================
-# CONFIGURACIÓN POR AGENTE — agents/{id}.yaml
-# =============================================================================
-# Los campos de abajo son propios de cada agente.
-# =============================================================================
+# -----------------------------------------------------------------------------
+# [photos]
+# -----------------------------------------------------------------------------
+#
+# Configuración del pipeline de fotos (reconocimiento facial + escena).
+#
+# Bloque OPCIONAL: si se omite, la feature queda desactivada.
 
-# id: "general"
-# name: "Inaki-g"
-# description: "Asistente personal de uso general"
-# system_prompt: |
-#   Eres Inaki, un asistente personal inteligente.
-#
-# # Override LLM — solo campos que cambian, el resto se hereda del global
-# llm:
-#   model: "anthropic/claude-3-5-haiku"
-#   max_tokens: 4096
-#
-# # El agente puede rotar una credencial del registry individualmente:
-# providers:
-#   groq: { api_key: "gsk_clave_del_agente..." }
-#
-# memory:
-#   enabled: true
-#
-# workspace:
-#   path: "~/inaki-workspace/agents/coder"
-#   containment: "strict"
-#
-# channels:
-#   telegram:
-#     allowed_user_ids: ["123456789"]
-#     allowed_chat_ids: []      # Grupos autorizados (IDs negativos grandes).
-#                               # Vacío = bot solo responde en privado.
-#                               # Para obtener el chat_id: agregar el bot al grupo
-#                               # y mandar `/chatid` (bypasea esta whitelist pero
-#                               # respeta allowed_user_ids).
-#     reactions: true
-#     voice_enabled: true
-#     # token → agents/{id}.secrets.yaml
-#
-#     # -------------------------------------------------------------------------
-#     # [channels.telegram.groups] — Comportamiento del bot en CHATS GRUPALES
-#     # -------------------------------------------------------------------------
-#     # OPCIONAL. Política de respuesta + timing en grupos. Aplica con o SIN
-#     # broadcast TCP: un solo bot en un grupo igual usa estos flags — la política
-#     # vive acá (no en `broadcast`) porque no depende del transporte.
-#     # groups:
-#     #   behavior: "mention"      # listen | mention | autonomous
-#     #                            #   listen     — nunca responde, solo escucha.
-#     #                            #   mention    — (DEFAULT) responde solo si lo
-#     #                            #                mencionan (@bot_username o reply).
-#     #                            #   autonomous — responde cuando considere que
-#     #                            #                aporta; puede contestar EXACTAMENTE
-#     #                            #                `__SKIP__` para callar (el sistema
-#     #                            #                detecta el marcador y no envía nada).
-#     #                            #                ⚠ Combinar SIEMPRE con rate_limiter.
-#     #   bot_username: "inaki_bot"  # Username del bot (sin @). Necesario para la
-#     #                              # detección de menciones en modo 'mention'.
-#     #   rate_limiter: 5          # Máx respuestas proactivas (autonomous) POR VENTANA
-#     #                            # por chat. Exactamente N pasan; la N+1 se bloquea
-#     #                            # hasta que la ventana expire. Aplica a mensajes
-#     #                            # entrantes Telegram y a triggers broadcast.
-#     #   rate_limiter_window: 30  # Ventana del rate limiter en segundos (default 30).
-#     #                            # ⚠ En autonomous, un ciclo bot-to-bot toma 15-40s
-#     #                            # (flush delay + LLM + red); si la ventana es menor,
-#     #                            # el contador se resetea entre intercambios y el
-#     #                            # limiter es inefectivo. Recomendado: 300 (5min) o +.
-#     #   min_delay_response: 9.5  # Delay aleatorio mín/máx (segundos) antes de
-#     #   max_delay_response: 60.0 # responder en grupo (coalesce de mensajes seguidos).
-#     #   reactions: true          # Override de `reactions` para grupos (ausente = hereda).
-#     #
-#     # -------------------------------------------------------------------------
-#     # [channels.telegram.broadcast] — TRANSPORTE LAN entre asistentes
-#     # -------------------------------------------------------------------------
-#     # OPCIONAL. Permite a múltiples instancias de Inaki (cada una en su
-#     # Raspberry, en la MISMA LAN) verse mutuamente en un grupo Telegram
-#     # compartido. Necesario porque la Bot API de Telegram NO entrega a un bot
-#     # los mensajes de OTROS bots — se necesita un canal lateral.
-#     #
-#     # Este bloque modela SOLO la red. La política de respuesta (behavior,
-#     # bot_username, rate_limiter) vive en `groups` (arriba). Para responder de
-#     # forma autónoma a lo que llega por el LAN, poné `groups.behavior: autonomous`.
-#     #
-#     # Topología: estrella (un server, N clients). Wire: JSON line-delimited
-#     # sobre TCP, firmado HMAC-SHA256 con ventana de frescura de 60s
-#     # (requiere NTP sincronizado en todas las Pis — falla silenciosa con
-#     # warning en logs si hay drift > 60s).
-#     #
-#     # El ROL se declara con un bloque nombrado: `server` XOR `client` (uno y
-#     # solo uno). `auth` es el secreto HMAC COMPARTIDO — un único campo para
-#     # ambos roles; el del client DEBE matchear el del server. Dos canales del
-#     # MISMO agente no pueden declarar el mismo `server.port`.
-#     #
-#     # --- Rol SERVER (el Inaki que acepta conexiones) ---
-#     # broadcast:
-#     #   enabled: true           # OPCIONAL (default true). false = transporte
-#     #                           # apagado sin borrar el bloque.
-#     #   auth: "shared-secret"   # Secret compartido HMAC. → SECRETS
-#     #   server:
-#     #     port: 6499            # Puerto TCP donde escucha (1024..65535).
-#     #   emit:                   # OPCIONAL — qué eventos se emiten al LAN.
-#     #     assistant_response: true   # (default) respuestas del LLM tras un turno.
-#     #     user_input_voice: false    # transcripciones de audio (activar en 1 bot).
-#     #     user_input_photo: false    # descripciones de foto (activar en 1 bot).
-#     #
-#     # --- Rol CLIENT (el Inaki que se conecta al server) ---
-#     # broadcast:
-#     #   auth: "shared-secret"   # DEBE matchear el auth del server. → SECRETS
-#     #   client:
-#     #     host: "192.168.1.50"  # IP o hostname del server (sin puerto).
-#     #     port: 6499            # Puerto del server (1024..65535).
-#     #
-#     # Reconexión automática con backoff exponencial + jitter. El cliente queda
-#     # reintentando hasta que el server levante. Ausencia del bloque (o
-#     # `enabled: false`) = sin transporte.
-#     #
-#     # Ver docs/configuracion.md y docs/broadcast-smoke.md para detalles y
-#     # prueba de humo E2E (listen / mention / autonomous + rate limiter).
+photos:
+  # Si False, el bot ignora todas las fotos con warning. No se carga ningún modelo.
+  enabled: true
+  # Tipos de chat donde el agente ofrecerá registrar caras nuevas. 'private' = solo
+  # chats privados. 'none' = el agente nunca ofrece enrolar.
+  enrollment_chats: private
+  # Si True, escribe /tmp/inaki.photo-debug.<timestamp>.log con el resultado del
+  # procesamiento y el prompt completo enviado al LLM. Útil para diagnosticar
+  # comportamientos extraños en grupos.
+  debug: false
+  # Reconocimiento facial local (InsightFace): qué modelo y con qué umbrales decide.
+  faces:
+    # Motor de detección y embedding facial. ``insightface`` es el único soportado.
+    provider: insightface
+    # Pack de modelos de InsightFace, de más liviano a más preciso.
+    model: buffalo_sc
+    # Score mínimo de similitud coseno para considerar una cara como MATCHED.
+    match_threshold: 0.55
+    # Score entre ambiguous_threshold y match_threshold → cara AMBIGUOUS.
+    ambiguous_threshold: 0.4
+  # Descripción de la escena vía LLM multimodal: vendor, modelo, prompt y credencial.
+  scene:
+    # Vendor del LLM multimodal que describe la foto: ``anthropic``, ``openai`` o
+    # ``groq``.
+    provider: anthropic
+    # Modelo multimodal a usar, en el nombre que espera el ``provider`` elegido.
+    model: claude-sonnet-4-6
+    # Prompt personalizado en español. None = usar el prompt built-in del adaptador.
+    prompt_template: null
+    # API key del proveedor. Conviene referenciar una entrada de ``providers:`` bajo
+    # photos.scene.api_key.
+    api_key: null
+  # Job nocturno que detecta personas registradas dos veces y reporta los pares.
+  dedup:
+    enabled: true   # Habilita el job nocturno de deduplicación de personas.
+    # Expresión cron para el job de deduplicación. Validada por croniter.
+    schedule: 0 3 * * *
+    # Score mínimo de similitud coseno entre centroides para reportar par duplicado.
+    similarity_threshold: 0.7
 
+# -----------------------------------------------------------------------------
+# [providers]
+# -----------------------------------------------------------------------------
+#
+# Entrada del registry top-level de proveedores.
+#
+# Cada entrada representa UN vendor (groq, openai, openrouter, ollama, etc.)
+# con sus credenciales y endpoint. Las features (`llm`, `embedding`,
+# `transcription`, `memories.llm`) referencian entradas por nombre vía su
+# campo ``provider: <key>``, eliminando duplicación de ``api_key``/``base_url``.
+#
+# ``extra="forbid"`` atrapa typos temprano (``api_ky``).
 
-# =============================================================================
-# SECRETS — config/global.secrets.yaml + agents/{id}.secrets.yaml
-# =============================================================================
-# Los campos de abajo NUNCA van en archivos commiteables.
-# =============================================================================
-
-# config/global.secrets.yaml:
-# providers:
-#   openrouter: { api_key: "sk-or-..." }
-#   groq:       { api_key: "gsk_...",  base_url: "https://api.groq.com/openai/v1" }
-#   openai:     { api_key: "sk-..." }
-# tool_config:                   # Tool Config Protocol — config por namespace de tool.
-#   web_search:                  # Se puede escribir a mano, pero lo normal es decirle
-#     api_key: "tvly-..."        # la key al agente por chat (operation=configure);
-#   exchange:                    # los campos sensibles se cifran solos (enc:).
-#     username: "dominio\\user"
-#     password: "..."
-
-# agents/general.secrets.yaml:
-# channels:
-#   telegram:
-#     token: "7xxxxxxx:AAF..."   # Bot token de BotFather
-#     broadcast:
-#       auth: "shared-secret"    # HMAC shared-secret — mismo campo para server
-#                                # y client (el del client matchea el del server)
+providers:
+  # <clave elegida por vos>:
+  # # Nombre del adapter que implementa este vendor. ``null`` → se usa la key del dict.
+  # type: null
+  # # Credencial del vendor. Es un SECRETO: la TUI lo enmascara al editarlo.
+  # api_key: null
+  # # Endpoint del vendor. ``null`` → el default hardcodeado del adapter.
+  # base_url: null

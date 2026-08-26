@@ -20,6 +20,7 @@ import pytest
 
 from adapters.broadcast.tcp import TcpBroadcastAdapter
 from adapters.inbound.telegram.bot import TelegramBot
+from adapters.inbound.telegram.ports import TelegramChannelSettings, TelegramGroupSettings
 from core.domain.services.broadcast_buffer import BroadcastBuffer
 from core.domain.services.rate_limiter import FixedWindowRateLimiter
 from core.ports.outbound.broadcast_port import BroadcastMessage
@@ -47,19 +48,19 @@ def _agent_cfg(agent_id: str, bot_username: str) -> MagicMock:
     cfg.id = agent_id
     cfg.name = agent_id.capitalize()
     cfg.description = ""
-    cfg.telegram = {
-        "token": "fake-token",
-        "allowed_user_ids": [],
+    cfg.telegram = TelegramChannelSettings(
+        token="fake-token",
+        allowed_user_ids=(),
         # El grupo de los broadcasts debe estar autorizado, o el guard de
         # ``_on_broadcast_received`` los descarta (ver ``telegram-group-auth``).
-        "allowed_chat_ids": [int(CHAT_ID)],
-        "reactions": False,
-        "groups": {
-            "behavior": "autonomous",
-            "bot_username": bot_username,
-            "rate_limiter": 5,
-        },
-    }
+        allowed_chat_ids=(CHAT_ID,),
+        reactions=False,
+        groups=TelegramGroupSettings(
+            behavior="autonomous",
+            bot_username=bot_username,
+            rate_limiter=5,
+        ),
+    )
     return cfg
 
 

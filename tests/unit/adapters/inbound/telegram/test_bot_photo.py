@@ -17,6 +17,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from adapters.inbound.telegram.ports import (
+    TelegramChannelSettings,
+    TelegramEmitFlags,
+    TelegramGroupSettings,
+)
 from core.domain.entities.face import ProcessPhotoResult
 
 
@@ -30,15 +35,15 @@ def _mk_agent_cfg(*, allowed_user_ids: list[int] | None = None) -> MagicMock:
     cfg.id = "dev"
     cfg.name = "Inaki"
     cfg.description = "Asistente"
-    tg = {
-        "token": "dummy-token",
-        "allowed_user_ids": allowed_user_ids or [],
+    tg = TelegramChannelSettings(
+        token="dummy-token",
+        allowed_user_ids=tuple(str(uid) for uid in allowed_user_ids or []),
         # 99 = chat_id default de _mk_update — autoriza los tests de grupo
         # (en grupos la auth es por allowed_chat_ids, no por allowed_user_ids).
-        "allowed_chat_ids": [99],
-        "reactions": True,
-        "voice_enabled": False,  # deshabilitar voz para simplificar
-    }
+        allowed_chat_ids=("99",),
+        reactions=True,
+        voice_enabled=False,  # deshabilitar voz para simplificar
+    )
     cfg.telegram = tg
     cfg.transcription = None
     # Workspace real bajo /tmp: _save_bytes_to_workspace escribe los bytes acá.
@@ -459,6 +464,39 @@ async def test_error_en_use_case_reply_error_y_reaccion_x(agent_cfg, mock_contai
     assert "👎" in reactions_sent
 
 
+async def test_sin_vision_local_avisa_por_el_canal_y_no_tumba_el_bot(
+    agent_cfg, mock_container
+) -> None:
+    """Escenario: inferencia remota, sin ONNX/InsightFace en el host.
+
+    Requisito del operador: mientras no crashee y se le avise al usuario POR EL
+    CANAL QUE LO PIDIÓ, está bien que el análisis no ande. Este test fija ese
+    contrato — el ``except`` de ``_handle_photo_message`` es lo único que lo
+    sostiene, y sin este guard alguien podría "limpiarlo" sin enterarse.
+
+    Es distinto del error genérico de arriba en dos cosas: usa el ``VisionError``
+    real que produce la falta de la librería, y exige que el aviso mencione la
+    causa (no un "algo falló" mudo).
+    """
+    from core.domain.errors import VisionError
+
+    mock_container.process_photo.execute.side_effect = VisionError(
+        "Error en detección facial (modelo 'buffalo_sc'): No module named 'insightface.app'"
+    )
+    bot = _build_bot(agent_cfg, mock_container)
+    update = _mk_update()
+
+    # No debe propagar: si esto levanta, el handler tumba el turno del usuario.
+    await bot._handle_photo_message(update, MagicMock())
+
+    update.message.reply_text.assert_awaited()
+    aviso = update.message.reply_text.await_args.args[0]
+    assert "foto" in aviso.lower(), f"el aviso debe hablar de la foto; dijo: {aviso!r}"
+    assert "insightface" in aviso.lower(), (
+        f"el aviso debe arrastrar la causa para que el operador sepa qué falta; dijo: {aviso!r}"
+    )
+
+
 def test_bot_registra_handler_photo(agent_cfg, mock_container) -> None:
     """El __init__ del bot debe registrar un MessageHandler para filters.PHOTO."""
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
@@ -682,24 +720,22 @@ def _mk_agent_cfg_con_emit_photo(allowed_user_ids: list[int]) -> MagicMock:
     cfg.id = "agente_a"
     cfg.name = "Inaki"
     cfg.description = "Asistente"
-    cfg.telegram = {
-        "token": "dummy-token",
-        "allowed_user_ids": allowed_user_ids,
+    cfg.telegram = TelegramChannelSettings(
+        token="dummy-token",
+        allowed_user_ids=tuple(str(uid) for uid in allowed_user_ids),
         # 99 = chat_id default de _mk_update — autoriza los tests de grupo.
-        "allowed_chat_ids": [99],
-        "reactions": True,
-        "voice_enabled": False,
-        "groups": {
-            "behavior": "mention",
-        },
-        "broadcast": {
-            "emit": {
-                "assistant_response": True,
-                "user_input_photo": True,
-                "user_input_voice": False,
-            },
-        },
-    }
+        allowed_chat_ids=("99",),
+        reactions=True,
+        voice_enabled=False,
+        groups=TelegramGroupSettings(
+            behavior="mention",
+        ),
+        emit=TelegramEmitFlags(
+            assistant_response=True,
+            user_input_photo=True,
+            user_input_voice=False,
+        ),
+    )
     cfg.transcription = None
     cfg.workspace_path = "/tmp/inaki-test-ws-photo"
     cfg.delegation = MagicMock()

@@ -126,15 +126,14 @@ def test_load_global_config_absent_admin_uses_defaults(tmp_path: Path) -> None:
     assert cfg.admin.auth_key is None
 
 
-def test_load_global_config_admin_auth_key_from_secrets(tmp_path: Path) -> None:
+def test_load_global_config_admin_auth_key(tmp_path: Path) -> None:
+    """La credencial del admin vive en global.yaml (la capa de secrets fue erradicada)."""
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     (config_dir / "global.yaml").write_text(
-        yaml.safe_dump({"app": {"name": "Test"}, "admin": {"port": 6497}}),
-        encoding="utf-8",
-    )
-    (config_dir / "global.secrets.yaml").write_text(
-        yaml.safe_dump({"admin": {"auth_key": "my-secret-key"}}),
+        yaml.safe_dump(
+            {"app": {"name": "Test"}, "admin": {"port": 6497, "auth_key": "my-secret-key"}}
+        ),
         encoding="utf-8",
     )
     cfg, _ = load_global_config(config_dir)

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+from adapters.inbound.telegram.ports import TelegramChannelSettings
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -26,12 +27,13 @@ def _build_bot(*, allowed_user_ids: list[int], allowed_chat_ids: list[int]):
     cfg.id = "inaki"
     cfg.name = "Inaki"
     cfg.description = "Asistente"
-    cfg.telegram = {
-        "token": "dummy-token",
-        "allowed_user_ids": allowed_user_ids,
-        "allowed_chat_ids": allowed_chat_ids,
-        "reactions": False,
-    }
+    # El builder del container normaliza los ids a str antes de armar el VO.
+    cfg.telegram = TelegramChannelSettings(
+        token="dummy-token",
+        allowed_user_ids=tuple(str(uid) for uid in allowed_user_ids),
+        allowed_chat_ids=tuple(str(cid) for cid in allowed_chat_ids),
+        reactions=False,
+    )
     with patch("adapters.inbound.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
         mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.connect_timeout.return_value.read_timeout.return_value.write_timeout.return_value.pool_timeout.return_value.build.return_value = mock_app

@@ -675,7 +675,7 @@ channels:
 
 A single **admin server** (port 6497, `127.0.0.1` by default) is the only HTTP surface of the daemon. Routing is by `agent_id` in the request; auth via `X-Admin-Key` (timing-safe comparison, fail-closed: no key configured → 403). There is no per-agent REST server.
 
-Endpoints: `/health`, `/inspect`, `/consolidate` (per-agent with `agent_id` in body, or all), `/scheduler/reload`, `/admin/reload`, `/admin/agents`, `/admin/agent/info`, `/admin/chat/turn` (accepts optional `channel`/`chat_id` to operate on a real history scope), `/admin/chat/task`, `/admin/chat/history`, `/admin/tool/list`, `/admin/tool/invoke`, `/admin/send`. See `docs/configuracion.md` for bodies and examples.
+Endpoints: `/health`, `/inspect`, `/consolidate` (per-agent with `agent_id` in body, or all), `/scheduler/reload`, `/admin/reload`, `/admin/agents`, `/admin/agent/info`, `/admin/chat/turn` (accepts optional `channel`/`chat_id` to operate on a real history scope), `/admin/chat/task`, `/admin/chat/history`, `/admin/tool/list`, `/admin/tool/invoke`, `/admin/send`. See `docs/admin-api.md` for bodies and examples.
 
 ---
 

@@ -1,6 +1,6 @@
 # Knowledge — How to Give Inaki Knowledge
 
-This document explains how to add external knowledge sources to the agent. For the full YAML parameter reference see `docs/configuracion.md`.
+This document explains how to add external knowledge sources to the agent. For the full YAML parameter reference see `docs/config-reference.md`.
 
 ---
 
@@ -86,7 +86,31 @@ knowledge:
       path: ~/data/knowledge.db
 ```
 
-Inaki **does not write** to this DB — it only queries it. The DB must have the schema Inaki expects (`chunks` table + `chunk_embeddings` virtual table with 384-dimension vectors). See `docs/configuracion.md` for the exact schema and an insertion example.
+Inaki **does not write** to this DB — it only queries it. The DB must have the
+schema Inaki expects:
+
+```sql
+CREATE TABLE chunks (
+    id          TEXT PRIMARY KEY,
+    file_path   TEXT NOT NULL,
+    file_mtime  REAL NOT NULL,
+    chunk_idx   INTEGER NOT NULL,
+    content     TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+CREATE VIRTUAL TABLE chunk_embeddings USING vec0(
+    id        TEXT PRIMARY KEY,
+    embedding FLOAT[384]
+);
+CREATE TABLE files_indexed (
+    file_path   TEXT PRIMARY KEY,
+    mtime       REAL NOT NULL,
+    chunk_count INTEGER NOT NULL
+);
+```
+
+This is the same schema Inaki writes for its own managed indexes at
+`~/.inaki/knowledge/{id}.db`.
 
 **Critical requirement**: embeddings must be 384 dimensions (e5-small ONNX or equivalent). If the DB uses a different dimension, the source fails on startup with a clear error in the logs.
 
@@ -191,7 +215,7 @@ If `enabled: false`, pre-fetch is skipped but the user can still invoke `knowled
 
 | Role | File |
 |------|------|
-| Full YAML reference | `docs/configuracion.md` — `knowledge:` section |
+| Full YAML reference | `docs/config-reference.md` — `KnowledgeConfig` |
 | Ports (read-only + indexable) | `core/ports/outbound/knowledge_port.py` |
 | Management use case | `core/use_cases/manage_knowledge.py` |
 | Document adapter | `adapters/outbound/knowledge/document_knowledge_source.py` |

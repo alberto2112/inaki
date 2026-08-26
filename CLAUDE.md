@@ -251,8 +251,14 @@ Cada una salió de un fallo en producción. El caso completo está en
 
 | Documento | Contiene |
 |---|---|
-| [`docs/configuracion.md`](docs/configuracion.md) | Referencia de configuración en prosa: `workspace.containment`, instance home, Tool Config Protocol, broadcast |
+| [`docs/configuracion.md`](docs/configuracion.md) | **Índice de config** — a qué doc ir, `inaki config show`, los ficheros, las 2 capas. No lista campos |
 | [`docs/config-reference.md`](docs/config-reference.md) | Referencia de config **autogenerada** desde el schema Pydantic (`GlobalConfig` / `AgentConfig`) |
+| [`docs/instance-home.md`](docs/instance-home.md) | `--home` / `INAKI_HOME` y resolución de paths de runtime |
+| [`docs/tool-config-protocol.md`](docs/tool-config-protocol.md) | `config/tool_config.yaml`: config de tools, cifrado en reposo, `configure` conversacional |
+| [`docs/contexto-por-entidad.md`](docs/contexto-por-entidad.md) | Memoria caliente por conversación en `~/.inaki/users/` |
+| [`docs/workspace-containment.md`](docs/workspace-containment.md) | `workspace.containment`: qué paths ven las file tools |
+| [`docs/transcripcion.md`](docs/transcripcion.md) | Transcripción de voz en Telegram: providers, flags, flujo del handler |
+| [`docs/admin-api.md`](docs/admin-api.md) | Endpoints HTTP del daemon, bodies y códigos de error |
 | [`docs/prompt_builder.md`](docs/prompt_builder.md) | Construcción del prompt y tabla de variables `{{CHANNEL.*}}` |
 | [`docs/semantic-routing.md`](docs/semantic-routing.md) | Selección RAG de tools, `tools.pinned` y page-in |
 | [`docs/scheduler-spec.md`](docs/scheduler-spec.md) | Spec del scheduler: triggers, task kinds, dispatch |

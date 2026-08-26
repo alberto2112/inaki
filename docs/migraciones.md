@@ -1271,7 +1271,7 @@ ruamel preservando comentarios; los writes son efectivos al instante sin
 reiniciar. Una tool adopta el protocolo declarando `config_namespace` (class
 attr de `ITool`) — el container la instancia con `config_store=...` (aplica
 también a tools de `ext/`, cuyo contrato deja de ser estrictamente zero-arg).
-Ver `docs/configuracion.md` → "Tool Config Protocol".
+Ver `docs/tool-config-protocol.md`.
 
 **Pasos del operador**: borrar los archivos huérfanos
 (`~/.inaki/config/{web_search,exchange,fal_music,replicate_music}_config.yaml`,
@@ -1333,7 +1333,7 @@ queda atrás, los broadcasts entre él y los actualizados se pierden silenciosam
 **Nuevos flags `broadcast.emit.*`**: defaults backward-compat (`assistant_response=true`,
 otros `false`) — sin cambios en config existente, comportamiento idéntico al previo. Para
 broadcastear transcripciones de voice o descripciones de fotos, activar `user_input_voice`
-y/o `user_input_photo` en UN bot del grupo (ver `docs/configuracion.md`).
+y/o `user_input_photo` en UN bot del grupo (ver `docs/config-reference.md`).
 
 ### `agent-state-scoped-by-channel-chat`
 
@@ -1867,5 +1867,5 @@ la variable del system prompt a `{{CHANNEL.CONTEXTID}}`. En CLI/REST, `context_i
 deriva de `channels.cli.user` (identidad estable) cuando el cliente no manda
 `chat_id`; sin ese config, del `session_id` efímero (sin archivo pre-escribible) —
 por eso el router usa `user_id = cli_user or session_id`. Sin cambios de DB ni de
-config. Ver `docs/configuracion.md` → "Per-entity context files" y
+config. Ver `docs/contexto-por-entidad.md` y
 `docs/prompt_builder.md` (tabla de variables).

@@ -169,7 +169,7 @@ photos:
     api_key: "sk-ant-..."
 ```
 
-See the full configuration reference in [`docs/configuracion.md`](configuracion.md).
+See the full configuration reference in [`config-reference.md`](config-reference.md).
 
 ## Bootstrap from Scratch
 

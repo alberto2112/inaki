@@ -117,7 +117,7 @@ def _run_daemon(config_dir: Path, agents_dir: Path, global_config, registry) -> 
 
     # Crea ~/.inaki/users/{channel}/ por cada canal configurado en cualquier agente.
     # Lazy + idempotente: cero costo si ya existen. Habilita la convención de
-    # contexto per-entidad (ver docs/configuracion.md → "Per-entity context files").
+    # contexto per-entidad (ver docs/contexto-por-entidad.md).
     from infrastructure.config import ensure_user_channel_dirs
 
     ensure_user_channel_dirs(get_inaki_home(), registry.list_all())
@@ -142,7 +142,7 @@ def _resolve_dirs():
 
     El home se fija en el callback raíz (``--home`` / ``INAKI_HOME``) vía ``set_inaki_home``;
     acá todo deriva de ``get_inaki_home()``. No hay override de config_dir suelto: el único
-    knob de relocalización es el home (ver "instance home" en docs/configuracion.md)."""
+    knob de relocalización es el home (ver docs/instance-home.md)."""
     from infrastructure.config import ensure_user_config
 
     config_dir = _get_config_dir()

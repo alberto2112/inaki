@@ -30,7 +30,7 @@ la versión de una línea; acá está el porqué y el detalle de implementación
 
 - **Tool results** must be `ToolResult` objects, never raw strings.
 - **Tool Config Protocol** — Tools que necesitan credenciales configurables por chat declaran `config_namespace` en la clase y reciben `config_store: IToolConfigStore` en el constructor (inyectado por `container.py`, también para tools de `ext/`). Persistencia en `tool_config.{namespace}` de **`config/tool_config.yaml`** — archivo PROPIO del store (dueño: el daemon), NO `global.yaml` (ese es del operador y el daemon no lo pisa). El store **lee su propio archivo al construirse** (la config sobrevive al reinicio) y `tool_config` NO participa del merge de 2 capas. Sensibles cifrados `enc:` con `~/.inaki/secret.key`. NUNCA crear un YAML de config propio por tool — eso era el patrón legacy (4 islas eliminadas); el archivo único compartido por namespace NO es una isla.
-- **Workspace containment** — `read_file`, `write_file` y `patch_file` usan `workspace.containment` (strict/warn/off). `shell_exec` NO tiene contención — opera en cualquier path. Ver `docs/configuracion.md`.
+- **Workspace containment** — `read_file`, `write_file` y `patch_file` usan `workspace.containment` (strict/warn/off). `shell_exec` NO tiene contención — opera en cualquier path. Ver `docs/workspace-containment.md`.
 
 ## Routing semántico de tools
 

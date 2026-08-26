@@ -264,7 +264,7 @@
 | `provider` | `Literal['anthropic', 'openai', 'groq']` | `'anthropic'` |  | Vendor del LLM multimodal que describe la foto: ``anthropic``, ``openai`` o ``groq``. |
 | `model` | `str` | `'claude-sonnet-4-6'` |  | Modelo multimodal a usar, en el nombre que espera el ``provider`` elegido. |
 | `prompt_template` | `str \| None` | `null` |  | Prompt personalizado en español. None = usar el prompt built-in del adaptador. |
-| `api_key` | `str \| None` | `null` | 🔒 | API key del proveedor. Conviene en global.secrets.yaml bajo photos.scene.api_key. |
+| `api_key` | `str \| None` | `null` | 🔒 | API key del proveedor. Conviene referenciar una entrada de ``providers:`` bajo photos.scene.api_key. |
 
 ### `DedupConfig`
 

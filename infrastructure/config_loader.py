@@ -198,7 +198,7 @@ def ensure_user_config(config_dir: Path, agents_dir: Path) -> None:
     # El orden importa: la extracción de `tool_config` lee `global.secrets.yaml`,
     # así que tiene que correr ANTES de que el fold lo haga desaparecer.
     migrate_tool_config_to_own_file(config_dir)
-    migrate_telegram_group_fields(config_dir)
+    migrate_telegram_group_fields(config_dir, agents_dir)
     migrate_secrets_into_main_layers(config_dir, agents_dir)
 
 
@@ -274,7 +274,7 @@ def migrate_tool_config_to_own_file(config_dir: Path) -> None:
 _GROUP_BEHAVIOR_FIELDS = ("behavior", "bot_username", "rate_limiter", "rate_limiter_window")
 
 
-def migrate_telegram_group_fields(config_dir: Path) -> None:
+def migrate_telegram_group_fields(config_dir: Path, agents_dir: Path) -> None:
     """Migración one-shot: mueve ``behavior``/``bot_username``/``rate_limiter``/
     ``rate_limiter_window`` de ``channels.telegram.broadcast`` a
     ``channels.telegram.groups``.
@@ -283,8 +283,17 @@ def migrate_telegram_group_fields(config_dir: Path) -> None:
     broadcast TCP), pero vivían en ``BroadcastConfig``, lo que obligaba a levantar
     el transporte solo para configurarlos. Esta función reubica instalaciones previas.
 
-    Procesa ``global.yaml``, ``global.secrets.yaml`` y todos los YAML bajo
-    ``agents/`` — cada campo puede vivir en cualquier capa del merge de 4 niveles.
+    Procesa ``global.yaml``, ``global.secrets.yaml`` (si sobrevive, corre antes
+    del fold) y todos los YAML de ``agents_dir`` y su ``sub-agents/`` — cada
+    campo puede vivir en cualquier capa.
+
+    ``agents_dir`` llega como parámetro porque el layout REAL lo tiene como
+    sibling de ``config/`` (``~/.inaki/agents/``), no como subcarpeta. La
+    versión original lo derivaba como ``config_dir / "agents"`` — el layout de
+    los tests — así que en instalaciones reales los ficheros de agente NUNCA se
+    migraban. Con los campos viejos ignorándose en silencio nadie lo notó;
+    desde que la config falla ruidoso (`config-falla-ruidoso`), un agente sin
+    migrar aborta el arranque, y este bug pasó de invisible a fatal.
     Idempotente: si ``broadcast`` no tiene ninguno de los campos, no toca el archivo.
     ``groups`` gana ante conflicto (campo presente en ambos → se descarta el de
     ``broadcast``). Si ``broadcast`` queda vacío tras mover (solo tenía comportamiento,
@@ -296,9 +305,9 @@ def migrate_telegram_group_fields(config_dir: Path) -> None:
     yaml_rt.preserve_quotes = True
 
     archivos = [config_dir / "global.yaml", config_dir / "global.secrets.yaml"]
-    agents_dir = config_dir / "agents"
-    if agents_dir.is_dir():
-        archivos.extend(sorted(agents_dir.glob("*.yaml")))
+    for directorio in (agents_dir, agents_dir / "sub-agents"):
+        if directorio.is_dir():
+            archivos.extend(sorted(directorio.glob("*.yaml")))
 
     for path in archivos:
         if not path.exists():
@@ -394,6 +403,20 @@ def migrate_secrets_into_main_layers(config_dir: Path, agents_dir: Path) -> None
             continue
         for secrets_path in sorted(directorio.glob("*.secrets.yaml")):
             principal = secrets_path.with_name(secrets_path.name.replace(".secrets.yaml", ".yaml"))
+            if not principal.exists():
+                # Secrets HUÉRFANO: su agente fue borrado (la TUI vieja eliminaba
+                # solo el YAML principal). Plegarlo fundaría un agente sin `id`
+                # que abortaría el arranque. Se deja en disco —el loader ya no lo
+                # lee— y se avisa: borrarlo o recrear el agente es del operador.
+                logger.warning(
+                    "Migración secrets: %s no tiene su %s — es el resto de un agente "
+                    "borrado. No se pliega (fundaría un agente inválido). Borralo si "
+                    "ya no lo necesitás, o recreá el agente para conservar sus "
+                    "credenciales.",
+                    secrets_path,
+                    principal.name,
+                )
+                continue
             pares.append((secrets_path, principal))
 
     tool_config_ya_migrado = (config_dir / "tool_config.yaml").exists()
@@ -411,11 +434,19 @@ def migrate_secrets_into_main_layers(config_dir: Path, agents_dir: Path) -> None
         if not isinstance(secrets_doc, dict):
             secrets_doc = {}
 
-        # El bloque `tool_config` solo sobrevive acá si `tool_config.yaml` ya
-        # existía cuando corrió su migración: los datos están a salvo allá y el
-        # store nunca lee esta copia. Plegarlo solo ensuciaría la capa principal.
-        if "tool_config" in secrets_doc and tool_config_ya_migrado:
+        # El bloque `tool_config` NUNCA se pliega a la capa principal: el store
+        # no la lee, y desde el chequeo top-level una clave `tool_config:` en
+        # global.yaml abortaría el arranque. Si `tool_config.yaml` ya existe,
+        # esta copia es el duplicado benigno de su migración y se descarta; si
+        # NO existe, esa migración falló al escribir y los datos se quedan en
+        # el secrets (reescrito solo con este bloque) hasta que el operador
+        # resuelva — perder credenciales de tools por un OSError no es opción.
+        bloque_varado = None
+        if "tool_config" in secrets_doc:
+            bloque = secrets_doc["tool_config"]
             del secrets_doc["tool_config"]
+            if not tool_config_ya_migrado:
+                bloque_varado = bloque
 
         if secrets_doc:
             try:
@@ -449,6 +480,25 @@ def migrate_secrets_into_main_layers(config_dir: Path, agents_dir: Path) -> None
                     secrets_path.name,
                 )
                 continue
+
+        if bloque_varado is not None:
+            try:
+                with secrets_path.open("w", encoding="utf-8") as f:
+                    yaml_rt.dump({"tool_config": bloque_varado}, f)
+                logger.warning(
+                    "Migración secrets: la migración de tool_config no pudo escribir su "
+                    "archivo propio, así que %s se conserva SOLO con ese bloque. Revisá "
+                    "permisos/disco y reiniciá para que la migración lo reintente.",
+                    secrets_path,
+                )
+            except OSError as exc:
+                logger.error(
+                    "Migración secrets: no se pudo reescribir %s (%s) — el fichero queda "
+                    "como estaba.",
+                    secrets_path,
+                    exc,
+                )
+            continue
 
         # Recién ahora, con los datos ya en la capa principal, borrar el secrets.
         try:
@@ -574,6 +624,46 @@ def _check_legacy_shape(merged: dict) -> None:
                     raise ConfigError(_LEGACY_ERROR_TEMPLATE.format(field=f"memories.llm.{key}"))
 
 
+def _check_top_level(
+    raw: dict, modelo: type[AgentConfig] | type[GlobalConfig], contexto: str
+) -> None:
+    """Rechaza claves top-level que el schema no declara.
+
+    El ``extra="forbid"`` de los modelos nunca ve este nivel: el loader arma
+    ``GlobalConfig``/``AgentConfig`` sección por sección con ``merged.get(...)``,
+    así que una sección con typo (``schedulr:``) o un bloque entero en el nivel
+    equivocado se ignoraban en silencio — el mismo fallo que la Fase 4 cerró
+    para los niveles anidados.
+
+    Para un agente, además, distingue el caso "bloque de nivel global": un
+    ``scheduler:`` en ``agents/{id}.yaml`` no es un typo, es config del tier
+    harness-global escrita donde ningún override es posible (ver "Tiers de
+    recursos" en CLAUDE.md) — y el operador que la escribió cree que aplica.
+    """
+    from difflib import get_close_matches
+
+    from core.domain.errors import ConfigError
+
+    conocidas = set(modelo.model_fields)
+    desconocidas = [k for k in raw if isinstance(k, str) and k not in conocidas]
+    if not desconocidas:
+        return
+
+    globales = set(GlobalConfig.model_fields) - conocidas
+    detalles = []
+    for clave in sorted(desconocidas):
+        if clave in globales:
+            detalles.append(
+                f"'{clave}' es config de nivel GLOBAL (harness): va en config/global.yaml, "
+                f"acá no tiene efecto"
+            )
+            continue
+        parecidas = get_close_matches(clave, conocidas, n=1, cutoff=0.6)
+        sugerencia = f" ¿Quisiste decir '{parecidas[0]}'?" if parecidas else ""
+        detalles.append(f"'{clave}' no existe{sugerencia}")
+    raise ConfigError(f"{contexto}: {'; '.join(detalles)}.")
+
+
 def _parse_providers(merged: dict) -> dict[str, ProviderConfig]:
     """Construye el dict ``{key: ProviderConfig}`` desde el merged raw."""
     providers_raw = merged.get("providers") or {}
@@ -597,6 +687,7 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
     merged = _load_yaml_safe(config_dir / "global.yaml")
 
     _check_legacy_shape(merged)
+    _check_top_level(merged, GlobalConfig, "config/global.yaml")
     providers = _parse_providers(merged)
 
     app = AppConfig(**merged.get("app", {}))
@@ -613,6 +704,17 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
     delegation = DelegationConfig(**merged.get("delegation", {}))
     admin = AdminConfig(**merged.get("admin", {}))
     user = UserConfig(**merged.get("user", {}))
+    # Solo los flags escalares: el bloque `channels` del global es dual en la
+    # práctica (flags transversales + defaults de adapters que los agentes
+    # heredan por el merge). Los sub-dicts son adapters y NO validan acá — el
+    # espejo exacto de `_filter_channel_adapters`, que en el lado del agente
+    # descarta los escalares. Sin este filtro pasaban dos cosas: el bloque
+    # entero se ignoraba (thinking_indicator: true no hacía NADA, knob muerto
+    # desde siempre) o, validado ingenuo, un `channels.telegram` global
+    # legítimo abortaría el arranque.
+    channels_global = ChannelsGlobalConfig(
+        **{k: v for k, v in (merged.get("channels") or {}).items() if not isinstance(v, dict)}
+    )
     transcription = (
         TranscriptionConfig(**merged["transcription"])
         if merged.get("transcription") is not None
@@ -642,6 +744,7 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
         photos = None
 
     global_cfg = GlobalConfig(
+        channels=channels_global,
         app=app,
         llm=llm,
         embedding=embedding,
@@ -784,6 +887,12 @@ def load_agent_config(
         return None
 
     agent_raw = _load_yaml_safe(agent_yaml)
+    # El aviso ANTES del chequeo: si el top-level aborta por un `broadcast:`
+    # suelto, el operador necesita leer también cuál es el path válido.
+    _avisar_broadcast_extraviado(agent_id, agent_raw)
+    # Sobre el fichero CRUDO del agente, antes del merge: tras mergear ya no se
+    # puede distinguir lo que el agente declaró de lo que heredó del global.
+    _check_top_level(agent_raw, AgentConfig, str(agent_yaml))
 
     if extra_base is not None:
         global_raw = _deep_merge(global_raw, extra_base)
@@ -792,7 +901,6 @@ def load_agent_config(
     merged = _deep_merge(global_raw, agent_raw)
 
     _check_legacy_shape(merged)
-    _avisar_broadcast_extraviado(agent_id, merged)
 
     try:
         return assemble_agent_config(merged)

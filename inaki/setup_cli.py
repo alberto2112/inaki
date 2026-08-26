@@ -74,6 +74,14 @@ def _lanzar_tui() -> None:
     )
 
     home = get_inaki_home()
+    # Bootstrap + migraciones ANTES de construir el container: la TUI solo lee
+    # las capas actuales, así que sobre una instalación sin migrar mostraría
+    # credenciales "sin configurar" (viven en un secrets aún no plegado), un
+    # valor nuevo tipeado ahí sería pisado por el fold del siguiente arranque,
+    # y un secrets huérfano de un agente borrado resucitaría como agente roto.
+    from infrastructure.config import ensure_user_config
+
+    ensure_user_config(home / "config", home / "agents")
     container = build_setup_container(
         config_dir=home / "config",
         agents_dir=home / "agents",

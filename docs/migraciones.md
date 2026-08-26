@@ -227,6 +227,16 @@ del schema, que `secrets-layer-eradication` conservó al erradicar los ficheros.
 El use case no conoce el schema: el composition root (`inaki/config_cli.py`) le
 pasa los defaults y el set de paths secretos ya resueltos.
 
+**Ajustes posteriores (review adversarial).** La redacción por paths del schema
+solo cubre la config VÁLIDA — y `config show` es la herramienta de diagnóstico
+justo cuando la config NO valida (shapes legacy, bloques varados). Se sumó una
+red por NOMBRE de hoja (`api_key`, `token`, `auth`, `password`, sufijos
+`_key`/`_token`/`_secret`…) para que esas credenciales también salgan
+redactadas. Además: `--agent` acepta sub-agentes, y un id inexistente da error
+en vez de la vista global-only en silencio (un diagnóstico convincente y
+equivocado). Límite conocido: una credencial bajo una clave con typo
+(`api_ky`) no tiene red posible.
+
 **Invariante.** **NUNCA** construyas una interfaz de configuración sobre los
 ficheros crudos. Se construye sobre la **config efectiva con origen**: una UI
 sobre eso es un problema simple; sobre N ficheros más la semántica de merge es
@@ -287,6 +297,18 @@ evitaba: un default silencioso que contradice lo escrito en el YAML no es
 robustez, es un bug que no se puede diagnosticar. El daemon que no arranca se
 arregla en diez segundos leyendo el error; el que arranca con un timeout que no
 pediste puede pasar meses sin que lo notes.
+
+**Ajuste posterior (review adversarial).** El `extra="forbid"` de los modelos
+nunca veía el nivel TOP: el loader arma la config sección por sección con
+`merged.get(...)`, así que un typo de sección (`schedulr:`) o un bloque entero
+en el nivel equivocado seguían ignorándose. `_check_top_level` cierra ese
+hueco: valida las claves top-level del global y del fichero CRUDO de cada
+agente (antes del merge — después ya no se distingue lo declarado de lo
+heredado), distinguiendo el typo ("¿Quisiste decir…?") del bloque de nivel
+global escrito en un agente ("va en config/global.yaml, acá no tiene efecto").
+El barrido sobre la instalación real encontró 16 sub-agentes declarando
+`memory:` — el nombre PREVIO al refactor memory→memories — sin efecto desde
+junio: exactamente la clase de mentira que este chequeo elimina.
 
 **Invariante.** **NUNCA** sanitizar un valor de config a un default "para no
 romper el arranque". Un valor mal escrito es un error del operador, y el
@@ -497,8 +519,26 @@ Los dos los cubre la misma pieza pendiente: `inaki config show --effective
 --origin` con redacción de campos secretos (Fase 5 de
 [`config-refactor-plan.md`](config-refactor-plan.md)) — un dump que enmascara
 también responde "qué tengo configurado y qué me falta". Hasta entonces, los
-huecos existen. Ojo: **esa redacción todavía NO está implementada**;
-`get_effective_config` hoy devuelve los valores en claro.
+huecos existían al escribirse esta nota; la Fase 5
+([`config-show-effective`](#config-show-effective)) los cerró — `inaki config
+show` redacta y `--secrets` da la vista transversal. `get_effective_config`
+(el use case del TUI) sigue devolviendo valores en claro: alimenta un editor,
+no un dump.
+
+**Ajustes posteriores (review adversarial).** Tres guardas que el diseño
+original no tenía:
+
+1. Un `agents/{id}.secrets.yaml` **huérfano** (su agente fue borrado — la TUI
+   vieja eliminaba solo el YAML principal) NO se pliega: fundaría un agente sin
+   `id` que abortaría el arranque. Queda en disco con un WARNING que dice qué
+   hacer.
+2. El bloque `tool_config` **nunca** se pliega a `global.yaml`: si su migración
+   propia falló al escribir, el secrets se conserva SOLO con ese bloque (con
+   aviso) en vez de varar credenciales donde nadie las lee.
+3. `inaki setup` corre `ensure_user_config` (bootstrap + migraciones) ANTES de
+   abrir. Sin eso, sobre una instalación sin migrar la TUI mostraba las
+   credenciales "(sin configurar)", y una key nueva tipeada ahí era PISADA por
+   el fold del siguiente arranque — pérdida silenciosa de la edición.
 
 **Invariante.** **NUNCA** expresar "este dato es sensible" como un split de
 ficheros: es metadato del schema. Un split de ficheros por sensibilidad

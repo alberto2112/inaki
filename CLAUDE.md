@@ -88,8 +88,9 @@ Resumen operativo. El texto completo, con el porqué y los antipatrones, está e
 
 ## Configuration
 
-Config en **`~/.inaki/`** (no en el repo). El primer arranque hace bootstrap desde
-`config/global.example.yaml`. Relocalizable entera con `--home DIR` / `INAKI_HOME`.
+Config en **`~/.inaki/`** (no en el repo). El primer arranque renderiza `global.yaml`
+desde los defaults del schema (`config/global.example.yaml` es referencia autogenerada,
+no se copia ni se lee). Relocalizable entera con `--home DIR` / `INAKI_HOME`.
 
 **Merge de 2 capas** — `global.yaml` es la **base** y cada capa siguiente completa o
 pisa solo los campos que declara (nunca al revés):

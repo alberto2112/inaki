@@ -188,3 +188,50 @@ def test_un_bloque_declarado_vacio_es_una_hoja_visible() -> None:
     vista = _uc({"channels": {"telegram": {"groups": {}}}}).execute()
 
     assert _por_path(vista)["channels.telegram.groups"].valor == {}
+
+
+def test_agente_inexistente_lanza_error_en_vez_de_vista_global() -> None:
+    """Un id con typo devolvía la vista global-only en silencio: diagnóstico
+    convincente y equivocado."""
+    import pytest
+
+    from core.domain.errors import AgentNotFoundError
+
+    repo = _repo({"app": {"name": "I"}})
+    repo.layer_exists.return_value = False
+    uc = ShowEffectiveConfigUseCase(repo=repo, defaults={}, paths_secretos=_SECRETOS)
+
+    with pytest.raises(AgentNotFoundError, match="fantasma"):
+        uc.execute("fantasma")
+
+
+def test_un_sub_agente_tambien_se_puede_mostrar() -> None:
+    from core.ports.config_repository import LayerName
+
+    repo = _repo({"llm": {"model": "base"}}, {"llm": {"model": "del-sub"}})
+    repo.layer_exists.side_effect = lambda layer, agent_id=None: layer is LayerName.SUB_AGENT
+    uc = ShowEffectiveConfigUseCase(repo=repo, defaults={}, paths_secretos=_SECRETOS)
+
+    vista = uc.execute("memory_extractor")
+
+    assert _por_path(vista)["llm.model"].valor == "del-sub"
+
+
+def test_la_red_por_nombre_redacta_credenciales_fuera_del_schema() -> None:
+    """`config show` es la herramienta de diagnóstico cuando el arranque aborta:
+    justo ahí la config trae shapes viejos o bloques varados que los paths del
+    schema no cubren. Sin la red por nombre, esas credenciales saldrían en claro
+    en el momento de pegar el output en un issue."""
+    vista = _uc(
+        {
+            "llm": {"api_key": "sk-LEGACY"},
+            "tool_config": {"gsn": {"password": "PLANO", "username": "alberto"}},
+            "servicio": {"access_token": "tok-X"},
+        }
+    ).execute()
+
+    campos = _por_path(vista)
+    assert campos["llm.api_key"].valor == REDACTADO
+    assert campos["tool_config.gsn.password"].valor == REDACTADO
+    assert campos["servicio.access_token"].valor == REDACTADO
+    assert campos["tool_config.gsn.username"].valor == "alberto", "no sobre-redactar"

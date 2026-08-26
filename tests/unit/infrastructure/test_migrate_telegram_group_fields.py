@@ -35,7 +35,7 @@ def _tg(path: Path) -> dict:
 def test_mueve_politica_a_groups_y_conserva_transporte(tmp_path: Path):
     (tmp_path / "global.yaml").write_text(_GLOBAL_CON_MIX, encoding="utf-8")
 
-    migrate_telegram_group_fields(tmp_path)
+    migrate_telegram_group_fields(tmp_path, tmp_path / "agents")
 
     tg = _tg(tmp_path / "global.yaml")
     # Los 4 campos de comportamiento aterrizaron en groups (junto a los que ya estaban).
@@ -61,7 +61,7 @@ def test_crea_groups_si_no_existe(tmp_path: Path):
         encoding="utf-8",
     )
 
-    migrate_telegram_group_fields(tmp_path)
+    migrate_telegram_group_fields(tmp_path, tmp_path / "agents")
 
     tg = _tg(tmp_path / "global.yaml")
     assert tg["groups"] == {"behavior": "mention", "bot_username": "bot"}
@@ -76,7 +76,7 @@ def test_broadcast_sin_transporte_se_elimina(tmp_path: Path):
         encoding="utf-8",
     )
 
-    migrate_telegram_group_fields(tmp_path)
+    migrate_telegram_group_fields(tmp_path, tmp_path / "agents")
 
     tg = _tg(tmp_path / "global.yaml")
     assert "broadcast" not in tg
@@ -96,7 +96,7 @@ def test_groups_gana_ante_conflicto(tmp_path: Path):
         encoding="utf-8",
     )
 
-    migrate_telegram_group_fields(tmp_path)
+    migrate_telegram_group_fields(tmp_path, tmp_path / "agents")
 
     tg = _tg(tmp_path / "global.yaml")
     # El valor que ya estaba en groups gana; el de broadcast se descarta.
@@ -118,7 +118,7 @@ def test_procesa_agents_yaml(tmp_path: Path):
         encoding="utf-8",
     )
 
-    migrate_telegram_group_fields(tmp_path)
+    migrate_telegram_group_fields(tmp_path, tmp_path / "agents")
 
     tg = _tg(agents / "dev.yaml")
     assert tg["groups"] == {"behavior": "autonomous"}
@@ -129,9 +129,9 @@ def test_idempotente_y_preserva_comentarios(tmp_path: Path):
     p = tmp_path / "global.yaml"
     p.write_text(_GLOBAL_CON_MIX, encoding="utf-8")
 
-    migrate_telegram_group_fields(tmp_path)
+    migrate_telegram_group_fields(tmp_path, tmp_path / "agents")
     primera = p.read_text(encoding="utf-8")
-    migrate_telegram_group_fields(tmp_path)
+    migrate_telegram_group_fields(tmp_path, tmp_path / "agents")
     segunda = p.read_text(encoding="utf-8")
 
     assert primera == segunda  # segunda corrida no toca nada
@@ -143,10 +143,40 @@ def test_noop_sin_broadcast(tmp_path: Path):
     original = "channels:\n  telegram:\n    groups:\n      behavior: mention\n"
     p.write_text(original, encoding="utf-8")
 
-    migrate_telegram_group_fields(tmp_path)
+    migrate_telegram_group_fields(tmp_path, tmp_path / "agents")
 
     assert p.read_text(encoding="utf-8") == original
 
 
 def test_noop_si_no_existen_archivos(tmp_path: Path):
-    migrate_telegram_group_fields(tmp_path)  # no debe explotar
+    migrate_telegram_group_fields(tmp_path, tmp_path / "agents")  # no debe explotar
+
+
+def test_layout_real_agents_sibling_de_config(tmp_path):
+    """Regresión del bug de path: en el layout REAL (``~/.inaki/agents/`` sibling
+    de ``config/``) la migración derivaba agents como ``config_dir/"agents"`` y
+    NUNCA tocaba los ficheros de agente. Con los campos viejos ignorados en
+    silencio nadie lo notó; desde `config-falla-ruidoso` el agente sin migrar
+    aborta el arranque."""
+    config_dir = tmp_path / "config"
+    agents_dir = tmp_path / "agents"
+    config_dir.mkdir()
+    (agents_dir / "sub-agents").mkdir(parents=True)
+    (agents_dir / "dev.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "id": "dev",
+                "channels": {
+                    "telegram": {"broadcast": {"behavior": "autonomous", "rate_limiter": 3}}
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    migrate_telegram_group_fields(config_dir, agents_dir)
+
+    doc = yaml.safe_load((agents_dir / "dev.yaml").read_text(encoding="utf-8"))
+    telegram = doc["channels"]["telegram"]
+    assert telegram["groups"] == {"behavior": "autonomous", "rate_limiter": 3}
+    assert "broadcast" not in telegram, "el bloque vacío debe eliminarse (guard port-XOR-remote)"

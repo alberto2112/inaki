@@ -186,18 +186,32 @@ def test_descarta_tool_config_ya_migrado(home: tuple[Path, Path]) -> None:
     assert doc["providers"]["groq"]["api_key"] == "gsk"
 
 
-def test_conserva_tool_config_si_no_se_migro(home: tuple[Path, Path]) -> None:
-    """Sin `tool_config.yaml`, el bloque es dato del usuario: se pliega en vez de perderse."""
+def test_tool_config_no_migrado_queda_en_el_secrets_no_en_global(
+    home: tuple[Path, Path], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Si `tool_config.yaml` no existe, su migración falló al escribir.
+
+    El bloque NO se pliega a `global.yaml` (el store no la lee, y el chequeo
+    top-level abortaría el arranque por la clave desconocida): el secrets se
+    conserva SOLO con ese bloque, con un WARNING, hasta que el operador
+    resuelva. Credenciales de tools no se pierden por un OSError.
+    """
     config_dir, agents_dir = home
     (config_dir / "global.yaml").write_text(_GLOBAL, encoding="utf-8")
     (config_dir / "global.secrets.yaml").write_text(
-        "tool_config:\n  exchange:\n    username: alberto\n", encoding="utf-8"
+        "providers:\n  groq:\n    api_key: gsk\ntool_config:\n  exchange:\n    username: alberto\n",
+        encoding="utf-8",
     )
 
-    migrate_secrets_into_main_layers(config_dir, agents_dir)
+    with caplog.at_level("WARNING"):
+        migrate_secrets_into_main_layers(config_dir, agents_dir)
 
     doc = _read(config_dir / "global.yaml")
-    assert doc["tool_config"]["exchange"]["username"] == "alberto"
+    assert "tool_config" not in doc, "plegarlo a global abortaría el arranque"
+    assert doc["providers"]["groq"]["api_key"] == "gsk", "el resto SÍ se pliega"
+    residual = _read(config_dir / "global.secrets.yaml")
+    assert residual == {"tool_config": {"exchange": {"username": "alberto"}}}
+    assert "tool_config" in caplog.text
 
 
 def test_no_borra_el_secrets_si_falla_la_escritura(
@@ -223,3 +237,25 @@ def test_no_borra_el_secrets_si_falla_la_escritura(
 
     assert secrets.exists()
     assert _read(secrets)["providers"]["groq"]["api_key"] == "gsk-secreta"
+
+
+def test_secrets_huerfano_de_agente_no_funda_un_agente(
+    home: tuple[Path, Path], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Un secrets sin su YAML principal es el resto de un agente borrado.
+
+    Plegarlo fundaría un `agents/{id}.yaml` sin `id`, que desde
+    `config-falla-ruidoso` aborta el arranque — el agente borrado "resucitaría"
+    matando al daemon. Se deja en disco (el loader ya no lo lee) y se avisa.
+    """
+    config_dir, agents_dir = home
+    (agents_dir / "fantasma.secrets.yaml").write_text(
+        "channels:\n  telegram:\n    token: tok\n", encoding="utf-8"
+    )
+
+    with caplog.at_level("WARNING"):
+        migrate_secrets_into_main_layers(config_dir, agents_dir)
+
+    assert not (agents_dir / "fantasma.yaml").exists(), "no debe fundar un agente"
+    assert (agents_dir / "fantasma.secrets.yaml").exists(), "las credenciales no se tiran"
+    assert "fantasma" in caplog.text

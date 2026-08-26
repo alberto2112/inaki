@@ -38,6 +38,11 @@ REDACTADO = "********"
 SIN_CONFIGURAR = "(sin configurar)"
 """Marca de un secreto declarado por el schema pero todavía sin valor."""
 
+_NOMBRES_SENSIBLES = frozenset(
+    {"api_key", "token", "auth", "auth_key", "password", "passwd", "secret", "credentials"}
+)
+_SUFIJOS_SENSIBLES = ("_key", "_token", "_secret", "_password")
+
 
 @dataclass(frozen=True)
 class CampoEfectivo:
@@ -112,13 +117,28 @@ class ShowEffectiveConfigUseCase:
         self._paths_secretos = paths_secretos
 
     def execute(self, agent_id: str | None = None) -> ConfigConOrigen:
-        """Arma la config efectiva. ``agent_id=None`` → solo la capa global."""
+        """Arma la config efectiva. ``agent_id=None`` → solo la capa global.
+
+        Raises:
+            AgentNotFoundError: si ``agent_id`` no existe ni como agente ni como
+                sub-agente. Sin este guard, un id con typo devolvía la vista
+                global-only en silencio — un diagnóstico convincente y equivocado.
+        """
+        from core.domain.errors import AgentNotFoundError
         from core.ports.config_repository import LayerName
 
         capas = [Capa("default", self._defaults)]
         capas.append(Capa("global", self._repo.read_layer(LayerName.GLOBAL)))
         if agent_id is not None:
-            capas.append(Capa("agent", self._repo.read_layer(LayerName.AGENT, agent_id=agent_id)))
+            if self._repo.layer_exists(LayerName.AGENT, agent_id=agent_id):
+                layer = LayerName.AGENT
+            elif self._repo.layer_exists(LayerName.SUB_AGENT, agent_id=agent_id):
+                layer = LayerName.SUB_AGENT
+            else:
+                raise AgentNotFoundError(
+                    f"No existe agents/{agent_id}.yaml ni agents/sub-agents/{agent_id}.yaml."
+                )
+            capas.append(Capa("agent", self._repo.read_layer(layer, agent_id=agent_id)))
 
         resultado = merge_capas(capas)
         plano = _aplanar(resultado.datos)
@@ -186,7 +206,17 @@ class ShowEffectiveConfigUseCase:
         )
 
     def _es_secreto(self, path: str) -> bool:
-        """``True`` si ``path`` matchea alguna ruta secreta, con ``*`` por segmento."""
+        """``True`` si ``path`` matchea una ruta secreta declarada O huele a credencial.
+
+        La segunda red importa: los paths del schema solo cubren la config
+        VÁLIDA, pero ``config show`` es la herramienta de diagnóstico cuando el
+        arranque aborta — o sea, cuando la config trae shapes viejos
+        (``llm.api_key``), bloques varados (``tool_config``) o claves en
+        niveles equivocados. Sin la red por nombre, exactamente esas
+        credenciales saldrían en claro en el momento en que el operador va a
+        pegar el output en un issue. (Un typo en el nombre mismo de la clave
+        — ``api_ky`` — sigue escapando: no hay red posible para eso.)
+        """
         segmentos = path.split(".")
         for patron in self._paths_secretos:
             partes = patron.split(".")
@@ -194,4 +224,5 @@ class ShowEffectiveConfigUseCase:
                 continue
             if all(p == "*" or p == s for p, s in zip(partes, segmentos)):
                 return True
-        return False
+        hoja = segmentos[-1].lower()
+        return hoja in _NOMBRES_SENSIBLES or hoja.endswith(_SUFIJOS_SENSIBLES)

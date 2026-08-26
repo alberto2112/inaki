@@ -63,17 +63,12 @@ def test_bloque_extraviado_avisa(tmp_path, caplog, cuerpo, esperado, sigue_carga
     agents_dir = tmp_path / "agents"
     _escribir_agente(agents_dir, cuerpo)
 
-    if sigue_cargando:
-        cfg = load_agent_config("inaki", agents_dir, dict(GLOBAL_MINIMO))
-        assert cfg is not None, (
-            "fuera de ``channels`` el bloque es una clave suelta: el aviso no rompe el arranque"
-        )
-    else:
-        # Garantía MÁS fuerte que el WARNING: dentro de ``channels`` el bloque
-        # extraviado es además un canal desconocido, así que ``AgentConfig`` lo
-        # rechaza y (desde la Fase 4) el arranque aborta en vez de degradar.
-        with pytest.raises(ConfigError, match="channels.broadcast"):
-            load_agent_config("inaki", agents_dir, dict(GLOBAL_MINIMO))
+    # Desde el chequeo top-level, AMBAS ubicaciones abortan: la raíz del agente
+    # es una clave desconocida y ``channels.broadcast`` un canal desconocido.
+    # El aviso corre ANTES del abort: el operador lee el path válido Y el error.
+    del sigue_cargando  # el parámetro documenta la conducta vieja; hoy ninguno carga
+    with pytest.raises(ConfigError):
+        load_agent_config("inaki", agents_dir, dict(GLOBAL_MINIMO))
     assert esperado in caplog.text
     assert "channels.telegram.broadcast" in caplog.text, (
         f"el aviso debe nombrar el path válido; dijo: {caplog.text!r}"

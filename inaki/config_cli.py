@@ -173,7 +173,13 @@ def show(
 
     ensure_user_config(get_inaki_home() / "config", get_inaki_home() / "agents")
 
-    vista = _construir_use_case().execute(agent)
+    from core.domain.errors import AgentNotFoundError
+
+    try:
+        vista = _construir_use_case().execute(agent)
+    except AgentNotFoundError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1) from exc
     campos = vista.secretos() if secrets else vista.campos
 
     if json_output:

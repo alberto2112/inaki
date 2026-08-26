@@ -494,7 +494,8 @@ photos:
     model: claude-sonnet-4-6
     # Prompt personalizado en español. None = usar el prompt built-in del adaptador.
     prompt_template: null
-    # API key del proveedor. Conviene en global.secrets.yaml bajo photos.scene.api_key.
+    # API key del proveedor. Conviene referenciar una entrada de ``providers:`` bajo
+    # photos.scene.api_key.
     api_key: null
   # Job nocturno que detecta personas registradas dos veces y reporta los pares.
   dedup:

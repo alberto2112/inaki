@@ -1647,7 +1647,7 @@ class SceneConfig(_ConfigBaseModel):
     prompt_template: str | None = None
     """Prompt personalizado en español. None = usar el prompt built-in del adaptador."""
     api_key: str | None = Field(default=None, json_schema_extra={"secret": True})
-    """API key del proveedor. Conviene en global.secrets.yaml bajo photos.scene.api_key."""
+    """API key del proveedor. Conviene referenciar una entrada de ``providers:`` bajo photos.scene.api_key."""
 
 
 class DedupConfig(_ConfigBaseModel):

@@ -8,7 +8,7 @@ Run this list in a real environment after every release that touches the setup T
 ## Prerequisites
 
 - Inaki installed on the Pi 5 (systemd mode or direct venv).
-- At least one agent configured in `~/.inaki/config/agents/`.
+- At least one agent configured in `~/.inaki/agents/`.
 - Active SSH connection with a terminal of at least 80x24.
 
 ---
@@ -158,7 +158,7 @@ bat ~/.inaki/config/global.yaml | rg "test-provider"   # no match
 **Verify:**
 
 ```bash
-bat ~/.inaki/config/agents/smoke-test.yaml
+bat ~/.inaki/agents/smoke-test.yaml
 ```
 
 - [ ] The file exists with the 4 fields.
@@ -184,7 +184,7 @@ bat ~/.inaki/config/agents/smoke-test.yaml
 **Verify:**
 
 ```bash
-bat ~/.inaki/config/agents/smoke-test.yaml
+bat ~/.inaki/agents/smoke-test.yaml
 ```
 
 - [ ] `memories.llm.provider` does NOT appear in the agent YAML (inherited).
@@ -217,8 +217,8 @@ bat ~/.inaki/config/agents/smoke-test.yaml
 **Verify:**
 
 ```bash
-bat ~/.inaki/config/agents/smoke-test.yaml | rg "token"
-stat -f "%A" ~/.inaki/config/agents/smoke-test.yaml   # should be 600
+bat ~/.inaki/agents/smoke-test.yaml | rg "token"
+stat -f "%A" ~/.inaki/agents/smoke-test.yaml   # should be 600
 ```
 
 - [ ] The token is written to `agents/smoke-test.yaml` — no sidecar file appears.
@@ -235,11 +235,11 @@ stat -f "%A" ~/.inaki/config/agents/smoke-test.yaml   # should be 600
 **Verify:**
 
 ```bash
-fd smoke-test ~/.inaki/config/agents/   # no match
+fd smoke-test ~/.inaki/agents/   # no match
 ```
 
 - [ ] `agents/smoke-test.yaml` is gone, credentials included.
-- [ ] No leftover file for that agent remains in `~/.inaki/config/agents/`.
+- [ ] No leftover file for that agent remains in `~/.inaki/agents/`.
 
 ---
 
@@ -317,7 +317,7 @@ If notable sluggishness occurs, document:
 ## 14. Post-smoke Cleanup
 
 ```bash
-rm -f ~/.inaki/config/agents/smoke-test.yaml
+rm -f ~/.inaki/agents/smoke-test.yaml
 # Restore global.yaml if it was modified
 # To see the welcome modal again:
 rm -f ~/.inaki/setup_welcome_seen

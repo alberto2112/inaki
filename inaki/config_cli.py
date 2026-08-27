@@ -168,10 +168,31 @@ def show(
     Los valores secretos salen siempre redactados: el output se puede pegar en
     un issue sin filtrar credenciales.
     """
-    from infrastructure.config import ensure_user_config
+    from infrastructure.config import AgentRegistry, ensure_user_config, load_global_config
     from infrastructure.home import get_inaki_home
 
-    ensure_user_config(get_inaki_home() / "config", get_inaki_home() / "agents")
+    from inaki.config_errors import borde_de_config
+
+    home = get_inaki_home()
+    config_dir, agents_dir = home / "config", home / "agents"
+
+    # `show` promete "la que ve el runtime, no la que está escrita" — y sin este
+    # paso mentía. El use case mergea los YAML CRUDOS contra los defaults del
+    # schema y NO valida: una config que aborta el arranque salía por acá con
+    # exit 0, listando un `llm.api_key` legacy como credencial configurada y un
+    # `schedulr:` como campo válido. El operador leía el OK de la única
+    # herramienta de diagnóstico que tiene, mientras el daemon se negaba a
+    # levantar por ese mismísimo campo. Una herramienta que no puede decir "esto
+    # no carga" es peor que no tenerla.
+    #
+    # Se valida con el MISMO loader del arranque (global + todos los agentes +
+    # unicidad de canal): así `show` no puede discrepar del daemon por
+    # construcción. Que aborte por un agente distinto del consultado es
+    # deliberado — el daemon tampoco levanta a medias.
+    with borde_de_config(str(home)):
+        ensure_user_config(config_dir, agents_dir)
+        _, global_raw = load_global_config(config_dir)
+        AgentRegistry(agents_dir, global_raw)
 
     from core.domain.errors import AgentNotFoundError
 

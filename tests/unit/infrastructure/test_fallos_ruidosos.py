@@ -120,6 +120,46 @@ def test_un_typo_en_el_agente_aborta_nombrando_el_fichero(tmp_path: Path) -> Non
     assert "temperatura" in mensaje
 
 
+def test_un_typo_de_bloque_global_en_el_agente_sugiere_y_lo_ubica(tmp_path: Path) -> None:
+    """`schedulr:` en un agente no matcheaba contra NADA y salía pelado.
+
+    La rama de bloques globales exige match EXACTO y las candidatas de `difflib`
+    son los campos del agente (que no incluyen `scheduler`, tier harness-global):
+    el typo caía justo entre las dos y el operador se quedaba sin la corrección
+    y sin saber que, bien escrito, ese bloque tampoco va en el agente.
+    """
+    cfg_dir, agents_dir = _home(
+        tmp_path, "id: dev\nname: Dev\ndescription: d\nschedulr:\n  enabled: true\n"
+    )
+    _, global_raw = load_global_config(cfg_dir)
+
+    with pytest.raises(ConfigError) as exc:
+        load_agent_config("dev", agents_dir, global_raw)
+
+    mensaje = str(exc.value)
+    assert "schedulr" in mensaje
+    assert "¿Quisiste decir 'scheduler'?" in mensaje
+    assert "GLOBAL" in mensaje, "corregir el typo no alcanza: el bloque tampoco va acá"
+    assert "config/global.yaml" in mensaje, "hay que decir dónde SÍ va"
+
+
+def test_una_clave_obligatoria_que_falta_se_nombra_como_tal(tmp_path: Path) -> None:
+    """Un `KeyError` stringifica a la clave PELADA: `dev.yaml: 'description'`.
+
+    Leído detrás de dos puntos no distingue si la clave sobra, falta o está mal
+    escrita — tres arreglos distintos para el mismo texto.
+    """
+    cfg_dir, agents_dir = _home(tmp_path, "id: dev\nname: Dev\n")
+    _, global_raw = load_global_config(cfg_dir)
+
+    with pytest.raises(ConfigError) as exc:
+        load_agent_config("dev", agents_dir, global_raw)
+
+    mensaje = str(exc.value)
+    assert "falta la clave obligatoria 'description'" in mensaje
+    assert "dev.yaml" in mensaje
+
+
 def test_un_agente_que_no_existe_sigue_devolviendo_none(tmp_path: Path) -> None:
     """No confundir "no está" con "está roto": preguntar por un agente
     inexistente es legítimo y no debe abortar nada."""

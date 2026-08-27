@@ -79,15 +79,19 @@ def _bootstrap(config_dir: Path, agents_dir: Path):
     from infrastructure.config import load_global_config, AgentRegistry
     from infrastructure.logging_setup import setup_logging
 
-    try:
+    from inaki.config_errors import borde_de_config
+
+    with borde_de_config(str(config_dir)):
         global_config, global_raw = load_global_config(config_dir)
-    except Exception as exc:
-        print(f"Error cargando configuración desde {config_dir}: {exc}", file=sys.stderr)
-        sys.exit(1)
 
     setup_logging(global_config.app.log_level)
 
-    registry = AgentRegistry(agents_dir, global_raw)
+    # El registry va DENTRO del borde: los YAML de agente validan acá
+    # (`_check_top_level`, shape legacy, unicidad de canal), y su `ConfigError`
+    # salía crudo porque el `try` cubría la carga del global y nada más. El
+    # mensaje del core era bueno; llegaba enterrado bajo el traceback.
+    with borde_de_config(str(agents_dir)):
+        registry = AgentRegistry(agents_dir, global_raw)
     if not registry.list_all():
         print(
             f"No hay agentes configurados en {agents_dir}. "
@@ -145,9 +149,15 @@ def _resolve_dirs():
     knob de relocalización es el home (ver docs/instance-home.md)."""
     from infrastructure.config import ensure_user_config
 
+    from inaki.config_errors import borde_de_config
+
     config_dir = _get_config_dir()
     agents_dir = _get_agents_dir()
-    ensure_user_config(config_dir, agents_dir)
+    # Las migraciones releen y reescriben los YAML con ruamel: un fichero que ni
+    # parsea (indentación, clave duplicada) revienta ACÁ, antes de que ningún
+    # loader llegue a validar nada.
+    with borde_de_config(str(get_inaki_home())):
+        ensure_user_config(config_dir, agents_dir)
     return config_dir, agents_dir
 
 
@@ -164,7 +174,12 @@ def _build_daemon_client(
     from infrastructure.config import load_global_config
     from adapters.outbound.daemon_client import DaemonClient
 
-    global_config, _ = load_global_config(config_dir)
+    from inaki.config_errors import borde_de_config
+
+    # Mismo borde que `_bootstrap`: este es el camino de `inaki` / `inaki chat`,
+    # o sea el primer comando que tipea el operador cuando algo no anda.
+    with borde_de_config(str(config_dir)):
+        global_config, _ = load_global_config(config_dir)
     admin = global_config.admin
     if remote_url:
         base_url = remote_url.rstrip("/")

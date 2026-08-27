@@ -659,8 +659,23 @@ def _check_top_level(
             )
             continue
         parecidas = get_close_matches(clave, conocidas, n=1, cutoff=0.6)
-        sugerencia = f" ¿Quisiste decir '{parecidas[0]}'?" if parecidas else ""
-        detalles.append(f"'{clave}' no existe{sugerencia}")
+        if parecidas:
+            detalles.append(f"'{clave}' no existe ¿Quisiste decir '{parecidas[0]}'?")
+            continue
+        # Segunda pasada contra los campos del tier GLOBAL. La rama de arriba
+        # exige match EXACTO, y `conocidas` son los campos del agente: un typo
+        # sobre un bloque global (`schedulr:` en agents/{id}.yaml) no matcheaba
+        # en ninguna de las dos y salía como "no existe" a secas — sin la
+        # corrección Y sin el aviso de que, bien escrito, tampoco iría acá.
+        parecidas_globales = get_close_matches(clave, sorted(globales), n=1, cutoff=0.6)
+        if parecidas_globales:
+            detalles.append(
+                f"'{clave}' no existe ¿Quisiste decir '{parecidas_globales[0]}'? "
+                f"— que además es config de nivel GLOBAL (harness): va en "
+                f"config/global.yaml, acá no tiene efecto"
+            )
+            continue
+        detalles.append(f"'{clave}' no existe")
     raise ConfigError(f"{contexto}: {'; '.join(detalles)}.")
 
 
@@ -904,11 +919,21 @@ def load_agent_config(
 
     try:
         return assemble_agent_config(merged)
-    except (KeyError, ValueError) as exc:
-        # ABORTA, no degrada. Antes esto era un WARNING y el agente simplemente
-        # desaparecía del registry: el operador veía el daemon "sano", su bot sin
-        # responder, y ninguna relación evidente entre las dos cosas. Un agente
-        # que no existe es indistinguible de uno que nunca se configuró.
+    # Ambas ramas ABORTAN, no degradan. Antes esto era un WARNING y el agente
+    # simplemente desaparecía del registry: el operador veía el daemon "sano", su
+    # bot sin responder, y ninguna relación evidente entre las dos cosas. Un
+    # agente que no existe es indistinguible de uno que nunca se configuró.
+    except KeyError as exc:
+        # Un KeyError stringifica a la clave PELADA (`'description'`), que leído
+        # detrás de dos puntos no dice si sobra, falta o está mal escrita. La
+        # clave obligatoria que falta hay que NOMBRARLA como tal.
+        from core.domain.errors import ConfigError
+
+        raise ConfigError(
+            f"Config inválida para el agente '{agent_id}' ({agent_yaml}): "
+            f"falta la clave obligatoria {exc}"
+        ) from exc
+    except ValueError as exc:
         from core.domain.errors import ConfigError
 
         raise ConfigError(
@@ -928,7 +953,10 @@ class AgentRegistry:
     - ``agents_dir/*.yaml``             → agentes regulares (instanciados al inicio, con canales)
     - ``agents_dir/sub-agents/*.yaml``  → sub-agentes (solo para delegación, sin canales)
 
-    Los agentes con config inválida se omiten con WARNING.
+    Un agente con config inválida **aborta el arranque** con ``ConfigError``
+    nombrando el fichero (ver ``config-falla-ruidoso``): omitirlo con WARNING
+    dejaba al operador con el bot mudo y el daemon diciéndose sano. Un agente que
+    NO EXISTE es otra cosa y sigue devolviendo ``None``.
     """
 
     def __init__(self, agents_dir: Path, global_raw: dict) -> None:

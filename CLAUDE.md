@@ -219,6 +219,11 @@ Cada una salió de un fallo en producción. El caso completo está en
   un default silencioso que contradice el YAML es un bug que no se puede diagnosticar.
   La única degradación legítima es la de una **dependencia externa** (no de la config),
   y el log tiene que nombrar qué capacidad queda muda. → `config-falla-ruidoso`
+- **NUNCA** dejar que un `ConfigError` cruce el composition root sin handler: un
+  mensaje accionable enterrado bajo treinta frames de traceback NO es accionable.
+  El borde es UNO (`inaki/config_errors.py`), no un `try` por call-site. Y una
+  vista de config que no valida con el MISMO loader del arranque puede decir "todo
+  bien" sobre lo que no arranca — peor que no tenerla. → `borde-de-config`
 - **NUNCA** volver al rol implícito por presencia de campo en la config de broadcast, ni
   duplicar `auth` por rol. → `broadcast-topology-config`
 - **NUNCA** dejar el `bind()` de un puerto dentro de una tarea de fondo mientras el caller

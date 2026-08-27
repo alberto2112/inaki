@@ -68,6 +68,7 @@ existe este documento— y la contradicción no queda flotando.
 | [`docs-de-config-autogeneradas`](#docs-de-config-autogeneradas) | `global.example.yaml` pasa a autogenerarse; `inaki gen-docs` regenera los dos artefactos |
 | [`docs-de-config-completas`](#docs-de-config-completas) | `config-reference.md` publica los docstrings enteros (antes el 28%): cada bloque con su propósito y cada campo con su descripción completa |
 | [`config-limpieza-final`](#config-limpieza-final) | Sin cambios observables: el adapter deja de resolver el home y la fachada de exponer internals |
+| [`borde-de-config`](#borde-de-config) | Una config que no carga sale como UNA línea, no como traceback; `inaki config show` pasa a **fallar** (exit 1) en vez de listar como válido lo que aborta el arranque |
 | [`secrets-layer-eradication`](#secrets-layer-eradication) | Desaparece la pantalla SECRETS del setup; borrar provider/agente se lleva sus credenciales |
 | [`channels-validados-al-cargar`](#channels-validados-al-cargar) | Un canal desconocido o una topología de broadcast inválida se reportan con su path en vez de ignorarse |
 | [`motor-de-merge-unico`](#motor-de-merge-unico) | Una clave que cambia de forma entre capas aborta con su path; antes se reemplazaba en silencio |
@@ -97,8 +98,69 @@ existe este documento— y la contradicción no queda flotando.
 - **Tools y config**: `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
-  `docs-de-config-completas`, `config-limpieza-final`
+  `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `borde-de-config`
+
+**`config-falla-ruidoso` se cumplía en el dominio y se perdía en el último
+metro.** El operador actualizó una Pi de producción, el daemon no arrancó, y lo
+que leyó fueron treinta frames de traceback terminando en `cli.py`. El mensaje
+que la Fase 4 prometió —fichero, bloque y clave a corregir— existía y era bueno;
+salía enterrado abajo de todo.
+
+**El diagnóstico: no era el core, era el BORDE.** `_bootstrap` envolvía en
+`try/except` la carga del global y **la línea siguiente quedaba afuera**:
+
+| Call-site desnudo | Qué dejaba escapar |
+|---|---|
+| `_bootstrap` → `AgentRegistry(...)` | TODO lo que valida un YAML de agente: `_check_top_level`, shape legacy, `assemble_agent_config`, unicidad de canal |
+| `_build_daemon_client` → `load_global_config` | El camino de `inaki` / `inaki chat` — el primer comando que se tipea cuando algo no anda |
+| `_resolve_dirs` → `ensure_user_config` | Un YAML que ni parsea (indentación, clave duplicada): revienta en ruamel antes de que ningún loader valide |
+
+Es la misma forma que
+[`formato-en-el-borde-del-transporte`](#formato-en-el-borde-del-transporte) pero
+del lado de entrada, y con la misma lección: **el borde es UNO**. Por eso el fix
+no fue un `try` por call-site sino un módulo, `inaki/config_errors.py`, con el
+context manager `borde_de_config()` que los tres usan.
+
+**Y `config show` era el peor de todos, porque decía que sí.** El use case mergea
+los YAML **crudos** contra los defaults del schema y no validaba nada: con un
+`llm.api_key` legacy devolvía **exit 0** listándolo como credencial configurada,
+y con un `schedulr:` lo mostraba como `schedulr.enabled  True`. La única
+herramienta de diagnóstico del operador daba luz verde sobre exactamente el campo
+por el que el daemon se negaba a levantar. Ahora `show` valida con el **mismo
+loader del arranque** (global + todos los agentes + unicidad de canal): no puede
+discrepar del daemon por construcción. Que aborte por un agente distinto del
+consultado es deliberado — el daemon tampoco levanta a medias.
+
+**Dos mensajes que no alcanzaban a decir qué arreglar.** Un typo sobre un bloque
+del tier global (`schedulr:` en `agents/{id}.yaml`) caía entre las dos ramas de
+`_check_top_level` —la de bloques globales exige match exacto, y las candidatas de
+`difflib` son los campos del agente, que no incluyen `scheduler`— y salía como
+`'schedulr' no existe` pelado. Y un campo obligatorio ausente salía como el
+`KeyError` crudo (`dev.yaml: 'description'`), que no distingue si la clave sobra,
+falta o está mal escrita.
+
+**Lo que NO se atrapa, a propósito.** El borde discrimina por tipo:
+`ConfigError`, `ValidationError`, `YAMLError` (PyYAML **y** ruamel: no comparten
+jerarquía) y `OSError` —permisos, esperable desde que
+[`secrets-layer-eradication`](#secrets-layer-eradication) puso 600 en todas las
+capas—. Un `AttributeError` nuestro sigue saliendo como traceback: ahí el
+traceback ES la información, y disfrazarlo de "revisá tu YAML" manda al operador
+a buscar un typo que no existe.
+
+**Cambio observable.** `inaki config show` sobre una config que no carga pasó de
+exit 0 (mostrando el dump) a exit 1 (mostrando el error). Si algo scriptea ese
+comando, ahora falla — que es el punto.
+
+**Invariante.** **NUNCA** dejar que un `ConfigError` cruce el composition root sin
+handler: un mensaje accionable enterrado bajo un traceback no es un mensaje
+accionable. Y **NUNCA** construir una vista de config que no valide con el mismo
+loader del arranque — una herramienta de diagnóstico que puede decir "todo bien"
+sobre lo que no arranca es peor que no tenerla.
 
 ---
 

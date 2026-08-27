@@ -200,6 +200,11 @@ Cada una salió de un fallo en producción. El caso completo está en
   ahí salen `config-reference.md`, `global.example.yaml` y la ayuda del setup TUI
   (`inaki gen-docs` los regenera, y un drift test los guarda). Cualquier otra copia
   nace condenada a divergir. → `docs-de-config-autogeneradas`
+- **NUNCA** recortar un docstring del schema al generar un artefacto (ni al primer
+  párrafo, ni a la primera línea): la regla de arriba solo se sostiene si lo escrito
+  LLEGA entero. Recortar deja un agujero mudo —nadie ve lo que no se emitió— y empuja
+  a documentar en otro lado. Ojo: el drift test NO lo caza, porque compara contra el
+  fichero ya generado. → `docs-de-config-completas`
 - **NUNCA** escribir una nota de `migraciones.md` en presente sobre el estado
   actual ("hoy todavía X", "queda pendiente Y"). Una nota es una instantánea del
   pasado: en pasado no puede caducar, en presente empieza a mentir el día que

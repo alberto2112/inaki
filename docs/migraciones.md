@@ -66,6 +66,7 @@ existe este documento— y la contradicción no queda flotando.
 | [`drop-per-agent-rest`](#drop-per-agent-rest) | Bloques `channels.rest` se ignoran en silencio |
 | [`config-show-effective`](#config-show-effective) | Comando nuevo `inaki config show`: config efectiva con origen y secretos redactados |
 | [`docs-de-config-autogeneradas`](#docs-de-config-autogeneradas) | `global.example.yaml` pasa a autogenerarse; `inaki gen-docs` regenera los dos artefactos |
+| [`docs-de-config-completas`](#docs-de-config-completas) | `config-reference.md` publica los docstrings enteros (antes el 28%): cada bloque con su propósito y cada campo con su descripción completa |
 | [`config-limpieza-final`](#config-limpieza-final) | Sin cambios observables: el adapter deja de resolver el home y la fachada de exponer internals |
 | [`secrets-layer-eradication`](#secrets-layer-eradication) | Desaparece la pantalla SECRETS del setup; borrar provider/agente se lleva sus credenciales |
 | [`channels-validados-al-cargar`](#channels-validados-al-cargar) | Un canal desconocido o una topología de broadcast inválida se reportan con su path en vez de ignorarse |
@@ -96,8 +97,67 @@ existe este documento— y la contradicción no queda flotando.
 - **Tools y config**: `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
-  `config-limpieza-final`
+  `docs-de-config-completas`, `config-limpieza-final`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `docs-de-config-completas`
+
+**El invariante de fuente única estaba escrito, respetado — y aun así la doc no
+alcanzaba.** El disparador fue un operador que quiso declarar un provider a mano
+y no encontró en ninguna parte qué valores acepta `llm.provider`. No era que
+faltara escribirlo: el docstring del campo lista los ocho adapters
+(`openrouter`, `openai`, `openai_responses`, `anthropic`, `deepseek`, `groq`,
+`ollama`, `custom`) y explica que se auto-descubren por `PROVIDER_NAME`. Estaba
+escrito hacía tiempo. **No se publicaba.**
+
+`generate_config_reference()` emitía una fila de tabla por campo, y una celda no
+aguanta varios párrafos: el renderer cortaba en el primero. Los docstrings de
+clase —los que explican qué es un bloque y cuándo se usa— no se emitían en
+absoluto. Medido sobre el schema completo:
+
+| | Escrito en el schema | Publicado en `config-reference.md` |
+|---|---|---|
+| Docstrings de campo | 34.527 chars | 12.801 (**se perdía el 63%**) |
+| Docstrings de clase | 10.015 chars | 0 (**se perdía el 100%**) |
+| **Total** | **44.542 chars** | **12.801 — el 28%** |
+
+**La asimetría vivía dentro del mismo módulo.** `generate_global_example()` ya
+llamaba a `_docstring_de_clase()` —por eso `global.example.yaml` sí traía la
+cabecera explicativa de cada bloque— y `generate_config_reference()` no. Misma
+función, mismo fichero, un generador la usaba y el otro la ignoraba. Aun así
+ningún artefacto cubría el caso que lo destapó: los dos recortaban los campos al
+primer párrafo, así que la lista de adapters no estaba en ninguno de los dos.
+
+**El cambio.** La referencia pasó a publicar los docstrings enteros, en tres
+partes por modelo: el docstring de clase como prosa bajo el encabezado, una
+tabla-índice con la forma de cada campo (`Field`/`Type`/`Default`/`Secret`, ya
+sin `Description`) y las descripciones completas debajo. El fichero pasó de 375
+a ~1.400 líneas. `global.example.yaml` quedó igual: es la referencia de *forma*
+—qué se puede configurar y con qué default—, y la de *significado* es el `.md`.
+
+Un detalle que costó una segunda pasada: unir las líneas de un párrafo para
+deshacer el envoltorio a 88 columnas aplastaba las **listas** en un renglón
+corrido de guiones. Seis docstrings del schema las usan (`workspace.containment`,
+`tools`, `scheduler.channel_fallback`, `memories`, `memories.llm`,
+`GlobalConfig`). El renderer distingue prosa envuelta de estructura —línea
+indentada, con viñeta o numerada— y emite la segunda tal cual.
+
+**El guard, que es la parte que importa.** El test de drift **no** cubría esto:
+compara byte a byte contra el fichero committeado, así que un renderer que
+recorte pasa limpio en cuanto alguien corre `inaki gen-docs`. El fichero queda
+sincronizado *y* mutilado a la vez. El guard nuevo verifica que cada párrafo de
+cada docstring —de campo y de clase— aparezca en el `.md`. Simulando la
+regresión, reporta 137 docstrings sin publicar.
+
+**Invariante.** **NUNCA** recortes un docstring del schema en un artefacto
+generado. Su hermana [`docs-de-config-autogeneradas`](#docs-de-config-autogeneradas)
+manda escribir la documentación en el docstring; esta manda que **llegue entera**.
+Las dos son la misma regla: un invariante de fuente única se rompe por el lado de
+la salida tanto como por el de la entrada. Y se rompe **en silencio** — nadie ve
+lo que no se emitió, así que la doc parece completa mientras empuja a documentar
+en otro lado, que es justo lo que la regla prohíbe.
 
 ---
 

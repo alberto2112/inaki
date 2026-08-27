@@ -2,7 +2,7 @@
 SqliteKnowledgeSource — fuente de conocimiento basada en una DB SQLite pre-construida
 por el usuario.
 
-La DB debe seguir el schema documentado en docs/configuracion.md:
+La DB debe seguir el schema documentado en docs/knowledge.md:
   - chunks(id INTEGER PRIMARY KEY, source_path TEXT, content TEXT, metadata_json TEXT)
   - chunk_embeddings — tabla virtual vec0 con embedding FLOAT[384]
     (rowid de chunk_embeddings = id de chunks)
@@ -95,7 +95,7 @@ class SqliteKnowledgeSource(IKnowledgeSource):
         if not rows:
             raise KnowledgeConfigError(
                 f"Fuente '{self._source_id}': la tabla 'chunks' no existe en '{self._db_path}'. "
-                "Consultá docs/configuracion.md para el schema requerido."
+                "Consultá docs/knowledge.md para el schema requerido."
             )
 
         # 2. Verificar que `chunk_embeddings` existe como tabla virtual
@@ -108,7 +108,7 @@ class SqliteKnowledgeSource(IKnowledgeSource):
         if not rows_ve:
             raise KnowledgeConfigError(
                 f"Fuente '{self._source_id}': la tabla virtual 'chunk_embeddings' no existe "
-                f"en '{self._db_path}'. Consultá docs/configuracion.md para el schema requerido."
+                f"en '{self._db_path}'. Consultá docs/knowledge.md para el schema requerido."
             )
 
         # 3. Extraer la dimensión del DDL del vec0

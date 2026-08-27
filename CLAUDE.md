@@ -200,6 +200,12 @@ Cada una salió de un fallo en producción. El caso completo está en
   ahí salen `config-reference.md`, `global.example.yaml` y la ayuda del setup TUI
   (`inaki gen-docs` los regenera, y un drift test los guarda). Cualquier otra copia
   nace condenada a divergir. → `docs-de-config-autogeneradas`
+- **NUNCA** escribir una nota de `migraciones.md` en presente sobre el estado
+  actual ("hoy todavía X", "queda pendiente Y"). Una nota es una instantánea del
+  pasado: en pasado no puede caducar, en presente empieza a mentir el día que
+  alguien cierra eso — y nadie relee una bitácora para corregirla. Si se cierra
+  después, se agrega `*Cerrado después:*` abajo; **no se reescribe la nota**.
+  → cabecera de [`migraciones.md`](docs/migraciones.md)
 - **NUNCA** construir una interfaz de config sobre los ficheros crudos: se construye
   sobre la config EFECTIVA con origen (`ShowEffectiveConfigUseCase`, `inaki config
   show`). Sobre ficheros crudos + semántica de merge es el problema que el setup TUI
@@ -243,23 +249,27 @@ Cada una salió de un fallo en producción. El caso completo está en
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Texto completo de las reglas estructurales: capas, canal THIN, tiers de recursos, wiring/DI y delegación con herencia |
 | [`docs/convenciones.md`](docs/convenciones.md) | Invariantes por subsistema: turno/RunAgent, tools, routing, knowledge, scheduler, canales, setup TUI, fotos |
 | [`docs/migraciones.md`](docs/migraciones.md) | Historial de migraciones: breaking changes, acciones del operador, cambios de comportamiento observable |
-| [`docs/inaki_spec.md`](docs/inaki_spec.md) | Spec técnica de referencia del sistema completo |
 | [`docs/modelo_de_datos.md`](docs/modelo_de_datos.md) | Entidades, value objects, jerarquía de errores, ports y `ToolResult` |
-| [`docs/flujo_ejecucion.md`](docs/flujo_ejecucion.md) | Flujo de ejecución de un turno, extremo a extremo |
+| [`docs/flujo_ejecucion.md`](docs/flujo_ejecucion.md) | El turno extremo a extremo (`RunAgentUseCase`, tool loop, fotos), arranque y bootstrap, ciclo de vida del container, consolidación y reconciliación |
 
 ### Subsistemas
 
 | Documento | Contiene |
 |---|---|
-| [`docs/configuracion.md`](docs/configuracion.md) | Referencia de configuración en prosa: `workspace.containment`, instance home, Tool Config Protocol, broadcast |
+| [`docs/configuracion.md`](docs/configuracion.md) | **Índice de config** — a qué doc ir, `inaki config show`, los ficheros, las 2 capas. No lista campos |
 | [`docs/config-reference.md`](docs/config-reference.md) | Referencia de config **autogenerada** desde el schema Pydantic (`GlobalConfig` / `AgentConfig`) |
+| [`docs/instance-home.md`](docs/instance-home.md) | `--home` / `INAKI_HOME` y resolución de paths de runtime |
+| [`docs/tool-config-protocol.md`](docs/tool-config-protocol.md) | `config/tool_config.yaml`: config de tools, cifrado en reposo, `configure` conversacional |
+| [`docs/contexto-por-entidad.md`](docs/contexto-por-entidad.md) | Memoria caliente por conversación en `~/.inaki/users/` |
+| [`docs/workspace-containment.md`](docs/workspace-containment.md) | `workspace.containment`: qué paths ven las file tools |
+| [`docs/transcripcion.md`](docs/transcripcion.md) | Transcripción de voz en Telegram: providers, flags, flujo del handler |
+| [`docs/admin-api.md`](docs/admin-api.md) | Endpoints HTTP del daemon, bodies y códigos de error |
 | [`docs/prompt_builder.md`](docs/prompt_builder.md) | Construcción del prompt y tabla de variables `{{CHANNEL.*}}` |
 | [`docs/semantic-routing.md`](docs/semantic-routing.md) | Selección RAG de tools, `tools.pinned` y page-in |
 | [`docs/scheduler-spec.md`](docs/scheduler-spec.md) | Spec del scheduler: triggers, task kinds, dispatch |
 | [`docs/knowledge.md`](docs/knowledge.md) | Fuentes de conocimiento, ingest y extensiones |
 | [`docs/tools_y_skills.md`](docs/tools_y_skills.md) | Cómo escribir una tool y una skill, con ejemplos completos |
 | [`docs/face-recognition.md`](docs/face-recognition.md) | Reconocimiento facial: `faces.db`, enrolado, cambio de modelo |
-| [`docs/tool_exchange_calendar.md`](docs/tool_exchange_calendar.md) | Tool `exchange_calendar`: operaciones, resolución de calendarios, seguridad |
 
 ### Operación y pruebas manuales
 
@@ -267,6 +277,10 @@ Cada una salió de un fallo en producción. El caso completo está en
 |---|---|
 | [`docs/broadcast-smoke.md`](docs/broadcast-smoke.md) | Smoke test del broadcast TCP entre Pis + bootstrap |
 | [`docs/setup-tui-smoke.md`](docs/setup-tui-smoke.md) | Smoke test manual del TUI `inaki setup` |
-| [`docs/setup-tui-redesign-plan.md`](docs/setup-tui-redesign-plan.md) | Plan de rediseño del setup TUI (split-pane, add/remove por schema) |
+
+> Los subdirectorios de `docs/` están gitignoreados: son material de trabajo
+> local (planes de refactor, borradores), no documentación del repo. Los planes
+> viven en `docs/plans/` y **no se versionan** — no los enlaces desde un fichero
+> tracked, que el enlace nace roto para cualquiera que clone.
 
 **GitHub**: https://github.com/alberto2112/inaki

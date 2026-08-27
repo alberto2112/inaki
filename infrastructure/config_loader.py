@@ -592,7 +592,7 @@ Las credenciales ahora viven en el bloque top-level 'providers:'. Ejemplo:
     provider: groq
     model: gpt-oss-120b
 
-Ver docs/configuracion.md#providers.\
+Ver docs/configuracion.md.\
 """
 
 

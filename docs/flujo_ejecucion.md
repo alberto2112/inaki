@@ -1,5 +1,59 @@
 # Execution Flow — Inaki v2
 
+## A Conversation Turn, End to End
+
+`RunAgentUseCase` orchestrates a full turn. The phases live as free functions in
+`_turn_pipeline.py` (same contract as `_tool_loop.py`: explicit dependencies, no
+`self`) and `_execute_turn` chains them:
+
+1. Load history scoped by `(agent_id, channel, chat_id)`
+2. `run_semantic_routing()` — if active: embed the input, filter relevant
+   tools/skills by cosine similarity, apply sticky TTL (with short-input bypass).
+   → [`semantic-routing.md`](semantic-routing.md)
+3. `prefetch_knowledge()` — retrieve knowledge chunks reusing the query embedding
+   (shared with `inspect()`). → [`knowledge.md`](knowledge.md)
+4. Build `AgentContext` and the dynamic system prompt (base + memory digest +
+   skills). → [`prompt_builder.md`](prompt_builder.md)
+5. `assemble_turn_messages()` — direct `user_input` vs. history-derived coalesced batch
+6. Call the LLM via `run_tool_loop()` (below)
+7. Persist `user` / `assistant` messages in history — **never** `tool` or `tool_result`
+8. Return `ChatTurnResult`
+
+### `_tool_loop.run_tool_loop()`
+
+Loops between LLM and tools until `tool_call_max_iterations` (default 5) is
+exhausted or the LLM stops calling tools.
+
+- **Circuit breaker:** if the same tool fails `circuit_breaker_threshold`
+  consecutive times, the loop is cut.
+- **In-flight injection:** between iterations (checkpoint A: before
+  `llm.complete`; checkpoint B: after the tool_calls batch) new user messages are
+  drained via `history_store.load_user_messages_since(cursor)` — a monotonic rowid
+  cursor, immune to the `max_messages` window. When messages are found, the
+  iteration counter resets to 0.
+- Backward-compatible: `history_store=None` disables injection (legacy mode).
+
+> The invariants this loop must not break (drain at checkpoint C, never reset the
+> counter without a ceiling, never replace the tool set mid-turn) are listed in
+> `CLAUDE.md` and written up in [`migraciones.md`](migraciones.md) →
+> `in-flight-message-injection`.
+
+### `ProcessPhotoUseCase`
+
+1. Download the image from Telegram via `IFileDownloader`
+2. `IVisionPort.detect_and_embed()` → list of `FaceDetection`
+3. For each face: search `IFaceRegistry` by cosine similarity
+4. On the result (MATCHED / AMBIGUOUS / UNKNOWN / IGNORED): enroll, ignore, or ask
+   for confirmation
+5. `ISceneDescriber.describe()` → text description of the scene
+6. Persist metadata in `IMessageFaceMetadataRepo` (side-table in `history.db`,
+   `ON DELETE CASCADE`)
+7. Return the combined response (recognitions + description)
+
+→ [`face-recognition.md`](face-recognition.md)
+
+---
+
 ## System Startup
 
 ### CLI Mode (`inaki [chat] [--agent id]`)
@@ -224,7 +278,7 @@ On each delegation it builds an **ephemeral one-shot child resolved against the 
 operates with the caller's tools/resources, and narrows the visible subset with the sub's own
 `tools.allowed`). The sub's pre-built `run_agent_one_shot` is no longer used in the `delegate`
 path; the async path resolves the same way via `one_shot_resolver(caller_id, target_id)`.
-See `inaki_spec.md` → Delegation.
+See [`arquitectura.md`](arquitectura.md) → delegación con herencia.
 
 ---
 

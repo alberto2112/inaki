@@ -9,6 +9,25 @@ Orden: **cronológico inverso** (la más reciente primero).
 > Los invariantes destilados de estas notas viven en `CLAUDE.md` → "Invariantes".
 > Este documento es el porqué; `CLAUDE.md` es el qué.
 
+**Cómo se escribe una nota (y por qué importa el tiempo verbal).** Una nota es
+una **instantánea**: describe el sistema *como estaba* cuando se hizo el cambio.
+Por eso va en **pasado**. Una bitácora no puede quedar desactualizada mientras
+hable del pasado — pero en el momento en que una nota afirma algo en presente
+sobre el estado actual ("hoy todavía X", "queda pendiente Y"), esa frase empieza
+a caducar, y **nadie relee una bitácora para corregirla**.
+
+Cuando algo que una nota daba por abierto se cierra después, **no se reescribe la
+nota**: se le agrega abajo una línea `*Cerrado después:*` apuntando a la nota que
+lo cerró. Así el registro de que estuvo abierto se conserva —que es para lo que
+existe este documento— y la contradicción no queda flotando.
+
+> Esta convención salió de un caso real: una nota afirmaba en presente que
+> `TelegramChannelConfig` conservaba `extra="allow"` y que un agente inválido
+> desaparecía con WARNING, cuando `config-falla-ruidoso` ya había puesto
+> `extra="forbid"` en todo el schema. Otra se contradecía a sí misma cinco líneas
+> más abajo: decía "hay que navegar el árbol para ver una credencial" y después
+> "la Fase 5 los cerró". Alguien parcheó el final y dejó el principio mintiendo.
+
 ## Índice por acción del operador
 
 ### Requieren acción manual
@@ -440,11 +459,13 @@ defaults y sus dos ramas `hasattr(model_dump)`.
   raíces propias del generador, porque `channels` es un dict indexado por nombre
   y la recursión por anotaciones no podía descubrirlos.
 
-**Lo que esta nota NO cambia.** `TelegramChannelConfig` conserva
-`extra="allow"`: un campo *desconocido* dentro de un canal conocido sigue
-pasando sin ruido. El endurecimiento a `extra="forbid"` y el aborto del arranque
-ante un agente inválido (hoy todavía desaparece con WARNING) son la Fase 4 de
-[`config-refactor-plan.md`](config-refactor-plan.md).
+**Lo que esta nota NO cambiaba.** Al escribirse, `TelegramChannelConfig`
+conservaba `extra="allow"` —un campo *desconocido* dentro de un canal conocido
+pasaba sin ruido— y un agente inválido desaparecía con un WARNING.
+
+*Cerrado después:* [`config-falla-ruidoso`](#config-falla-ruidoso) puso
+`extra="forbid"` en todo el schema, `TelegramChannelConfig` incluido, y un agente
+inválido aborta el arranque.
 
 **Invariante.** **NUNCA** dejes un bloque de config sin tipar "para que el merge
 no se queje": el merge opera sobre dicts crudos ANTES de validar, así que
@@ -506,24 +527,20 @@ segunda pregunta, porque ya no hay un segundo fichero que dejar huérfano.
 
 **Los dos costos que se aceptan.** Ambos conocidos, ninguno accidental:
 
-1. **Se pierde la vista transversal de credenciales.** La `SecretsPage` listaba
+1. **Se perdía la vista transversal de credenciales.** La `SecretsPage` listaba
    *todos* los secretos declarados por el schema marcando cuáles estaban
    configurados y cuáles pendientes (`iter_declared_secrets`, borrada con
    ella). Esa vista no dependía del split de ficheros — era una feature propia
-   que cayó con la página. Hoy hay que navegar el árbol de global/agente para
+   que cayó con la página, y había que navegar el árbol de global/agente para
    ver una credencial.
-2. **`cat global.yaml` deja de ser pegable** en un issue sin filtrar llaves a
+2. **`cat global.yaml` dejaba de ser pegable** en un issue sin filtrar llaves a
    mano.
 
-Los dos los cubre la misma pieza pendiente: `inaki config show --effective
---origin` con redacción de campos secretos (Fase 5 de
-[`config-refactor-plan.md`](config-refactor-plan.md)) — un dump que enmascara
-también responde "qué tengo configurado y qué me falta". Hasta entonces, los
-huecos existían al escribirse esta nota; la Fase 5
-([`config-show-effective`](#config-show-effective)) los cerró — `inaki config
-show` redacta y `--secrets` da la vista transversal. `get_effective_config`
-(el use case del TUI) sigue devolviendo valores en claro: alimenta un editor,
-no un dump.
+*Cerrado después:* ambos huecos los tapó
+[`config-show-effective`](#config-show-effective) — `inaki config show` redacta
+los secretos y `--secrets` da la vista transversal. `get_effective_config` (el
+use case del TUI) sigue devolviendo valores en claro a propósito: alimenta un
+editor, no un dump.
 
 **Ajustes posteriores (review adversarial).** Tres guardas que el diseño
 original no tenía:
@@ -1270,7 +1287,7 @@ ruamel preservando comentarios; los writes son efectivos al instante sin
 reiniciar. Una tool adopta el protocolo declarando `config_namespace` (class
 attr de `ITool`) — el container la instancia con `config_store=...` (aplica
 también a tools de `ext/`, cuyo contrato deja de ser estrictamente zero-arg).
-Ver `docs/configuracion.md` → "Tool Config Protocol".
+Ver `docs/tool-config-protocol.md`.
 
 **Pasos del operador**: borrar los archivos huérfanos
 (`~/.inaki/config/{web_search,exchange,fal_music,replicate_music}_config.yaml`,
@@ -1332,7 +1349,7 @@ queda atrás, los broadcasts entre él y los actualizados se pierden silenciosam
 **Nuevos flags `broadcast.emit.*`**: defaults backward-compat (`assistant_response=true`,
 otros `false`) — sin cambios en config existente, comportamiento idéntico al previo. Para
 broadcastear transcripciones de voice o descripciones de fotos, activar `user_input_voice`
-y/o `user_input_photo` en UN bot del grupo (ver `docs/configuracion.md`).
+y/o `user_input_photo` en UN bot del grupo (ver `docs/config-reference.md`).
 
 ### `agent-state-scoped-by-channel-chat`
 
@@ -1866,5 +1883,5 @@ la variable del system prompt a `{{CHANNEL.CONTEXTID}}`. En CLI/REST, `context_i
 deriva de `channels.cli.user` (identidad estable) cuando el cliente no manda
 `chat_id`; sin ese config, del `session_id` efímero (sin archivo pre-escribible) —
 por eso el router usa `user_id = cli_user or session_id`. Sin cambios de DB ni de
-config. Ver `docs/configuracion.md` → "Per-entity context files" y
+config. Ver `docs/contexto-por-entidad.md` y
 `docs/prompt_builder.md` (tabla de variables).

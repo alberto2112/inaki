@@ -225,15 +225,19 @@ async def test_on_broadcast_assistant_response_respeta_rate_limiter(
     mock_container.run_agent.record_user_message.assert_awaited_once()
     assert bot._pending_tasks == {}
     rl.check_and_increment.assert_called_once_with("inaki", "-100123", 5)
+    # Un bot NO resetea el presupuesto: solo un humano lo hace.
+    rl.reset.assert_not_called()
 
 
 async def test_on_broadcast_user_input_voice_no_consume_rate_limiter(
     agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter
 ):
-    """user_input_voice viene del humano → no debe consumir el contador del rate limiter.
+    """user_input_voice viene del humano → no consume el contador y lo RESETEA.
 
     Aunque el rate limiter esté saturado por respuestas previas de otro bot,
-    una transcripción humana siempre debe persistirse Y programar flush.
+    una transcripción humana siempre debe persistirse Y programar flush. Y como
+    "habló un humano", el presupuesto vuelve a cero — misma regla que el mensaje
+    humano nativo en ``_handle_group_message``, sin importar el transporte.
     """
     rl = MagicMock()
     rl.check_and_increment = MagicMock(return_value=MagicMock(counter=99))
@@ -257,6 +261,7 @@ async def test_on_broadcast_user_input_voice_no_consume_rate_limiter(
     mock_container.run_agent.record_user_message.assert_awaited_once()
     assert "-100123" in bot._pending_tasks
     rl.check_and_increment.assert_not_called()
+    rl.reset.assert_called_once_with("inaki", "-100123")
 
     bot._pending_tasks["-100123"].cancel()
     try:
@@ -268,7 +273,7 @@ async def test_on_broadcast_user_input_voice_no_consume_rate_limiter(
 async def test_on_broadcast_user_input_photo_no_consume_rate_limiter(
     agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter
 ):
-    """user_input_photo viene del humano → no debe consumir el contador del rate limiter."""
+    """user_input_photo viene del humano → no consume el contador y lo RESETEA."""
     rl = MagicMock()
     rl.check_and_increment = MagicMock(return_value=MagicMock(counter=99))
     bot = _build_bot(
@@ -291,6 +296,7 @@ async def test_on_broadcast_user_input_photo_no_consume_rate_limiter(
     mock_container.run_agent.record_user_message.assert_awaited_once()
     assert "-100123" in bot._pending_tasks
     rl.check_and_increment.assert_not_called()
+    rl.reset.assert_called_once_with("inaki", "-100123")
 
     bot._pending_tasks["-100123"].cancel()
     try:

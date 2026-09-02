@@ -75,6 +75,7 @@ existe este documento— y la contradicción no queda flotando.
 | [`broadcast-topology-config`](#broadcast-topology-config) | Rol explícito `server` XOR `client`; config vieja falla al cargar |
 | [`broadcast-arranque-observable`](#broadcast-arranque-observable) | El fallo de `bind()` y la config de broadcast que no valida ahora salen como `ERROR` en el log |
 | [`formato-en-el-borde-del-transporte`](#formato-en-el-borde-del-transporte) | Todo lo que Telegram manda fuera del turno conversacional (scheduler, `bg-N`, intermedios, media) sale **formateado** y troceado, no en markdown crudo |
+| [`broadcast-human-reset`](#broadcast-human-reset) | Un `user_input_voice`/`user_input_photo` recibido por broadcast **resetea** el rate limiter del grupo, igual que un mensaje humano nativo |
 
 ## Índice por subsistema
 
@@ -85,7 +86,7 @@ existe este documento— y la contradicción no queda flotando.
   `search-history-retention-horizon`
 - **Telegram y canales**: `channels-validados-al-cargar`, `attachment-grammar`,
   `formato-en-el-borde-del-transporte`,
-  `groups-vs-broadcast`,
+  `groups-vs-broadcast`, `broadcast-human-reset`,
   `broadcast-topology-config`, `broadcast-arranque-observable`,
   `broadcast-cross-agent-events`,
   `multi-agent-telegram-broadcast`, `telegram-group-auth`,
@@ -100,6 +101,42 @@ existe este documento— y la contradicción no queda flotando.
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `broadcast-human-reset`
+
+**Contexto (2026-09-02).** El rate limiter de grupos en modo `autonomous`
+(`FixedWindowRateLimiter`, keyed por `(agent_id, chat_id)`) tenía dos caminos
+de entrada con reglas distintas. El nativo (`_handle_group_message`) reseteaba
+el contador cuando el remitente era humano y recién después incrementaba. El
+de broadcast (`_on_broadcast_received`) solo incrementaba con
+`assistant_response` y **nunca reseteaba**: los `user_input_voice` /
+`user_input_photo`, que vienen de un humano de la otra Pi, pasaban de largo sin
+consumir contador pero también sin devolver el presupuesto.
+
+**El agujero.** Un bot saturado por las respuestas de otro bot quedaba mudo
+hasta que venciera la ventana, aunque un humano interviniera por voz o foto y
+esa intervención le llegara solo por broadcast. La señal "habló un humano" se
+honraba en un transporte y se ignoraba en el otro. La ventana fija tapaba el
+hueco por accidente (a los `rate_limiter_window` segundos el contador volvía a
+1), lo que lo hacía invisible mientras nadie se preguntara qué pasaría sin ella.
+
+**Cambio.** `_on_broadcast_received` resetea el contador ante cualquier
+`event_type` que empiece por `user_input_` antes de decidir el flush. El
+`assistant_response` sigue consumiendo y sin resetear. Los dos caminos quedaron
+con la misma regla: humano ⇒ reset; bot ⇒ consume.
+
+**De paso.** El Scenario C de `docs/broadcast-smoke.md` describía que 4 mensajes
+humanos seguidos silenciaban al bot tras 3 respuestas. Eso no era cierto desde
+que existe el reset humano nativo: el limiter solo se agota con tráfico
+bot-a-bot. Se reescribió el escenario para que pruebe lo que el código hace.
+
+**Invariante que dejó.** **NUNCA** honrar una señal de política de grupo (aquí:
+"habló un humano") en un solo transporte. Telegram nativo y broadcast son dos
+puertas al MISMO chat; si una regla del flujo de grupo depende de quién habló,
+tiene que aplicarse igual entre en `_handle_group_message` o en
+`_on_broadcast_received`.
 
 ---
 

@@ -124,24 +124,28 @@ into its buffer.
 
 ## Scenario C — `autonomous` mode with rate limiter
 
-**Objective:** bots respond on their own. The rate limiter cuts off after N responses
-within 30 seconds.
+**Objective:** bots respond on their own. The rate limiter caps how many times a bot
+is triggered by *other bots* per `(agent, chat)` within `rate_limiter_window`
+seconds. A human message, native or received via broadcast (voice/photo), resets
+the counter — so the limiter only exhausts on bot-to-bot traffic.
 
-**Preparation:** `behavior: autonomous` and `rate_limiter: 3` on both sides. Restart.
+**Preparation:** `behavior: autonomous`, `rate_limiter: 3` and
+`rate_limiter_window: 300` on both sides (the window must be longer than one
+bot-to-bot cycle, ~15-40s, or the counter resets by itself). Restart.
 
 **Steps:**
 
 1. Send a message in the group.
    **Expected:** one or both bots may respond (the LLM decides). If the LLM responds
    `[SKIP]` internally, nothing appears in Telegram.
-2. Send 4 messages in a row within 30 seconds.
-   **Expected:** after 3 responses from a bot, subsequent messages are
-   silenced. In the logs of the corresponding Pi a rate limit reached event appears
-   (e.g., `rate_limiter.breach`).
-3. Wait 30 seconds and send another message.
-   **Expected:** the bot is enabled to respond again.
-
----
+2. Let the bots talk to each other without intervening.
+   **Expected:** after 3 bot-triggered responses on a Pi, the next incoming
+   `assistant_response` is persisted but not answered. In that Pi's logs a
+   `broadcast.trigger.skip.rate_limited` line appears.
+3. Send a message yourself (text, or a voice note/photo so it reaches the other
+   Pi only via broadcast).
+   **Expected:** the counter resets on every bot that saw the human, and the
+   silenced bot is enabled to respond again without waiting for the window.
 
 ## Scenario D — `chat_id` bootstrap with `/chatid`
 

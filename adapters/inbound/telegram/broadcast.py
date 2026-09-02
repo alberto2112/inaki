@@ -201,10 +201,17 @@ class TelegramBroadcastMixin:
             )
 
             # Rate limiter por (agent_id, chat_id) — evita tormentas bot-to-bot.
-            # Solo aplica a ``assistant_response`` (único event_type que puede
-            # producir loops entre bots). Los ``user_input_*`` vienen del humano
-            # y no deben consumir el contador ni gatillar breach.
+            # Solo ``assistant_response`` consume el contador (único event_type que
+            # puede producir loops entre bots). Los ``user_input_*`` vienen de un
+            # humano: no consumen el contador y además lo RESETEAN, igual que un
+            # mensaje humano nativo en ``_handle_group_message``. La señal es
+            # "habló un humano", da igual por qué transporte llegó — sin este reset,
+            # un bot saturado por otro bot seguía mudo aunque un humano intervenga
+            # por voz o foto y su mensaje solo le llegue por broadcast.
             # Gobierna SOLO el flush: el broadcast ya quedó persistido arriba.
+            if self._rate_limiter is not None and msg.event_type.startswith("user_input_"):
+                self._rate_limiter.reset(self._settings.id, msg.chat_id)
+
             if self._rate_limiter is not None and msg.event_type == "assistant_response":
                 breach = self._rate_limiter.check_and_increment(
                     self._settings.id,

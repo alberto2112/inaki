@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 
 from adapters.outbound.config_repository.yaml_tool_config_store import YamlToolConfigStore
 from adapters.outbound.history.sqlite_history_store import (
@@ -14,6 +16,7 @@ from adapters.outbound.history.sqlite_history_store import (
 from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
 from adapters.outbound.tools.tool_registry import ToolRegistry
 from infrastructure.container import AgentContainer
+from infrastructure.home import set_inaki_home
 
 
 class FakeEmbedder:
@@ -51,6 +54,20 @@ class FakeMemory:
         return 0
 
 
+@pytest.fixture(autouse=True)
+def _home_aislado(tmp_path: Path):
+    """Ancla el home al tmp_path del test.
+
+    El container resuelve el home para leer las capas de config (el origen de
+    cada valor). Sin esto el test leería el ``~/.inaki`` REAL de quien corre la
+    suite. El override es global de proceso: se limpia al salir o se filtra a
+    todo lo que venga después.
+    """
+    set_inaki_home(tmp_path)
+    yield
+    set_inaki_home(None)
+
+
 def _make_container(tmp_path: Path) -> AgentContainer:
     embedder = FakeEmbedder()
     container = AgentContainer.__new__(AgentContainer)
@@ -63,19 +80,26 @@ def _make_container(tmp_path: Path) -> AgentContainer:
     container._history = SQLiteHistoryStore(
         HistoryStoreSettings(db_filename=str(tmp_path / "history.db"))
     )
+    # `model_dump` no es decorativo: `_register_tools` arma con él el snapshot
+    # de config que sirve la tool `config`. Un fake de AgentConfig tiene que
+    # poder volcarse igual que el real.
     container.agent_config = SimpleNamespace(  # type: ignore[assignment]
         id="test-agent",
         workspace=SimpleNamespace(
             path=str(tmp_path / "workspace"),
             containment="strict",
         ),
+        model_dump=lambda: {"id": "test-agent", "llm": {"model": "fake-model"}},
     )
     container._tool_config_store = YamlToolConfigStore(
         store_path=tmp_path / "tool_config.yaml",
         key_path=tmp_path / "secret.key",
     )
     # _global_config necesario para _build_knowledge_orchestrator
-    container._global_config = SimpleNamespace(knowledge=None)  # type: ignore[assignment]
+    container._global_config = SimpleNamespace(  # type: ignore[assignment]
+        knowledge=None,
+        model_dump=lambda: {"app": {"ext_dirs": []}},
+    )
     return container
 
 

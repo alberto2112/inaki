@@ -80,7 +80,34 @@ class ConfigConOrigen:
         return [c for c in self.campos if c.es_secreto]
 
 
-def _aplanar(nodo: Any, path: tuple[str, ...] = ()) -> dict[str, Any]:
+def es_path_secreto(path: str, paths_secretos: frozenset[str]) -> bool:
+    """``True`` si ``path`` matchea una ruta secreta declarada O huele a credencial.
+
+    La segunda red importa: los paths del schema solo cubren la config VÁLIDA,
+    pero esta clasificación se usa en el momento del diagnóstico — cuando la
+    config trae shapes viejos (``llm.api_key``), bloques varados
+    (``tool_config``) o claves en niveles equivocados. Sin la red por nombre,
+    exactamente esas credenciales saldrían en claro justo cuando el operador va
+    a pegar el output en un issue. (Un typo en el nombre mismo de la clave
+    — ``api_ky`` — sigue escapando: no hay red posible para eso.)
+
+    Es función de módulo, no método: la redacción es una POLÍTICA, y la aplican
+    tanto la vista de disco (``ShowEffectiveConfigUseCase``) como la de runtime
+    (``RuntimeConfigUseCase``). Dos implementaciones sería una de las dos
+    filtrando credenciales el día que alguien toque solo la otra.
+    """
+    segmentos = path.split(".")
+    for patron in paths_secretos:
+        partes = patron.split(".")
+        if len(partes) != len(segmentos):
+            continue
+        if all(p == "*" or p == s for p, s in zip(partes, segmentos)):
+            return True
+    hoja = segmentos[-1].lower()
+    return hoja in _NOMBRES_SENSIBLES or hoja.endswith(_SUFIJOS_SENSIBLES)
+
+
+def aplanar(nodo: Any, path: tuple[str, ...] = ()) -> dict[str, Any]:
     """Aplana un dict anidado a ``{"a.b.c": valor}``.
 
     Un dict VACÍO es una hoja: declarar ``groups: {}`` es una decisión del
@@ -89,7 +116,7 @@ def _aplanar(nodo: Any, path: tuple[str, ...] = ()) -> dict[str, Any]:
     if isinstance(nodo, dict) and nodo:
         salida: dict[str, Any] = {}
         for clave, sub in nodo.items():
-            salida.update(_aplanar(sub, path + (str(clave),)))
+            salida.update(aplanar(sub, path + (str(clave),)))
         return salida
     return {".".join(path): nodo}
 
@@ -141,7 +168,7 @@ class ShowEffectiveConfigUseCase:
             capas.append(Capa("agent", self._repo.read_layer(layer, agent_id=agent_id)))
 
         resultado = merge_capas(capas)
-        plano = _aplanar(resultado.datos)
+        plano = aplanar(resultado.datos)
         self._agregar_secretos_pendientes(plano, resultado.datos)
 
         campos = [
@@ -206,23 +233,4 @@ class ShowEffectiveConfigUseCase:
         )
 
     def _es_secreto(self, path: str) -> bool:
-        """``True`` si ``path`` matchea una ruta secreta declarada O huele a credencial.
-
-        La segunda red importa: los paths del schema solo cubren la config
-        VÁLIDA, pero ``config show`` es la herramienta de diagnóstico cuando el
-        arranque aborta — o sea, cuando la config trae shapes viejos
-        (``llm.api_key``), bloques varados (``tool_config``) o claves en
-        niveles equivocados. Sin la red por nombre, exactamente esas
-        credenciales saldrían en claro en el momento en que el operador va a
-        pegar el output en un issue. (Un typo en el nombre mismo de la clave
-        — ``api_ky`` — sigue escapando: no hay red posible para eso.)
-        """
-        segmentos = path.split(".")
-        for patron in self._paths_secretos:
-            partes = patron.split(".")
-            if len(partes) != len(segmentos):
-                continue
-            if all(p == "*" or p == s for p, s in zip(partes, segmentos)):
-                return True
-        hoja = segmentos[-1].lower()
-        return hoja in _NOMBRES_SENSIBLES or hoja.endswith(_SUFIJOS_SENSIBLES)
+        return es_path_secreto(path, self._paths_secretos)

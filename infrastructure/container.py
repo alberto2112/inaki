@@ -65,6 +65,8 @@ from core.ports.outbound.outbound_sink_port import IOutboundSink
 from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRepo
 from adapters.outbound.embedding.sqlite_embedding_cache import SqliteEmbeddingCache
 from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
+from adapters.outbound.config_repository import YamlRepository
+from adapters.outbound.tools.config_tool import ConfigTool
 from adapters.outbound.tools.tool_registry import ToolRegistry
 from core.domain.errors import AgentNotFoundError, ConfigError, InakiError
 from core.domain.services.broadcast_buffer import BroadcastBuffer
@@ -76,6 +78,8 @@ from core.ports.outbound.memory_port import IMemoryRepository
 from core.ports.outbound.scope_registry_port import IScopeRegistry
 from core.ports.outbound.tool_config_port import IToolConfigStore
 from core.ports.outbound.transcription_port import ITranscriptionProvider
+from core.use_cases.config.runtime_config import RuntimeConfigUseCase
+from core.use_cases.config.show_effective import ShowEffectiveConfigUseCase
 from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
 from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
 from core.use_cases.reconcile_memory import ReconcileMemoryUseCase
@@ -107,6 +111,7 @@ from infrastructure.daemon_reloader import DaemonReloader
 from infrastructure.factories.embedding_factory import EmbeddingProviderFactory
 from infrastructure.factories.llm_factory import LLMProviderFactory
 from infrastructure.factories.transcription_factory import TranscriptionProviderFactory
+from infrastructure.config_introspection import defaults_del_schema, paths_secretos
 from infrastructure.home import get_inaki_home
 from infrastructure.scheduler_reconciler import SchedulerReconciler
 
@@ -735,6 +740,55 @@ class AgentContainer:
             PatchFileTool(workspace=workspace_path, containment=ws_cfg.containment)
         )
         self._tools.register(EditFileTool(workspace=workspace_path, containment=ws_cfg.containment))
+        # Lectura de la propia config. El snapshot se arma ACÁ, en el arranque,
+        # porque acá es donde vive la config ya validada que el proceso usa: la
+        # tool no vuelve a tocar disco en ningún turno. Un reload reconstruye el
+        # container entero, así que el snapshot no puede quedar viejo.
+        self._tools.register(ConfigTool(runtime_config=self._build_runtime_config()))
+
+    def _build_runtime_config(self) -> RuntimeConfigUseCase:
+        """Arma el snapshot de config que la tool ``config`` sirve al LLM.
+
+        El VALOR sale de los objetos ya validados (``global_config`` como base,
+        ``agent_config`` encima — el mismo orden de capas del loader), no del
+        merge de los YAML: es lo único que responde con qué está corriendo el
+        proceso. El ORIGEN de cada valor sí sale de la vista de disco, leída en
+        este mismo instante, cuando disco y memoria todavía coinciden.
+        """
+        en_memoria = deep_merge(self._global_config.model_dump(), self.agent_config.model_dump())
+        return RuntimeConfigUseCase(
+            config_en_memoria=en_memoria,
+            origenes=self._origenes_de_config(),
+            paths_secretos=paths_secretos(),
+        )
+
+    def _origenes_de_config(self) -> dict[str, str]:
+        """Mapa ``path -> capa`` leyendo los YAML. ``{}`` si no se pueden leer.
+
+        Degradar acá es legítimo y no toca ningún valor: lo que se pierde es la
+        anotación de procedencia, y el snapshot la reporta como ``desconocido``
+        en vez de inventar ``default``. Se degrada por una dependencia EXTERNA
+        (el filesystem), nunca por la config en sí — un fichero ilegible no
+        puede impedir que el agente sepa con qué está corriendo.
+        """
+        home = get_inaki_home()
+        try:
+            vista = ShowEffectiveConfigUseCase(
+                repo=YamlRepository(config_dir=home / "config", agents_dir=home / "agents"),
+                defaults=defaults_del_schema(),
+                paths_secretos=paths_secretos(),
+            ).execute(self.agent_config.id)
+        except Exception:
+            logger.warning(
+                "Agente '%s': no se pudieron leer las capas de config desde %s. "
+                "La tool `config` sigue sirviendo los valores en memoria, pero sin "
+                "decir de qué capa sale cada uno.",
+                self.agent_config.id,
+                home,
+                exc_info=True,
+            )
+            return {}
+        return {campo.path: campo.origen for campo in vista.campos}
 
     @staticmethod
     def _resolve_transcription(cfg: AgentConfig) -> ITranscriptionProvider | None:

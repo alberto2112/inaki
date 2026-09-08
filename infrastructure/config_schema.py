@@ -1373,6 +1373,12 @@ class UserConfig(_ConfigBaseModel):
     autodetecta igual.
     """
 
+    # validate_default: sin bloque `user:` en el YAML el default "" NO pasaba por
+    # `_resolve_timezone` y el scheduler recibía una timezone vacía — moría al
+    # construir el container con un ValueError de ZoneInfo sin contexto. Mismo
+    # patrón que los bloques con RuntimePath. → `config-falla-ruidoso`
+    model_config = ConfigDict(validate_default=True)
+
     @field_validator("timezone", mode="after")
     @classmethod
     def _resolve_timezone(cls, v: str) -> str:

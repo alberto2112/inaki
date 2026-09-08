@@ -12,7 +12,6 @@ import pytest
 from core.use_cases.run_agent import RunAgentUseCase
 from infrastructure.container import build_run_agent_settings
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

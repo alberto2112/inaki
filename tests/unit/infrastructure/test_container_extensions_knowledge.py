@@ -14,6 +14,7 @@ from __future__ import annotations
 import sys
 import types
 from pathlib import Path
+
 import pytest
 
 from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
@@ -21,7 +22,6 @@ from adapters.outbound.tools.tool_registry import ToolRegistry
 from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
 from core.ports.outbound.knowledge_port import IKnowledgeSource
 from infrastructure.container import AgentContainer
-
 
 # ---------------------------------------------------------------------------
 # Fakes

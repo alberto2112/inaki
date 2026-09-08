@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from inaki.shared.message import Message, Role
 from core.domain.services.prepend_timestamps import prepend_timestamps
+from inaki.shared.message import Message, Role
 
 
 def _msg(

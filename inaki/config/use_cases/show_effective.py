@@ -151,8 +151,8 @@ class ShowEffectiveConfigUseCase:
                 sub-agente. Sin este guard, un id con typo devolvía la vista
                 global-only en silencio — un diagnóstico convincente y equivocado.
         """
-        from inaki.shared.errors import AgentNotFoundError
         from inaki.config.ports import LayerName
+        from inaki.shared.errors import AgentNotFoundError
 
         capas = [Capa("default", self._defaults)]
         capas.append(Capa("global", self._repo.read_layer(LayerName.GLOBAL)))

@@ -72,9 +72,9 @@ def _create_lightweight_uc(
     config_dir: Path,
 ) -> tuple["ISchedulerUseCase", "GlobalConfig"]:
     """Crea ScheduleTaskUseCase con bootstrap mínimo — sin AppContainer."""
-    from inaki.config import load_global_config
     from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRepo
     from core.use_cases.schedule_task import ScheduleTaskUseCase
+    from inaki.config import load_global_config
 
     global_config, _ = load_global_config(config_dir)
     repo = SQLiteSchedulerRepo(

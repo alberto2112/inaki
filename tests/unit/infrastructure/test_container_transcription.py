@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import pytest
 
-from inaki.shared.errors import InakiError
 from core.ports.outbound.transcription_port import ITranscriptionProvider
 from inaki.config import (
     AgentConfig,
@@ -29,6 +28,7 @@ from inaki.config import (
     ProviderConfig,
     TranscriptionConfig,
 )
+from inaki.shared.errors import InakiError
 from infrastructure.container import AgentContainer
 
 

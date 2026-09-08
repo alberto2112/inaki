@@ -146,8 +146,8 @@ def test_run_cmd_trigger_failed_exit_1(tmp_path: Path) -> None:
 def test_run_cmd_task_not_found_exit_1(tmp_path: Path) -> None:
     from typer.testing import CliRunner
 
-    from inaki.shared.errors import TaskNotFoundError
     from inaki.scheduler_cli import scheduler_app
+    from inaki.shared.errors import TaskNotFoundError
 
     mock_client = MagicMock()
     mock_client.health.return_value = True

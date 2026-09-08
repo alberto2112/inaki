@@ -14,7 +14,6 @@ from core.domain.value_objects.agent_settings import (
     sanitize_digest_scope,
 )
 
-
 # ---------------------------------------------------------------------------
 # sanitize_digest_scope
 # ---------------------------------------------------------------------------

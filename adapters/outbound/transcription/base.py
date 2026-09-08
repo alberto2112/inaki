@@ -22,8 +22,8 @@ from typing import Any, ClassVar
 import httpx
 from pydantic import BaseModel
 
-from inaki.shared.errors import TranscriptionError, TranscriptionFileTooLargeError
 from core.ports.outbound.transcription_port import ITranscriptionProvider
+from inaki.shared.errors import TranscriptionError, TranscriptionFileTooLargeError
 
 logger = logging.getLogger(__name__)
 

@@ -1,23 +1,24 @@
 """Tests unitarios para RunAgentUseCase — flujo básico."""
 
-import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from core.use_cases.run_agent import RunAgentUseCase
-from infrastructure.container import build_run_agent_settings
-from inaki.shared.message import Message, Role
+import pytest
+
 from core.domain.entities.skill import Skill
 from core.domain.value_objects.llm_response import LLMResponse
+from core.use_cases.run_agent import RunAgentUseCase
 from inaki.config import (
     AgentConfig,
-    LLMConfig,
-    EmbeddingConfig,
-    MemoriesConfig,
     ChatHistoryConfig,
+    EmbeddingConfig,
+    LLMConfig,
+    MemoriesConfig,
     SkillsConfig,
     ToolsConfig,
 )
+from inaki.shared.message import Message, Role
+from infrastructure.container import build_run_agent_settings
 
 
 @pytest.fixture

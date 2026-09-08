@@ -28,8 +28,8 @@ from typing import AsyncIterator
 import aiosqlite
 
 from core.domain.entities.face import BBox, FaceMatch, MatchStatus, MessageFaceMetadata
-from inaki.shared.errors import FaceRegistryError
 from core.ports.outbound.message_face_metadata_port import IMessageFaceMetadataRepo
+from inaki.shared.errors import FaceRegistryError
 
 logger = logging.getLogger(__name__)
 

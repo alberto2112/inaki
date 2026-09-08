@@ -12,20 +12,18 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-
 from unittest.mock import AsyncMock
 
 import pytest
 
-from inaki.shared.message import Message, Role
-from inaki.shared.errors import ToolLoopMaxIterationsError
 from core.domain.value_objects.conversation_state import ConversationState
 from core.domain.value_objects.llm_response import LLMResponse
 from core.ports.outbound.history_port import IHistoryStore
 from core.ports.outbound.scope_registry_port import Scope
 from core.ports.outbound.tool_port import ToolResult
 from core.use_cases._tool_loop import run_tool_loop
-
+from inaki.shared.errors import ToolLoopMaxIterationsError
+from inaki.shared.message import Message, Role
 
 # ---------------------------------------------------------------------------
 # Fake de IHistoryStore — solo load() es significativo; el resto son no-ops.

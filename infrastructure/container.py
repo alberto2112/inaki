@@ -16,37 +16,27 @@ from typing import TYPE_CHECKING, Callable, Literal
 
 if TYPE_CHECKING:
     from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
-    from core.ports.outbound.file_downloader_port import IFileDownloader
-    from core.ports.outbound.telegram_file_repo_port import IFileRecordRepo
-    from core.use_cases.process_photo import ProcessPhotoUseCase
-    from inaki.shared.channel_context import ChannelContext
     from core.ports.outbound.background_delegation_port import IBackgroundDelegationQueue
     from core.ports.outbound.knowledge_port import IKnowledgeSource
+    from core.use_cases.process_photo import ProcessPhotoUseCase
+    from inaki.channels.telegram.files.ports import IFileDownloader, IFileRecordRepo
+    from inaki.shared.channel_context import ChannelContext
 
+from adapters.outbound.config_repository.yaml_tool_config_store import YamlToolConfigStore
 from adapters.outbound.delegation.background_queue_adapter import (
     BackgroundDelegationQueueAdapter,
 )
-from adapters.inbound.telegram.ports import (
-    TelegramBotPorts,
-    TelegramBotSettings,
-    TelegramChannelSettings,
-    TelegramEmitFlags,
-    TelegramGroupSettings,
-    TranscriptionLimits,
-)
+from adapters.outbound.embedding.sqlite_embedding_cache import SqliteEmbeddingCache
 from adapters.outbound.history.sqlite_history_store import (
     HistoryStoreSettings,
     SQLiteHistoryStore,
 )
-from core.domain.services.channel_outbound_registry import ChannelOutboundRegistry
 from adapters.outbound.memory.sqlite_memory_repo import SQLiteMemoryRepository
-from adapters.outbound.config_repository.yaml_tool_config_store import YamlToolConfigStore
-from adapters.outbound.scope_registry_adapter import InMemoryScopeRegistryAdapter
 from adapters.outbound.scheduler.builtin_tasks import (
+    _RECONCILE_MEMORY_BASE_ID,
     build_consolidate_memory_task,
     build_face_dedup_task,
     build_reconcile_memory_task,
-    _RECONCILE_MEMORY_BASE_ID,
 )
 from adapters.outbound.scheduler.dispatch_adapters import (
     ConsolidationDispatchAdapter,
@@ -55,33 +45,13 @@ from adapters.outbound.scheduler.dispatch_adapters import (
     ReconcileDispatchAdapter,
     ShellExecAdapter,
 )
-from core.ports.outbound.scheduler_dispatch_port import SchedulerDispatchPorts
-from core.domain.services.channel_router import ChannelFallbackSettings, ChannelRouter
 from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRepo
-from adapters.outbound.embedding.sqlite_embedding_cache import SqliteEmbeddingCache
+from adapters.outbound.scope_registry_adapter import InMemoryScopeRegistryAdapter
 from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
-from inaki.config.adapters.yaml_repository import YamlRepository
-from inaki.config.tools.config_tool import ConfigTool
 from adapters.outbound.tools.tool_registry import ToolRegistry
-from inaki.shared.errors import AgentNotFoundError, ConfigError, InakiError
-from core.domain.services.broadcast_buffer import BroadcastBuffer
-from inaki.shared.channel_context import current_channel_context
-from core.domain.services.rate_limiter import FixedWindowRateLimiter
+from core.domain.services.channel_outbound_registry import ChannelOutboundRegistry
+from core.domain.services.channel_router import ChannelFallbackSettings, ChannelRouter
 from core.domain.services.scheduler_service import SchedulerService
-from core.ports.inbound.scheduler_port import IManualTaskRunner
-from core.ports.outbound.memory_port import IMemoryRepository
-from core.ports.outbound.scope_registry_port import IScopeRegistry
-from core.ports.outbound.tool_config_port import IToolConfigStore
-from core.ports.outbound.turn_tracer_port import ITurnTracer, NullTurnTracer
-from core.ports.outbound.transcription_port import ITranscriptionProvider
-from inaki.config.use_cases.runtime_config import RuntimeConfigUseCase
-from inaki.config.use_cases.show_effective import ShowEffectiveConfigUseCase
-from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
-from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
-from core.use_cases.reconcile_memory import ReconcileMemoryUseCase
-from core.use_cases.run_agent import RunAgentUseCase
-from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
-from core.use_cases.schedule_task import ScheduleTaskUseCase
 from core.domain.value_objects.agent_settings import (
     ConsolidationSettings,
     MemorySettings,
@@ -90,26 +60,58 @@ from core.domain.value_objects.agent_settings import (
     ReconciliationSettings,
     RunAgentSettings,
 )
-from inaki.config.merge import deep_merge, resolver_inherit
+from core.ports.inbound.scheduler_port import IManualTaskRunner
+from core.ports.outbound.channel_port import IChannel
+from core.ports.outbound.memory_port import IMemoryRepository
+from core.ports.outbound.scheduler_dispatch_port import SchedulerDispatchPorts
+from core.ports.outbound.scope_registry_port import IScopeRegistry
+from core.ports.outbound.tool_config_port import IToolConfigStore
+from core.ports.outbound.transcription_port import ITranscriptionProvider
+from core.ports.outbound.turn_tracer_port import ITurnTracer, NullTurnTracer
+from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
+from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
+from core.use_cases.reconcile_memory import ReconcileMemoryUseCase
+from core.use_cases.run_agent import RunAgentUseCase
+from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
+from core.use_cases.schedule_task import ScheduleTaskUseCase
+from inaki.channels.telegram.broadcast.buffer import BroadcastBuffer
+from inaki.channels.telegram.broadcast.egress import BroadcastEgress
+from inaki.channels.telegram.broadcast.rate_limiter import FixedWindowRateLimiter
+from inaki.channels.telegram.broadcast.tcp import TcpBroadcastAdapter
+from inaki.channels.telegram.config import TelegramChannelConfig, telegram_config
+from inaki.channels.telegram.ports import (
+    TelegramBotPorts,
+    TelegramBotSettings,
+    TelegramChannelSettings,
+    TelegramEmitFlags,
+    TelegramGroupSettings,
+    TranscriptionLimits,
+)
 from inaki.config import (
+    SUBAGENT_DEFAULTS,
     AgentConfig,
     AgentRegistry,
     GlobalConfig,
     KnowledgeSourceConfig,
     MemoriesConfig,
     PhotosConfig,
-    SUBAGENT_DEFAULTS,
-    TelegramChannelConfig,
     assemble_agent_config,
     migrate_tool_config_to_own_file,
 )
+from inaki.config.adapters.yaml_repository import YamlRepository
+from inaki.config.home import get_inaki_home
+from inaki.config.introspection import defaults_del_schema, paths_secretos
+from inaki.config.merge import deep_merge, resolver_inherit
+from inaki.config.tools.config_tool import ConfigTool
+from inaki.config.use_cases.runtime_config import RuntimeConfigUseCase
+from inaki.config.use_cases.show_effective import ShowEffectiveConfigUseCase
+from inaki.observability import JsonlTurnTracer, is_debug_enabled, startup_event
+from inaki.shared.channel_context import current_channel_context
+from inaki.shared.errors import AgentNotFoundError, ConfigError, InakiError
 from infrastructure.daemon_reloader import DaemonReloader
 from infrastructure.factories.embedding_factory import EmbeddingProviderFactory
 from infrastructure.factories.llm_factory import LLMProviderFactory
 from infrastructure.factories.transcription_factory import TranscriptionProviderFactory
-from inaki.config.introspection import defaults_del_schema, paths_secretos
-from inaki.config.home import get_inaki_home
-from inaki.observability import JsonlTurnTracer, is_debug_enabled, startup_event
 from infrastructure.scheduler_reconciler import SchedulerReconciler
 
 logger = logging.getLogger(__name__)
@@ -144,7 +146,7 @@ def build_memory_settings(memories_cfg: MemoriesConfig) -> MemorySettings:
 
 
 def build_run_agent_settings(cfg: AgentConfig) -> RunAgentSettings:
-    tg_cfg = cfg.telegram
+    tg_cfg = telegram_config(cfg)
     timestamp_channels = (
         frozenset({"telegram"}) if tg_cfg is not None and tg_cfg.add_llm_timestamp else frozenset()
     )
@@ -250,7 +252,7 @@ def build_telegram_bot_settings(cfg: AgentConfig) -> TelegramBotSettings:
         description=cfg.description,
         workspace_path=cfg.workspace.path,
         transcription=transcription,
-        telegram=build_telegram_channel_settings(cfg.telegram),
+        telegram=build_telegram_channel_settings(telegram_config(cfg)),
     )
 
 
@@ -349,7 +351,10 @@ class AgentContainer:
         # tiene ningún canal telegram con bloque broadcast:.
         # Tipo: TcpBroadcastAdapter | None (evitamos importar el adapter en __init__
         # para no crear dependencia circular; el tipo se declara como object).
-        self.broadcast_adapter: object | None = None
+        self.broadcast_adapter: TcpBroadcastAdapter | None = None
+        # Política de emisión al LAN del agente (flags emit.*); la comparten el
+        # outbound del canal y el bot. None si el agente no tiene canal telegram.
+        self.broadcast_egress: BroadcastEgress | None = None
         # Rate limiter de grupos (behavior=autonomous). Vive a nivel de grupos, NO de
         # broadcast: un bot autónomo sin LAN igual lo necesita para no spammear el
         # grupo (migración groups-vs-broadcast). Lo consume group_flow y, si hay
@@ -810,7 +815,7 @@ class AgentContainer:
         - Si `voice_enabled` está activo y `cfg.transcription` es `None` →
           error claro en bootstrap (no degradamos silenciosamente).
         """
-        tg_cfg = cfg.telegram
+        tg_cfg = telegram_config(cfg)
         if tg_cfg is None:
             return None
 
@@ -1061,12 +1066,12 @@ class AgentContainer:
         if self._telegram_tools_wired:
             return
 
-        tg_cfg = self.agent_config.telegram
+        tg_cfg = telegram_config(self.agent_config)
         if tg_cfg is None or not tg_cfg.token:
             self._telegram_tools_wired = True
             return
 
-        from adapters.inbound.telegram.outbound import TelegramChannelOutbound
+        from inaki.channels.telegram.outbound import TelegramChannelOutbound
 
         # El egress del canal se registra ANTES de las tools: el bot lo necesita
         # para la narración intermedia y el scheduler para channel_send, tengan o
@@ -1075,6 +1080,7 @@ class AgentContainer:
             get_telegram_bot=get_telegram_bot,
             history=self._history,
             agent_id=self.agent_config.id,
+            broadcast=self.broadcast_egress,
         )
         self.channel_outbound_registry.register(tg_channel_outbound)
 
@@ -1088,17 +1094,17 @@ class AgentContainer:
 
         from pathlib import Path
 
-        from adapters.outbound.file_transport.telegram_file_downloader import (
+        from inaki.channels.telegram.files.downloader import (
             TelegramFileDownloader,
         )
-        from adapters.inbound.telegram.tools.download_from_telegram_tool import (
+        from inaki.channels.telegram.tools.download_from_telegram_tool import (
             DownloadFromTelegramTool,
         )
-        from adapters.inbound.telegram.tools.send_to_telegram_tool import (
-            SendToTelegramTool,
-        )
-        from adapters.inbound.telegram.tools.send_telegram_message_tool import (
+        from inaki.channels.telegram.tools.send_telegram_message_tool import (
             SendTelegramMessageTool,
+        )
+        from inaki.channels.telegram.tools.send_to_telegram_tool import (
+            SendToTelegramTool,
         )
 
         ws_cfg = self.agent_config.workspace
@@ -1571,6 +1577,7 @@ class AppContainer:
         self._wire_telegram_tools()
         self._wire_memory_extractors()
         self._wire_memory_reconcilers()
+        self._build_channels()
 
     def _init_shared_state(self, config_dir: Path | None) -> None:
         # Tool Config Protocol — UN store para toda la app, dueño de su propio
@@ -1586,8 +1593,11 @@ class AppContainer:
             key_path=resolved_config_dir.parent / "secret.key",
         )
 
-        # Registro de bots de Telegram — el daemon runner los registra al arrancar
+        # Registro de bots de Telegram — los registra ``_build_channels`` al construirlos
         self._telegram_bots: dict[str, object] = {}
+        # Canales del daemon (``IChannel``): el runner los arranca y detiene sin
+        # saber cuál es cuál. Se construyen al FINAL del init, con todo wired.
+        self.channels: list[IChannel] = []
 
         # Coordinador de reload del daemon — lo consumen el admin REST y el bot de Telegram
         # para señalar al runner que debe reiniciar todos los channels.
@@ -1802,8 +1812,7 @@ class AppContainer:
         # construidos. Por cada agente con canal telegram, _wire_broadcast_for_agent
         # resuelve el rate limiter de grupos (behavior=autonomous) y, si hay bloque
         # broadcast:, un TcpBroadcastAdapter (+ BroadcastBuffer). El lifecycle
-        # (start/stop) del adapter se gestiona en AppContainer.startup() / shutdown().
-        self._broadcast_adapters: list[object] = []  # TcpBroadcastAdapter instances
+        # (start/stop) lo gobierna el ``TelegramChannel`` del agente.
         for agent_cfg in self.registry.list_regular():
             try:
                 self._wire_broadcast_for_agent(agent_cfg)
@@ -1879,11 +1888,12 @@ class AppContainer:
         # DB en la misma carpeta que history.db / faces.db.
         self._telegram_file_repo = None
         if any(
-            cfg.telegram is not None and cfg.telegram.token for cfg in self.registry.list_regular()
+            (tg := telegram_config(cfg)) is not None and tg.token
+            for cfg in self.registry.list_regular()
         ):
             from pathlib import Path
 
-            from adapters.outbound.file_repo.sqlite_telegram_file_repo import (
+            from inaki.channels.telegram.files.repo import (
                 SqliteTelegramFileRepo,
             )
 
@@ -2030,8 +2040,6 @@ class AppContainer:
         Si el agente no tiene container (falló en _build_agent_containers) o no tiene
         canal telegram, se omite silenciosamente.
         """
-        from adapters.broadcast.tcp import TcpBroadcastAdapter
-
         container = self.agents.get(agent_cfg.id)
         if container is None:
             return
@@ -2041,9 +2049,10 @@ class AppContainer:
         # arranque con ConfigError. Antes se revalidaba acá dentro de un
         # try/except que, al fallar, se llevaba en silencio el transporte de
         # broadcast Y el rate limiter de grupos con el daemon arrancando sano.
-        tg_cfg = agent_cfg.telegram
+        tg_cfg = telegram_config(agent_cfg)
         if tg_cfg is None:
             return
+        flags = build_telegram_channel_settings(tg_cfg).emit
 
         # (1) Rate limiter de grupos — solo behavior=autonomous lo necesita
         # (mention/listen no responden proactivamente). Independiente del broadcast:
@@ -2072,11 +2081,13 @@ class AppContainer:
                 agent=agent_cfg.id,
                 reason="sin bloque broadcast",
             )
+            container.broadcast_egress = BroadcastEgress(None, agent_cfg.id, flags)
             return
         if not broadcast_cfg.enabled:
             startup_event(
                 logger, "broadcast", status="skip", agent=agent_cfg.id, reason="enabled=false"
             )
+            container.broadcast_egress = BroadcastEgress(None, agent_cfg.id, flags)
             return
 
         # Rol explícito por bloque nombrado: server XOR client (garantizado por el
@@ -2108,11 +2119,54 @@ class AppContainer:
         )
 
         container.broadcast_adapter = adapter
-        self._broadcast_adapters.append(adapter)
+        container.broadcast_egress = BroadcastEgress(adapter, agent_cfg.id, flags)
 
         startup_event(
             logger, "broadcast", status="ok", agent=agent_cfg.id, role=role, host=host, port=port
         )
+
+    def _build_channels(self) -> None:
+        """Construye un ``IChannel`` por agente regular con canal telegram configurado.
+
+        Corre al final del init: el bot necesita los ports ya wireados (scheduler,
+        fotos, tools, outbound). Un bot que no se puede construir se reporta como
+        ``startup.resource`` con ``status=error`` y no tumba al daemon.
+        """
+        from inaki.channels.telegram.bot import TelegramBot
+        from inaki.channels.telegram.channel import TelegramChannel
+
+        for agent_cfg in self.registry.list_regular():
+            tg_cfg = telegram_config(agent_cfg)
+            if tg_cfg is None:
+                continue
+            if not tg_cfg.token:
+                startup_event(
+                    logger,
+                    "telegram_bot",
+                    status="skip",
+                    agent=agent_cfg.id,
+                    reason="channels.telegram.token no configurado",
+                )
+                continue
+            container = self.agents.get(agent_cfg.id)
+            if container is None:
+                continue
+            try:
+                bot = TelegramBot(
+                    build_telegram_bot_settings(agent_cfg),
+                    build_telegram_bot_ports(container),
+                    broadcast_emitter=container.broadcast_adapter,
+                    broadcast_receiver=container.broadcast_adapter,
+                    rate_limiter=container.group_rate_limiter,
+                    reloader=self.reloader,
+                )
+            except ValueError as exc:
+                startup_event(
+                    logger, "telegram_bot", status="error", agent=agent_cfg.id, reason=str(exc)
+                )
+                continue
+            self.register_telegram_bot(agent_cfg.id, bot)
+            self.channels.append(TelegramChannel(agent_cfg.id, bot, container.broadcast_adapter))
 
     def register_telegram_bot(self, agent_id: str, bot: object) -> None:
         """Registra el bot de Telegram para un agente.
@@ -2201,8 +2255,9 @@ class AppContainer:
         )
 
     async def startup(self) -> None:
-        """Arranca el scheduler service, la cola de background-delegation y los
-        adapters de broadcast. Llamar en el daemon lifecycle."""
+        """Arranca el scheduler service y la cola de background-delegation.
+
+        Los canales (bots, broadcast) los arranca el daemon vía ``self.channels``."""
         if self.global_config.scheduler.enabled:
             await self._reconcile_consolidate_memory_task()
             await self._reconcile_reconcile_memory_tasks()
@@ -2215,29 +2270,8 @@ class AppContainer:
         await self.background_queue.start()
         logger.info("BackgroundDelegationQueue iniciada")
 
-        # Arrancar todos los adapters de broadcast (start es idempotente).
-        # En rol server, start() hace el bind() y PROPAGA el OSError si el puerto
-        # no se pudo abrir — por eso este log de éxito ya no miente.
-        for adapter in self._broadcast_adapters:
-            role = adapter._role  # type: ignore[attr-defined]
-            host = adapter._host  # type: ignore[attr-defined]
-            port = adapter._port  # type: ignore[attr-defined]
-            try:
-                await adapter.start()  # type: ignore[attr-defined]
-                logger.info("broadcast adapter iniciado: role=%s host=%s port=%d", role, host, port)
-            except Exception as exc:
-                logger.error(
-                    "Broadcast %s NO arrancó en %s:%d — el puerto queda cerrado y ningún "
-                    "cliente podrá conectarse: %s",
-                    role,
-                    host,
-                    port,
-                    exc,
-                )
-
     async def shutdown(self) -> None:
-        """Detiene la cola de background-delegation, el scheduler service y los
-        adapters de broadcast graciosamente."""
+        """Detiene la cola de background-delegation y el scheduler service."""
         # REQ-BGD-8: detener la cola PRIMERO. Las tasks in-flight se abandonan
         # sin dispatchar resultado — aceptable por la decisión in-memory only.
         await self.background_queue.stop()
@@ -2245,13 +2279,6 @@ class AppContainer:
 
         await self.scheduler_service.stop()
         logger.info("SchedulerService detenido")
-
-        # Detener todos los adapters de broadcast (stop es idempotente).
-        for adapter in self._broadcast_adapters:
-            try:
-                await adapter.stop()  # type: ignore[attr-defined]
-            except Exception as exc:
-                logger.error("Error deteniendo broadcast adapter: %s", exc)
 
     def get_agent(self, agent_id: str) -> AgentContainer:
         if agent_id not in self.agents:

@@ -35,8 +35,8 @@ from starlette.testclient import TestClient
 from adapters.outbound import daemon_client as daemon_client_module
 from adapters.outbound.daemon_client import DaemonClient
 from adapters.outbound.scope_registry_adapter import InMemoryScopeRegistryAdapter
-from inaki.shared.message import Message, Role
 from core.domain.value_objects.agent_info import AgentInfoDTO
+from inaki.shared.message import Message, Role
 
 _AGENT_ID = "general"
 _AUTH_KEY = "e2e-key"

@@ -24,7 +24,6 @@ from ruamel.yaml.comments import CommentedMap
 
 from inaki.config.ports import LayerName
 
-
 # ---------------------------------------------------------------------------
 # Headers de creación para archivos nuevos
 # ---------------------------------------------------------------------------

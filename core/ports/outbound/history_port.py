@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
 
-from inaki.shared.message import Message
 from core.domain.value_objects.conversation_state import ConversationState
+from inaki.shared.message import Message
 
 
 class IHistoryStore(ABC):

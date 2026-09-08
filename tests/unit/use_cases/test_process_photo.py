@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-
 from core.domain.entities.face import (
     BBox,
     FaceDetection,
@@ -21,9 +20,8 @@ from core.domain.entities.face import (
     MatchStatus,
     Person,
 )
-from core.use_cases.process_photo import ProcessPhotoUseCase
 from core.domain.value_objects.agent_settings import PhotosSettings
-
+from core.use_cases.process_photo import ProcessPhotoUseCase
 
 # ----------------------------------------------------------------------
 # Helpers

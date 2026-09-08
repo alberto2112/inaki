@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from inaki.shared.errors import AgentNotFoundError
 from inaki.config.ports import LayerName
+from inaki.shared.errors import AgentNotFoundError
 
 if TYPE_CHECKING:
     from inaki.config.ports import IConfigRepository

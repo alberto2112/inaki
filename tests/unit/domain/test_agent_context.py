@@ -9,7 +9,6 @@ from freezegun import freeze_time
 
 from core.domain.value_objects.agent_context import AgentContext
 
-
 BASE_PROMPT = "Eres Inaki, un asistente personal."
 
 

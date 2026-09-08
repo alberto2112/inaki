@@ -27,9 +27,9 @@ from pydantic import BaseModel
 from ruamel.yaml import YAMLError as RuamelYAMLError
 from typer.testing import CliRunner
 
-from inaki.shared.errors import ConfigError
 from inaki.config.boundary import borde_de_config
 from inaki.config.home import set_inaki_home
+from inaki.shared.errors import ConfigError
 
 
 @pytest.fixture
@@ -143,9 +143,8 @@ def test_el_arranque_no_tira_traceback_con_un_agente_roto(
     home: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """El agujero original: ``AgentRegistry`` quedaba fuera del ``try``."""
-    from inaki.config import ensure_user_config
-
     from inaki.cli import _bootstrap
+    from inaki.config import ensure_user_config
 
     config_dir, agents_dir = home / "config", home / "agents"
     ensure_user_config(config_dir, agents_dir)

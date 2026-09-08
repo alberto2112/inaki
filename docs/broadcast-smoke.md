@@ -2,7 +2,7 @@
 
 End-to-end test plan to verify the broadcast channel between two Inaki instances
 on the same LAN. Run manually before greenlighting a new production deployment or
-after any change in `adapters/broadcast/` or the Telegram handler.
+after any change in `inaki/channels/telegram/broadcast/` or the Telegram handler.
 
 ---
 

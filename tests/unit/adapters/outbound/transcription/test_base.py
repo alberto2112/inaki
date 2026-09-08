@@ -17,8 +17,8 @@ from adapters.outbound.transcription.base import (
     BaseTranscriptionProvider,
     ResolvedTranscriptionConfig,
 )
-from inaki.shared.errors import TranscriptionError
 from core.ports.outbound.transcription_port import ITranscriptionProvider
+from inaki.shared.errors import TranscriptionError
 
 
 def test_base_hereda_de_port() -> None:

@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 
+from core.domain.value_objects.chat_turn_result import ChatTurnResult
 from inaki.shared.errors import (
     DaemonAuthError,
     DaemonClientError,
@@ -19,7 +20,6 @@ from inaki.shared.errors import (
     TaskNotFoundError,
     UnknownAgentError,
 )
-from core.domain.value_objects.chat_turn_result import ChatTurnResult
 
 logger = logging.getLogger(__name__)
 
@@ -356,7 +356,6 @@ class DaemonClient:
         text: str | None = None,
         sources: list[str] | None = None,
         caption: str | None = None,
-        broadcast: bool = True,
     ) -> dict[str, Any]:
         """Envía un mensaje a un canal externo via el ChannelOutboundRegistry del agente.
 
@@ -368,9 +367,6 @@ class DaemonClient:
             text: Texto del mensaje. Requerido cuando kind="text".
             sources: Paths locales de archivos. Requerido para kinds de media.
             caption: Texto descriptivo adjunto a un archivo/álbum. Opcional.
-            broadcast: Si emitir BroadcastMessage al LAN tras envío exitoso.
-                Default True (consistente con el comportamiento del bot).
-                Solo aplica para kind=text y channel=telegram.
 
         Raises:
             DaemonNotRunningError: si el daemon no es alcanzable.
@@ -380,13 +376,11 @@ class DaemonClient:
             DaemonClientError: para otros errores HTTP del daemon.
         """
         # Filtrar Nones para no mandar campos nulos innecesarios.
-        # broadcast es bool (no Optional) — siempre se incluye en el body.
         body: dict[str, Any] = {
             "agent_id": agent_id,
             "channel": channel,
             "chat_id": chat_id,
             "kind": kind,
-            "broadcast": broadcast,
         }
         if text is not None:
             body["text"] = text

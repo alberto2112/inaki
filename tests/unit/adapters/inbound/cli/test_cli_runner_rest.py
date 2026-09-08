@@ -25,10 +25,9 @@ from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
 
-from inaki.shared.errors import DaemonNotRunningError, DaemonTimeoutError
 from core.domain.value_objects.chat_turn_result import ChatTurnResult
 from core.ports.outbound.daemon_client_port import IDaemonClient
-
+from inaki.shared.errors import DaemonNotRunningError, DaemonTimeoutError
 
 # ---------------------------------------------------------------------------
 # Fixtures

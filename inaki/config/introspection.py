@@ -71,7 +71,8 @@ def paths_secretos() -> frozenset[str]:
     Usa ``*`` para los dicts indexados por nombre (``providers.*.api_key``,
     ``channels.*.token``): esas claves las pone el operador, no el schema.
     """
-    from inaki.config import CHANNEL_SCHEMAS, AgentConfig, GlobalConfig
+    from inaki.config import AgentConfig, GlobalConfig
+    from inaki.config.channels import canales_registrados
 
     encontrados: set[str] = set()
 
@@ -111,8 +112,8 @@ def paths_secretos() -> frozenset[str]:
         if isinstance(extra, dict) and extra.get("secret"):
             encontrados.add(f"providers.*.{nombre}")
 
-    for canal, modelo in CHANNEL_SCHEMAS.items():
-        _recolectar_secretos_anidados(modelo, f"channels.{canal}.", encontrados)
+    for canal, registrado in canales_registrados().items():
+        _recolectar_secretos_anidados(registrado.modelo, f"channels.{canal}.", encontrados)
 
     return frozenset(encontrados)
 

@@ -13,11 +13,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from inaki.shared.message import Message, Role
-from inaki.shared.errors import ConsolidationError
+from core.domain.value_objects.agent_settings import ConsolidationSettings, MemorySettings
 from core.domain.value_objects.llm_response import LLMResponse
 from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
-from core.domain.value_objects.agent_settings import ConsolidationSettings, MemorySettings
+from inaki.shared.errors import ConsolidationError
+from inaki.shared.message import Message, Role
 
 
 @pytest.fixture

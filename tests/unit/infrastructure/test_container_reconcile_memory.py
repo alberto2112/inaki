@@ -19,7 +19,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.ports.outbound.turn_tracer_port import NullTurnTracer
 from adapters.outbound.scheduler.builtin_tasks import (
     _RECONCILE_MEMORY_BASE_ID,
     build_reconcile_memory_task,
@@ -28,6 +27,7 @@ from adapters.outbound.scheduler.dispatch_adapters import ReconcileDispatchAdapt
 from adapters.outbound.tools.tool_registry import ToolRegistry
 from core.domain.entities.task import TriggerType
 from core.domain.value_objects.agent_settings import MemorySettings, OneShotSettings
+from core.ports.outbound.turn_tracer_port import NullTurnTracer
 from core.use_cases.reconcile_memory import ReconcileMemoryUseCase
 from core.use_cases.run_agent import RunAgentUseCase
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
@@ -41,11 +41,10 @@ from inaki.config import (
     GlobalConfig,
     LLMConfig,
     MemoriesConfig,
-    ReconciliationConfig,
     ProviderConfig,
+    ReconciliationConfig,
 )
 from infrastructure.container import AgentContainer, build_memory_settings
-
 
 # ---------------------------------------------------------------------------
 # Helpers — idéntico patrón que test_container_wire_scheduler.py

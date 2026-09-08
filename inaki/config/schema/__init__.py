@@ -28,17 +28,9 @@ from inaki.config.schema.memories import (
 )
 from inaki.config.schema.photos import DedupConfig, FacesConfig, PhotosConfig, SceneConfig
 from inaki.config.schema.providers import ProviderConfig
-from inaki.config.schema.root import AgentConfig, CHANNEL_SCHEMAS, GlobalConfig
+from inaki.config.schema.root import AgentConfig, GlobalConfig
 from inaki.config.schema.scheduler import SchedulerConfig
 from inaki.config.schema.skills import SkillsConfig
-from inaki.config.schema.telegram import (
-    BroadcastClientConfig,
-    BroadcastConfig,
-    BroadcastEmitConfig,
-    BroadcastServerConfig,
-    TelegramChannelConfig,
-    TelegramGroupsConfig,
-)
 from inaki.config.schema.tools import SemanticRoutingConfig, ToolsConfig
 from inaki.config.schema.transcription import TranscriptionConfig
 from inaki.config.schema.user import UserConfig
@@ -49,11 +41,6 @@ __all__ = [
     "AgentConfig",
     "AgentDelegationConfig",
     "AppConfig",
-    "BroadcastClientConfig",
-    "BroadcastConfig",
-    "BroadcastEmitConfig",
-    "BroadcastServerConfig",
-    "CHANNEL_SCHEMAS",
     "ChannelFallbackConfig",
     "ChannelsGlobalConfig",
     "ChatHistoryConfig",
@@ -80,8 +67,6 @@ __all__ = [
     "SchedulerConfig",
     "SemanticRoutingConfig",
     "SkillsConfig",
-    "TelegramChannelConfig",
-    "TelegramGroupsConfig",
     "ToolsConfig",
     "TranscriptionConfig",
     "UserConfig",

@@ -21,16 +21,15 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from adapters.outbound.tools.delegate_tool import DelegateTool, _RESULT_FORMAT_FOOTER
-from inaki.shared.errors import ToolLoopMaxIterationsError
-from inaki.shared.channel_context import ChannelContext
+import pytest
+
+from adapters.outbound.tools.delegate_tool import _RESULT_FORMAT_FOOTER, DelegateTool
 from core.domain.value_objects.delegation_result import DelegationResult
 from core.ports.outbound.tool_port import ToolResult
-
+from inaki.shared.channel_context import ChannelContext
+from inaki.shared.errors import ToolLoopMaxIterationsError
 
 # ---------------------------------------------------------------------------
 # Helpers & fixtures

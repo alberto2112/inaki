@@ -14,13 +14,13 @@ from pathlib import Path
 
 import pytest
 
-from inaki.shared.errors import KnowledgeError
 from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
 from core.ports.outbound.knowledge_port import (
     IIndexableKnowledgeSource,
     IKnowledgeSource,
 )
 from core.use_cases.manage_knowledge import ManageKnowledgeUseCase
+from inaki.shared.errors import KnowledgeError
 
 
 class _FakeReadOnlySource(IKnowledgeSource):

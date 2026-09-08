@@ -26,7 +26,6 @@ from adapters.outbound.knowledge.sqlite_knowledge_source import (
 )
 from inaki.shared.errors import KnowledgeConfigError
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

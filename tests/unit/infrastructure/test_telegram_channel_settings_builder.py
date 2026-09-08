@@ -9,7 +9,7 @@ el bot tenía con los ``.get()``.
 
 from __future__ import annotations
 
-from inaki.config import TelegramChannelConfig
+from inaki.channels.telegram.config import TelegramChannelConfig
 from infrastructure.container import build_telegram_channel_settings
 
 

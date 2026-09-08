@@ -15,12 +15,11 @@ from __future__ import annotations
 from typing import Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
-
-from core.ports.outbound.turn_tracer_port import NullTurnTracer
 from adapters.outbound.tools.delegate_tool import DelegateTool
 from adapters.outbound.tools.tool_registry import ToolRegistry
-from core.use_cases.run_agent import RunAgentUseCase
 from core.domain.value_objects.agent_settings import OneShotSettings
+from core.ports.outbound.turn_tracer_port import NullTurnTracer
+from core.use_cases.run_agent import RunAgentUseCase
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from inaki.config import (
     AgentConfig,
@@ -34,7 +33,6 @@ from inaki.config import (
     ProviderConfig,
 )
 from infrastructure.container import AgentContainer
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -694,6 +692,7 @@ def test_one_shot_has_no_extra_system_sections_attribute(tmp_path) -> None:
     This ensures the discovery section cannot leak into child (one-shot) runs.
     """
     from unittest.mock import AsyncMock as _AsyncMock
+
     from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 
     agent_cfg = _make_agent_config("child", delegation_enabled=True)

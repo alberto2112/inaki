@@ -39,12 +39,13 @@ from typing import Any, Optional
 
 import typer
 
-from inaki.config.cli import config_app
-from inaki.knowledge_cli import knowledge_app
-from inaki.scheduler_cli import scheduler_app
 from inaki import __version__
+from inaki.channels import registrar_canales_instalados
+from inaki.config.cli import config_app
 from inaki.config.home import get_inaki_home, set_inaki_home
+from inaki.knowledge_cli import knowledge_app
 from inaki.observability import is_debug_enabled, set_debug_override, setup_logging
+from inaki.scheduler_cli import scheduler_app
 
 app = typer.Typer(
     name="inaki",
@@ -75,8 +76,7 @@ def _get_agents_dir() -> Path:
 
 def _bootstrap(config_dir: Path, agents_dir: Path):
     """Carga config, logging y registry. Retorna (global_config, registry)."""
-    from inaki.config import load_global_config, AgentRegistry
-
+    from inaki.config import AgentRegistry, load_global_config
     from inaki.config.boundary import borde_de_config
 
     with borde_de_config(str(config_dir)):
@@ -112,8 +112,9 @@ def _run_daemon(config_dir: Path, agents_dir: Path, global_config, registry) -> 
     el contenido actual de ``config_dir`` / ``agents_dir``.
     """
     import logging
-    from infrastructure.container import AppContainer
+
     from inaki.daemon_runner import run_daemon
+    from infrastructure.container import AppContainer
 
     logger = logging.getLogger(__name__)
     logger.info("Iniciando Inaki en modo daemon")
@@ -149,7 +150,6 @@ def _resolve_dirs():
     acá todo deriva de ``get_inaki_home()``. No hay override de config_dir suelto: el único
     knob de relocalización es el home (ver docs/instance-home.md)."""
     from inaki.config import ensure_user_config
-
     from inaki.config.boundary import borde_de_config
 
     config_dir = _get_config_dir()
@@ -172,9 +172,8 @@ def _build_daemon_client(
     Si `remote_url` está definido, apunta al daemon remoto en vez del local.
     El auth key se resuelve: `remote_key` > `admin.auth_key` del config local.
     """
-    from inaki.config import load_global_config
     from adapters.outbound.daemon_client import DaemonClient
-
+    from inaki.config import load_global_config
     from inaki.config.boundary import borde_de_config
 
     # Mismo borde que `_bootstrap`: este es el camino de `inaki` / `inaki chat`,
@@ -358,6 +357,8 @@ def _root(
 ) -> None:
     """Inaki — asistente personal agentico."""
     ctx.ensure_object(dict)
+    # Los canales instalados registran su sección de config ANTES de cargar nada.
+    registrar_canales_instalados()
     if debug:
         set_debug_override(True)
     if home is not None:
@@ -763,15 +764,6 @@ def send(
         metavar="AGENT_ID",
         help="ID del agente desde el que se envía (default: agente por defecto del global).",
     ),
-    no_broadcast: bool = typer.Option(
-        False,
-        "--no-broadcast",
-        help=(
-            "No emitir BroadcastMessage al LAN tras envío (escape hatch para "
-            "scripts CI o casos donde no querés que otros bots vean este mensaje). "
-            "Solo aplica para envíos de texto a Telegram."
-        ),
-    ),
 ) -> None:
     """Envía un mensaje o archivo a un canal externo sin pasar por el LLM."""
     # --- Parsear destination ------------------------------------------------
@@ -895,10 +887,5 @@ def send(
         if caption is not None:
             kwargs["caption"] = caption
 
-    respuesta: dict[str, Any] = _handle_daemon_errors(
-        lambda: client.send_message_via(
-            agent_id, canal, chat_id, kind, broadcast=not no_broadcast, **kwargs
-        )
-    )
-    sufijo = " [broadcast]" if (respuesta or {}).get("broadcasted") else ""
-    print(f"✓ enviado a {canal}:{chat_id} ({kind}){sufijo}")
+    _handle_daemon_errors(lambda: client.send_message_via(agent_id, canal, chat_id, kind, **kwargs))
+    print(f"✓ enviado a {canal}:{chat_id} ({kind})")

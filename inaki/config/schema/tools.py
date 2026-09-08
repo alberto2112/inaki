@@ -7,6 +7,7 @@ Importá desde ``inaki.config.schema`` (o ``inaki.config``).
 from __future__ import annotations
 
 from pydantic import Field
+
 from inaki.config.schema._base import _ConfigBaseModel
 
 

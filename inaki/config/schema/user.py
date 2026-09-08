@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 
 from pydantic import ConfigDict, field_validator
+
 from inaki.config.schema._base import _ConfigBaseModel
 
 logger = logging.getLogger(__name__)

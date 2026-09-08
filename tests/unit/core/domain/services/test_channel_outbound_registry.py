@@ -8,7 +8,6 @@ from core.domain.services.channel_outbound_registry import ChannelOutboundRegist
 from core.domain.value_objects.outbound_kind import OutboundKind
 from core.ports.outbound.channel_port import IChannelOutbound
 
-
 # ---------------------------------------------------------------------------
 # Fake adapter para tests
 # ---------------------------------------------------------------------------

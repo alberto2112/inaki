@@ -25,11 +25,11 @@ from core.domain.entities.face import (
     Person,
     ProcessPhotoResult,
 )
+from core.domain.value_objects.agent_settings import PhotosSettings
 from core.ports.outbound.face_registry_port import IFaceRegistryPort
 from core.ports.outbound.message_face_metadata_port import IMessageFaceMetadataRepo
 from core.ports.outbound.scene_describer_port import ISceneDescriberPort
 from core.ports.outbound.vision_port import IVisionPort
-from core.domain.value_objects.agent_settings import PhotosSettings
 
 logger = logging.getLogger(__name__)
 

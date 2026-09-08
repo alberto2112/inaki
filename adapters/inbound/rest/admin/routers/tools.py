@@ -11,7 +11,6 @@ Todos requieren X-Admin-Key (via check_admin_auth).
 from __future__ import annotations
 
 import logging
-import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -215,56 +214,9 @@ async def send_message(body: SendRequest, request: Request) -> SendResponse:
         body.kind,
     )
 
-    # --- Emitir broadcast al LAN si corresponde ---
-    broadcasted = False
-    if (
-        body.broadcast
-        and body.kind == "text"  # solo TEXT mapea a assistant_response
-        and body.channel == "telegram"  # solo Telegram tiene broadcast LAN por ahora
-    ):
-        # Resolver flag del config del agente:
-        # agent_config.channels.telegram.broadcast.emit.assistant_response
-        agente = resolver_agente(request, body.agent_id)
-        tg_cfg = agente.agent_config.telegram
-        broadcast_cfg = tg_cfg.broadcast if tg_cfg is not None else None
-        # Sin bloque broadcast declarado rige el default del schema (emitir).
-        emit_assistant = (
-            broadcast_cfg.emit.assistant_response if broadcast_cfg is not None else True
-        )
-
-        if emit_assistant:
-            emitter = getattr(request.app.state.app_container, "broadcast_adapter", None)
-            if emitter is not None:
-                from core.ports.outbound.broadcast_port import BroadcastMessage
-
-                msg = BroadcastMessage(
-                    timestamp=time.time(),
-                    agent_id=body.agent_id,
-                    chat_id=body.chat_id,
-                    event_type="assistant_response",
-                    content=body.text or "",
-                    sender="",
-                )
-                try:
-                    await emitter.emit(msg)
-                    broadcasted = True
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "/admin/send: emit broadcast falló agent=%s chat=%s err=%s",
-                        body.agent_id,
-                        body.chat_id,
-                        exc,
-                    )
-            else:
-                logger.debug(
-                    "/admin/send: broadcast_adapter no disponible, skip emit agent=%s",
-                    body.agent_id,
-                )
-
     return SendResponse(
         sent=True,
         channel=body.channel,
         chat_id=body.chat_id,
         kind=body.kind,
-        broadcasted=broadcasted,
     )

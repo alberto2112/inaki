@@ -14,9 +14,8 @@ import io
 import pytest
 from PIL import Image
 
-from core.domain.entities.face import BBox, FaceMatch, MatchStatus, Person
 from adapters.outbound.imaging.pillow_annotator import PillowPhotoAnnotator
-
+from core.domain.entities.face import BBox, FaceMatch, MatchStatus, Person
 
 # ---------------------------------------------------------------------------
 # Helpers

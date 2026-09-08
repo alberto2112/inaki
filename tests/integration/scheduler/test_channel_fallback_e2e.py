@@ -17,16 +17,14 @@ from pathlib import Path
 import aiosqlite
 import pytest
 
-from core.ports.outbound.scheduler_dispatch_port import SchedulerDispatchPorts
 from adapters.outbound.scheduler.dispatch_adapters import (
-    ShellExecAdapter,
     ConsolidationDispatchAdapter,
     HttpCallerAdapter,
     LLMDispatcherAdapter,
     ReconcileDispatchAdapter,
+    ShellExecAdapter,
 )
 from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRepo
-from core.domain.services.channel_router import ChannelFallbackSettings, ChannelRouter
 from core.domain.entities.task import (
     ChannelSendPayload,
     ScheduledTask,
@@ -34,7 +32,9 @@ from core.domain.entities.task import (
     TaskStatus,
     TriggerType,
 )
+from core.domain.services.channel_router import ChannelFallbackSettings, ChannelRouter
 from core.domain.services.scheduler_service import SchedulerService
+from core.ports.outbound.scheduler_dispatch_port import SchedulerDispatchPorts
 
 
 @pytest.fixture()

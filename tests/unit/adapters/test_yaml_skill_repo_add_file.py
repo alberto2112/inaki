@@ -9,7 +9,6 @@ import pytest
 
 from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
 
-
 # ---------------------------------------------------------------------------
 # Fake embedder
 # ---------------------------------------------------------------------------

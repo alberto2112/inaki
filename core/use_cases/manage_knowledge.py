@@ -17,11 +17,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from inaki.shared.errors import KnowledgeError
 from core.ports.outbound.knowledge_port import (
     IIndexableKnowledgeSource,
     IKnowledgeSource,
 )
+from inaki.shared.errors import KnowledgeError
 
 
 class ManageKnowledgeUseCase:

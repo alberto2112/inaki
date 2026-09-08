@@ -9,9 +9,9 @@ Cubre tarea 4.1 (TEST):
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import MagicMock
 
+import pytest
 from fastapi import HTTPException
 
 from adapters.inbound.rest.admin.routers.deps import check_admin_auth

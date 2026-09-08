@@ -16,8 +16,8 @@ import logging
 
 import httpx
 
-from inaki.shared.errors import SceneDescriptionError
 from core.ports.outbound.scene_describer_port import ISceneDescriberPort
+from inaki.shared.errors import SceneDescriptionError
 
 PROVIDER_NAME = "anthropic"
 

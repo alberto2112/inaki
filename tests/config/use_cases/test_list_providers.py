@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-
 from inaki.config.ports import IConfigRepository, LayerName
 from inaki.config.use_cases.list_providers import ListProvidersUseCase, ProviderInfo
 

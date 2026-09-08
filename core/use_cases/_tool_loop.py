@@ -23,17 +23,17 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 
-from inaki.shared.message import Message, Role
-from inaki.shared.errors import ToolLoopMaxIterationsError
-from core.ports.outbound.history_port import IHistoryStore
 from core.ports.outbound.channel_port import (
     IIntermediateSink,
     NullIntermediateSink,
 )
+from core.ports.outbound.history_port import IHistoryStore
 from core.ports.outbound.llm_port import ILLMProvider
 from core.ports.outbound.scope_registry_port import IScopeRegistry, Scope
 from core.ports.outbound.tool_port import IToolExecutor
 from core.ports.outbound.turn_tracer_port import ITurnTracer, NullTurnTracer
+from inaki.shared.errors import ToolLoopMaxIterationsError
+from inaki.shared.message import Message, Role
 
 logger = logging.getLogger(__name__)
 

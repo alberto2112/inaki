@@ -12,8 +12,8 @@ def _run(coro):
 
 def test_run_admin_server_creates_uvicorn_server() -> None:
     """Verifica que _run_admin_server crea un uvicorn.Server con la config correcta."""
-    from inaki.daemon_runner import _run_admin_server
     from inaki.config import AdminConfig
+    from inaki.daemon_runner import _run_admin_server
 
     admin_cfg = AdminConfig(port=6497, host="127.0.0.1", auth_key="test")
     app_container = MagicMock()
@@ -37,8 +37,8 @@ def test_run_admin_server_creates_uvicorn_server() -> None:
 
 def test_run_admin_server_disables_signal_handlers() -> None:
     """Verifica que los signal handlers de uvicorn están desactivados."""
-    from inaki.daemon_runner import _run_admin_server
     from inaki.config import AdminConfig
+    from inaki.daemon_runner import _run_admin_server
 
     admin_cfg = AdminConfig(port=6497, host="127.0.0.1", auth_key="test")
     app_container = MagicMock()
@@ -60,8 +60,8 @@ def test_run_admin_server_disables_signal_handlers() -> None:
 
 def test_run_admin_server_warns_when_no_auth_key() -> None:
     """Verifica warning cuando auth_key es None."""
-    from inaki.daemon_runner import _run_admin_server
     from inaki.config import AdminConfig
+    from inaki.daemon_runner import _run_admin_server
 
     admin_cfg = AdminConfig(port=6497, host="127.0.0.1", auth_key=None)
     app_container = MagicMock()

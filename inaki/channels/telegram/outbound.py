@@ -1,0 +1,288 @@
+"""TelegramChannelOutbound — implementación de ``IChannelOutbound`` para Telegram.
+
+Unifica la lógica de ``TelegramFileSender`` (photo/audio/video/file/album) y
+``TelegramMessageSender`` (texto) bajo la interfaz genérica ``IChannelOutbound``.
+
+El adapter persiste el envío exitoso en ``IHistoryStore`` como ``Role.ASSISTANT``
+bajo el scope ``(agent_id, "telegram", chat_id)``. Esto asegura que el historial
+refleje lo enviado aunque el LLM no haya generado texto en ese turno.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+from core.domain.value_objects.outbound_kind import OutboundKind
+from core.ports.outbound.channel_port import IChannelOutbound
+from core.ports.outbound.history_port import IHistoryStore
+from inaki.channels.telegram.broadcast.egress import BroadcastEgress, es_chat_de_grupo
+from inaki.shared.message import Message, Role
+
+logger = logging.getLogger(__name__)
+
+
+class TelegramChannelOutbound(IChannelOutbound):
+    """Adapter de envío saliente para Telegram.
+
+    Soporta todos los kinds: TEXT, PHOTO, AUDIO, VIDEO, FILE y ALBUM.
+    """
+
+    channel_name = "telegram"
+
+    def __init__(
+        self,
+        get_telegram_bot: Callable[[], object | None],
+        history: IHistoryStore,
+        agent_id: str,
+        broadcast: BroadcastEgress | None = None,
+    ) -> None:
+        """Inicializa el adapter.
+
+        Args:
+            get_telegram_bot: Callable que devuelve el bot activo, o None si
+                Telegram no está disponible en este momento.
+            history: Store de historial donde se persiste cada envío exitoso.
+            agent_id: Identificador del agente que realiza el envío.
+        """
+        self._get_telegram_bot = get_telegram_bot
+        self._history = history
+        self._agent_id = agent_id
+        # El BORDE del transporte también decide la réplica al LAN: todo texto que
+        # salga a un grupo por acá (scheduler, tools, /admin/send, bg-N) se emite
+        # como ``assistant_response`` si los flags lo permiten.
+        self._broadcast = broadcast
+
+    def capabilities(self) -> set[OutboundKind]:
+        """Retorna los kinds soportados por Telegram."""
+        return {
+            OutboundKind.TEXT,
+            OutboundKind.PHOTO,
+            OutboundKind.AUDIO,
+            OutboundKind.VIDEO,
+            OutboundKind.FILE,
+            OutboundKind.ALBUM,
+        }
+
+    async def send(
+        self,
+        *,
+        chat_id: str,
+        kind: OutboundKind,
+        text: str | None = None,
+        sources: list[Path] | None = None,
+        caption: str | None = None,
+        record_history: bool = True,
+    ) -> None:
+        """Envía un payload a Telegram y lo persiste en el historial.
+
+        Con ``record_history=False`` el envío se hace igual pero NO se persiste:
+        el caller ya es dueño de ese rastro (ver "Dueño único del rastro" en
+        ``IChannelOutbound``).
+
+        Valida precondiciones antes de llamar a la API de Telegram:
+        - kind no soportado → ``ValueError``
+        - TEXT sin texto → ``ValueError``
+        - media sin sources → ``ValueError``
+        - archivo inexistente → ``FileNotFoundError``
+        - bot no disponible → ``RuntimeError``
+        """
+        if kind not in self.capabilities():
+            raise ValueError(
+                f"El canal 'telegram' no soporta kind={kind.value!r}. "
+                f"Kinds soportados: {[k.value for k in self.capabilities()]}"
+            )
+
+        if kind == OutboundKind.TEXT:
+            await self._enviar_texto(chat_id=chat_id, text=text)
+            contenido_historial = text or ""
+            if self._broadcast is not None and es_chat_de_grupo(chat_id):
+                await self._broadcast.emit(
+                    event_type="assistant_response", chat_id=chat_id, content=contenido_historial
+                )
+        elif kind == OutboundKind.ALBUM:
+            await self._enviar_album(chat_id=chat_id, sources=sources or [], caption=caption)
+            contenido_historial = caption or ""
+        else:
+            # PHOTO, AUDIO, VIDEO, FILE — media individual
+            fuentes = sources or []
+            if len(fuentes) != 1:
+                raise ValueError(
+                    f"kind={kind.value!r} requiere exactamente 1 source; "
+                    f"se recibieron {len(fuentes)}"
+                )
+            await self._enviar_media(chat_id=chat_id, kind=kind, source=fuentes[0], caption=caption)
+            contenido_historial = caption or ""
+
+        if not record_history:
+            return
+
+        # Persistir en historial bajo scope (agent_id, "telegram", chat_id)
+        await self._history.append(
+            self._agent_id,
+            Message(role=Role.ASSISTANT, content=contenido_historial),
+            channel="telegram",
+            chat_id=chat_id,
+        )
+
+    # ---------------------------------------------------------------------------
+    # Métodos privados de envío
+    # ---------------------------------------------------------------------------
+
+    async def _enviar_texto(self, *, chat_id: str, text: str | None) -> None:
+        """Envía un mensaje de texto a Telegram."""
+        if not text or not text.strip():
+            raise ValueError("el texto del mensaje no puede ser vacío para kind=TEXT")
+        bot = self._require_bot()
+        chat_id_int = self._parse_chat_id(chat_id)
+        await bot.send_message(chat_id=chat_id_int, text=text)  # type: ignore[attr-defined]
+
+    async def _enviar_media(
+        self,
+        *,
+        chat_id: str,
+        kind: OutboundKind,
+        source: Path,
+        caption: str | None,
+    ) -> None:
+        """Envía un archivo individual (photo/audio/video/file)."""
+        bot = self._require_bot()
+        chat_id_int = self._parse_chat_id(chat_id)
+
+        if not source.exists():
+            raise FileNotFoundError(f"El fichero no existe: {source}")
+
+        handle = source.open("rb")
+        try:
+            if kind == OutboundKind.PHOTO:
+                await bot.send_photo(  # type: ignore[attr-defined]
+                    chat_id=chat_id_int, photo=handle, caption=caption
+                )
+            elif kind == OutboundKind.AUDIO:
+                await bot.send_audio(  # type: ignore[attr-defined]
+                    chat_id=chat_id_int, audio=handle, caption=caption
+                )
+            elif kind == OutboundKind.VIDEO:
+                await bot.send_video(  # type: ignore[attr-defined]
+                    chat_id=chat_id_int, video=handle, caption=caption
+                )
+            elif kind == OutboundKind.FILE:
+                await bot.send_document(  # type: ignore[attr-defined]
+                    chat_id=chat_id_int, document=handle, caption=caption
+                )
+            else:  # pragma: no cover — never reached; kind validado antes
+                raise ValueError(f"kind no manejado en _enviar_media: {kind!r}")
+        finally:
+            handle.close()
+
+    async def _enviar_album(
+        self,
+        *,
+        chat_id: str,
+        sources: list[Path],
+        caption: str | None,
+    ) -> None:
+        """Envía un álbum de fotos.
+
+        Si ``sources`` tiene una sola foto, delega a ``_enviar_media`` (PHOTO).
+        Con múltiples fotos, usa ``send_media_group``.
+        """
+        if not sources:
+            raise ValueError("ALBUM requiere al menos 1 source")
+
+        if len(sources) == 1:
+            await self._enviar_media(
+                chat_id=chat_id,
+                kind=OutboundKind.PHOTO,
+                source=sources[0],
+                caption=caption,
+            )
+            return
+
+        bot = self._require_bot()
+        chat_id_int = self._parse_chat_id(chat_id)
+
+        for path in sources:
+            if not path.exists():
+                raise FileNotFoundError(f"El fichero no existe: {path}")
+
+        handles = [path.open("rb") for path in sources]
+        try:
+            await self._enviar_media_group(bot, chat_id_int, handles, caption)
+        finally:
+            for h in handles:
+                h.close()
+
+    async def _enviar_media_group(
+        self,
+        bot: object,
+        chat_id_int: int,
+        handles: list[Any],
+        caption: str | None,
+    ) -> None:
+        """Manda el álbum con el caption renderizado, con fallback al caption crudo.
+
+        Este es el ÚNICO camino de salida de Telegram cuyo caption no pasa por
+        ``TelegramBot.send_photo`` y familia: el álbum lo lleva el primer
+        ``InputMediaPhoto``, no un kwarg del envío. Por eso repite acá el
+        renderizado — con la misma guarda de 1024 chars — en vez de heredarlo.
+
+        El ``seek(0)`` antes del reintento es obligatorio: python-telegram-bot ya
+        consumió los handles en el intento fallido y sin rebobinar el álbum se
+        subiría con ficheros vacíos.
+        """
+        # Lazy import para no atar el adapter al módulo telegram en tiempo de carga
+        from telegram import InputMediaPhoto  # noqa: PLC0415
+        from telegram.constants import ParseMode  # noqa: PLC0415
+        from telegram.error import BadRequest  # noqa: PLC0415
+
+        from inaki.channels.telegram.message_mapper import (  # noqa: PLC0415
+            es_error_de_parseo,
+            format_caption,
+        )
+
+        def construir(texto: str | None, modo: "ParseMode | None") -> list[Any]:
+            return [
+                InputMediaPhoto(media=handles[0], caption=texto, parse_mode=modo),
+                *(InputMediaPhoto(media=h) for h in handles[1:]),
+            ]
+
+        texto, modo = format_caption(caption)
+        try:
+            await bot.send_media_group(  # type: ignore[attr-defined]
+                chat_id=chat_id_int, media=construir(texto, modo)
+            )
+        except BadRequest as exc:
+            if modo is None or not es_error_de_parseo(exc):
+                raise
+            logger.warning(
+                "Telegram rechazó el caption HTML del álbum; reintento en texto plano: %s", exc
+            )
+            for h in handles:
+                h.seek(0)
+            await bot.send_media_group(  # type: ignore[attr-defined]
+                chat_id=chat_id_int, media=construir(caption, None)
+            )
+
+    # ---------------------------------------------------------------------------
+    # Helpers
+    # ---------------------------------------------------------------------------
+
+    def _require_bot(self) -> object:
+        """Retorna el bot activo o lanza ``RuntimeError`` si no está disponible."""
+        bot = self._get_telegram_bot()
+        if bot is None:
+            raise RuntimeError(
+                "Telegram no está disponible: no hay un bot registrado en el sistema."
+            )
+        return bot
+
+    @staticmethod
+    def _parse_chat_id(chat_id: str) -> int:
+        """Parsea el chat_id de string a entero."""
+        try:
+            return int(chat_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"chat_id debe ser un entero serializado: {chat_id!r}") from exc

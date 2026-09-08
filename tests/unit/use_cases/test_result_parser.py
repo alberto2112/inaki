@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import json
 
-
 from core.domain.value_objects.delegation_result import DelegationResult
 from core.use_cases._result_parser import parse_delegation_result
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -20,7 +20,6 @@ from unittest.mock import MagicMock, patch
 
 from typer.testing import CliRunner
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

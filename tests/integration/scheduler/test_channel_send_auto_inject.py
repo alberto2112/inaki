@@ -18,9 +18,8 @@ import pytest
 from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRepo
 from adapters.outbound.tools.scheduler_tool import SchedulerTool
 from core.domain.entities.task import ChannelSendPayload
-from inaki.shared.channel_context import ChannelContext
 from core.use_cases.schedule_task import ScheduleTaskUseCase
-
+from inaki.shared.channel_context import ChannelContext
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -105,7 +105,7 @@ def test_daemon_client_error_str_includes_status() -> None:
 # Tarea 2.1 — UnknownAgentError y DaemonAuthError
 # ---------------------------------------------------------------------------
 
-from inaki.shared.errors import UnknownAgentError, DaemonAuthError  # noqa: E402
+from inaki.shared.errors import DaemonAuthError, UnknownAgentError  # noqa: E402
 
 
 def test_unknown_agent_error_es_subclase_de_daemon_client_error() -> None:

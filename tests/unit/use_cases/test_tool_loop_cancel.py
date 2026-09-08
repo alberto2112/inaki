@@ -9,15 +9,14 @@ produce el resumen de cierre.
 from __future__ import annotations
 
 import json
-
 from unittest.mock import AsyncMock
 
 from adapters.outbound.scope_registry_adapter import InMemoryScopeRegistryAdapter
-from inaki.shared.message import Message, Role
 from core.domain.value_objects.llm_response import LLMResponse
 from core.ports.outbound.scope_registry_port import Scope
 from core.ports.outbound.tool_port import ToolResult
 from core.use_cases._tool_loop import _CANCELLED_TOOL_RESULT, run_tool_loop
+from inaki.shared.message import Message, Role
 
 _SCOPE: Scope = ("agent1", "telegram", "chat1")
 

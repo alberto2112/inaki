@@ -29,7 +29,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from core.domain.entities.background_task import BackgroundTaskView
-from inaki.shared.message import Message, Role
 from core.domain.entities.skill import Skill
 from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
 from core.domain.services.prepend_timestamps import prepend_timestamps
@@ -37,10 +36,11 @@ from core.domain.services.sticky_selector import apply_sticky
 from core.domain.value_objects.agent_settings import RunAgentSettings
 from core.domain.value_objects.conversation_state import ConversationState
 from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
-from core.ports.outbound.embedding_port import IEmbeddingProvider
 from core.ports.outbound.channel_port import IIntermediateSink
+from core.ports.outbound.embedding_port import IEmbeddingProvider
 from core.ports.outbound.skill_port import ISkillRepository
 from core.ports.outbound.tool_port import IToolExecutor
+from inaki.shared.message import Message, Role
 
 logger = logging.getLogger(__name__)
 

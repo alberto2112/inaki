@@ -19,8 +19,8 @@ import pytest
 
 from adapters.outbound.providers.base import ResolvedLLMConfig
 from adapters.outbound.providers.custom import CustomProvider
-from inaki.shared.message import Message, Role
 from inaki.shared.errors import ConfigError
+from inaki.shared.message import Message, Role
 from infrastructure.factories.llm_factory import LLMProviderFactory
 
 _BASE_URL = "http://192.168.1.50:8000/v1"

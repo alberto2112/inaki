@@ -11,14 +11,13 @@ Cobertura:
 
 from __future__ import annotations
 
-
 import httpx
 import pytest
 
-from adapters.outbound.providers.openai_responses import OpenAIResponsesProvider
-from inaki.shared.message import Message, Role
-from inaki.shared.errors import LLMError
 from adapters.outbound.providers.base import ResolvedLLMConfig
+from adapters.outbound.providers.openai_responses import OpenAIResponsesProvider
+from inaki.shared.errors import LLMError
+from inaki.shared.message import Message, Role
 
 
 def _cfg(**overrides) -> ResolvedLLMConfig:

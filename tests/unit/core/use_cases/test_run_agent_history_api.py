@@ -7,13 +7,13 @@ Cubre Design §D1:
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock
 
-from inaki.shared.message import Message, Role
-from core.use_cases.run_agent import RunAgentUseCase
-from infrastructure.container import build_run_agent_settings
+import pytest
 
+from core.use_cases.run_agent import RunAgentUseCase
+from inaki.shared.message import Message, Role
+from infrastructure.container import build_run_agent_settings
 
 # ---------------------------------------------------------------------------
 # Fixtures

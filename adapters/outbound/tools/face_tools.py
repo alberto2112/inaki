@@ -28,11 +28,11 @@ from typing import Any
 import numpy as np
 
 from core.domain.entities.face import Person
-from inaki.shared.errors import FaceRegistryError
-from inaki.shared.channel_context import ChannelContext
 from core.ports.outbound.face_registry_port import IFaceRegistryPort
 from core.ports.outbound.message_face_metadata_port import IMessageFaceMetadataRepo
 from core.ports.outbound.tool_port import ITool, ToolResult
+from inaki.shared.channel_context import ChannelContext
+from inaki.shared.errors import FaceRegistryError
 
 logger = logging.getLogger(__name__)
 

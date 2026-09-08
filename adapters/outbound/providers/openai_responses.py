@@ -20,9 +20,9 @@ from collections.abc import AsyncIterator
 import httpx
 
 from adapters.outbound.providers.base import BaseLLMProvider, ResolvedLLMConfig
-from inaki.shared.message import Message, Role
-from inaki.shared.errors import LLMError
 from core.domain.value_objects.llm_response import LLMResponse
+from inaki.shared.errors import LLMError
+from inaki.shared.message import Message, Role
 
 PROVIDER_NAME = "openai_responses"
 

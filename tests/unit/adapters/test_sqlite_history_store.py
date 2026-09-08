@@ -8,8 +8,8 @@ from adapters.outbound.history.sqlite_history_store import (
     HistoryStoreSettings,
     SQLiteHistoryStore,
 )
-from inaki.shared.message import Message, Role
 from core.domain.value_objects.conversation_state import ConversationState
+from inaki.shared.message import Message, Role
 
 
 @pytest.fixture
@@ -530,6 +530,7 @@ async def test_load_state_filters_non_positive_ttls(history_store):
     en vez de propagarlo. Los valores válidos se conservan.
     """
     import json
+
     import aiosqlite
 
     async with aiosqlite.connect(history_store._db_path) as conn:

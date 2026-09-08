@@ -19,8 +19,9 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from inaki.config.channels import canales_registrados
 from inaki.config.docs import generate_config_reference, generate_global_example
-from inaki.config.schema import CHANNEL_SCHEMAS, AgentConfig, GlobalConfig
+from inaki.config.schema import AgentConfig, GlobalConfig
 
 _RAIZ = Path(__file__).resolve().parents[2]
 _REFERENCE = _RAIZ / "docs" / "config-reference.md"
@@ -47,7 +48,11 @@ def _modelos_del_schema() -> list[type[BaseModel]]:
                 if inspect.isclass(sub) and issubclass(sub, BaseModel):
                     recorrer(sub)
 
-    raices: list[type[BaseModel]] = [GlobalConfig, AgentConfig, *CHANNEL_SCHEMAS.values()]
+    raices: list[type[BaseModel]] = [
+        GlobalConfig,
+        AgentConfig,
+        *(c.modelo for c in canales_registrados().values()),
+    ]
     for raiz in raices:
         recorrer(raiz)
     return vistos

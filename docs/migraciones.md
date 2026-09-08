@@ -75,6 +75,7 @@ existe este documento— y la contradicción no queda flotando.
 | [`broadcast-topology-config`](#broadcast-topology-config) | Rol explícito `server` XOR `client`; config vieja falla al cargar |
 | [`broadcast-arranque-observable`](#broadcast-arranque-observable) | El fallo de `bind()` y la config de broadcast que no valida ahora salen como `ERROR` en el log |
 | [`formato-en-el-borde-del-transporte`](#formato-en-el-borde-del-transporte) | Todo lo que Telegram manda fuera del turno conversacional (scheduler, `bg-N`, intermedios, media) sale **formateado** y troceado, no en markdown crudo |
+| [`canal-telegram-vertical`](#canal-telegram-vertical) | `POST /admin/send` pierde `broadcast`/`broadcasted` e `inaki send` pierde `--no-broadcast`: la emisión al LAN la decide el borde del canal, así que `channel_send`, tools y resultados `bg-N` hacia un grupo AHORA se replican por broadcast; el módulo config deja de conocer canales (registro) |
 | [`egress-unico`](#egress-unico) | Un `channel_send` sale por el bot del agente DUEÑO (antes, por el primer bot registrado) y lo persiste el outbound; sin dueño no persiste. Desaparecen `IOutboundSink`, `TelegramSink`, `SinkFactory`, `ChannelHistoryRecorderAdapter` y los sinks intermedios de Telegram/router |
 | [`modulo-config-y-retiro-del-tui`](#modulo-config-y-retiro-del-tui) | Desaparece `inaki setup` (TUI retirado; la config se edita en YAML con `inaki config show --origin` de espejo); `textual` deja de ser dependencia; la config vive en `inaki/config/` con el schema partido por secciones |
 | [`observabilidad-un-solo-stack`](#observabilidad-un-solo-stack) | Cada línea de log lleva hora, nivel, logger y los campos `extra` (antes solo el mensaje); `structlog` deja de ser dependencia; nuevos `app.log_format`, `app.debug` y `inaki --debug` con trazas de turno en `<home>/debug/turns/` |
@@ -105,6 +106,73 @@ existe este documento— y la contradicción no queda flotando.
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `canal-telegram-vertical`
+
+**Contexto (2026-09-08, fase 4 del refactor modular — la que motivó todo).** El canal
+Telegram estaba repartido en OCHO paquetes cortados por dirección técnica:
+`adapters/inbound/telegram` (bot y mixins), `adapters/broadcast` (transporte TCP, un
+paquete que no era ni inbound ni outbound), `core/ports/outbound/broadcast_port.py`,
+`core/domain/services/{broadcast_buffer,rate_limiter}.py`, `adapters/outbound/file_repo`,
+`adapters/outbound/file_transport`, `core/domain/value_objects/telegram_file.py` (+ su port)
+y la sección `TelegramChannelConfig` dentro del módulo config, con su migración
+`broadcast→groups` y su validación de unicidad de tokens dentro del loader. El
+broadcast, que nació para suplir que Telegram no deje hablar a dos bots, se trataba
+como un subsistema transversal: lo arrancaba `AppContainer.startup()`, y la decisión
+de emitir estaba copiada en el bot y en `/admin/send` — y AUSENTE en el scheduler,
+así que un `channel_send` a un grupo era invisible para los otros bots.
+
+**Cambio.**
+
+- Nace `inaki/channels/telegram/`: `bot.py` + handlers, `outbound.py` (el borde),
+  `tools/`, `broadcast/` (`tcp`, `buffer`, `rate_limiter`, `port`, `mixin`, y el nuevo
+  `egress`), `files/` (modelo, ports, repo, downloader), `config.py` (sección +
+  migración + validaciones) y `channel.py` (`TelegramChannel`, el `IChannel`).
+- **El módulo config no conoce canales.** `CHANNEL_SCHEMAS` se reemplaza por un
+  registro (`inaki/config/channels.py`: `registrar_canal(nombre, modelo, migraciones,
+  validar_raw, validar_agentes)`) que llena `inaki/channels/registrar_canales_instalados()`
+  desde el composition root (`inaki/cli.py`, antes de cargar nada) y desde
+  `tests/conftest.py`. Loader, introspección y `config-reference.md` iteran el registro.
+  La property `AgentConfig.telegram` desaparece: accesor genérico
+  `AgentConfig.canal(nombre, Modelo)` y helper `telegram_config(cfg)` del canal.
+- **Emisión de broadcast en el borde.** `BroadcastEgress` (una política) la usan el
+  outbound del canal (scheduler, tools, `/admin/send`, `bg-N`) y la respuesta
+  conversacional del bot. Se borra la copia de `/admin/send`, los campos `broadcast`
+  y `broadcasted` de su API, el parámetro del `DaemonClient` y `inaki send --no-broadcast`.
+- **Ciclo de vida.** `TelegramChannel.start()` arranca el transporte de broadcast
+  (un `bind()` fallido se loguea como `startup.resource` con `status=error` y el bot
+  arranca igual) y el bot (`initialize` → `start` → comandos → username → trigger →
+  aviso online → polling sin descartar backlog); `stop()` deshace en orden inverso.
+  `AppContainer._build_channels()` construye los bots al final del init y los expone
+  en `channels: list[IChannel]`; el daemon (`_start_channels`/`_stop_channels`) los
+  arranca sin saber cuál es cuál. `startup()`/`shutdown()` del container ya no tocan
+  el broadcast.
+- `turn_dispatch` (routing de turnos in-flight, compartido por REST y Telegram) pasa
+  al kernel: `core/use_cases/turn_dispatch.py`.
+- Contratos `lint-imports`: `core`, `adapters`, `shared`, `observability` y `config` no
+  importan `inaki.channels`; `inaki.channels.telegram` no importa otros inbounds, el
+  wiring ni el composition root.
+
+**Comportamiento observable.**
+
+- `POST /admin/send` ya no acepta `broadcast` ni devuelve `broadcasted`; `inaki send`
+  pierde `--no-broadcast`. Un texto enviado a un GRUPO por cualquier camino
+  (scheduler, tools, `/admin/send`, `bg-N`) se replica al LAN si `emit.assistant_response`
+  lo permite — antes solo lo hacían el bot y `/admin/send`.
+- Los bots se construyen al armar el container (no al arrancar el daemon); el transporte
+  de broadcast arranca y se detiene con su canal.
+- Wire format del broadcast, DB y claves YAML: sin cambios.
+
+**Pendiente declarado (fase 4b).** Los mixins del bot (`commands`, `group_flow`,
+`media`, `broadcast.mixin`) siguen siendo mixins con contrato por anotaciones de clase.
+Convertirlos a composición es un refactor propio, ortogonal al movimiento, y se hace en
+una fase dedicada.
+
+**Invariante que dejó.** **NUNCA** un módulo de config que importe un canal: el canal
+se registra, config lee el registro. Y **NUNCA** un `AppContainer` que arranque el
+transporte de un canal: el ciclo de vida de un canal es del canal (`IChannel`).
 
 ---
 

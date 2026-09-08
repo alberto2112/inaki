@@ -11,7 +11,6 @@ from typing import Literal
 
 from inaki.config.schema._base import ExpandedPath, _ConfigBaseModel
 
-
 ContainmentMode = Literal["strict", "warn", "off"]
 
 

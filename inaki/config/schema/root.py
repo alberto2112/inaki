@@ -1,4 +1,4 @@
-"""Raíces del schema: ``AgentConfig``, ``GlobalConfig`` y el registro ``CHANNEL_SCHEMAS``.
+"""Raíces del schema: ``AgentConfig`` y ``GlobalConfig``.
 
 Sección del schema de configuración. Solo declaraciones: sin I/O ni carga de YAML.
 Importá desde ``inaki.config.schema`` (o ``inaki.config``).
@@ -6,13 +6,15 @@ Importá desde ``inaki.config.schema`` (o ``inaki.config``).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeVar
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
+
+from inaki.config.channels import canal_registrado, canales_registrados
 from inaki.config.schema._base import _ConfigBaseModel
 from inaki.config.schema.admin import AdminConfig
 from inaki.config.schema.app import AppConfig
-from inaki.config.schema.channels import ChannelsGlobalConfig, CliChannelConfig
+from inaki.config.schema.channels import ChannelsGlobalConfig
 from inaki.config.schema.chat_history import ChatHistoryConfig
 from inaki.config.schema.delegation import AgentDelegationConfig, DelegationConfig
 from inaki.config.schema.embedding import EmbeddingConfig
@@ -23,32 +25,12 @@ from inaki.config.schema.photos import PhotosConfig
 from inaki.config.schema.providers import ProviderConfig
 from inaki.config.schema.scheduler import SchedulerConfig
 from inaki.config.schema.skills import SkillsConfig
-from inaki.config.schema.telegram import TelegramChannelConfig
 from inaki.config.schema.tools import SemanticRoutingConfig, ToolsConfig
 from inaki.config.schema.transcription import TranscriptionConfig
 from inaki.config.schema.user import UserConfig
 from inaki.config.schema.workspace import WorkspaceConfig
 
-
-# ---------------------------------------------------------------------------
-# Registry de canales — fuente única de "qué canal existe y con qué schema"
-# ---------------------------------------------------------------------------
-
-CHANNEL_SCHEMAS: dict[str, type[BaseModel]] = {
-    "telegram": TelegramChannelConfig,
-    "cli": CliChannelConfig,
-}
-"""Schema de cada canal soportado, indexado por su clave en ``channels:``.
-
-Fuente ÚNICA de la verdad, consumida por tres superficies que antes la
-duplicaban o la ignoraban: la validación de ``AgentConfig.channels`` (acá
-abajo), la introspección del schema (``inaki/config/introspection.py``) y el
-generador de ``docs/config-reference.md``.
-
-Vive en este módulo, y no en uno propio, para no crear un ciclo de imports:
-las clases que indexa se definen arriba. Agregar un canal = agregar su modelo
-y una entrada acá; **no** hay más lugares que tocar.
-"""
+_ModeloCanal = TypeVar("_ModeloCanal", bound=BaseModel)
 
 
 # ---------------------------------------------------------------------------
@@ -152,10 +134,10 @@ class AgentConfig(_ConfigBaseModel):
     channels: dict[str, Any] = {}
     """Adapters de canal del agente, indexados por su clave en ``channels:``.
 
-    Los bloques de canales conocidos (``CHANNEL_SCHEMAS``) llegan acá **ya
-    validados y coercionados a su modelo Pydantic** por ``_validar_channels``.
-    Para acceso tipado usá las properties (``telegram``, ``cli``); el dict
-    directo sirve para iterar o preguntar qué canales declaró el agente.
+    Los bloques de los canales REGISTRADOS (``inaki.config.channels``) llegan acá
+    **ya validados y coercionados a su modelo Pydantic** por ``_validar_channels``.
+    Para acceso tipado usá ``canal(nombre, Modelo)``; el dict directo sirve para
+    iterar o preguntar qué canales declaró el agente.
     """
     providers: dict[str, ProviderConfig] = {}
     """Registry de proveedores post-merge. Heredado del global + overrides del agente."""
@@ -163,7 +145,7 @@ class AgentConfig(_ConfigBaseModel):
     @field_validator("channels", mode="before")
     @classmethod
     def _validar_channels(cls, value: Any) -> Any:
-        """Valida cada bloque de canal conocido contra ``CHANNEL_SCHEMAS``.
+        """Valida cada bloque de canal contra el modelo que registró su canal.
 
         Es la ÚNICA puerta de validación de canales, y por eso vive acá y no en
         el loader: cubre por igual los cuatro caminos que construyen un
@@ -181,12 +163,13 @@ class AgentConfig(_ConfigBaseModel):
 
         resultado: dict[str, Any] = {}
         for nombre, bloque in value.items():
-            schema = CHANNEL_SCHEMAS.get(nombre)
-            if schema is None:
-                conocidos = ", ".join(sorted(CHANNEL_SCHEMAS))
+            registrado = canal_registrado(nombre)
+            if registrado is None:
+                conocidos = ", ".join(canales_registrados()) or "(ninguno registrado)"
                 raise ValueError(
                     f"channels.{nombre}: canal desconocido. Canales soportados: {conocidos}."
                 )
+            schema = registrado.modelo
             if isinstance(bloque, schema):
                 resultado[nombre] = bloque
                 continue
@@ -203,17 +186,15 @@ class AgentConfig(_ConfigBaseModel):
                 raise ValueError(f"channels.{nombre}: {exc}") from exc
         return resultado
 
-    @property
-    def telegram(self) -> TelegramChannelConfig | None:
-        """Bloque ``channels.telegram`` tipado, o ``None`` si el agente no lo declara."""
-        bloque = self.channels.get("telegram")
-        return bloque if isinstance(bloque, TelegramChannelConfig) else None
+    def canal(self, nombre: str, modelo: type[_ModeloCanal]) -> _ModeloCanal | None:
+        """Bloque ``channels.<nombre>`` tipado como ``modelo``, o ``None`` si no lo declara.
 
-    @property
-    def cli(self) -> CliChannelConfig | None:
-        """Bloque ``channels.cli`` tipado, o ``None`` si el agente no lo declara."""
-        bloque = self.channels.get("cli")
-        return bloque if isinstance(bloque, CliChannelConfig) else None
+        El schema raíz no tiene un campo por canal: los canales se registran desde
+        fuera (``inaki.config.channels``) y cada uno expone su accesor
+        (``inaki.channels.telegram.config.telegram_config``) sobre este método.
+        """
+        bloque = self.channels.get(nombre)
+        return bloque if isinstance(bloque, modelo) else None
 
 
 class GlobalConfig(_ConfigBaseModel):

@@ -8,7 +8,6 @@ import yaml
 
 from inaki.config import AdminConfig, GlobalConfig, load_global_config
 
-
 # ---------------------------------------------------------------------------
 # AdminConfig — defaults
 # ---------------------------------------------------------------------------

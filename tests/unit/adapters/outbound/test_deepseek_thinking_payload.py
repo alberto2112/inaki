@@ -17,9 +17,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from adapters.outbound.providers.base import ResolvedLLMConfig
 from adapters.outbound.providers.deepseek import DeepSeekProvider
 from inaki.shared.message import Message, Role
-from adapters.outbound.providers.base import ResolvedLLMConfig
 
 
 def _cfg(

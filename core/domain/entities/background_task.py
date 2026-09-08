@@ -24,7 +24,6 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-
 _PROMPT_PREVIEW_MAX = 80
 _ELLIPSIS = "…"
 

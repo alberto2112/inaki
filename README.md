@@ -27,7 +27,7 @@ Inaki follows **strict hexagonal (Ports & Adapters)** architecture:
 ```
 ext/          ← User extensions (auto-discovered)
 adapters/
-  inbound/    ← CLI · Telegram · REST · daemon
+  inbound/    ← CLI · REST · daemon   (Telegram: inaki/channels/telegram/)
   outbound/   ← LLM providers · tools · memory · embeddings · skills · scheduler
 core/
   domain/     ← Entities, value objects, errors — zero external imports

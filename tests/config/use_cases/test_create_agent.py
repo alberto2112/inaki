@@ -6,9 +6,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from inaki.shared.errors import AgentYaExisteError
 from inaki.config.ports import IConfigRepository, LayerName
 from inaki.config.use_cases.create_agent import CreateAgentUseCase
+from inaki.shared.errors import AgentYaExisteError
 
 
 @pytest.fixture()

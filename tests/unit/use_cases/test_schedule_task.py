@@ -13,8 +13,8 @@ from core.domain.entities.task import (
     TaskStatus,
     TriggerType,
 )
-from inaki.shared.errors import BuiltinTaskProtectedError, TaskNotFoundError
 from core.use_cases.schedule_task import ScheduleTaskUseCase
+from inaki.shared.errors import BuiltinTaskProtectedError, TaskNotFoundError
 
 
 def _make_task(task_id: int = 0) -> ScheduledTask:

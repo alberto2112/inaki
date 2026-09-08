@@ -14,9 +14,9 @@ import pkgutil
 from pathlib import Path
 
 from adapters.outbound.providers.base import BaseLLMProvider, ResolvedLLMConfig
-from inaki.shared.errors import ConfigError
 from core.ports.outbound.llm_port import ILLMProvider
 from inaki.config import LLMConfig, ProviderConfig
+from inaki.shared.errors import ConfigError
 
 logger = logging.getLogger(__name__)
 

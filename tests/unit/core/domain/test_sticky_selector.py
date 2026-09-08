@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from core.domain.services.sticky_selector import apply_sticky
 
-
 # ---------------------------------------------------------------------------
 # Feature deshabilitada
 # ---------------------------------------------------------------------------

@@ -40,7 +40,7 @@ Cuatro capas. La dirección de dependencias es `adapters → core ← infrastruc
 | Capa | Qué contiene | Regla dura |
 |---|---|---|
 | **`core/`** | Entidades, ports, use cases, servicios y errores de dominio | **NUNCA** importa `adapters/` ni `infrastructure/`. Terceros permitidos: solo `pydantic`, `croniter`, `numpy` |
-| **`adapters/`** | Implementaciones de ports. Inbound (Telegram, REST admin, CLI chat) y outbound (LLM, tools, repos, embedding, skills, scheduler) | **NUNCA** importa `infrastructure/`. Si "necesita" el container o el schema → declara un Protocol/Settings VO y el composition root se lo inyecta |
+| **`adapters/`** | Implementaciones de ports. Inbound (REST admin, CLI chat) y outbound (LLM, tools, repos, embedding, skills, scheduler). Telegram ya NO vive acá: es el paquete vertical `inaki/channels/telegram/` | **NUNCA** importa `infrastructure/`. Si "necesita" el container o el schema → declara un Protocol/Settings VO y el composition root se lo inyecta |
 | **`infrastructure/`** | Wiring y cross-cutting. `container.py` | Único lugar donde se instancian adapters y se inyectan en use cases |
 | **`inaki/`** | Composition root: `cli.py`, `daemon_runner.py`, sub-CLIs | Fuera de la regla hexagonal (ensamblar es su trabajo). Los entry points NUEVOS van acá, **no** bajo `adapters/inbound/` |
 
@@ -52,8 +52,10 @@ Cuatro capas. La dirección de dependencias es `adapters → core ← infrastruc
 > compartidas: `Message`/`Role`, gramática de attachments, `ChannelContext`,
 > errores, skip marker — **no importa nada del proyecto**) e
 > `inaki/observability/` (logging unificado, modo debug, trazas de turno,
-> eventos de arranque) e `inaki/config/` (schema por secciones, loader, merge,
-> home, config efectiva, borde de errores; el setup TUI fue retirado). La ley de dependencias vive en `pyproject.toml` →
+> eventos de arranque), `inaki/config/` (schema por secciones, loader, merge,
+> home, config efectiva, borde de errores; el setup TUI fue retirado) e
+> `inaki/channels/telegram/` (el primer canal vertical: bot, outbound como borde con
+> emisión de broadcast, transporte TCP, ficheros y su sección de config registrada). La ley de dependencias vive en `pyproject.toml` →
 > `[tool.importlinter]` y la verifica `lint-imports`. Mientras dure el refactor,
 > las capas `core/`, `adapters/` e `infrastructure/` siguen vigentes con sus
 > reglas; los módulos se mudan de a uno.
@@ -73,9 +75,11 @@ Resumen operativo. El texto completo, con el porqué y los antipatrones, está e
    y se expone por tres superficies que comparten lógica: use case en `core/` → tool del
    LLM → gateway admin único (`POST /admin/tool/invoke`, cliente `inaki tool <name>`). Un
    **canal** (Telegram, mañana Slack) es un inbound adapter que solo traduce su I/O a un
-   turno. Un canal nuevo se declara en **una** línea: su modelo en el schema + su entrada
-   en `CHANNEL_SCHEMAS` (`inaki/config/schema/root.py`). De ahí lo leen el loader (que
-   lo valida), la introspección del schema y el generador de `config-reference.md`. **Antipatrón**: que cada canal implemente pasarelas de los CLI — es una
+   turno. Un canal nuevo es UN paquete bajo `inaki/channels/<nombre>/` que implementa el
+   contrato del kernel (`core/ports/outbound/channel_port.py`: `IChannel` + `IChannelOutbound`)
+   y REGISTRA su sección de config con `registrar_canal(...)` (`inaki/config/channels.py`)
+   desde `inaki/channels/__init__.py`. El módulo config no conoce ningún canal: el loader
+   (validación y migraciones), la introspección y `config-reference.md` leen el registro. **Antipatrón**: que cada canal implemente pasarelas de los CLI — es una
    explosión N×M. Excepción CERRADA: los slash commands de Telegram son el panel del
    OPERADOR (admin-only, deterministas, sin LLM); extender uno existente es aceptable,
    crear uno nuevo para una capacidad nueva NO, y **NUNCA replicarlos en un canal nuevo**.

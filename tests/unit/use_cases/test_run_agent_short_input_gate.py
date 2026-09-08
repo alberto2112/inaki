@@ -14,7 +14,7 @@ from core.domain.value_objects.conversation_state import ConversationState
 from core.domain.value_objects.llm_response import LLMResponse
 from core.use_cases.run_agent import RunAgentUseCase
 from infrastructure.container import build_run_agent_settings
-from infrastructure.config import (
+from inaki.config import (
     AgentConfig,
     ChatHistoryConfig,
     EmbeddingConfig,

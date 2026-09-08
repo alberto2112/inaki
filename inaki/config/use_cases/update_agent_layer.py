@@ -1,0 +1,70 @@
+"""
+UpdateAgentLayerUseCase — escribe cambios en la capa de agente.
+
+Gestiona el tri-estado de ``memory.llm.*`` (Inherit / Override / Override-to-null):
+- ``TristadoValor.INHERIT`` → elimina la clave del YAML (ausente = heredar de global).
+- ``TristadoValor.OVERRIDE_VALOR`` → escribe el valor explícito.
+- ``TristadoValor.OVERRIDE_NULL`` → escribe la clave con valor ``null`` explícito.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from inaki.config.ports import LayerName
+from inaki.config.use_cases.intent import (
+    CampoTriestado,
+    TristadoValor,
+    deep_merge_con_eliminaciones,
+    resolver_tristados,
+)
+
+if TYPE_CHECKING:
+    from inaki.config.ports import IConfigRepository
+
+# Re-exportados desde ``intent`` para no romper imports existentes (los tests
+# los toman de acá).
+__all__ = ["CampoTriestado", "TristadoValor", "UpdateAgentLayerUseCase"]
+
+
+class UpdateAgentLayerUseCase:
+    """
+    Actualiza campos en la capa de agente indicada.
+
+    Soporta tri-estado en ``memory.llm.*``: si el caller pasa un
+    ``CampoTriestado`` para un sub-campo de ``memory.llm``, el use case
+    lo resuelve correctamente (INHERIT = eliminar clave; OVERRIDE_NULL =
+    escribir ``null`` explícito).
+    """
+
+    def __init__(self, repo: "IConfigRepository") -> None:
+        self._repo = repo
+
+    def execute(
+        self,
+        agent_id: str,
+        cambios: dict[str, Any],
+        layer: LayerName = LayerName.AGENT,
+    ) -> None:
+        """
+        Aplica ``cambios`` en la capa ``layer`` del agente ``agent_id``.
+
+        Args:
+            agent_id: Id del agente cuya capa se modifica.
+            cambios: Dict con los campos a actualizar.
+                     Los valores pueden ser ``CampoTriestado`` para campos
+                     bajo ``memory.llm.*`` que usan tri-estado.
+            layer: Solo capas de agente son válidas: ``AGENT`` o ``SUB_AGENT``.
+
+        Raises:
+            ValueError: Si se pasa una capa global.
+        """
+        if layer not in (LayerName.AGENT, LayerName.SUB_AGENT):
+            raise ValueError(
+                f"UpdateAgentLayerUseCase solo acepta capas de agente, recibió: {layer!r}"
+            )
+
+        datos_actuales = self._repo.read_layer(layer, agent_id=agent_id)
+        datos_resueltos = resolver_tristados(cambios)
+        datos_nuevos = deep_merge_con_eliminaciones(datos_actuales, datos_resueltos)
+        self._repo.write_layer(layer, datos_nuevos, agent_id=agent_id)

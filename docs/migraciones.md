@@ -75,6 +75,7 @@ existe este documento— y la contradicción no queda flotando.
 | [`broadcast-topology-config`](#broadcast-topology-config) | Rol explícito `server` XOR `client`; config vieja falla al cargar |
 | [`broadcast-arranque-observable`](#broadcast-arranque-observable) | El fallo de `bind()` y la config de broadcast que no valida ahora salen como `ERROR` en el log |
 | [`formato-en-el-borde-del-transporte`](#formato-en-el-borde-del-transporte) | Todo lo que Telegram manda fuera del turno conversacional (scheduler, `bg-N`, intermedios, media) sale **formateado** y troceado, no en markdown crudo |
+| [`modulo-config-y-retiro-del-tui`](#modulo-config-y-retiro-del-tui) | Desaparece `inaki setup` (TUI retirado; la config se edita en YAML con `inaki config show --origin` de espejo); `textual` deja de ser dependencia; la config vive en `inaki/config/` con el schema partido por secciones |
 | [`observabilidad-un-solo-stack`](#observabilidad-un-solo-stack) | Cada línea de log lleva hora, nivel, logger y los campos `extra` (antes solo el mensaje); `structlog` deja de ser dependencia; nuevos `app.log_format`, `app.debug` y `inaki --debug` con trazas de turno en `<home>/debug/turns/` |
 | [`user-timezone-default`](#user-timezone-default) | Un `global.yaml` sin bloque `user:` arranca (timezone autodetectada); antes el container moría con un `ValueError` de `ZoneInfo` |
 | [`broadcast-human-reset`](#broadcast-human-reset) | Un `user_input_voice`/`user_input_photo` recibido por broadcast **resetea** el rate limiter del grupo, igual que un mensaje humano nativo |
@@ -103,6 +104,51 @@ existe este documento— y la contradicción no queda flotando.
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `modulo-config-y-retiro-del-tui`
+
+**Contexto (2026-09-08, fase 2 del refactor modular).** La configuración estaba
+repartida en cuatro sitios sin frontera: `infrastructure/config*.py` (schema de
+1.800 líneas, loader, docs, introspección), `core/domain/config_merge.py`,
+`core/use_cases/config/` (12 use cases) más `core/ports/config_repository.py`,
+`adapters/outbound/config_repository/`, `inaki/config_cli.py` e
+`inaki/config_errors.py`. Y encima el setup TUI: 4.753 líneas en
+`adapters/inbound/setup_tui/` que editaban ficheros CRUDOS reimplementando la
+semántica de merge en la UI — el problema que `config-show-effective` ya había
+diagnosticado — con un commit desde julio y que "nunca funcionó como se
+esperaba" (palabras del operador).
+
+**Cambio.**
+
+- Nace `inaki/config/` como módulo con frontera: `schema/` (una sección por
+  área: `app`, `llm`, `memories`, `telegram`, `scheduler`... y `root` con
+  `AgentConfig`/`GlobalConfig`/`CHANNEL_SCHEMAS`), `loader`, `merge`, `home`,
+  `introspection`, `docs`, `ports`, `adapters/yaml_repository`, `use_cases/`
+  (con `intent.py`, antes `_merge.py`), `tools/config_tool`, `boundary` (antes
+  `config_errors`) y `cli`. Contrato `lint-imports`: el módulo solo conoce
+  `inaki.shared` y los ports de `core`; `adapters/` NO lo importa (sigue
+  recibiendo Settings VOs y paths resueltos).
+- El schema se partió en 19 ficheros para que cada bloque de config se mude con
+  su módulo cuando este se extraiga (el de Telegram, en la fase 4). Los modelos,
+  sus validadores y `config-reference.md` son idénticos: el drift test lo prueba.
+- El setup TUI se **borró** entero (código, tests, `docs/setup-tui-smoke.md`,
+  `inaki setup`, la dependencia `textual` y su override de mypy). Entre medio y
+  hasta que exista la config web (fase 11), la config se edita en YAML y
+  `inaki config show --origin` es el espejo de lo que el daemon ve de verdad.
+  Se rescató lo único con valor de dominio: la traducción intención → primitivo
+  del motor de merge (heredar / null explícito / valor), que ya vivía en el use
+  case y queda como `use_cases/intent.py`.
+
+**Pasos del operador.** Ninguno obligatorio. `inaki setup` deja de existir;
+`textual` queda instalado sin uso hasta el próximo `pip install -e .` limpio.
+
+**Invariante que dejó.** **NUNCA** volver a construir una interfaz de config
+sobre los ficheros crudos (ya lo decía `config-show-effective`; el TUI fue el
+caso que lo demostró con 5.000 líneas). Y **NUNCA** dejar que un bloque de
+config viva lejos de su módulo: cada sección del schema tiene un fichero para
+poder mudarse con el módulo que la consume.
 
 ---
 

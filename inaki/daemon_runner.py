@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Callable
 from inaki.observability import startup_event
 
 if TYPE_CHECKING:
-    from infrastructure.config import AgentRegistry
+    from inaki.config import AgentRegistry
     from infrastructure.container import AppContainer
 
 logger = logging.getLogger(__name__)

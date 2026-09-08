@@ -1,7 +1,5 @@
-"""
-Adapter outbound: repositorio YAML de configuración con preservación de comentarios.
-"""
+"""Store del Tool Config Protocol (``config/tool_config.yaml``, cifrado en reposo).
 
-from .yaml_repository import YamlRepository
-
-__all__ = ["YamlRepository"]
+El repositorio YAML de las capas de config vive en ``inaki/config/adapters``; este
+paquete queda con el store de las tools hasta que el módulo ``tools`` lo absorba.
+"""

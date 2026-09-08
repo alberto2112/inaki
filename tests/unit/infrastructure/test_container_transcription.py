@@ -20,7 +20,7 @@ import pytest
 
 from inaki.shared.errors import InakiError
 from core.ports.outbound.transcription_port import ITranscriptionProvider
-from infrastructure.config import (
+from inaki.config import (
     AgentConfig,
     ChatHistoryConfig,
     EmbeddingConfig,

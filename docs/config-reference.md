@@ -25,7 +25,7 @@ Cumple dos roles que conviene no confundir:
    políticas del proceso; escribirlos en ``agents/{id}.yaml`` no los
    override — según el caso se rechaza como clave desconocida o se filtra.
 
-Las credenciales viven en este mismo fichero (registry ``providers``, ``admin.auth_key``), que se crea con permisos 600 y NUNCA se commitea. La marca ``secret`` del schema sirve para enmascarar el campo en la TUI, no para separarlo en otro archivo.
+Las credenciales viven en este mismo fichero (registry ``providers``, ``admin.auth_key``), que se crea con permisos 600 y NUNCA se commitea. La marca ``secret`` del schema sirve para redactar el campo al mostrarlo (``inaki config show``), no para separarlo en otro archivo.
 
 | Field | Type | Default | Secret |
 |---|---|---|---|
@@ -133,7 +133,7 @@ Cada directorio se escanea buscando ``*/manifest.py``, que registra tools, skill
 
 **`default_agent`** — Agente que usan los comandos de CLI cuando no se pasa ``--agent``.
 
-Debe corresponder a un fichero ``agents/{id}.yaml`` existente. El validador de referencias cruzadas del TUI (``inaki setup``) avisa si apunta a un agente que no existe.
+Debe corresponder a un fichero ``agents/{id}.yaml`` existente: nadie lo valida al cargar, y un id inexistente hace fallar los comandos de CLI al resolver el agente (``AgentNotFoundError``).
 
 ### `LLMConfig`
 
@@ -651,7 +651,7 @@ El default ``127.0.0.1`` lo deja accesible SOLO desde la propia máquina. Ponerl
 
 **`auth_key`** — Credencial del header ``X-Admin-Key`` que protege los endpoints de gestión.
 
-Es un SECRETO: la TUI lo enmascara. Con ``null`` (default) el daemon arranca igual pero loggea un WARNING y los endpoints protegidos responden 403 — o sea, sin clave no se administra. La CLI la toma de acá salvo que se le pase ``--remote-key``.
+Es un SECRETO: ``inaki config show`` lo redacta. Con ``null`` (default) el daemon arranca igual pero loggea un WARNING y los endpoints protegidos responden 403 — o sea, sin clave no se administra. La CLI la toma de acá salvo que se le pase ``--remote-key``.
 
 **`chat_timeout`** — Timeout en segundos para turnos de chat vía REST (POST /admin/chat/turn).
 
@@ -870,7 +870,7 @@ Cada entrada representa UN vendor (groq, openai, openrouter, ollama, etc.) con s
 
 Con ``providers.groq: {...}`` el tipo se resuelve solo a ``"groq"``. Solo se explicita para tener DOS entradas del mismo adapter con credenciales distintas: ``providers.groq-work: {type: groq, api_key: K2}`` deja que ``llm.provider: groq-work`` apunte al adapter groq con otra cuenta.
 
-**`api_key`** — Credencial del vendor. Es un SECRETO: la TUI lo enmascara al editarlo.
+**`api_key`** — Credencial del vendor. Es un SECRETO: ``inaki config show`` lo redacta.
 
 Opcional para los providers locales que no la piden (``ollama``, ``e5_onnx``); los adapters que sí la requieren fallan al construirse si falta.
 

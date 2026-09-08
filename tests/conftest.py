@@ -10,7 +10,7 @@ from core.domain.entities.face import (
 )
 from core.domain.value_objects.conversation_state import ConversationState
 from core.domain.value_objects.llm_response import LLMResponse
-from infrastructure.config import (
+from inaki.config import (
     AgentConfig,
     ChatHistoryConfig,
     EmbeddingConfig,

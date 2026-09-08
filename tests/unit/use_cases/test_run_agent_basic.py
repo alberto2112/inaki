@@ -9,7 +9,7 @@ from infrastructure.container import build_run_agent_settings
 from inaki.shared.message import Message, Role
 from core.domain.entities.skill import Skill
 from core.domain.value_objects.llm_response import LLMResponse
-from infrastructure.config import (
+from inaki.config import (
     AgentConfig,
     LLMConfig,
     EmbeddingConfig,

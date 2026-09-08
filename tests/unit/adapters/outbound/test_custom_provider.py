@@ -181,7 +181,7 @@ def test_factory_crea_custom_sin_api_key_en_el_registry() -> None:
     Mismo trato que ``ollama``. Sin esto, arrancar contra un server sin auth te
     obliga a declarar una credencial fantasma solo para pasar el check.
     """
-    from infrastructure.config import LLMConfig, ProviderConfig
+    from inaki.config import LLMConfig, ProviderConfig
 
     provider = LLMProviderFactory.create(
         LLMConfig(provider="custom", model="unsloth/qwen3-8b", max_tokens=2048),

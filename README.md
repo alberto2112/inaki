@@ -95,7 +95,7 @@ Config is resolved via a **2-layer YAML merge** (each layer overrides only what 
 global.yaml  →  agents/{id}.yaml
 ```
 
-Credentials (provider `api_key`s, Telegram tokens, `admin.auth_key`) live in those same two files, which are created with mode `600` — **neither is committable**. "Secret" is a mark in the Pydantic schema, not a separate file: it is what makes `inaki setup` mask the field. Installs coming from the old `*.secrets.yaml` sidecars are migrated automatically on first start; no operator action needed.
+Credentials (provider `api_key`s, Telegram tokens, `admin.auth_key`) live in those same two files, which are created with mode `600` — **neither is committable**. "Secret" is a mark in the Pydantic schema, not a separate file: it is what makes `inaki config show` redact the field. Installs coming from the old `*.secrets.yaml` sidecars are migrated automatically on first start; no operator action needed.
 
 `tool_config.yaml` is **not part of this merge** — it is daemon-owned (written at runtime when tools store credentials) and read directly by the `YamlToolConfigStore`. Sensitive fields are stored with Fernet encryption (`enc:` prefix) using `~/.inaki/secret.key`.
 
@@ -150,7 +150,6 @@ inaki reload                     # Hot-reload daemon (closes channels, reloads c
 inaki consolidate                # Run memory consolidation for all agents
 inaki consolidate --agent dev    # Consolidate a single agent
 inaki inspect "query"            # Inspect RAG pipeline for a message (no LLM call)
-inaki setup                      # Interactive TUI for editing config (offline)
 inaki scheduler list             # List scheduled tasks
 inaki knowledge list             # List configured knowledge sources
 ```

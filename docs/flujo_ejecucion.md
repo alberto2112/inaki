@@ -359,7 +359,6 @@ Full wipe for the agent.
 | `inaki consolidate` | Consolidates all enabled agents with delay and exits |
 | `inaki consolidate --agent dev` | Consolidates only the specified agent and exits |
 | `inaki inspect "msg"` | Inspects the prompt pipeline (routing + memory) without calling the LLM |
-| `inaki setup` | Interactive configuration TUI (offline) |
 | `inaki reload` | Hot-reload the daemon |
 | `/consolidate` (in chat) | Extracts memories and archives the current agent's history |
 | `/history` (in chat) | Shows the current history |

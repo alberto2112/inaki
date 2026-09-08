@@ -14,7 +14,7 @@ inaki --home /srv/inaki-deptB daemon      # flag
 INAKI_HOME=/srv/inaki-deptB inaki daemon  # env var (systemd: Environment=INAKI_HOME=...)
 ```
 
-Orden de resolución (`infrastructure/home.py`): flag `--home` → env `INAKI_HOME`
+Orden de resolución (`inaki/config/home.py`): flag `--home` → env `INAKI_HOME`
 → default `~/.inaki`. Con `--home /foo`, los paths se re-anclan a `/foo/config`,
 `/foo/data/*.db`, `/foo/knowledge/`, `/foo/users/`, `/foo/secret.key`,
 `/foo/config/tool_config.yaml`.

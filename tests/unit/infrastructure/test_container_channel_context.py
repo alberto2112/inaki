@@ -33,7 +33,7 @@ from core.domain.value_objects.agent_settings import OneShotSettings
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from core.domain.services.scheduler_service import SchedulerService
 from core.use_cases.schedule_task import ScheduleTaskUseCase
-from infrastructure.config import (
+from inaki.config import (
     AgentConfig,
     AgentDelegationConfig,
     AppConfig,

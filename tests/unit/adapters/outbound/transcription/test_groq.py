@@ -18,12 +18,12 @@ import httpx
 import pytest
 import respx
 
+from adapters.outbound.transcription.base import ResolvedTranscriptionConfig
 from adapters.outbound.transcription.groq import (
     PROVIDER_NAME,
     GroqTranscriptionProvider,
 )
 from inaki.shared.errors import TranscriptionError, TranscriptionFileTooLargeError
-from adapters.outbound.transcription.base import ResolvedTranscriptionConfig
 
 DEFAULT_ENDPOINT = "https://api.groq.com/openai/v1/audio/transcriptions"
 

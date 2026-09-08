@@ -8,7 +8,6 @@ from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
 from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
 from core.ports.outbound.knowledge_port import IKnowledgeSource
 
-
 # ---------------------------------------------------------------------------
 # Helpers — fuentes mock
 # ---------------------------------------------------------------------------

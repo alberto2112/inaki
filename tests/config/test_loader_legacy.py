@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from inaki.shared.errors import ConfigError
 from inaki.config import load_agent_config, load_global_config
+from inaki.shared.errors import ConfigError
 
 
 def _write(path: Path, data: dict) -> None:

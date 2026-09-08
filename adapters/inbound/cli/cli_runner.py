@@ -12,12 +12,12 @@ import uuid
 
 from rich.console import Console
 
+from core.ports.outbound.daemon_client_port import IDaemonClient
 from inaki.shared.errors import (
     DaemonClientError,
     DaemonNotRunningError,
     DaemonTimeoutError,
 )
-from core.ports.outbound.daemon_client_port import IDaemonClient
 
 logger = logging.getLogger(__name__)
 console = Console()

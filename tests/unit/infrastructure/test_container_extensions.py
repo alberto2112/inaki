@@ -14,7 +14,6 @@ from adapters.outbound.tools.tool_registry import ToolRegistry
 from core.ports.outbound.tool_port import ITool, ToolResult
 from infrastructure.container import AgentContainer
 
-
 # ---------------------------------------------------------------------------
 # Fakes
 # ---------------------------------------------------------------------------

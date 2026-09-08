@@ -1,4 +1,4 @@
-"""Guard de la validación de ``channels`` contra ``CHANNEL_SCHEMAS``.
+"""Guard de la validación de ``channels`` contra el registro de canales.
 
 Antes ``AgentConfig.channels`` era un ``dict[str, dict[str, Any]]`` opaco: sus
 26 campos —el 14% del schema— no se validaban NUNCA al cargar. Un typo de tipo,
@@ -19,16 +19,15 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from inaki.shared.errors import ConfigError
-
+from inaki.channels.telegram.config import TelegramChannelConfig, telegram_config
 from inaki.config import (
-    CHANNEL_SCHEMAS,
     AgentConfig,
     CliChannelConfig,
-    TelegramChannelConfig,
     load_agent_config,
     load_global_config,
 )
+from inaki.config.channels import canales_registrados
+from inaki.shared.errors import ConfigError
 
 _BASE: dict[str, Any] = {
     "id": "dev",
@@ -53,38 +52,40 @@ def _agente(channels: dict) -> AgentConfig:
 def test_el_bloque_llega_tipado_y_con_los_defaults_del_schema() -> None:
     cfg = _agente({"telegram": {"token": "TKN"}})
 
-    assert isinstance(cfg.telegram, TelegramChannelConfig)
-    assert cfg.telegram.token == "TKN"
+    tg = telegram_config(cfg)
+    assert isinstance(tg, TelegramChannelConfig)
+    assert tg.token == "TKN"
     # Los defaults los pone el schema — no cada consumidor por su cuenta.
-    assert cfg.telegram.voice_enabled is True
-    assert cfg.telegram.reactions is False
+    assert tg.voice_enabled is True
+    assert tg.reactions is False
 
 
 def test_property_devuelve_none_si_el_canal_no_esta_declarado() -> None:
     cfg = _agente({"cli": {"user": "alberto"}})
 
-    assert cfg.telegram is None
-    assert isinstance(cfg.cli, CliChannelConfig)
-    assert cfg.cli.user == "alberto"
+    assert telegram_config(cfg) is None
+    cli = cfg.canal("cli", CliChannelConfig)
+    assert isinstance(cli, CliChannelConfig)
+    assert cli.user == "alberto"
 
 
 def test_bloque_vacio_o_nulo_equivale_a_todos_los_defaults() -> None:
-    assert _agente({"telegram": {}}).telegram.token == ""  # type: ignore[union-attr]
-    assert _agente({"telegram": None}).telegram.token == ""  # type: ignore[union-attr]
+    assert telegram_config(_agente({"telegram": {}})).token == ""  # type: ignore[union-attr]
+    assert telegram_config(_agente({"telegram": None})).token == ""  # type: ignore[union-attr]
 
 
 def test_un_modelo_ya_construido_pasa_sin_revalidar() -> None:
     """El builder efímero y el admin pueden pasar el modelo directo."""
     modelo = TelegramChannelConfig(token="T")
 
-    assert _agente({"telegram": modelo}).telegram is modelo
+    assert telegram_config(_agente({"telegram": modelo})) is modelo
 
 
 def test_sin_channels_no_hay_canales() -> None:
     cfg = AgentConfig(**_BASE)
 
     assert cfg.channels == {}
-    assert cfg.telegram is None and cfg.cli is None
+    assert telegram_config(cfg) is None and cfg.canal("cli", CliChannelConfig) is None
 
 
 # ---------------------------------------------------------------------------
@@ -156,9 +157,10 @@ def test_topologia_de_broadcast_invalida_aborta(broadcast: dict, motivo: str) ->
 def test_el_registry_cubre_los_canales_que_el_schema_expone() -> None:
     """Si alguien agrega un canal, tiene que estar en el registry: es lo que
     validan el loader, el setup TUI y el generador de la referencia."""
-    assert set(CHANNEL_SCHEMAS) == {"telegram", "cli"}
-    assert CHANNEL_SCHEMAS["telegram"] is TelegramChannelConfig
-    assert CHANNEL_SCHEMAS["cli"] is CliChannelConfig
+    registro = canales_registrados()
+    assert set(registro) == {"telegram", "cli"}
+    assert registro["telegram"].modelo is TelegramChannelConfig
+    assert registro["cli"].modelo is CliChannelConfig
 
 
 # ---------------------------------------------------------------------------
@@ -193,8 +195,9 @@ def test_el_loader_entrega_el_canal_tipado(tmp_path: Path) -> None:
     agente = load_agent_config("dev", agents_dir, global_raw)
 
     assert agente is not None
-    assert isinstance(agente.telegram, TelegramChannelConfig)
-    assert agente.telegram.allowed_chat_ids == [-100]
+    tg = telegram_config(agente)
+    assert isinstance(tg, TelegramChannelConfig)
+    assert tg.allowed_chat_ids == [-100]
 
 
 def test_el_loader_aborta_con_un_canal_invalido(tmp_path: Path) -> None:

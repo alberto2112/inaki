@@ -7,9 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from inaki.shared.errors import ConfigError
 from inaki.config import AgentRegistry
-
+from inaki.shared.errors import ConfigError
 
 _GLOBAL_RAW: dict = {
     "llm": {"provider": "openrouter", "model": "anthropic/claude-3-5-haiku"},

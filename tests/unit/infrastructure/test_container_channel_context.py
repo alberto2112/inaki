@@ -20,18 +20,13 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
-from core.ports.outbound.turn_tracer_port import NullTurnTracer
 from adapters.outbound.tools.scheduler_tool import SchedulerTool
 from adapters.outbound.tools.tool_registry import ToolRegistry
-from inaki.shared.channel_context import (
-    ChannelContext,
-    reset_current_channel_context,
-    set_current_channel_context,
-)
-from core.use_cases.run_agent import RunAgentUseCase
-from core.domain.value_objects.agent_settings import OneShotSettings
-from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from core.domain.services.scheduler_service import SchedulerService
+from core.domain.value_objects.agent_settings import OneShotSettings
+from core.ports.outbound.turn_tracer_port import NullTurnTracer
+from core.use_cases.run_agent import RunAgentUseCase
+from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from core.use_cases.schedule_task import ScheduleTaskUseCase
 from inaki.config import (
     AgentConfig,
@@ -49,8 +44,12 @@ from inaki.config import (
     ToolsConfig,
     WorkspaceConfig,
 )
+from inaki.shared.channel_context import (
+    ChannelContext,
+    reset_current_channel_context,
+    set_current_channel_context,
+)
 from infrastructure.container import AgentContainer
-
 
 # ---------------------------------------------------------------------------
 # Helpers — mismos patrones que test_container_wire_scheduler.py

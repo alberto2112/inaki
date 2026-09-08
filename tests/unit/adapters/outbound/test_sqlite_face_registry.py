@@ -19,13 +19,11 @@ Cubre:
 
 from __future__ import annotations
 
-
 import numpy as np
 import pytest
 
 from adapters.outbound.faces.sqlite_face_registry import SqliteFaceRegistryAdapter
 from inaki.shared.errors import EmbeddingDimensionMismatchError
-
 
 # ---------------------------------------------------------------------------
 # Helpers

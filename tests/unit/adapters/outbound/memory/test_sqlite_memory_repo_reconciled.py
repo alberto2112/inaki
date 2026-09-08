@@ -10,12 +10,11 @@ sobre una DB legacy sin la columna.
 
 from __future__ import annotations
 
-import aiosqlite
-import sqlite_vec
-
 from datetime import datetime, timezone
 
+import aiosqlite
 import pytest
+import sqlite_vec
 
 from adapters.outbound.memory.sqlite_memory_repo import SQLiteMemoryRepository
 from core.domain.entities.memory import MemoryEntry

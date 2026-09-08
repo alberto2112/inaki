@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
-from inaki.config.loader import _render_default_global_yaml
 from inaki.config import (
     AppConfig,
     ChatHistoryConfig,
@@ -16,6 +14,7 @@ from inaki.config import (
     ProviderConfig,
     SchedulerConfig,
 )
+from inaki.config.loader import _render_default_global_yaml
 from infrastructure.factories.llm_factory import LLMProviderFactory
 
 HOME = str(Path.home())

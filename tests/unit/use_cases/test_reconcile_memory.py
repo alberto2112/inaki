@@ -8,7 +8,6 @@ from core.domain.entities.memory import MemoryEntry
 from core.domain.value_objects.agent_settings import MemorySettings, ReconciliationSettings
 from core.use_cases.reconcile_memory import _RECONCILER_PROMPT, ReconcileMemoryUseCase
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

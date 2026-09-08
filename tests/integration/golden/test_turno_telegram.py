@@ -40,11 +40,11 @@ def _update_privado(texto: str) -> MagicMock:
 @pytest.fixture
 def bot(app_container):
     """``TelegramBot`` real con settings y ports salidos de los builders del container."""
-    from adapters.inbound.telegram.bot import TelegramBot
+    from inaki.channels.telegram.bot import TelegramBot
     from infrastructure.container import build_telegram_bot_ports, build_telegram_bot_settings
 
     agente = app_container.get_agent(AGENT_ID)
-    with patch("adapters.inbound.telegram.bot.Application"):
+    with patch("inaki.channels.telegram.bot.Application"):
         return TelegramBot(
             build_telegram_bot_settings(agente.agent_config),
             build_telegram_bot_ports(agente),

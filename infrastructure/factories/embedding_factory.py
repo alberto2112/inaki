@@ -14,9 +14,9 @@ import pkgutil
 from pathlib import Path
 
 from adapters.outbound.embedding.base import BaseEmbeddingProvider, ResolvedEmbeddingConfig
-from inaki.shared.errors import ConfigError
 from core.ports.outbound.embedding_port import IEmbeddingProvider
 from inaki.config import EmbeddingConfig, ProviderConfig
+from inaki.shared.errors import ConfigError
 
 logger = logging.getLogger(__name__)
 

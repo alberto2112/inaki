@@ -15,7 +15,6 @@ from unittest.mock import MagicMock
 
 from infrastructure.container import AppContainer
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

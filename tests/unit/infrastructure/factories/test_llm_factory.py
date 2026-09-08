@@ -15,11 +15,11 @@ from __future__ import annotations
 import pytest
 
 from adapters.outbound.providers.base import BaseLLMProvider, ResolvedLLMConfig
-from inaki.shared.errors import ConfigError
 from inaki.config import (
     LLMConfig,
     ProviderConfig,
 )
+from inaki.shared.errors import ConfigError
 from infrastructure.factories.llm_factory import LLMProviderFactory
 
 

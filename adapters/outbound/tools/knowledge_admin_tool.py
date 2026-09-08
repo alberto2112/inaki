@@ -12,9 +12,9 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from inaki.shared.errors import KnowledgeError
 from core.ports.outbound.tool_port import ITool, ToolResult
 from core.use_cases.manage_knowledge import ManageKnowledgeUseCase
+from inaki.shared.errors import KnowledgeError
 
 logger = logging.getLogger(__name__)
 

@@ -26,7 +26,6 @@ from core.domain.entities.face import (
 )
 from inaki.shared.channel_context import ChannelContext
 
-
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------

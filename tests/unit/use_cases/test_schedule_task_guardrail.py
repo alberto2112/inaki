@@ -12,8 +12,8 @@ from core.domain.entities.task import (
     TaskKind,
     TriggerType,
 )
-from inaki.shared.errors import TooManyActiveTasksError
 from core.use_cases.schedule_task import ScheduleTaskUseCase
+from inaki.shared.errors import TooManyActiveTasksError
 
 
 def _make_agent_task(agent_id: str = "agent-main") -> ScheduledTask:

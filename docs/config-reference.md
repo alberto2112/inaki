@@ -953,7 +953,7 @@ Si un canal del agente tiene ``voice_enabled: true`` y no hay bloque ni acá ni 
 
 **`channels`** — Adapters de canal del agente, indexados por su clave en ``channels:``.
 
-Los bloques de canales conocidos (``CHANNEL_SCHEMAS``) llegan acá **ya validados y coercionados a su modelo Pydantic** por ``_validar_channels``. Para acceso tipado usá las properties (``telegram``, ``cli``); el dict directo sirve para iterar o preguntar qué canales declaró el agente.
+Los bloques de los canales REGISTRADOS (``inaki.config.channels``) llegan acá **ya validados y coercionados a su modelo Pydantic** por ``_validar_channels``. Para acceso tipado usá ``canal(nombre, Modelo)``; el dict directo sirve para iterar o preguntar qué canales declaró el agente.
 
 **`providers`** — Registry de proveedores post-merge. Heredado del global + overrides del agente.
 
@@ -992,7 +992,7 @@ Es el bloque ``channels.cli`` que consume el admin server al armar el ``ChannelC
 
 Config tipada del canal Telegram.
 
-Tuvo ``extra="allow"`` mientras el bloque no se validaba al cargar: sin validación, rechazar lo desconocido habría roto configs sin dar un diagnóstico útil. Desde que el canal se valida contra ``CHANNEL_SCHEMAS``, un campo que no está acá es un typo y se rechaza como en el resto del schema.
+Tuvo ``extra="allow"`` mientras el bloque no se validaba al cargar: sin validación, rechazar lo desconocido habría roto configs sin dar un diagnóstico útil. Desde que el canal se valida contra el registro de canales, un campo que no está acá es un typo y se rechaza como en el resto del schema.
 
 | Field | Type | Default | Secret |
 |---|---|---|---|

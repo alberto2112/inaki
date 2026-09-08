@@ -27,8 +27,8 @@ from core.domain.entities.task import (
     TriggerPayload,
 )
 from core.domain.entities.task_log import TaskLog
-from inaki.shared.errors import InvalidScheduleError
 from core.domain.utils.cron import next_cron_occurrence, resolve_timezone
+from inaki.shared.errors import InvalidScheduleError
 
 logger = logging.getLogger(__name__)
 

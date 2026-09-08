@@ -18,7 +18,6 @@ from inaki.config.merge import (
 )
 from inaki.shared.errors import ConfigError
 
-
 # ---------------------------------------------------------------------------
 # Tabla de semántica
 # ---------------------------------------------------------------------------

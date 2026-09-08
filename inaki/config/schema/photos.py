@@ -9,8 +9,8 @@ from __future__ import annotations
 from typing import Literal
 
 from pydantic import Field, model_validator
-from inaki.config.schema._base import _ConfigBaseModel
 
+from inaki.config.schema._base import _ConfigBaseModel
 
 # ---------------------------------------------------------------------------
 # GlobalConfig — config del sistema (sin agentes)

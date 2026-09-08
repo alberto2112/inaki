@@ -131,6 +131,7 @@ forbidden_modules = [
     "inaki.scheduler_cli",
     "inaki.observability",
     "inaki.config",
+    "inaki.channels",
 ]
 
 # adapters/ solo conoce core/ e inaki.shared: ni el wiring ni el módulo de config
@@ -147,6 +148,7 @@ forbidden_modules = [
     "inaki.scheduler_cli",
     "inaki.observability",
     "inaki.config",
+    "inaki.channels",
 ]
 
 [[tool.importlinter.contracts]]
@@ -163,6 +165,7 @@ forbidden_modules = [
     "inaki.scheduler_cli",
     "inaki.observability",
     "inaki.config",
+    "inaki.channels",
 ]
 
 [[tool.importlinter.contracts]]
@@ -177,6 +180,7 @@ forbidden_modules = [
     "inaki.knowledge_cli",
     "inaki.scheduler_cli",
     "inaki.config",
+    "inaki.channels",
 ]
 
 # Un outbound nunca conoce a un inbound: el egress de un canal vive CON su canal
@@ -200,4 +204,21 @@ forbidden_modules = [
     "inaki.knowledge_cli",
     "inaki.scheduler_cli",
     "inaki.observability",
+    "inaki.channels",
+]
+
+# Un canal conoce el kernel (core), shared, observability y config (su sección se
+# registra ahí). NUNCA a otro canal, al wiring ni al composition root. Mientras las
+# tools sigan en adapters/outbound/tools (fase 7) el canal puede importarlas.
+[[tool.importlinter.contracts]]
+name = "inaki/channels/telegram no conoce otros canales, el wiring ni el composition root"
+type = "forbidden"
+source_modules = ["inaki.channels.telegram"]
+forbidden_modules = [
+    "adapters.inbound",
+    "infrastructure",
+    "inaki.cli",
+    "inaki.daemon_runner",
+    "inaki.knowledge_cli",
+    "inaki.scheduler_cli",
 ]

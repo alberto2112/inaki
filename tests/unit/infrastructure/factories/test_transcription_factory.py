@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import pytest
 
-from adapters.outbound.transcription.base import BaseTranscriptionProvider
-from inaki.shared.errors import ConfigError, UnknownTranscriptionProviderError
-from adapters.outbound.transcription.base import ResolvedTranscriptionConfig
+from adapters.outbound.transcription.base import (
+    BaseTranscriptionProvider,
+    ResolvedTranscriptionConfig,
+)
 from inaki.config import ProviderConfig, TranscriptionConfig
+from inaki.shared.errors import ConfigError, UnknownTranscriptionProviderError
 from infrastructure.factories.transcription_factory import TranscriptionProviderFactory
 
 

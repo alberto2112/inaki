@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from inaki.shared.errors import ConsolidationError
 from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
+from inaki.shared.errors import ConsolidationError
 
 
 def _mock_uc(return_value: str = "✓ 1 recuerdo") -> AsyncMock:

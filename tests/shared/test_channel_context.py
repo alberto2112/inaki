@@ -7,7 +7,6 @@ from pydantic import ValidationError
 
 from inaki.shared.channel_context import ChannelContext
 
-
 # ---------------------------------------------------------------------------
 # Construcción válida y routing_key
 # ---------------------------------------------------------------------------

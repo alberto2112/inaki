@@ -9,10 +9,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from inaki.shared.message import Message, Role
 from core.domain.value_objects.llm_response import LLMResponse
 from core.ports.outbound.tool_port import ToolResult
 from core.use_cases.run_agent import RunAgentUseCase
+from inaki.shared.message import Message, Role
 from infrastructure.container import build_run_agent_settings
 
 

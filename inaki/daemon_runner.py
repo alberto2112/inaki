@@ -4,7 +4,8 @@ Daemon runner — arranca todos los canales de todos los agentes en un único ev
 Se ejecuta como servicio systemd. Levanta en paralelo:
   - Un admin server FastAPI/uvicorn (puerto global único — toda la superficie
     REST vive acá, ruteada por agent_id)
-  - Un bot Telegram por cada agente con canal 'telegram'
+  - Los canales del container (``IChannel``: hoy un ``TelegramChannel`` por agente
+    con canal telegram), sin saber cuál es cuál
 
 Maneja SIGTERM/SIGINT para shutdown gracioso (systemd KillMode=process).
 También soporta reload in-place: cuando alguien señaliza ``app_container.reloader``
@@ -38,6 +39,7 @@ BootstrapFn = Callable[[], tuple["AppContainer", "AgentRegistry"]]
 async def _run_admin_server(app_container, admin_cfg, servers: list) -> None:
     """Arranca el admin server global del daemon."""
     import uvicorn
+
     from adapters.inbound.rest.admin.app import create_admin_app
 
     if admin_cfg.auth_key is None:
@@ -67,77 +69,12 @@ async def _run_admin_server(app_container, admin_cfg, servers: list) -> None:
     await server.serve()
 
 
-async def _run_telegram_bot(agent_cfg, container, app_container=None) -> None:
-    """Arranca el bot de Telegram para un agente usando la API async nativa de PTB 21+."""
-    from adapters.inbound.telegram.bot import TelegramBot
-    from infrastructure.container import build_telegram_bot_ports, build_telegram_bot_settings
-
-    # Leer adapters de broadcast del container (wired en Phase 4 de AppContainer).
-    # El rate limiter es de grupos (behavior=autonomous), no del broadcast — puede
-    # existir aunque el agente no tenga transporte TCP (migración groups-vs-broadcast).
-    broadcast_adapter = getattr(container, "broadcast_adapter", None)
-    rate_limiter = getattr(container, "group_rate_limiter", None)
-    reloader = getattr(app_container, "reloader", None) if app_container else None
-
-    try:
-        bot = TelegramBot(
-            build_telegram_bot_settings(agent_cfg),
-            build_telegram_bot_ports(container),
-            broadcast_emitter=broadcast_adapter,
-            broadcast_receiver=broadcast_adapter,
-            rate_limiter=rate_limiter,
-            reloader=reloader,
-        )
-    except ValueError as exc:
-        startup_event(logger, "telegram_bot", status="error", agent=agent_cfg.id, reason=str(exc))
-        return
-
-    # Registrar el bot en el gateway para que ChannelSenderAdapter pueda encontrarlo
-    if app_container is not None:
-        app_container.register_telegram_bot(agent_cfg.id, bot)
-
-    logger.info("Telegram bot iniciando para agente '%s'", agent_cfg.id)
-
-    # python-telegram-bot 21+ ofrece API async nativa via context manager.
-    # `Application.updater` es Optional porque PTB permite construir Apps sin
-    # updater (handlers manuales, webhook-only, etc.). Acá siempre lo tenemos
-    # porque `TelegramBot` arma el App con `.builder().token(...).build()`,
-    # que incluye updater por default. Lo asertamos para descartar `None` y
-    # darle tipo concreto al resto del bloque.
-    async with bot._app:
-        await bot._app.start()
-        await bot.setup_commands()
-
-        # Validación de bot_username contra la API de Telegram (non-blocking).
-        # Solo aplica si hay groups config con bot_username declarado.
-        await bot.verificar_bot_username()
-
-        # Suscripción al canal broadcast para trigger bot-to-bot (solo autonomous).
-        await bot.subscribe_broadcast_trigger()
-
-        updater = bot._app.updater
-        assert updater is not None, "PTB Application sin updater — config inesperada"
-        # Avisar 'online' a los chats privados que escribieron mientras el daemon
-        # estuvo caído. Se invoca ACÁ (no vía hook ``post_init`` de PTB) porque el
-        # lifecycle es manual con ``async with app``, e ``initialize()`` NO dispara
-        # ``post_init``. Drena y confirma el backlog a mano, por eso el polling
-        # arranca con ``drop_pending_updates=False``: ya no queda nada que descartar.
-        await bot._announce_back_online(bot._app)
-        await updater.start_polling(drop_pending_updates=False)
-        startup_event(logger, "telegram_bot", status="ok", agent=agent_cfg.id, mode="polling")
-        try:
-            await asyncio.get_running_loop().create_future()  # bloquear hasta cancelación
-        except asyncio.CancelledError:
-            pass
-        finally:
-            await updater.stop()
-            await bot._app.stop()
-
-
 def _build_channel_tasks(app_container, registry) -> tuple[list[asyncio.Task], list]:
-    """Construye las tasks de admin/Telegram para una iteración del runner.
+    """Construye las tasks de larga duración de una iteración del runner (hoy: el admin server).
 
-    Se llama una vez por arranque y otra vez por cada reload.
+    Se llama una vez por arranque y otra vez por cada reload. Los canales de
+    mensajería NO son tasks: son ``IChannel`` con ``start()``/``stop()`` (ver
+    ``_start_channels``).
     """
     tasks: list[asyncio.Task] = []
     uvicorn_servers: list = []
@@ -150,31 +87,33 @@ def _build_channel_tasks(app_container, registry) -> tuple[list[asyncio.Task], l
         name="admin",
     )
     tasks.append(admin_task)
-
-    # Telegram bots
-    for agent_cfg in registry.agents_with_channel("telegram"):
-        tg_cfg = agent_cfg.telegram
-        if tg_cfg is None or not tg_cfg.token:
-            startup_event(
-                logger,
-                "telegram_bot",
-                status="skip",
-                agent=agent_cfg.id,
-                reason="channels.telegram.token no configurado",
-            )
-            continue
-        try:
-            container = app_container.get_agent(agent_cfg.id)
-        except Exception as exc:
-            logger.error("No se pudo obtener container para '%s': %s", agent_cfg.id, exc)
-            continue
-        task = asyncio.create_task(
-            _run_telegram_bot(agent_cfg, container, app_container),
-            name=f"telegram:{agent_cfg.id}",
-        )
-        tasks.append(task)
-
     return tasks, uvicorn_servers
+
+
+async def _start_channels(app_container) -> list:
+    """Arranca cada ``IChannel`` del container; uno que falle no tumba a los demás.
+
+    Devuelve los que arrancaron (son los que hay que detener después). El fallo
+    queda como ``startup.resource`` con ``status=error`` — el daemon sigue con lo
+    que sí levantó, y el operador tiene la línea que lo explica.
+    """
+    arrancados: list = []
+    for canal in app_container.channels:
+        try:
+            await canal.start()
+            arrancados.append(canal)
+        except Exception as exc:  # noqa: BLE001 — un canal roto no apaga el daemon
+            startup_event(logger, f"channel:{canal.name}", status="error", reason=str(exc))
+            logger.exception("El canal '%s' no arrancó", canal.name)
+    return arrancados
+
+
+async def _stop_channels(canales: list) -> None:
+    for canal in reversed(canales):
+        try:
+            await canal.stop()
+        except Exception:  # noqa: BLE001
+            logger.exception("Error deteniendo el canal '%s'", canal.name)
 
 
 async def _shutdown_iteration(
@@ -183,17 +122,21 @@ async def _shutdown_iteration(
     done: set[asyncio.Task],
     uvicorn_servers: list,
     app_container,
+    canales: list | None = None,
 ) -> None:
-    """Cierra una iteración del runner: uvicorn graceful, cancel Telegram, app_container.shutdown."""
+    """Cierra una iteración del runner: canales, uvicorn graceful, tasks, app_container.shutdown."""
+    # Primero los canales: dejan de recibir mensajes antes de que caiga lo que
+    # los atiende (scheduler, cola de background).
+    await _stop_channels(canales or [])
+
     # Shutdown gracioso de uvicorn: should_exit = True deja que uvicorn
     # haga su propio teardown del lifespan en lugar de recibir un
     # CancelledError en mitad de starlette.routing.lifespan.
     for server in uvicorn_servers:
         server.should_exit = True
 
-    # Cancelar telegram bots (no tienen protocolo should_exit).
-    # El task de uvicorn (admin) terminará por su cuenta cuando
-    # should_exit tome efecto, pero igual lo esperamos en el gather.
+    # Cancelar las tasks restantes (el admin termina solo cuando should_exit
+    # toma efecto, pero igual lo esperamos en el gather).
     for task in pending:
         if task.get_name() != "admin":
             task.cancel()
@@ -253,6 +196,7 @@ async def run_daemon(
                 return
 
         await app_container.startup()
+        canales = await _start_channels(app_container)
         tasks, uvicorn_servers = _build_channel_tasks(app_container, registry)
 
         logger.info(
@@ -269,7 +213,7 @@ async def run_daemon(
             return_when=asyncio.FIRST_COMPLETED,
         )
 
-        await _shutdown_iteration(tasks, pending, done, uvicorn_servers, app_container)
+        await _shutdown_iteration(tasks, pending, done, uvicorn_servers, app_container, canales)
 
         if app_container.reloader.was_triggered() and not shutdown_event.is_set():
             logger.info("Reload solicitado — recargando config y canales")

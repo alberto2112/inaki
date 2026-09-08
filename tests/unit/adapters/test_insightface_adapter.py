@@ -22,7 +22,6 @@ import pytest
 from core.domain.entities.face import BBox, FaceDetection
 from inaki.shared.errors import VisionError
 
-
 # ---------------------------------------------------------------------------
 # Mock de insightface en sys.modules ANTES de importar el adaptador
 # ---------------------------------------------------------------------------
@@ -93,8 +92,9 @@ def adaptador(mock_insightface_module):
 
 def _make_jpeg_bytes(ancho: int = 100, alto: int = 100) -> bytes:
     """Crea un JPEG mínimo usando PIL."""
-    from PIL import Image
     import io
+
+    from PIL import Image
 
     img = Image.new("RGB", (ancho, alto), color="gray")
     buf = io.BytesIO()

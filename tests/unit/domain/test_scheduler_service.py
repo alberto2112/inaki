@@ -19,10 +19,9 @@ from core.domain.entities.task import (
     WebhookPayload,
 )
 from core.domain.entities.task_log import TaskLog
-from inaki.shared.errors import TaskNotFoundError
 from core.domain.services.scheduler_service import SchedulerService
 from core.domain.value_objects.dispatch_result import DispatchResult
-
+from inaki.shared.errors import TaskNotFoundError
 
 # ---------------------------------------------------------------------------
 # Fixtures

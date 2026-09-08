@@ -21,15 +21,15 @@ Contratos clave:
 from __future__ import annotations
 
 import asyncio
-import uuid
 import logging
+import uuid
 
-from inaki.shared.message import Message, Role
+from core.domain.value_objects.agent_settings import OneShotSettings
 from core.ports.outbound.llm_port import ILLMProvider
 from core.ports.outbound.tool_port import IToolExecutor
 from core.ports.outbound.turn_tracer_port import ITurnTracer, NullTurnTracer
 from core.use_cases._tool_loop import run_tool_loop
-from core.domain.value_objects.agent_settings import OneShotSettings
+from inaki.shared.message import Message, Role
 
 logger = logging.getLogger(__name__)
 

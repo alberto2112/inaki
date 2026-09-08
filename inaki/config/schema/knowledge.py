@@ -7,7 +7,8 @@ Importá desde ``inaki.config.schema`` (o ``inaki.config``).
 from __future__ import annotations
 
 from pydantic import ConfigDict
-from inaki.config.schema._base import RuntimePath, ExpandedPath, _ConfigBaseModel
+
+from inaki.config.schema._base import ExpandedPath, RuntimePath, _ConfigBaseModel
 
 
 class KnowledgeSourceConfig(_ConfigBaseModel):

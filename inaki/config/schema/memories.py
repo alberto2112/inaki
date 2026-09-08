@@ -7,9 +7,9 @@ Importá desde ``inaki.config.schema`` (o ``inaki.config``).
 from __future__ import annotations
 
 from pydantic import ConfigDict
+
 from inaki.config.schema._base import RuntimePath, _ConfigBaseModel
 from inaki.config.schema.llm import LLMConfig
-
 
 # Los DTOs ``Resolved*Config`` (feature + creds compuestas) viven en la capa
 # adapters — cada familia los declara en su ``base.py`` (providers, embedding,

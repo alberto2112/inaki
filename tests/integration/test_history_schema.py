@@ -19,7 +19,6 @@ from adapters.outbound.history.sqlite_history_store import (
 )
 from inaki.shared.message import Message, Role
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

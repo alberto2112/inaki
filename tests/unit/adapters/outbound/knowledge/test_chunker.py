@@ -21,7 +21,6 @@ from adapters.outbound.knowledge._chunker import (
     chunkear_archivo,
 )
 
-
 # ---------------------------------------------------------------------------
 # Tests de _ventana_deslizante
 # ---------------------------------------------------------------------------

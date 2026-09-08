@@ -18,7 +18,6 @@ from adapters.outbound.delegation.background_queue_adapter import (
 )
 from inaki.shared.skip_marker import SKIP_MARKER
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

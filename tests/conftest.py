@@ -1,7 +1,8 @@
 """Fixtures compartidas para todos los tests."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from core.domain.entities.face import (
     BBox,
@@ -10,6 +11,7 @@ from core.domain.entities.face import (
 )
 from core.domain.value_objects.conversation_state import ConversationState
 from core.domain.value_objects.llm_response import LLMResponse
+from inaki.channels import registrar_canales_instalados
 from inaki.config import (
     AgentConfig,
     ChatHistoryConfig,
@@ -29,6 +31,11 @@ def _build_providers() -> dict[str, ProviderConfig]:
         "e5_onnx": ProviderConfig(),
         "ollama": ProviderConfig(),
     }
+
+
+# Igual que el composition root: los canales instalados se registran ANTES de que
+# cualquier test construya un AgentConfig con ``channels``.
+registrar_canales_instalados()
 
 
 @pytest.fixture

@@ -38,12 +38,12 @@ import logging
 from datetime import datetime, timezone
 
 from core.domain.entities.memory import MemoryEntry
+from core.domain.value_objects.agent_settings import MemorySettings
 from core.ports.outbound.embedding_port import IEmbeddingProvider
 from core.ports.outbound.llm_port import ILLMProvider
 from core.ports.outbound.memory_port import IMemoryRepository
 from core.use_cases._json_extract import extract_json_array
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
-from core.domain.value_objects.agent_settings import MemorySettings
 
 logger = logging.getLogger(__name__)
 

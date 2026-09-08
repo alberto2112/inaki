@@ -20,12 +20,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.ports.outbound.turn_tracer_port import NullTurnTracer
-from adapters.outbound.tools.delegate_tool import DelegateTool, _RESULT_FORMAT_FOOTER
+from adapters.outbound.tools.delegate_tool import _RESULT_FORMAT_FOOTER, DelegateTool
 from adapters.outbound.tools.tool_registry import ToolRegistry
+from core.domain.value_objects.agent_settings import OneShotSettings
 from core.domain.value_objects.conversation_state import ConversationState
 from core.domain.value_objects.delegation_result import DelegationResult
 from core.domain.value_objects.llm_response import LLMResponse
+from core.ports.outbound.turn_tracer_port import NullTurnTracer
 from core.use_cases.run_agent import RunAgentUseCase
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from inaki.config import (
@@ -39,9 +40,7 @@ from inaki.config import (
     MemoriesConfig,
     ProviderConfig,
 )
-from core.domain.value_objects.agent_settings import OneShotSettings
 from infrastructure.container import AgentContainer, build_run_agent_settings
-
 
 # ===========================================================================
 # Shared helpers and fixtures

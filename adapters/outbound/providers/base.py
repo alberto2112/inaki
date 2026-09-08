@@ -3,9 +3,9 @@ from collections.abc import AsyncIterator
 
 from pydantic import BaseModel
 
-from inaki.shared.message import Message, Role
 from core.domain.value_objects.llm_response import LLMResponse
 from core.ports.outbound.llm_port import ILLMProvider
+from inaki.shared.message import Message, Role
 
 
 class ResolvedLLMConfig(BaseModel):

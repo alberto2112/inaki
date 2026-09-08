@@ -14,13 +14,14 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-
-from core.ports.outbound.turn_tracer_port import NullTurnTracer
 from adapters.outbound.tools.scheduler_tool import SchedulerTool
 from adapters.outbound.tools.tool_registry import ToolRegistry
-from core.use_cases.run_agent import RunAgentUseCase
+from core.domain.services.scheduler_service import SchedulerService
 from core.domain.value_objects.agent_settings import OneShotSettings
+from core.ports.outbound.turn_tracer_port import NullTurnTracer
+from core.use_cases.run_agent import RunAgentUseCase
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
+from core.use_cases.schedule_task import ScheduleTaskUseCase
 from inaki.config import (
     AgentConfig,
     AgentDelegationConfig,
@@ -33,9 +34,6 @@ from inaki.config import (
     ProviderConfig,
 )
 from infrastructure.container import AgentContainer
-from core.domain.services.scheduler_service import SchedulerService
-from core.use_cases.schedule_task import ScheduleTaskUseCase
-
 
 # ---------------------------------------------------------------------------
 # Helpers — mirrors test_container.py pattern exactly

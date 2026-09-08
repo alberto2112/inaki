@@ -24,8 +24,8 @@ import numpy as np
 from PIL import Image
 
 from core.domain.entities.face import BBox, FaceDetection
-from inaki.shared.errors import VisionError
 from core.ports.outbound.vision_port import IVisionPort
+from inaki.shared.errors import VisionError
 
 logger = logging.getLogger(__name__)
 

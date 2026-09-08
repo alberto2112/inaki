@@ -27,9 +27,9 @@ config_app = typer.Typer(help="Inspeccionar la configuración efectiva.")
 
 def _construir_use_case():
     from inaki.config.adapters.yaml_repository import YamlRepository
-    from inaki.config.use_cases.show_effective import ShowEffectiveConfigUseCase
-    from inaki.config.introspection import defaults_del_schema, paths_secretos
     from inaki.config.home import get_inaki_home
+    from inaki.config.introspection import defaults_del_schema, paths_secretos
+    from inaki.config.use_cases.show_effective import ShowEffectiveConfigUseCase
 
     home = get_inaki_home()
     return ShowEffectiveConfigUseCase(
@@ -58,9 +58,8 @@ def show(
     un issue sin filtrar credenciales.
     """
     from inaki.config import AgentRegistry, ensure_user_config, load_global_config
-    from inaki.config.home import get_inaki_home
-
     from inaki.config.boundary import borde_de_config
+    from inaki.config.home import get_inaki_home
 
     home = get_inaki_home()
     config_dir, agents_dir = home / "config", home / "agents"

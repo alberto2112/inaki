@@ -25,9 +25,9 @@ from typing import AsyncIterator
 import aiosqlite
 import sqlite_vec
 
-from inaki.shared.errors import KnowledgeConfigError
 from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
 from core.ports.outbound.knowledge_port import IKnowledgeSource
+from inaki.shared.errors import KnowledgeConfigError
 
 logger = logging.getLogger(__name__)
 

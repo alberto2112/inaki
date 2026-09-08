@@ -11,7 +11,7 @@ veía "todo bien" con el puerto cerrado. El contrato de entonces era que ese
 camino fuese ruidoso: nivel ERROR con la topología esperada en el mensaje.
 
 Hoy la garantía es MÁS FUERTE y llega antes: ``channels`` se valida contra
-``CHANNEL_SCHEMAS`` en el propio ``AgentConfig``, así que una topología inválida
+el registro de canales en el propio ``AgentConfig``, así que una topología inválida
 ni siquiera produce un ``AgentConfig`` — el arranque muere con el error de
 validación y nunca se llega al wiring. Los tests de abajo fijan esa versión del
 contrato: el bloque roto aborta la construcción, y el mensaje nombra el path del
@@ -56,9 +56,10 @@ def _self_minimo() -> types.SimpleNamespace:
     """``self`` con lo mínimo que toca ``_wire_broadcast_for_agent``."""
     return types.SimpleNamespace(
         agents={
-            "inaki": types.SimpleNamespace(broadcast_adapter=None, group_rate_limiter=None),
+            "inaki": types.SimpleNamespace(
+                broadcast_adapter=None, group_rate_limiter=None, broadcast_egress=None
+            ),
         },
-        _broadcast_adapters=[],
     )
 
 
@@ -71,12 +72,12 @@ def test_topologia_valida_wirea_el_adapter_server():
         ),
     )
 
-    assert len(self_._broadcast_adapters) == 1
-    adapter = self_._broadcast_adapters[0]
+    adapter = self_.agents["inaki"].broadcast_adapter
+    assert adapter is not None
     assert adapter._role == "server"
     assert adapter._host == "0.0.0.0"  # el server escucha en toda la LAN
     assert adapter._port == 6499
-    assert self_.agents["inaki"].broadcast_adapter is adapter
+    assert self_.agents["inaki"].broadcast_egress is not None
 
 
 @pytest.mark.parametrize(

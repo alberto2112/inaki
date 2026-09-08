@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import json
-
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from inaki.shared.message import Message, Role
-from inaki.shared.errors import ToolLoopMaxIterationsError
+import pytest
+
 from core.domain.value_objects.llm_response import LLMResponse
 from core.ports.outbound.tool_port import ToolResult
 from core.use_cases._tool_loop import run_tool_loop
-
+from inaki.shared.errors import ToolLoopMaxIterationsError
+from inaki.shared.message import Message, Role
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -17,9 +17,9 @@ from adapters.outbound.transcription.base import (
     BaseTranscriptionProvider,
     ResolvedTranscriptionConfig,
 )
-from inaki.shared.errors import ConfigError, UnknownTranscriptionProviderError
 from core.ports.outbound.transcription_port import ITranscriptionProvider
 from inaki.config import ProviderConfig, TranscriptionConfig
+from inaki.shared.errors import ConfigError, UnknownTranscriptionProviderError
 
 logger = logging.getLogger(__name__)
 

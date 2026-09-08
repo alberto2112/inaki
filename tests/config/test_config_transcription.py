@@ -19,7 +19,6 @@ from pathlib import Path
 
 import yaml
 
-from inaki.config.loader import _render_default_global_yaml
 from inaki.config import (
     EmbeddingConfig,
     GlobalConfig,
@@ -28,6 +27,7 @@ from inaki.config import (
     load_agent_config,
     load_global_config,
 )
+from inaki.config.loader import _render_default_global_yaml
 
 
 def test_defaults_de_transcription_config() -> None:

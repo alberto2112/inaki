@@ -26,9 +26,9 @@ from typing import AsyncIterator
 
 import aiosqlite
 
-from inaki.shared.message import Message, Role
 from core.domain.value_objects.conversation_state import ConversationState
 from core.ports.outbound.history_port import IHistoryStore
+from inaki.shared.message import Message, Role
 
 logger = logging.getLogger(__name__)
 

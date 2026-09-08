@@ -13,13 +13,12 @@ import json
 
 import pytest
 
+from adapters.outbound.providers.base import ResolvedLLMConfig
 from adapters.outbound.providers.groq import GroqProvider
 from adapters.outbound.providers.ollama import OllamaProvider
 from adapters.outbound.providers.openai import OpenAIProvider
 from adapters.outbound.providers.openrouter import OpenRouterProvider
 from inaki.shared.message import Message, Role
-from adapters.outbound.providers.base import ResolvedLLMConfig
-
 
 SYSTEM_PROMPT = "Eres un asistente de test."
 

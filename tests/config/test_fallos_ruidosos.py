@@ -16,16 +16,15 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from inaki.shared.errors import ConfigError
+from inaki.channels.telegram.config import TelegramChannelConfig
 from inaki.config import (
     LLMConfig,
     MemoriesConfig,
     SchedulerConfig,
-    TelegramChannelConfig,
     load_agent_config,
     load_global_config,
 )
-
+from inaki.shared.errors import ConfigError
 
 # ---------------------------------------------------------------------------
 # Claves desconocidas: el typo se nombra y se sugiere el campo correcto

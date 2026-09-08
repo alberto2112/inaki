@@ -21,8 +21,8 @@ import pytest
 
 from adapters.outbound.providers.anthropic import AnthropicProvider
 from adapters.outbound.providers.base import ResolvedLLMConfig
-from inaki.shared.message import Message, Role
 from inaki.shared.errors import LLMError
+from inaki.shared.message import Message, Role
 
 
 def _cfg(**overrides: Any) -> ResolvedLLMConfig:

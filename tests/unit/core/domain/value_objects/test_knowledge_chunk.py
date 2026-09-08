@@ -7,7 +7,6 @@ from pydantic import ValidationError
 
 from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
 
-
 # ---------------------------------------------------------------------------
 # Score — validación de rango coseno [-1, 1]
 # ---------------------------------------------------------------------------

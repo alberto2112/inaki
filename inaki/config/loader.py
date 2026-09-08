@@ -18,6 +18,7 @@ from typing import Any, Iterable, Protocol
 
 import yaml
 
+from inaki.config.channels import canales_registrados
 from inaki.config.merge import deep_merge, resolver_inherit
 from inaki.config.schema import (
     AdminConfig,
@@ -198,7 +199,11 @@ def ensure_user_config(config_dir: Path, agents_dir: Path) -> None:
     # El orden importa: la extracción de `tool_config` lee `global.secrets.yaml`,
     # así que tiene que correr ANTES de que el fold lo haga desaparecer.
     migrate_tool_config_to_own_file(config_dir)
-    migrate_telegram_group_fields(config_dir, agents_dir)
+    # Migraciones que cada canal registrado declara sobre SU bloque (p. ej. Telegram
+    # movió los campos de grupo de broadcast→groups). El loader no sabe cuáles son.
+    for canal in canales_registrados().values():
+        for migracion in canal.migraciones:
+            migracion(config_dir, agents_dir)
     migrate_secrets_into_main_layers(config_dir, agents_dir)
 
 
@@ -267,103 +272,6 @@ def migrate_tool_config_to_own_file(config_dir: Path) -> None:
         return
 
     logger.info("Migración tool_config: bloque movido de %s a %s", secrets_path, store_path)
-
-
-# Campos de *comportamiento en grupos* que migraron de ``channels.telegram.broadcast``
-# a ``channels.telegram.groups``. El transporte TCP (port/remote/auth/emit) NO se toca.
-_GROUP_BEHAVIOR_FIELDS = ("behavior", "bot_username", "rate_limiter", "rate_limiter_window")
-
-
-def migrate_telegram_group_fields(config_dir: Path, agents_dir: Path) -> None:
-    """Migración one-shot: mueve ``behavior``/``bot_username``/``rate_limiter``/
-    ``rate_limiter_window`` de ``channels.telegram.broadcast`` a
-    ``channels.telegram.groups``.
-
-    Esos campos describen *cómo responde el bot en un grupo* (aplica con o sin
-    broadcast TCP), pero vivían en ``BroadcastConfig``, lo que obligaba a levantar
-    el transporte solo para configurarlos. Esta función reubica instalaciones previas.
-
-    Procesa ``global.yaml``, ``global.secrets.yaml`` (si sobrevive, corre antes
-    del fold) y todos los YAML de ``agents_dir`` y su ``sub-agents/`` — cada
-    campo puede vivir en cualquier capa.
-
-    ``agents_dir`` llega como parámetro porque el layout REAL lo tiene como
-    sibling de ``config/`` (``~/.inaki/agents/``), no como subcarpeta. La
-    versión original lo derivaba como ``config_dir / "agents"`` — el layout de
-    los tests — así que en instalaciones reales los ficheros de agente NUNCA se
-    migraban. Con los campos viejos ignorándose en silencio nadie lo notó;
-    desde que la config falla ruidoso (`config-falla-ruidoso`), un agente sin
-    migrar aborta el arranque, y este bug pasó de invisible a fatal.
-    Idempotente: si ``broadcast`` no tiene ninguno de los campos, no toca el archivo.
-    ``groups`` gana ante conflicto (campo presente en ambos → se descarta el de
-    ``broadcast``). Si ``broadcast`` queda vacío tras mover (solo tenía comportamiento,
-    sin transporte) se elimina el bloque. Preserva comentarios (ruamel).
-    """
-    from ruamel.yaml import YAML
-
-    yaml_rt = YAML()
-    yaml_rt.preserve_quotes = True
-
-    archivos = [config_dir / "global.yaml", config_dir / "global.secrets.yaml"]
-    for directorio in (agents_dir, agents_dir / "sub-agents"):
-        if directorio.is_dir():
-            archivos.extend(sorted(directorio.glob("*.yaml")))
-
-    for path in archivos:
-        if not path.exists():
-            continue
-        try:
-            with path.open("r", encoding="utf-8") as f:
-                doc = yaml_rt.load(f)
-        except OSError as exc:
-            logger.error("Migración groups: no se pudo leer %s (%s)", path, exc)
-            continue
-        if not isinstance(doc, dict) or not _move_group_fields_broadcast_to_groups(doc):
-            continue
-        try:
-            with path.open("w", encoding="utf-8") as f:
-                yaml_rt.dump(doc, f)
-        except OSError as exc:
-            logger.error("Migración groups: no se pudo escribir %s (%s)", path, exc)
-            continue
-        logger.info("Migración groups: comportamiento movido broadcast→groups en %s", path)
-
-
-def _move_group_fields_broadcast_to_groups(doc: dict) -> bool:
-    """Mueve los campos de comportamiento de ``telegram.broadcast`` a
-    ``telegram.groups`` dentro de un doc ruamel ya cargado. Devuelve ``True`` si
-    hubo cambios (in-place sobre ``doc``)."""
-    channels = doc.get("channels")
-    if not isinstance(channels, dict):
-        return False
-    telegram = channels.get("telegram")
-    if not isinstance(telegram, dict):
-        return False
-    broadcast = telegram.get("broadcast")
-    if not isinstance(broadcast, dict):
-        return False
-
-    presentes = [campo for campo in _GROUP_BEHAVIOR_FIELDS if campo in broadcast]
-    if not presentes:
-        return False
-
-    groups = telegram.get("groups")
-    if not isinstance(groups, dict):
-        groups = {}
-        telegram["groups"] = groups
-
-    for campo in presentes:
-        valor = broadcast.pop(campo)
-        # groups gana ante conflicto: solo escribimos si no estaba ya definido ahí.
-        if campo not in groups:
-            groups[campo] = valor
-
-    # Un broadcast sin transporte (port/remote) ya no es broadcast: lo eliminamos
-    # para no disparar el validador port-XOR-remote con un bloque vacío.
-    if not broadcast:
-        del telegram["broadcast"]
-
-    return True
 
 
 def migrate_secrets_into_main_layers(config_dir: Path, agents_dir: Path) -> None:
@@ -799,47 +707,6 @@ def _filter_channel_adapters(raw: dict) -> dict:
     return {k: v for k, v in raw.items() if isinstance(v, dict)}
 
 
-# Único path donde el wiring LEE el bloque de broadcast. Cualquier otro lugar
-# donde el operador lo escriba se descarta sin efecto.
-_BROADCAST_PATH_VALIDO = "channels.telegram.broadcast"
-
-
-def _avisar_broadcast_extraviado(agent_id: str, merged: dict) -> None:
-    """Avisa si hay un bloque ``broadcast:`` en un nivel del YAML que nadie lee.
-
-    ``_wire_broadcast_for_agent`` solo mira ``channels.telegram.broadcast``.
-    Caso real: un `broadcast:` fuera de `channels.telegram` con la topología
-    vieja (`port:` suelto). Ni el error de validación llegó a emitirse, porque
-    el bloque nunca alcanzó el parser.
-
-    Quedan dos ubicaciones equivocadas, y desde que ``AgentConfig`` valida los
-    canales ya no se tratan igual:
-
-    - **Raíz del agente**: ``assemble_agent_config`` solo copia ``channels``, así
-      que el bloque se descarta sin que nada lo mire. Este warning es la ÚNICA
-      señal — sigue siendo imprescindible.
-    - **``channels.broadcast``**: ahora es un canal desconocido y la validación
-      lo rechaza con su path. El warning corre antes y agrega lo que el error no
-      sabe: cuál es el path válido.
-    """
-    extraviados = []
-    if isinstance(merged.get("broadcast"), dict):
-        extraviados.append("broadcast (raíz del agente)")
-    canales = merged.get("channels")
-    if isinstance(canales, dict) and isinstance(canales.get("broadcast"), dict):
-        extraviados.append("channels.broadcast")
-
-    if extraviados:
-        logger.warning(
-            "Agente '%s': bloque de broadcast en un nivel que NADIE lee (%s). El único "
-            "path válido es '%s' — tal como está, el transporte no se levanta y el "
-            "puerto queda cerrado.",
-            agent_id,
-            ", ".join(extraviados),
-            _BROADCAST_PATH_VALIDO,
-        )
-
-
 def assemble_agent_config(merged: dict) -> AgentConfig:
     """Ensambla un ``AgentConfig`` desde un dict YA mergeado y resuelto.
 
@@ -902,9 +769,11 @@ def load_agent_config(
         return None
 
     agent_raw = _load_yaml_safe(agent_yaml)
-    # El aviso ANTES del chequeo: si el top-level aborta por un `broadcast:`
-    # suelto, el operador necesita leer también cuál es el path válido.
-    _avisar_broadcast_extraviado(agent_id, agent_raw)
+    # Avisos de cada canal sobre el YAML CRUDO, ANTES del chequeo de top-level: si
+    # este aborta, el operador necesita leer también cuál es el path válido.
+    for canal in canales_registrados().values():
+        if canal.validar_raw is not None:
+            canal.validar_raw(agent_id, agent_raw)
     # Sobre el fichero CRUDO del agente, antes del merge: tras mergear ya no se
     # puede distinguir lo que el agente declaró de lo que heredó del global.
     _check_top_level(agent_raw, AgentConfig, str(agent_yaml))
@@ -1006,7 +875,11 @@ class AgentRegistry:
         )
 
         regular_agents = {k: v for k, v in self._agents.items() if k not in self._sub_agent_ids}
-        _validate_channel_uniqueness(regular_agents)
+        # Validaciones cruzadas entre agentes que cada canal registra (p. ej. dos
+        # agentes con el mismo token de Telegram).
+        for canal in canales_registrados().values():
+            if canal.validar_agentes is not None:
+                canal.validar_agentes(regular_agents)
 
     def get(self, agent_id: str) -> AgentConfig:
         if agent_id not in self._agents:
@@ -1047,61 +920,3 @@ class AgentRegistry:
             for id, a in self._agents.items()
             if id not in self._sub_agent_ids and channel_type in a.channels
         ]
-
-
-def _validate_channel_uniqueness(agents: dict[str, AgentConfig]) -> None:
-    """
-    Rechaza configs donde varios agentes comparten la misma identidad de canal,
-    o donde un mismo agente tiene dos canales con el mismo ``broadcast.server.port``.
-
-    Motivo: un bot de Telegram solo admite UN ``getUpdates`` activo por token
-    (Telegram API). Si dos agentes declaran el mismo token, el daemon levanta
-    pollings que se pisan → errores ``Conflict`` en loop.
-
-    El modelo canónico: un solo agente expone el canal (entry point) y delega
-    a los subagentes vía la tool ``delegate``. Los subagentes NO deben
-    declarar ``channels.telegram`` apuntando al mismo token que el principal.
-
-    Broadcast port uniqueness: dentro de un mismo agente, dos canales no pueden
-    declarar el mismo ``broadcast.server.port`` — ambos intentarían hacer
-    ``bind()`` en el mismo puerto del host.
-    """
-    from inaki.shared.errors import ConfigError
-
-    telegram_tokens: dict[str, list[str]] = {}
-
-    for agent_id, cfg in agents.items():
-        tg_cfg = cfg.telegram
-        if tg_cfg is not None and tg_cfg.token:
-            telegram_tokens.setdefault(tg_cfg.token, []).append(agent_id)
-
-        # Unicidad de broadcast.server.port dentro del mismo agente. Solo los
-        # servers hacen bind(); un bloque con enabled=false no levanta transporte.
-        broadcast_ports: dict[int, list[str]] = {}
-        for channel_name, channel_cfg in cfg.channels.items():
-            bc = getattr(channel_cfg, "broadcast", None)
-            if bc is None or bc.enabled is False or bc.server is None:
-                continue
-            broadcast_ports.setdefault(bc.server.port, []).append(channel_name)
-
-        duplicated_bc_ports = {p: chs for p, chs in broadcast_ports.items() if len(chs) > 1}
-        if duplicated_bc_ports:
-            conflicts = "; ".join(
-                f"port {p} declarado en [{', '.join(chs)}]"
-                for p, chs in duplicated_bc_ports.items()
-            )
-            raise ConfigError(
-                f"Agente '{agent_id}': broadcast.server.port duplicado — {conflicts}. "
-                "Cada canal del agente debe usar un puerto de broadcast distinto."
-            )
-
-    duplicated_tokens = {tok: ids for tok, ids in telegram_tokens.items() if len(ids) > 1}
-
-    if duplicated_tokens:
-        agent_lists = "; ".join(f"agentes [{', '.join(ids)}]" for ids in duplicated_tokens.values())
-        raise ConfigError(
-            f"Token de Telegram duplicado entre {agent_lists}. "
-            "Un token solo admite un polling activo: dejá 'channels.telegram' únicamente "
-            "en el agente que actúa como entry point; los subagentes reciben mensajes "
-            "vía la tool 'delegate'."
-        )

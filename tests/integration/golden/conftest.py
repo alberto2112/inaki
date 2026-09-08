@@ -19,10 +19,10 @@ from pathlib import Path
 
 import pytest
 
-from inaki.shared.message import Message
 from core.domain.value_objects.llm_response import LLMResponse
 from core.ports.outbound.embedding_port import IEmbeddingProvider
 from core.ports.outbound.llm_port import ILLMProvider
+from inaki.shared.message import Message
 
 # Nombre que ``resolve_provider_name`` lee del módulo del embedder (clave del cache).
 PROVIDER_NAME = "fake-golden"

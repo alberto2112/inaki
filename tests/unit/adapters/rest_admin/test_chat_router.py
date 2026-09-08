@@ -48,7 +48,6 @@ from httpx import ASGITransport, AsyncClient
 from adapters.inbound.rest.admin.app import create_admin_app
 from inaki.shared.message import Message, Role
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

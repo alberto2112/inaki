@@ -22,28 +22,20 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 
-from inaki.shared.message import Message, Role
 from core.domain.entities.skill import Skill
-from inaki.shared.errors import ToolLoopMaxIterationsError
 from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
-from inaki.shared.skip_marker import is_skip_response
 from core.domain.value_objects.agent_context import AgentContext
 from core.domain.value_objects.agent_info import AgentInfoDTO
-from inaki.shared.channel_context import (
-    ChannelContext,
-    current_channel_context,
-    reset_current_channel_context,
-    set_current_channel_context,
-)
+from core.domain.value_objects.agent_settings import RunAgentSettings
 from core.domain.value_objects.conversation_state import ConversationState
 from core.ports.outbound.background_delegation_port import IBackgroundDelegationQueue
+from core.ports.outbound.channel_port import IIntermediateSink
 from core.ports.outbound.embedding_port import IEmbeddingProvider
 from core.ports.outbound.history_port import IHistoryStore
-from core.ports.outbound.channel_port import IIntermediateSink
 from core.ports.outbound.llm_port import ILLMProvider
 from core.ports.outbound.memory_port import IMemoryRepository
 from core.ports.outbound.scope_registry_port import IScopeRegistry
@@ -66,7 +58,15 @@ from core.use_cases._turn_pipeline import (
     warn_if_token_budget_exceeded,
     write_debug_phase2,
 )
-from core.domain.value_objects.agent_settings import RunAgentSettings
+from inaki.shared.channel_context import (
+    ChannelContext,
+    current_channel_context,
+    reset_current_channel_context,
+    set_current_channel_context,
+)
+from inaki.shared.errors import ToolLoopMaxIterationsError
+from inaki.shared.message import Message, Role
+from inaki.shared.skip_marker import is_skip_response
 
 logger = logging.getLogger(__name__)
 

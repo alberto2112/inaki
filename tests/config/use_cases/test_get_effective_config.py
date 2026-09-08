@@ -11,6 +11,7 @@ from inaki.config.use_cases.get_effective_config import GetEffectiveConfigUseCas
 def _repo_con_capas(capas: dict[tuple, dict]) -> MagicMock:
     """Genera un mock que devuelve datos por (layer, agent_id)."""
     from unittest.mock import MagicMock
+
     from inaki.config.ports import IConfigRepository
 
     repo = MagicMock(spec=IConfigRepository)
@@ -128,6 +129,7 @@ def test_cadena_de_capas_es_global_y_agent() -> None:
 def test_sin_agente_no_lee_capas_de_agente() -> None:
     """Con agent_id=None, no se llaman las capas de agente."""
     from unittest.mock import MagicMock
+
     from inaki.config.ports import IConfigRepository
 
     repo = MagicMock(spec=IConfigRepository)

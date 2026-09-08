@@ -38,7 +38,7 @@ from adapters.outbound.history.sqlite_history_store import (
     HistoryStoreSettings,
     SQLiteHistoryStore,
 )
-from adapters.outbound.messaging.channel_outbound_registry import ChannelOutboundRegistry
+from core.domain.services.channel_outbound_registry import ChannelOutboundRegistry
 from adapters.outbound.memory.sqlite_memory_repo import SQLiteMemoryRepository
 from adapters.outbound.config_repository.yaml_tool_config_store import YamlToolConfigStore
 from adapters.outbound.scope_registry_adapter import InMemoryScopeRegistryAdapter
@@ -49,9 +49,6 @@ from adapters.outbound.scheduler.builtin_tasks import (
     _RECONCILE_MEMORY_BASE_ID,
 )
 from adapters.outbound.scheduler.dispatch_adapters import (
-    ChannelFallbackSettings,
-    ChannelHistoryRecorderAdapter,
-    ChannelRouter,
     ConsolidationDispatchAdapter,
     HttpCallerAdapter,
     LLMDispatcherAdapter,
@@ -59,9 +56,7 @@ from adapters.outbound.scheduler.dispatch_adapters import (
     ShellExecAdapter,
 )
 from core.ports.outbound.scheduler_dispatch_port import SchedulerDispatchPorts
-from adapters.outbound.sinks.sink_factory import SinkFactory
-from adapters.outbound.sinks.telegram_sink import TelegramSink
-from core.ports.outbound.outbound_sink_port import IOutboundSink
+from core.domain.services.channel_router import ChannelFallbackSettings, ChannelRouter
 from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRepo
 from adapters.outbound.embedding.sqlite_embedding_cache import SqliteEmbeddingCache
 from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
@@ -274,6 +269,11 @@ def build_telegram_bot_ports(container: AgentContainer) -> TelegramBotPorts:
         transcription=container.transcription,
         telegram_file_repo=container.telegram_file_repo,
         telegram_file_downloader=container.telegram_file_downloader,
+        channel_outbound=(
+            container.channel_outbound_registry.get("telegram")
+            if "telegram" in container.channel_outbound_registry.list_channels()
+            else None
+        ),
     )
 
 
@@ -836,9 +836,9 @@ class AgentContainer:
     def history(self) -> SQLiteHistoryStore:
         """Historial conversacional de este agente.
 
-        Accesor público para que el ``ChannelHistoryRecorderAdapter`` del
-        scheduler resuelva el historial por ``agent_id`` (mismo patrón que
-        ``run_agent``, que el ``LLMDispatcherAdapter`` consume duck-typed).
+        Accesor público: el outbound del canal lo recibe por inyección y los
+        adapters del scheduler resuelven por ``agent_id`` duck-typed (mismo patrón
+        que ``run_agent`` con el ``LLMDispatcherAdapter``).
         """
         return self._history
 
@@ -1065,6 +1065,19 @@ class AgentContainer:
         if tg_cfg is None or not tg_cfg.token:
             self._telegram_tools_wired = True
             return
+
+        from adapters.inbound.telegram.outbound import TelegramChannelOutbound
+
+        # El egress del canal se registra ANTES de las tools: el bot lo necesita
+        # para la narración intermedia y el scheduler para channel_send, tengan o
+        # no repo de ficheros.
+        tg_channel_outbound = TelegramChannelOutbound(
+            get_telegram_bot=get_telegram_bot,
+            history=self._history,
+            agent_id=self.agent_config.id,
+        )
+        self.channel_outbound_registry.register(tg_channel_outbound)
+
         if telegram_file_repo is None:
             logger.warning(
                 "AgentContainer '%s': telegram_file_repo es None — tools no registradas",
@@ -1077,9 +1090,6 @@ class AgentContainer:
 
         from adapters.outbound.file_transport.telegram_file_downloader import (
             TelegramFileDownloader,
-        )
-        from adapters.outbound.messaging.telegram_channel_outbound import (
-            TelegramChannelOutbound,
         )
         from adapters.inbound.telegram.tools.download_from_telegram_tool import (
             DownloadFromTelegramTool,
@@ -1098,12 +1108,6 @@ class AgentContainer:
         # file_id de los media entrantes.
         self.telegram_file_repo = telegram_file_repo
 
-        tg_channel_outbound = TelegramChannelOutbound(
-            get_telegram_bot=get_telegram_bot,
-            history=self._history,
-            agent_id=self.agent_config.id,
-        )
-        self.channel_outbound_registry.register(tg_channel_outbound)
         downloader = TelegramFileDownloader(get_telegram_bot=get_telegram_bot)
         self.telegram_file_downloader = downloader
 
@@ -1632,19 +1636,26 @@ class AppContainer:
         # bots (los bots de Telegram se registran después, al arrancar el daemon
         # — el sink los resuelve en tiempo de envío, no acá).
         scheduler_cfg = self.global_config.scheduler
-        telegram_sink = TelegramSink(get_telegram_bot=self._get_telegram_bot)
-        sink_factory = SinkFactory(get_telegram_bot=self._get_telegram_bot)
-        # Los sinks nativos son los canales conversacionales vivos: un mensaje
-        # que resuelve a uno de estos llegó a una conversación real y se persiste
-        # en historial; uno que cae al fallback (archivo) no.
-        self._native_sinks: dict[str, IOutboundSink] = {"telegram": telegram_sink}
+
+        def _outbounds_de(agent_id: str | None) -> ChannelOutboundRegistry | None:
+            # Resolución por DUEÑO: el envío sale por el bot y queda en el historial
+            # del agente que lo agendó. Sin dueño (tarea creada desde el CLI) se usa
+            # el registro del primer agente con canales, como antes hacía el sink
+            # con "el primer bot" — pero sin persistir nada (el router no registra
+            # historial cuando no hay agente).
+            if agent_id and agent_id in self.agents:
+                return self.agents[agent_id].channel_outbound_registry
+            for container in self.agents.values():
+                if container.channel_outbound_registry.list_channels():
+                    return container.channel_outbound_registry
+            return None
+
         self._channel_router = ChannelRouter(
-            native_sinks=self._native_sinks,
-            fallback_config=ChannelFallbackSettings(
+            resolve_outbounds=_outbounds_de,
+            fallback=ChannelFallbackSettings(
                 default=scheduler_cfg.channel_fallback.default,
                 overrides=dict(scheduler_cfg.channel_fallback.overrides),
             ),
-            sink_factory=sink_factory.from_target,
             hardcoded_fallback=f"file://{scheduler_cfg.fallback_log_filename}",
         )
 
@@ -1675,7 +1686,6 @@ class AppContainer:
             timeout_seconds=self.global_config.delegation.timeout_seconds,
             max_concurrent=3,
             result_sender=self._channel_router,
-            conversational_channels=set(self._native_sinks),
         )
 
     def _wire_all_delegation(self) -> None:
@@ -1760,7 +1770,6 @@ class AppContainer:
             reconciler=ReconcileDispatchAdapter(self._enabled_reconcilers),
             http_caller=HttpCallerAdapter(),
             shell_executor=ShellExecAdapter(),
-            history_recorder=ChannelHistoryRecorderAdapter(self.agents, set(self._native_sinks)),
         )
         self.scheduler_service = SchedulerService(
             repo=self.scheduler_repo,

@@ -11,9 +11,8 @@ Coverage:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
-from adapters.outbound.sinks.telegram_sink import TelegramSink as ChannelSenderAdapter
 from infrastructure.container import AppContainer
 
 
@@ -30,27 +29,6 @@ def _build_minimal_app_container() -> AppContainer:
     app = AppContainer.__new__(AppContainer)
     app._telegram_bots = {}
     return app
-
-
-# ---------------------------------------------------------------------------
-# Test 1 — ChannelSenderAdapter almacena callable en _get_telegram_bot
-# ---------------------------------------------------------------------------
-
-
-def test_channel_sender_adapter_almacena_callable() -> None:
-    """
-    ChannelSenderAdapter debe almacenar el callable get_telegram_bot internamente.
-    Al inspeccionarlo, debe ser callable.
-    """
-    bot_mock = AsyncMock()
-    get_bot = MagicMock(return_value=bot_mock)
-
-    adapter = ChannelSenderAdapter(get_telegram_bot=get_bot)
-
-    assert adapter._get_telegram_bot is get_bot, (
-        "_get_telegram_bot debe referenciar exactamente el callable pasado al constructor"
-    )
-    assert callable(adapter._get_telegram_bot), "_get_telegram_bot debe ser callable"
 
 
 # ---------------------------------------------------------------------------
@@ -124,30 +102,4 @@ def test_app_container_get_telegram_bot_devuelve_none_sin_bots() -> None:
 
     assert resultado is None, (
         "_get_telegram_bot() debe devolver None cuando no hay ningún bot registrado"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Test 6 — ChannelSenderAdapter con callable de AppContainer refleja bots dinámicos
-# ---------------------------------------------------------------------------
-
-
-def test_channel_sender_adapter_callable_refleja_bots_dinamicos() -> None:
-    """
-    Al usar el callable de AppContainer._get_telegram_bot en ChannelSenderAdapter,
-    el resultado refleja el estado actual de _telegram_bots (lazy evaluation).
-    """
-    app = _build_minimal_app_container()
-    adapter = ChannelSenderAdapter(get_telegram_bot=app._get_telegram_bot)
-
-    # Sin bots → None
-    assert adapter._get_telegram_bot() is None
-
-    # Registrar bot
-    bot_mock = MagicMock()
-    app.register_telegram_bot("agent-z", bot_mock)
-
-    # Ahora debe devolver el bot
-    assert adapter._get_telegram_bot() is bot_mock, (
-        "El callable debe reflejar el estado dinámico de _telegram_bots"
     )

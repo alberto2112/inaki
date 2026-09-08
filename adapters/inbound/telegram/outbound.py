@@ -17,7 +17,7 @@ from typing import Any
 
 from inaki.shared.message import Message, Role
 from core.domain.value_objects.outbound_kind import OutboundKind
-from core.ports.outbound.channel_outbound_port import IChannelOutbound
+from core.ports.outbound.channel_port import IChannelOutbound
 from core.ports.outbound.history_port import IHistoryStore
 
 logger = logging.getLogger(__name__)

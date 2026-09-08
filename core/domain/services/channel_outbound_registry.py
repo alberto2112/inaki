@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 
 from core.domain.value_objects.outbound_kind import OutboundKind
-from core.ports.outbound.channel_outbound_port import IChannelOutbound
+from core.ports.outbound.channel_port import IChannelOutbound
 
 logger = logging.getLogger(__name__)
 

@@ -19,17 +19,14 @@ import pytest
 
 from core.ports.outbound.scheduler_dispatch_port import SchedulerDispatchPorts
 from adapters.outbound.scheduler.dispatch_adapters import (
-    ChannelFallbackSettings,
-    ChannelHistoryRecorderAdapter,
     ShellExecAdapter,
-    ChannelRouter,
     ConsolidationDispatchAdapter,
     HttpCallerAdapter,
     LLMDispatcherAdapter,
     ReconcileDispatchAdapter,
 )
 from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRepo
-from adapters.outbound.sinks.sink_factory import SinkFactory
+from core.domain.services.channel_router import ChannelFallbackSettings, ChannelRouter
 from core.domain.entities.task import (
     ChannelSendPayload,
     ScheduledTask,
@@ -53,11 +50,9 @@ async def test_channel_send_cli_cae_en_hardcoded_file_y_persiste_metadata(
 ) -> None:
     # --- Arrange: router real con hardcoded redirigido a tmp_path ---
     destino_hardcoded = tmp_path / "hardcoded.log"
-    factory = SinkFactory(get_telegram_bot=lambda: None)
     router = ChannelRouter(
-        native_sinks={},  # Telegram no registrado: cli cae a cascada
-        fallback_config=ChannelFallbackSettings(),  # sin default ni overrides
-        sink_factory=factory.from_target,
+        resolve_outbounds=lambda agent_id: None,  # ningún agente con canales: cli cae a cascada
+        fallback=ChannelFallbackSettings(),  # sin default ni overrides
         hardcoded_fallback=f"file://{destino_hardcoded}",
     )
     dispatch = SchedulerDispatchPorts(
@@ -67,7 +62,6 @@ async def test_channel_send_cli_cae_en_hardcoded_file_y_persiste_metadata(
         reconciler=ReconcileDispatchAdapter({}),
         http_caller=HttpCallerAdapter(),
         shell_executor=ShellExecAdapter(),
-        history_recorder=ChannelHistoryRecorderAdapter({}, set()),
     )
     service = SchedulerService(repo=repo, dispatch=dispatch)
 

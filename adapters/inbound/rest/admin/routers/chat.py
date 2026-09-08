@@ -27,7 +27,7 @@ from adapters.inbound.rest.admin.schemas import (
     TaskTurnResponse,
 )
 from adapters.inbound.turn_dispatch import dispatch_inbound_turn
-from adapters.outbound.intermediate_sinks.buffering import BufferingIntermediateSink
+from core.ports.outbound.channel_port import BufferingIntermediateSink
 from inaki.shared.channel_context import ChannelContext
 
 logger = logging.getLogger(__name__)

@@ -1,4 +1,4 @@
-"""Unit tests para ChannelRouter (migra los de ChannelSenderAdapter) y HttpCallerAdapter."""
+"""Unit tests de los dispatch adapters del scheduler: HttpCallerAdapter y LLMDispatcherAdapter."""
 
 from __future__ import annotations
 
@@ -8,132 +8,10 @@ import httpx
 import pytest
 
 from adapters.outbound.scheduler.dispatch_adapters import (
-    ChannelFallbackSettings,
-    ChannelHistoryRecorderAdapter,
-    ChannelRouter,
     HttpCallerAdapter,
     LLMDispatcherAdapter,
 )
-from adapters.outbound.sinks.sink_factory import SinkFactory
-from adapters.outbound.sinks.telegram_sink import TelegramSink
-from inaki.shared.message import Role
 from core.domain.entities.task import WebhookPayload
-
-
-# ---------------------------------------------------------------------------
-# ChannelRouter — camino Telegram nativo
-# ---------------------------------------------------------------------------
-
-
-def _make_router_with_telegram(
-    bot: MagicMock | None = None,
-    fallback: ChannelFallbackSettings | None = None,
-) -> tuple[ChannelRouter, MagicMock]:
-    mock_bot = bot if bot is not None else MagicMock()
-    mock_bot.send_message = AsyncMock()
-    get_bot = MagicMock(return_value=mock_bot)
-    telegram_sink = TelegramSink(get_telegram_bot=get_bot)
-    factory = SinkFactory(get_telegram_bot=get_bot)
-    router = ChannelRouter(
-        native_sinks={"telegram": telegram_sink},
-        fallback_config=fallback or ChannelFallbackSettings(),
-        sink_factory=factory.from_target,
-    )
-    return router, mock_bot
-
-
-class TestChannelRouterTelegramNativo:
-    async def test_telegram_prefix_llama_send_message_con_user_id_entero(self) -> None:
-        router, mock_bot = _make_router_with_telegram()
-
-        await router.send_message("telegram:12345", "Hola!")
-
-        mock_bot.send_message.assert_awaited_once_with(12345, "Hola!")
-
-    async def test_telegram_prefix_convierte_user_id_a_int(self) -> None:
-        router, mock_bot = _make_router_with_telegram()
-
-        await router.send_message("telegram:99999", "Mensaje de prueba")
-
-        args, _ = mock_bot.send_message.call_args
-        assert isinstance(args[0], int)
-        assert args[0] == 99999
-
-    async def test_telegram_prefix_pasa_texto_correcto(self) -> None:
-        router, mock_bot = _make_router_with_telegram()
-        texto = "Recordatorio: reunión a las 10am"
-
-        await router.send_message("telegram:42", texto)
-
-        mock_bot.send_message.assert_awaited_once_with(42, texto)
-
-
-class TestChannelRouterCanalesInboundConFallback:
-    """Antes los canales inbound (cli/rest/daemon) lanzaban ValueError.
-
-    Con ChannelRouter + fallback ya NUNCA lanzan por canal: siempre cae
-    en override → default → hardcoded. Mantenemos la intención del test
-    original (evitar errores silenciosos) pero verificando el nuevo contrato.
-    """
-
-    async def test_cli_prefix_con_default_null_no_lanza(self) -> None:
-        cfg = ChannelFallbackSettings(default="null:")
-        router, _ = _make_router_with_telegram(fallback=cfg)
-
-        result = await router.send_message("cli:alguno", "texto")
-
-        assert result.original_target == "cli:alguno"
-        assert result.resolved_target == "null:"
-
-    async def test_rest_prefix_con_override_no_lanza(self) -> None:
-        cfg = ChannelFallbackSettings(overrides={"rest": "null:x"})
-        router, _ = _make_router_with_telegram(fallback=cfg)
-
-        result = await router.send_message("rest:alguno", "texto")
-
-        assert result.resolved_target == "null:x"
-
-    async def test_daemon_prefix_sin_config_cae_en_hardcoded(self, tmp_path) -> None:
-        # Redirigimos el hardcoded a tmp_path para no tocar /tmp real.
-        factory = SinkFactory(get_telegram_bot=lambda: None)
-        destino = tmp_path / "hc.log"
-        router = ChannelRouter(
-            native_sinks={},
-            fallback_config=ChannelFallbackSettings(),
-            sink_factory=factory.from_target,
-            hardcoded_fallback=f"file://{destino}",
-        )
-
-        result = await router.send_message("daemon:alguno", "texto")
-
-        assert result.original_target == "daemon:alguno"
-        assert result.resolved_target == f"file://{destino}"
-        assert destino.exists()
-
-    async def test_prefijo_desconocido_cae_en_fallback_no_lanza(self) -> None:
-        cfg = ChannelFallbackSettings(default="null:")
-        router, _ = _make_router_with_telegram(fallback=cfg)
-
-        result = await router.send_message("mqtt:topic/test", "texto")
-
-        assert result.resolved_target == "null:"
-
-
-class TestChannelRouterTelegramBotNone:
-    async def test_telegram_bot_none_lanza_value_error_descriptivo(self) -> None:
-        """Si el sink nativo de Telegram aplica y el bot no está registrado,
-        TelegramSink levanta ValueError — el router no oculta ese error."""
-        get_bot = MagicMock(return_value=None)
-        telegram_sink = TelegramSink(get_telegram_bot=get_bot)
-        factory = SinkFactory(get_telegram_bot=get_bot)
-        router = ChannelRouter(
-            native_sinks={"telegram": telegram_sink},
-            fallback_config=ChannelFallbackSettings(),
-            sink_factory=factory.from_target,
-        )
-
-        with pytest.raises(ValueError, match="no está configurado|no fue registrado"):
-            await router.send_message("telegram:12345", "Hola")
 
 
 def _make_payload(**kwargs: object) -> WebhookPayload:
@@ -417,67 +295,12 @@ class TestLLMDispatcherAdapterLockPerScope:
 
 
 # ---------------------------------------------------------------------------
-# ChannelHistoryRecorderAdapter — persistencia del channel_send en historial
-# ---------------------------------------------------------------------------
 
 
 def _make_agent_with_history() -> MagicMock:
     agent = MagicMock()
     agent.history.append = AsyncMock(return_value=1)
     return agent
-
-
-class TestChannelHistoryRecorderAdapter:
-    async def test_canal_conversacional_persiste_assistant_message(self) -> None:
-        """resolved_target a un canal vivo (telegram) → append de un mensaje
-        Role.ASSISTANT en el scope (channel, chat_id) parseado del target."""
-        agent = _make_agent_with_history()
-        recorder = ChannelHistoryRecorderAdapter(
-            {"main": agent}, conversational_channels={"telegram"}
-        )
-
-        await recorder.record_channel_send("main", "telegram:42", "buenos días")
-
-        agent.history.append.assert_awaited_once()
-        args, kwargs = agent.history.append.call_args
-        assert args[0] == "main"
-        message = args[1]
-        assert message.role == Role.ASSISTANT
-        assert message.content == "buenos días"
-        assert kwargs == {"channel": "telegram", "chat_id": "42"}
-
-    async def test_fallback_a_archivo_no_persiste(self) -> None:
-        """Si el mensaje cayó al fallback (file://...) no es conversacional →
-        no se persiste: el usuario nunca lo vio en una conversación."""
-        agent = _make_agent_with_history()
-        recorder = ChannelHistoryRecorderAdapter(
-            {"main": agent}, conversational_channels={"telegram"}
-        )
-
-        await recorder.record_channel_send(
-            "main", "file:///home/user/.inaki/data/scheduler-fallback.log", "hola"
-        )
-
-        agent.history.append.assert_not_awaited()
-
-    async def test_agente_desconocido_es_no_op(self) -> None:
-        """Tarea cuyo created_by ya no existe (agente renombrado/eliminado) →
-        no-op sin excepción."""
-        recorder = ChannelHistoryRecorderAdapter({}, conversational_channels={"telegram"})
-
-        # No debe lanzar.
-        await recorder.record_channel_send("fantasma", "telegram:42", "hola")
-
-    async def test_target_sin_prefijo_es_no_op(self) -> None:
-        """resolved_target malformado (sin ':') → no-op defensivo."""
-        agent = _make_agent_with_history()
-        recorder = ChannelHistoryRecorderAdapter(
-            {"main": agent}, conversational_channels={"telegram"}
-        )
-
-        await recorder.record_channel_send("main", "telegram42", "hola")
-
-        agent.history.append.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

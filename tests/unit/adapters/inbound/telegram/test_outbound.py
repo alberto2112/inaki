@@ -10,7 +10,7 @@ import pytest
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
 
-from adapters.outbound.messaging.telegram_channel_outbound import TelegramChannelOutbound
+from adapters.inbound.telegram.outbound import TelegramChannelOutbound
 from inaki.shared.message import Role
 from core.domain.value_objects.outbound_kind import OutboundKind
 

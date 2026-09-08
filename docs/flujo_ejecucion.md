@@ -117,7 +117,7 @@ inaki (cli.py → app)
 │   │       built BEFORE the queue; shared by the queue AND the scheduler
 │   ├── LLMDispatcherAdapter(agents) — SINGLE shared instance (lock-per-scope)
 │   ├── BackgroundDelegationQueueAdapter(dispatcher, semaphore=3,
-│   │       result_sender=ChannelRouter, conversational_channels=native_sinks)
+│   │       result_sender=ChannelRouter)  # el router decide qué canal es conversacional
 │   │       → delivers the parent's [bg-N] response back to the origin channel
 │   │
 │   └── Scheduler wiring:

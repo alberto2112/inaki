@@ -196,7 +196,7 @@ async def test_turno_skip_capaz_que_skipea_no_persiste_rastro(agent_config, mock
 async def test_incremental_narracion_sin_flag_persiste_cada_emit(agent_config, mocks):
     """Flag persist_tool_calls OFF + turno conversacional: la narración que el
     sink entrega en vivo se persiste en caliente como assistant plano."""
-    from core.ports.outbound.intermediate_sink_port import NullIntermediateSink
+    from core.ports.outbound.channel_port import NullIntermediateSink
 
     mock_llm, _, _, _, mock_history, _ = mocks
     _tool_then_final_llm(mock_llm, narration="voy a escribir el archivo")

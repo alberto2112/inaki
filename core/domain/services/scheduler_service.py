@@ -356,19 +356,19 @@ class SchedulerService(IManualTaskRunner):
         """
         payload = task.trigger_payload
         if isinstance(payload, ChannelSendPayload):
-            dr = await self._dispatch.channel_sender.send_message(payload.target, payload.text)
-            # Persistir el envío como mensaje del asistente en el historial del
-            # agente DUEÑO de la conversación: ``payload.agent_id`` si quien agendó lo
-            # informó explícito (un cronista que publica EN NOMBRE DE otro agente), o
-            # ``task.created_by`` en su defecto (el que agendó es el dueño). Se omite en
-            # pruebas manuales (ephemeral) o cuando no hay dueño alguno (CLI sin
-            # agent_id). El recorder es no-op si el target resuelto no es un canal
-            # conversacional vivo.
+            # El envío sale por el outbound del agente DUEÑO de la conversación:
+            # ``payload.agent_id`` si quien agendó lo informó explícito (un cronista
+            # que publica EN NOMBRE DE otro agente), o ``task.created_by`` en su
+            # defecto. El outbound persiste el mensaje como asistente en el historial
+            # del dueño — salvo en pruebas manuales (ephemeral) o sin dueño (CLI):
+            # el router no persiste nada cuando no hay agente.
             owner = payload.agent_id or task.created_by
-            if not ephemeral and owner:
-                await self._dispatch.history_recorder.record_channel_send(
-                    owner, dr.resolved_target, payload.text
-                )
+            dr = await self._dispatch.channel_sender.send_message(
+                payload.target,
+                payload.text,
+                agent_id=owner or None,
+                record_history=not ephemeral,
+            )
             return None, {
                 "original_target": dr.original_target,
                 "resolved_target": dr.resolved_target,
@@ -390,7 +390,7 @@ class SchedulerService(IManualTaskRunner):
             chat_id = ""
             if payload.output_channel:
                 live_sink = self._dispatch.channel_sender.build_intermediate_sink(
-                    payload.output_channel
+                    payload.output_channel, agent_id=payload.agent_id
                 )
                 _ch, _sep, _cid = payload.output_channel.partition(":")
                 if _sep:
@@ -416,8 +416,13 @@ class SchedulerService(IManualTaskRunner):
                         "original_target": payload.output_channel,
                         "skipped": True,
                     }
+                # record_history=False: el turno de ``dispatch`` ya persistió la
+                # respuesta en el bucket del canal destino (dueño único del rastro).
                 dr = await self._dispatch.channel_sender.send_message(
-                    payload.output_channel, result
+                    payload.output_channel,
+                    result,
+                    agent_id=payload.agent_id,
+                    record_history=False,
                 )
                 return None, {
                     "original_target": dr.original_target,

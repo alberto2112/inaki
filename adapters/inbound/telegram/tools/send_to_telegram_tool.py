@@ -24,7 +24,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from adapters.outbound.messaging.channel_outbound_registry import ChannelOutboundRegistry
+from core.domain.services.channel_outbound_registry import ChannelOutboundRegistry
 from adapters.outbound.tools.path_resolution import (
     ContainmentMode,
     WorkspaceEscapeError,

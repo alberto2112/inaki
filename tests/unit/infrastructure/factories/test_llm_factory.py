@@ -16,7 +16,7 @@ import pytest
 
 from adapters.outbound.providers.base import BaseLLMProvider, ResolvedLLMConfig
 from inaki.shared.errors import ConfigError
-from infrastructure.config import (
+from inaki.config import (
     LLMConfig,
     ProviderConfig,
 )

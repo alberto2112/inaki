@@ -52,7 +52,8 @@ Cuatro capas. La dirección de dependencias es `adapters → core ← infrastruc
 > compartidas: `Message`/`Role`, gramática de attachments, `ChannelContext`,
 > errores, skip marker — **no importa nada del proyecto**) e
 > `inaki/observability/` (logging unificado, modo debug, trazas de turno,
-> eventos de arranque). La ley de dependencias vive en `pyproject.toml` →
+> eventos de arranque) e `inaki/config/` (schema por secciones, loader, merge,
+> home, config efectiva, borde de errores; el setup TUI fue retirado). La ley de dependencias vive en `pyproject.toml` →
 > `[tool.importlinter]` y la verifica `lint-imports`. Mientras dure el refactor,
 > las capas `core/`, `adapters/` e `infrastructure/` siguen vigentes con sus
 > reglas; los módulos se mudan de a uno.
@@ -73,8 +74,8 @@ Resumen operativo. El texto completo, con el porqué y los antipatrones, está e
    LLM → gateway admin único (`POST /admin/tool/invoke`, cliente `inaki tool <name>`). Un
    **canal** (Telegram, mañana Slack) es un inbound adapter que solo traduce su I/O a un
    turno. Un canal nuevo se declara en **una** línea: su modelo en el schema + su entrada
-   en `CHANNEL_SCHEMAS` (`infrastructure/config_schema.py`). De ahí lo leen el loader (que
-   lo valida), el setup TUI y el generador de `config-reference.md`. **Antipatrón**: que cada canal implemente pasarelas de los CLI — es una
+   en `CHANNEL_SCHEMAS` (`inaki/config/schema/root.py`). De ahí lo leen el loader (que
+   lo valida), la introspección del schema y el generador de `config-reference.md`. **Antipatrón**: que cada canal implemente pasarelas de los CLI — es una
    explosión N×M. Excepción CERRADA: los slash commands de Telegram son el panel del
    OPERADOR (admin-only, deterministas, sin LLM); extender uno existente es aceptable,
    crear uno nuevo para una capacidad nueva NO, y **NUNCA replicarlos en un canal nuevo**.
@@ -95,7 +96,7 @@ Resumen operativo. El texto completo, con el porqué y los antipatrones, está e
    o repo. Los use cases **no reciben `AgentConfig`**: reciben Settings VOs
    (`core/domain/value_objects/agent_settings.py`), mapeados en los builders públicos de
    `container.py`. Los adapters outbound usan sus propios DTOs (`Resolved*Config`) en el
-   `base.py` de su familia — **NUNCA** moverlos de vuelta a `infrastructure/config.py`.
+   `base.py` de su familia — **NUNCA** moverlos de vuelta a `inaki/config/`.
    Providers (LLM, embedding, transcripción) se auto-descubren por la constante
    `PROVIDER_NAME`; los tres registries son **independientes**.
 
@@ -112,8 +113,8 @@ pisa solo los campos que declara (nunca al revés):
 2. `~/.inaki/agents/{id}.yaml`
 
 La semántica completa (listas, `null`, borrado, conflictos de forma) la define
-`core/domain/config_merge.py` — motor único de los cuatro carriles: carga, edición del
-setup TUI, `get_effective_config` y sub-agentes efímeros.
+`inaki/config/merge.py` — motor único de los cuatro carriles: carga, edición de capas
+(`update_*_layer`), `get_effective_config` y sub-agentes efímeros.
 
 Las credenciales viven en esas mismas capas (solo YAML, sin env vars): los ficheros se
 crean con permisos **600** y están gitignoreados — **nunca commitearlos**. Un campo es
@@ -203,14 +204,14 @@ Cada una salió de un fallo en producción. El caso completo está en
   consumidor, y ninguna herramienta que lea el schema puede verlo.
   → `channels-validados-al-cargar`
 - **NUNCA** escribir un segundo merge de config. La semántica vive UNA vez en
-  `core/domain/config_merge.py` (dict⊕dict funde, lista reemplaza, `null` pisa,
+  `inaki/config/merge.py` (dict⊕dict funde, lista reemplaza, `null` pisa,
   sentinel borra, cambiar de forma entre capas es error). Si no alcanza para un caso
   nuevo, **extendé el motor**; no nazca otro al lado. → `motor-de-merge-unico`
 - **NUNCA** borrar ni renombrar un campo del schema sin migración: desde que las
   claves desconocidas abortan el arranque, quitar un campo que el bootstrap escribió
   alguna vez rompe TODAS las instalaciones existentes. → `config-limpieza-final`
 - **NUNCA** documentar un parámetro de config fuera de su docstring en el schema: de
-  ahí salen `config-reference.md`, `global.example.yaml` y la ayuda del setup TUI
+  ahí salen `config-reference.md`, `global.example.yaml` y la ayuda de cualquier UI de configuración
   (`inaki gen-docs` los regenera, y un drift test los guarda). Cualquier otra copia
   nace condenada a divergir. → `docs-de-config-autogeneradas`
 - **NUNCA** recortar un docstring del schema al generar un artefacto (ni al primer
@@ -226,15 +227,15 @@ Cada una salió de un fallo en producción. El caso completo está en
   → cabecera de [`migraciones.md`](docs/migraciones.md)
 - **NUNCA** construir una interfaz de config sobre los ficheros crudos: se construye
   sobre la config EFECTIVA con origen (`ShowEffectiveConfigUseCase`, `inaki config
-  show`). Sobre ficheros crudos + semántica de merge es el problema que el setup TUI
-  lleva 5.000 líneas peleando. → `config-show-effective`
+  show`). Sobre ficheros crudos + semántica de merge es el problema en el que el setup TUI se
+  enterró con 5.000 líneas (retirado en 2026-09). → `config-show-effective`
 - **NUNCA** sanitizar un valor de config a un default "para no romper el arranque":
   un default silencioso que contradice el YAML es un bug que no se puede diagnosticar.
   La única degradación legítima es la de una **dependencia externa** (no de la config),
   y el log tiene que nombrar qué capacidad queda muda. → `config-falla-ruidoso`
 - **NUNCA** dejar que un `ConfigError` cruce el composition root sin handler: un
   mensaje accionable enterrado bajo treinta frames de traceback NO es accionable.
-  El borde es UNO (`inaki/config_errors.py`), no un `try` por call-site. Y una
+  El borde es UNO (`inaki/config/boundary.py`), no un `try` por call-site. Y una
   vista de config que no valida con el MISMO loader del arranque puede decir "todo
   bien" sobre lo que no arranca — peor que no tenerla. → `borde-de-config`
 - **NUNCA** volver al rol implícito por presencia de campo en la config de broadcast, ni
@@ -273,7 +274,7 @@ Cada una salió de un fallo en producción. El caso completo está en
 | Documento | Contiene |
 |---|---|
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Texto completo de las reglas estructurales: capas, canal THIN, tiers de recursos, wiring/DI y delegación con herencia |
-| [`docs/convenciones.md`](docs/convenciones.md) | Invariantes por subsistema: turno/RunAgent, tools, routing, knowledge, scheduler, canales, setup TUI, fotos |
+| [`docs/convenciones.md`](docs/convenciones.md) | Invariantes por subsistema: turno/RunAgent, tools, routing, knowledge, scheduler, canales, config, fotos |
 | [`docs/migraciones.md`](docs/migraciones.md) | Historial de migraciones: breaking changes, acciones del operador, cambios de comportamiento observable |
 | [`docs/modelo_de_datos.md`](docs/modelo_de_datos.md) | Entidades, value objects, jerarquía de errores, ports y `ToolResult` |
 | [`docs/flujo_ejecucion.md`](docs/flujo_ejecucion.md) | El turno extremo a extremo (`RunAgentUseCase`, tool loop, fotos), arranque y bootstrap, ciclo de vida del container, consolidación y reconciliación |
@@ -302,7 +303,6 @@ Cada una salió de un fallo en producción. El caso completo está en
 | Documento | Contiene |
 |---|---|
 | [`docs/broadcast-smoke.md`](docs/broadcast-smoke.md) | Smoke test del broadcast TCP entre Pis + bootstrap |
-| [`docs/setup-tui-smoke.md`](docs/setup-tui-smoke.md) | Smoke test manual del TUI `inaki setup` |
 
 > Los subdirectorios de `docs/` están gitignoreados: son material de trabajo
 > local (planes de refactor, borradores), no documentación del repo. Los planes

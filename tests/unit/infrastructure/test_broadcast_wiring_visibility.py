@@ -29,7 +29,7 @@ import types
 import pytest
 from pydantic import ValidationError
 
-from infrastructure.config import (
+from inaki.config import (
     AgentConfig,
     ChatHistoryConfig,
     EmbeddingConfig,

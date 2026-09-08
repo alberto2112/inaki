@@ -28,8 +28,8 @@ knowledge_app = typer.Typer(help="Manage document knowledge sources.")
 
 def _load_global_config():
     """Carga la configuración global del home de instancia. Retorna GlobalConfig."""
-    from infrastructure.config import ensure_user_config, load_global_config
-    from infrastructure.home import get_inaki_home
+    from inaki.config import ensure_user_config, load_global_config
+    from inaki.config.home import get_inaki_home
 
     config_dir = get_inaki_home() / "config"
     agents_dir = get_inaki_home() / "agents"

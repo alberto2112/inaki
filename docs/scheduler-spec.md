@@ -855,7 +855,7 @@ CREATE TABLE IF NOT EXISTS task_logs (
 | Outbound sinks | [adapters/outbound/sinks/](../adapters/outbound/sinks/) | `TelegramSink`, `FileSink`, `NullSink`, `SinkFactory` (port: `core/ports/outbound/outbound_sink_port.py::IOutboundSink`) |
 | Value objects | [core/domain/value_objects/dispatch_result.py](../core/domain/value_objects/dispatch_result.py) | `DispatchResult(original_target, resolved_target)` |
 | Builtin tasks | [adapters/outbound/scheduler/builtin_tasks.py](../adapters/outbound/scheduler/builtin_tasks.py) | `build_consolidate_memory_task()`, `CONSOLIDATE_MEMORY_TASK_ID` |
-| Config | [infrastructure/config.py](../infrastructure/config.py) | `SchedulerConfig`, `GlobalConfig` |
+| Config | [inaki/config/schema/scheduler.py](../inaki/config/schema/scheduler.py) | `SchedulerConfig`, `GlobalConfig` |
 | DI Container | [infrastructure/container.py](../infrastructure/container.py) | `AppContainer` |
 | Errors | [inaki/shared/errors.py](../inaki/shared/errors.py) | `SchedulerError`, `BuiltinTaskProtectedError`, `InvalidTriggerTypeError`, `TaskNotFoundError` |
 

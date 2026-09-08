@@ -14,7 +14,7 @@ import pytest
 from adapters.outbound.transcription.base import BaseTranscriptionProvider
 from inaki.shared.errors import ConfigError, UnknownTranscriptionProviderError
 from adapters.outbound.transcription.base import ResolvedTranscriptionConfig
-from infrastructure.config import ProviderConfig, TranscriptionConfig
+from inaki.config import ProviderConfig, TranscriptionConfig
 from infrastructure.factories.transcription_factory import TranscriptionProviderFactory
 
 

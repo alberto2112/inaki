@@ -193,7 +193,7 @@ class TestPreFetchBypassOnShortInput:
         mock_tools,
     ) -> None:
         from core.domain.value_objects.conversation_state import ConversationState
-        from infrastructure.config import (
+        from inaki.config import (
             AgentConfig,
             ChatHistoryConfig,
             EmbeddingConfig,

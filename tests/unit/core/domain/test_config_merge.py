@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.domain.config_merge import (
+from inaki.config.merge import (
     SENTINEL_ELIMINAR,
     Capa,
     deep_merge,

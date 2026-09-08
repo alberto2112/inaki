@@ -36,7 +36,7 @@ from inaki.shared.errors import BuiltinTaskProtectedError, TaskNotFoundError
 
 if TYPE_CHECKING:
     from core.ports.inbound.scheduler_port import ISchedulerUseCase
-    from infrastructure.config import GlobalConfig
+    from inaki.config import GlobalConfig
 
 # ---------------------------------------------------------------------------
 # Sub-app
@@ -72,7 +72,7 @@ def _create_lightweight_uc(
     config_dir: Path,
 ) -> tuple["ISchedulerUseCase", "GlobalConfig"]:
     """Crea ScheduleTaskUseCase con bootstrap mínimo — sin AppContainer."""
-    from infrastructure.config import load_global_config
+    from inaki.config import load_global_config
     from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRepo
     from core.use_cases.schedule_task import ScheduleTaskUseCase
 

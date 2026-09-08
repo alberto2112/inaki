@@ -22,7 +22,7 @@ from adapters.outbound.tools.tool_registry import ToolRegistry
 from core.use_cases.run_agent import RunAgentUseCase
 from core.domain.value_objects.agent_settings import OneShotSettings
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
-from infrastructure.config import (
+from inaki.config import (
     AgentConfig,
     AgentDelegationConfig,
     ChatHistoryConfig,
@@ -75,7 +75,7 @@ def _make_global_config(
     max_iterations_per_sub: int = 10,
     timeout_seconds: int = 60,
 ) -> GlobalConfig:
-    from infrastructure.config import (
+    from inaki.config import (
         AppConfig,
         SchedulerConfig,
         SkillsConfig,

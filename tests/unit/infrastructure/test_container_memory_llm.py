@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from adapters.outbound.providers.base import ResolvedLLMConfig
-from infrastructure.config import (
+from inaki.config import (
     AgentConfig,
     ChatHistoryConfig,
     EmbeddingConfig,

@@ -26,7 +26,6 @@ dependencies = [
     "rich>=13.0",
     "tzlocal>=5.0",
     "pypdf>=4.0",
-    "textual>=0.80",
     "ruamel.yaml>=0.18",
     "Pillow>=10.0",
     "insightface",
@@ -66,15 +65,6 @@ target-version = "py311"
 # type-checkeamos. Si una extensión tiene errores, son responsabilidad del
 # usuario, no del proyecto.
 exclude = ["^ext/"]
-
-[[tool.mypy.overrides]]
-# Textual stubs son incompletos:
-#   - Las subclases de Screen no resuelven `push_screen` en type-check,
-#     pero lo heredan en runtime vía el framework App.
-#   - Button.variant exige Literal[...], pero pasamos strings dinámicos
-#     para alternar estilo primary/default según el estado del widget.
-module = "adapters.inbound.setup_tui.*"
-disable_error_code = ["attr-defined", "arg-type"]
 
 [[tool.mypy.overrides]]
 # ruamel.yaml no expone py.typed marker — third-party sin stubs.
@@ -125,11 +115,11 @@ ignore_missing_imports = true
 [tool.importlinter]
 root_packages = ["core", "adapters", "infrastructure", "inaki"]
 
-# Módulos de `inaki/` que el dominio NO puede conocer. `inaki.shared` (primitivas)
-# es la excepción deliberada: el dominio la consume. Cuando `core/` se disuelva en
-# `inaki/kernel` (fase 9) esta lista se convierte en el contrato de capas final.
+# Módulos de `inaki/` que cada capa NO puede conocer. `inaki.shared` (primitivas)
+# la consumen todos. Cuando `core/` se disuelva en `inaki/kernel` (fase 9) estas
+# listas se convierten en el contrato de capas final.
 [[tool.importlinter.contracts]]
-name = "core/ no conoce adapters/, infrastructure/ ni el composition root"
+name = "core/ no conoce adapters/, infrastructure/ ni los módulos de inaki/ salvo shared"
 type = "forbidden"
 source_modules = ["core"]
 forbidden_modules = [
@@ -137,12 +127,26 @@ forbidden_modules = [
     "infrastructure",
     "inaki.cli",
     "inaki.daemon_runner",
-    "inaki.config_cli",
-    "inaki.config_errors",
     "inaki.knowledge_cli",
     "inaki.scheduler_cli",
-    "inaki.setup_cli",
     "inaki.observability",
+    "inaki.config",
+]
+
+# adapters/ solo conoce core/ e inaki.shared: ni el wiring ni el módulo de config
+# (reciben Settings VOs y paths resueltos por inyección).
+[[tool.importlinter.contracts]]
+name = "adapters/ no conoce infrastructure/ ni los módulos de inaki/ salvo shared"
+type = "forbidden"
+source_modules = ["adapters"]
+forbidden_modules = [
+    "infrastructure",
+    "inaki.cli",
+    "inaki.daemon_runner",
+    "inaki.knowledge_cli",
+    "inaki.scheduler_cli",
+    "inaki.observability",
+    "inaki.config",
 ]
 
 [[tool.importlinter.contracts]]
@@ -155,12 +159,10 @@ forbidden_modules = [
     "infrastructure",
     "inaki.cli",
     "inaki.daemon_runner",
-    "inaki.config_cli",
-    "inaki.config_errors",
     "inaki.knowledge_cli",
     "inaki.scheduler_cli",
-    "inaki.setup_cli",
     "inaki.observability",
+    "inaki.config",
 ]
 
 [[tool.importlinter.contracts]]
@@ -172,15 +174,22 @@ forbidden_modules = [
     "infrastructure",
     "inaki.cli",
     "inaki.daemon_runner",
-    "inaki.config_cli",
-    "inaki.config_errors",
     "inaki.knowledge_cli",
     "inaki.scheduler_cli",
-    "inaki.setup_cli",
+    "inaki.config",
 ]
 
+# inaki/config es un módulo de feature: conoce shared y los ports de core, nada más.
 [[tool.importlinter.contracts]]
-name = "adapters/ no conoce infrastructure/"
+name = "inaki/config solo conoce core (ports) y shared"
 type = "forbidden"
-source_modules = ["adapters"]
-forbidden_modules = ["infrastructure"]
+source_modules = ["inaki.config"]
+forbidden_modules = [
+    "adapters",
+    "infrastructure",
+    "inaki.cli",
+    "inaki.daemon_runner",
+    "inaki.knowledge_cli",
+    "inaki.scheduler_cli",
+    "inaki.observability",
+]

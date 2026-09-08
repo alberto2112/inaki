@@ -1,0 +1,84 @@
+"""
+CreateAgentUseCase — crea un nuevo agente desde una plantilla mínima.
+
+Valida que el id sea único. Si ya existe, lanza ``AgentYaExisteError``
+sin modificar ningún archivo.
+
+Crea ``agents/{id}.yaml`` con los valores del template.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from inaki.shared.errors import AgentYaExisteError
+from inaki.config.ports import LayerName
+
+if TYPE_CHECKING:
+    from inaki.config.ports import IConfigRepository
+
+# Plantilla mínima para un agente nuevo.
+# El caller puede pasar ``template_extra`` para enriquecer los campos.
+_TEMPLATE_BASE: dict[str, Any] = {
+    "id": "",
+    "name": "",
+    "description": "",
+    "system_prompt": "Sos un asistente de IA.",
+}
+
+
+class CreateAgentUseCase:
+    """
+    Crea ``agents/{id}.yaml`` con una plantilla mínima.
+
+    Las credenciales del agente (token de Telegram, etc.) se agregan después
+    vía la TUI, en ese mismo archivo.
+    """
+
+    def __init__(self, repo: "IConfigRepository") -> None:
+        self._repo = repo
+
+    def execute(
+        self,
+        agent_id: str,
+        nombre: str,
+        descripcion: str = "",
+        system_prompt: str = "",
+        template_extra: dict[str, Any] | None = None,
+        layer: LayerName = LayerName.AGENT,
+    ) -> None:
+        """
+        Crea el agente si el id es único.
+
+        Args:
+            agent_id: Id único del agente (slug, sin espacios).
+            nombre: Nombre legible del agente.
+            descripcion: Descripción breve (opcional).
+            system_prompt: System prompt inicial (opcional).
+            template_extra: Campos adicionales a mezclar en el YAML generado.
+            layer: Capa de destino. ``AGENT`` (default) crea un agente regular;
+                ``SUB_AGENT`` crea un sub-agente en ``agents/sub-agents/``.
+
+        Raises:
+            ValueError: Si ``layer`` no es ``AGENT`` ni ``SUB_AGENT``.
+            AgentYaExisteError: Si el archivo del agente ya existe.
+        """
+        if layer not in (LayerName.AGENT, LayerName.SUB_AGENT):
+            raise ValueError(
+                f"CreateAgentUseCase solo acepta AGENT o SUB_AGENT, recibió: {layer!r}"
+            )
+
+        if self._repo.layer_exists(layer, agent_id=agent_id):
+            raise AgentYaExisteError(agent_id)
+
+        datos: dict[str, Any] = {
+            **_TEMPLATE_BASE,
+            "id": agent_id,
+            "name": nombre,
+            "description": descripcion,
+            "system_prompt": system_prompt or _TEMPLATE_BASE["system_prompt"],
+        }
+        if template_extra:
+            datos.update(template_extra)
+
+        self._repo.write_layer(layer, datos, agent_id=agent_id)

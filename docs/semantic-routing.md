@@ -229,7 +229,7 @@ put(hash, provider, dim, embedding)
 
 ## Configuration
 
-### `EmbeddingConfig` (in `infrastructure/config.py`)
+### `EmbeddingConfig` (in `inaki/config/schema/embedding.py`)
 
 | Field | Default | Description |
 |-------|---------|-------------|
@@ -349,6 +349,6 @@ Only skills retrieved by routing (or all if routing is inactive) appear in the p
 | **Adapter** | `adapters/outbound/skills/yaml_skill_repo.py` | Skill loading + routing |
 | **Adapter** | `adapters/outbound/tools/tool_registry.py` | Tool registration + routing |
 | **Infrastructure** | `infrastructure/container.py` | Wiring: instantiates and connects everything |
-| **Config** | `infrastructure/config.py` | `EmbeddingConfig`, `SkillsConfig`, `ToolsConfig`, `SemanticRoutingConfig` |
+| **Config** | `inaki/config/schema/` | `EmbeddingConfig`, `SkillsConfig`, `ToolsConfig`, `SemanticRoutingConfig` |
 
 The hexagonal rule is respected: the core doesn't know about SQLite or YAML. It only depends on the interfaces (`IEmbeddingCache`, `IEmbeddingProvider`, `ISkillRepository`).

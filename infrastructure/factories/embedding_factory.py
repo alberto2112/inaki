@@ -16,7 +16,7 @@ from pathlib import Path
 from adapters.outbound.embedding.base import BaseEmbeddingProvider, ResolvedEmbeddingConfig
 from inaki.shared.errors import ConfigError
 from core.ports.outbound.embedding_port import IEmbeddingProvider
-from infrastructure.config import EmbeddingConfig, ProviderConfig
+from inaki.config import EmbeddingConfig, ProviderConfig
 
 logger = logging.getLogger(__name__)
 

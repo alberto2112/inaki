@@ -8,7 +8,7 @@
 #
 # Para documentar un parámetro, escribí su docstring en el schema: de ahí salen
 # los comentarios de este fichero, la columna Description de
-# `docs/config-reference.md` y la ayuda del setup TUI.
+# `docs/config-reference.md` y la ayuda de cualquier UI de configuración.
 #
 # Este fichero NO se lee en runtime — es la referencia canónica de qué se puede
 # configurar. La config real vive en:
@@ -524,7 +524,7 @@ providers:
   # <clave elegida por vos>:
   # # Nombre del adapter que implementa este vendor. ``null`` → se usa la key del dict.
   # type: null
-  # # Credencial del vendor. Es un SECRETO: la TUI lo enmascara al editarlo.
+  # # Credencial del vendor. Es un SECRETO: ``inaki config show`` lo redacta.
   # api_key: null
   # # Endpoint del vendor. ``null`` → el default hardcodeado del adapter.
   # base_url: null

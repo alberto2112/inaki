@@ -40,7 +40,7 @@ from httpx import ASGITransport, AsyncClient
 
 from adapters.inbound.rest.admin.app import create_admin_app
 from core.domain.value_objects.outbound_kind import OutboundKind
-from infrastructure.config import (
+from inaki.config import (
     BroadcastConfig,
     BroadcastEmitConfig,
     BroadcastServerConfig,

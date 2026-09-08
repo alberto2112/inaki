@@ -5,8 +5,8 @@ referencia de cada parámetro se autogenera desde los docstrings del schema
 Pydantic y vive en [`config-reference.md`](config-reference.md).
 
 > **NUNCA** documentes un parámetro fuera de su docstring en el schema
-> (`infrastructure/config_schema.py`): de ahí salen `config-reference.md`,
-> `global.example.yaml` y la ayuda del setup TUI (`inaki gen-docs` los regenera,
+> (`inaki/config/schema/`): de ahí salen `config-reference.md`,
+> `global.example.yaml` y la ayuda de cualquier UI de configuración (`inaki gen-docs` los regenera,
 > y un test de drift los vigila). Cualquier otra copia nace condenada a divergir.
 
 ## Adónde ir
@@ -83,8 +83,8 @@ AgentConfig resuelto y completo
 
 La semántica exacta (dict⊕dict funde, lista reemplaza, `null` pisa, sentinel
 borra, cambiar de forma entre capas es error) vive **una sola vez**, en
-`core/domain/config_merge.py`. Es el motor único de los cuatro carriles: carga,
-edición del setup TUI, `get_effective_config` y sub-agentes efímeros.
+`inaki/config/merge.py`. Es el motor único de los cuatro carriles: carga,
+edición de capas, `get_effective_config` y sub-agentes efímeros.
 
 **Secreto es una marca del schema, no un fichero.** Un campo es secreto porque el
 schema Pydantic lo dice (`kind == "secret"`) — eso es lo que lo enmascara en el

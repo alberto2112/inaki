@@ -39,12 +39,11 @@ from typing import Any, Optional
 
 import typer
 
-from inaki.config_cli import config_app
+from inaki.config.cli import config_app
 from inaki.knowledge_cli import knowledge_app
 from inaki.scheduler_cli import scheduler_app
-from inaki.setup_cli import setup_app
 from inaki import __version__
-from infrastructure.home import get_inaki_home, set_inaki_home
+from inaki.config.home import get_inaki_home, set_inaki_home
 from inaki.observability import is_debug_enabled, set_debug_override, setup_logging
 
 app = typer.Typer(
@@ -63,7 +62,6 @@ def _version_callback(value: bool) -> None:
 
 app.add_typer(scheduler_app, name="scheduler", help="Manage scheduled tasks")
 app.add_typer(knowledge_app, name="knowledge", help="Manage document knowledge sources")
-app.add_typer(setup_app, name="setup", help="Configuración del sistema (TUI offline)")
 app.add_typer(config_app, name="config", help="Inspeccionar la configuración efectiva")
 
 
@@ -77,9 +75,9 @@ def _get_agents_dir() -> Path:
 
 def _bootstrap(config_dir: Path, agents_dir: Path):
     """Carga config, logging y registry. Retorna (global_config, registry)."""
-    from infrastructure.config import load_global_config, AgentRegistry
+    from inaki.config import load_global_config, AgentRegistry
 
-    from inaki.config_errors import borde_de_config
+    from inaki.config.boundary import borde_de_config
 
     with borde_de_config(str(config_dir)):
         global_config, global_raw = load_global_config(config_dir)
@@ -125,7 +123,7 @@ def _run_daemon(config_dir: Path, agents_dir: Path, global_config, registry) -> 
     # Crea ~/.inaki/users/{channel}/ por cada canal configurado en cualquier agente.
     # Lazy + idempotente: cero costo si ya existen. Habilita la convención de
     # contexto per-entidad (ver docs/contexto-por-entidad.md).
-    from infrastructure.config import ensure_user_channel_dirs
+    from inaki.config import ensure_user_channel_dirs
 
     ensure_user_channel_dirs(get_inaki_home(), registry.list_all())
 
@@ -150,9 +148,9 @@ def _resolve_dirs():
     El home se fija en el callback raíz (``--home`` / ``INAKI_HOME``) vía ``set_inaki_home``;
     acá todo deriva de ``get_inaki_home()``. No hay override de config_dir suelto: el único
     knob de relocalización es el home (ver docs/instance-home.md)."""
-    from infrastructure.config import ensure_user_config
+    from inaki.config import ensure_user_config
 
-    from inaki.config_errors import borde_de_config
+    from inaki.config.boundary import borde_de_config
 
     config_dir = _get_config_dir()
     agents_dir = _get_agents_dir()
@@ -174,10 +172,10 @@ def _build_daemon_client(
     Si `remote_url` está definido, apunta al daemon remoto en vez del local.
     El auth key se resuelve: `remote_key` > `admin.auth_key` del config local.
     """
-    from infrastructure.config import load_global_config
+    from inaki.config import load_global_config
     from adapters.outbound.daemon_client import DaemonClient
 
-    from inaki.config_errors import borde_de_config
+    from inaki.config.boundary import borde_de_config
 
     # Mismo borde que `_bootstrap`: este es el camino de `inaki` / `inaki chat`,
     # o sea el primer comando que tipea el operador cuando algo no anda.
@@ -503,7 +501,7 @@ def gen_docs() -> None:
     """
     from pathlib import Path
 
-    from infrastructure.config_docs import generate_config_reference, generate_global_example
+    from inaki.config.docs import generate_config_reference, generate_global_example
 
     raiz = Path(__file__).resolve().parent.parent
     artefactos = (

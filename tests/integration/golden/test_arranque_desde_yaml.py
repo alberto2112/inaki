@@ -68,7 +68,7 @@ async def test_modo_debug_deja_la_traza_del_turno(
     """``--debug`` (override de proceso) → el mismo arranque deja ``debug/turns/<agent>.jsonl``."""
     import json
 
-    from infrastructure.config import AgentRegistry, ensure_user_config, load_global_config
+    from inaki.config import AgentRegistry, ensure_user_config, load_global_config
     from infrastructure.container import AppContainer
     from inaki.observability import set_debug_override
 

@@ -64,9 +64,8 @@ DEUDA_TERCEROS_CORE: frozenset[tuple[str, str]] = frozenset()
 # en delegate_tool y admin REST vía Protocols estructurales (2026-06-13); y los
 # composition-roots (CLIs scheduler/knowledge + daemon runner) reubicados a
 # inaki/ — fuera de adapters/, donde un import de infrastructure es legítimo
-# (2026-06-13). Lo único que queda es la introspección del schema Pydantic en
-# el setup_tui, que necesita las clases reales (GlobalConfig/AgentConfig) para
-# generar formularios — se salda inyectándolas desde el composition root.
+# (2026-06-13). El setup TUI, último consumidor del schema desde adapters/, se
+# retiró en 2026-09 (fase 2 del refactor modular).
 DEUDA_ADAPTERS_INFRA: frozenset[tuple[str, str]] = frozenset()
 
 

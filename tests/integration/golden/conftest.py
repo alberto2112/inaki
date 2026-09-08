@@ -76,7 +76,7 @@ class FakeEmbedder(IEmbeddingProvider):
 @pytest.fixture
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """Home de instancia aislado: config + data + users bajo ``tmp_path``."""
-    from infrastructure.home import set_inaki_home
+    from inaki.config.home import set_inaki_home
 
     home = tmp_path / "inaki_home"
     home.mkdir()
@@ -163,7 +163,7 @@ def bordes_externos(monkeypatch: pytest.MonkeyPatch, fake_llm: FakeLLM) -> FakeL
 @pytest.fixture
 def app_container(config_files: tuple[Path, Path], bordes_externos: FakeLLM):
     """El composition root REAL: mismo camino que ``inaki daemon``."""
-    from infrastructure.config import AgentRegistry, ensure_user_config, load_global_config
+    from inaki.config import AgentRegistry, ensure_user_config, load_global_config
     from infrastructure.container import AppContainer
 
     config_dir, agents_dir = config_files

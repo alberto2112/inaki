@@ -31,7 +31,7 @@ def users_root(tmp_path):
 
     Usa ``set_inaki_home`` (no ``HOME``): ``get_inaki_home()`` resuelve por override →
     ``INAKI_HOME`` → default, nunca por ``HOME``. Resetea el override (process-global) al final."""
-    from infrastructure.home import set_inaki_home
+    from inaki.config.home import set_inaki_home
 
     home = tmp_path / ".inaki"
     root = home / "users"

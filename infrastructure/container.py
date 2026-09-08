@@ -65,8 +65,8 @@ from core.ports.outbound.outbound_sink_port import IOutboundSink
 from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRepo
 from adapters.outbound.embedding.sqlite_embedding_cache import SqliteEmbeddingCache
 from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
-from adapters.outbound.config_repository import YamlRepository
-from adapters.outbound.tools.config_tool import ConfigTool
+from inaki.config.adapters.yaml_repository import YamlRepository
+from inaki.config.tools.config_tool import ConfigTool
 from adapters.outbound.tools.tool_registry import ToolRegistry
 from inaki.shared.errors import AgentNotFoundError, ConfigError, InakiError
 from core.domain.services.broadcast_buffer import BroadcastBuffer
@@ -79,8 +79,8 @@ from core.ports.outbound.scope_registry_port import IScopeRegistry
 from core.ports.outbound.tool_config_port import IToolConfigStore
 from core.ports.outbound.turn_tracer_port import ITurnTracer, NullTurnTracer
 from core.ports.outbound.transcription_port import ITranscriptionProvider
-from core.use_cases.config.runtime_config import RuntimeConfigUseCase
-from core.use_cases.config.show_effective import ShowEffectiveConfigUseCase
+from inaki.config.use_cases.runtime_config import RuntimeConfigUseCase
+from inaki.config.use_cases.show_effective import ShowEffectiveConfigUseCase
 from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
 from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
 from core.use_cases.reconcile_memory import ReconcileMemoryUseCase
@@ -95,8 +95,8 @@ from core.domain.value_objects.agent_settings import (
     ReconciliationSettings,
     RunAgentSettings,
 )
-from core.domain.config_merge import deep_merge, resolver_inherit
-from infrastructure.config import (
+from inaki.config.merge import deep_merge, resolver_inherit
+from inaki.config import (
     AgentConfig,
     AgentRegistry,
     GlobalConfig,
@@ -112,8 +112,8 @@ from infrastructure.daemon_reloader import DaemonReloader
 from infrastructure.factories.embedding_factory import EmbeddingProviderFactory
 from infrastructure.factories.llm_factory import LLMProviderFactory
 from infrastructure.factories.transcription_factory import TranscriptionProviderFactory
-from infrastructure.config_introspection import defaults_del_schema, paths_secretos
-from infrastructure.home import get_inaki_home
+from inaki.config.introspection import defaults_del_schema, paths_secretos
+from inaki.config.home import get_inaki_home
 from inaki.observability import JsonlTurnTracer, is_debug_enabled, startup_event
 from infrastructure.scheduler_reconciler import SchedulerReconciler
 

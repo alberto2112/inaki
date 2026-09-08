@@ -16,7 +16,7 @@ from adapters.outbound.history.sqlite_history_store import (
 from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
 from adapters.outbound.tools.tool_registry import ToolRegistry
 from infrastructure.container import AgentContainer
-from infrastructure.home import set_inaki_home
+from inaki.config.home import set_inaki_home
 
 
 class FakeEmbedder:

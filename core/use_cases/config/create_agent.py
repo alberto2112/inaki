@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from core.domain.errors import AgentYaExisteError
+from inaki.shared.errors import AgentYaExisteError
 from core.ports.config_repository import LayerName
 
 if TYPE_CHECKING:

@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from core.domain.entities.background_task import BackgroundTaskView
-from core.domain.entities.message import Message, Role
+from inaki.shared.message import Message, Role
 from core.domain.entities.skill import Skill
 from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
 from core.domain.services.prepend_timestamps import prepend_timestamps

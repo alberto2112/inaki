@@ -301,7 +301,7 @@ class ReconcileMemoryUseCase:
                 timeout_seconds=self._reconciler_timeout_seconds,
             )
         else:
-            from core.domain.entities.message import Message, Role  # import local evita ciclo
+            from inaki.shared.message import Message, Role  # import local evita ciclo
 
             response = await self._llm.complete(
                 messages=[Message(role=Role.USER, content=task_text)],

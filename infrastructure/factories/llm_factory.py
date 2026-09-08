@@ -14,7 +14,7 @@ import pkgutil
 from pathlib import Path
 
 from adapters.outbound.providers.base import BaseLLMProvider, ResolvedLLMConfig
-from core.domain.errors import ConfigError
+from inaki.shared.errors import ConfigError
 from core.ports.outbound.llm_port import ILLMProvider
 from infrastructure.config import LLMConfig, ProviderConfig
 

@@ -26,7 +26,9 @@ from infrastructure.config import AgentConfig, GlobalConfig, TelegramChannelConf
 def _container(tmp_path: Path, monkeypatch):
     cfg = tmp_path / "config"
     (cfg / "agents").mkdir(parents=True)
-    (cfg / "global.yaml").write_text("app:\n  name: Inaki\nllm:\n  provider: x\n  model: y\n", "utf-8")
+    (cfg / "global.yaml").write_text(
+        "app:\n  name: Inaki\nllm:\n  provider: x\n  model: y\n", "utf-8"
+    )
     (cfg / "agents" / "anacleto.yaml").write_text(
         "id: anacleto\nname: Anacleto\nllm:\n  provider: anthropic\n  model: sonnet\n"
         "channels:\n  telegram:\n    token: T\n    groups:\n      behavior: autonomous\n",

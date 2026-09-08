@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from croniter import croniter
 
-from core.domain.errors import InvalidScheduleError
+from inaki.shared.errors import InvalidScheduleError
 
 logger = logging.getLogger(__name__)
 

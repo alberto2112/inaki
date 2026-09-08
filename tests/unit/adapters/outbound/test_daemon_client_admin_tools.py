@@ -33,7 +33,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from adapters.outbound.daemon_client import DaemonClient
-from core.domain.errors import (
+from inaki.shared.errors import (
     DaemonAuthError,
     DaemonNotRunningError,
     UnknownAgentError,

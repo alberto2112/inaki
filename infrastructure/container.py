@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from core.ports.outbound.file_downloader_port import IFileDownloader
     from core.ports.outbound.telegram_file_repo_port import IFileRecordRepo
     from core.use_cases.process_photo import ProcessPhotoUseCase
-    from core.domain.value_objects.channel_context import ChannelContext
+    from inaki.shared.channel_context import ChannelContext
     from core.ports.outbound.background_delegation_port import IBackgroundDelegationQueue
     from core.ports.outbound.knowledge_port import IKnowledgeSource
 
@@ -68,15 +68,16 @@ from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
 from adapters.outbound.config_repository import YamlRepository
 from adapters.outbound.tools.config_tool import ConfigTool
 from adapters.outbound.tools.tool_registry import ToolRegistry
-from core.domain.errors import AgentNotFoundError, ConfigError, InakiError
+from inaki.shared.errors import AgentNotFoundError, ConfigError, InakiError
 from core.domain.services.broadcast_buffer import BroadcastBuffer
-from core.domain.value_objects.channel_context import current_channel_context
+from inaki.shared.channel_context import current_channel_context
 from core.domain.services.rate_limiter import FixedWindowRateLimiter
 from core.domain.services.scheduler_service import SchedulerService
 from core.ports.inbound.scheduler_port import IManualTaskRunner
 from core.ports.outbound.memory_port import IMemoryRepository
 from core.ports.outbound.scope_registry_port import IScopeRegistry
 from core.ports.outbound.tool_config_port import IToolConfigStore
+from core.ports.outbound.turn_tracer_port import ITurnTracer, NullTurnTracer
 from core.ports.outbound.transcription_port import ITranscriptionProvider
 from core.use_cases.config.runtime_config import RuntimeConfigUseCase
 from core.use_cases.config.show_effective import ShowEffectiveConfigUseCase
@@ -113,6 +114,7 @@ from infrastructure.factories.llm_factory import LLMProviderFactory
 from infrastructure.factories.transcription_factory import TranscriptionProviderFactory
 from infrastructure.config_introspection import defaults_del_schema, paths_secretos
 from infrastructure.home import get_inaki_home
+from inaki.observability import JsonlTurnTracer, is_debug_enabled, startup_event
 from infrastructure.scheduler_reconciler import SchedulerReconciler
 
 logger = logging.getLogger(__name__)
@@ -284,9 +286,13 @@ class AgentContainer:
         global_config: GlobalConfig,
         scope_registry: IScopeRegistry | None = None,
         tool_config_store: IToolConfigStore | None = None,
+        tracer: ITurnTracer | None = None,
     ) -> None:
         cfg = agent_config
         self.agent_config = agent_config
+        # Trazas del modo debug — una instancia por proceso (la crea AppContainer);
+        # Null cuando el debug está apagado o en construcciones sueltas (tests).
+        self._tracer: ITurnTracer = tracer or NullTurnTracer()
 
         # Registry compartido de scopes activos para in-flight-message-injection.
         # Si el caller no lo provee (tests directos), creamos uno local — pero la
@@ -397,6 +403,7 @@ class AgentContainer:
             knowledge_orchestrator=self._knowledge_orchestrator,
             thinking_indicator=global_config.channels.thinking_indicator,
             scope_registry=self.scope_registry,
+            tracer=self._tracer,
         )
 
         # Every agent gets a one-shot use case unconditionally so it can always
@@ -416,6 +423,7 @@ class AgentContainer:
                 request_delay_seconds=cfg.llm.request_delay_seconds,
             ),
             thinking_indicator=global_config.channels.thinking_indicator,
+            tracer=self._tracer,
         )
 
         # LLM de memoria COMPARTIDO por consolidación y reconciliación. Se resuelve
@@ -628,7 +636,7 @@ class AgentContainer:
         from adapters.outbound.knowledge.sqlite_knowledge_source import (
             SqliteKnowledgeSource,
         )
-        from core.domain.errors import KnowledgeConfigError
+        from inaki.shared.errors import KnowledgeConfigError
 
         fuente_id = getattr(fuente_cfg, "id", "<sin-id>")
         db_path = getattr(fuente_cfg, "path", None)
@@ -998,6 +1006,7 @@ class AgentContainer:
             tools=self._tools,
             settings=settings,
             thinking_indicator=self._global_config.channels.thinking_indicator,
+            tracer=self._tracer,
         )
 
     def wire_scheduler(
@@ -1209,7 +1218,7 @@ class AgentContainer:
 
     def _build_scene_describer(self, photos_cfg):
         """Instancia el adaptador de descripción de escena según el provider configurado."""
-        from core.domain.errors import InakiError
+        from inaki.shared.errors import InakiError
 
         provider = photos_cfg.scene.provider
         model = photos_cfg.scene.model
@@ -1585,6 +1594,15 @@ class AppContainer:
         # aislados por agent_id en la tupla `(agent_id, channel, chat_id)`.
         self.scope_registry: IScopeRegistry = InMemoryScopeRegistryAdapter()
 
+        # Trazas de turno (modo debug): UN tracer por proceso, compartido por todos
+        # los agentes; escribe en <home>/debug/turns/<agent_id>.jsonl. Con el debug
+        # apagado es el Null (costo cero en el turno).
+        self.turn_tracer: ITurnTracer = (
+            JsonlTurnTracer(get_inaki_home() / "debug" / "turns")
+            if is_debug_enabled(self.global_config.app.debug)
+            else NullTurnTracer()
+        )
+
     def _build_agent_containers(self) -> None:
         # Un AgentContainer por agente declarado. Debe correr primero: todo el
         # wiring posterior resuelve hermanos contra self.agents.
@@ -1595,6 +1613,7 @@ class AppContainer:
                     self.global_config,
                     scope_registry=self.scope_registry,
                     tool_config_store=self.tool_config_store,
+                    tracer=self.turn_tracer,
                 )
                 logger.info("AgentContainer creado para '%s'", agent_cfg.id)
             except Exception as exc:
@@ -2025,21 +2044,29 @@ class AppContainer:
             container.group_rate_limiter = FixedWindowRateLimiter(
                 window_seconds=float(groups_cfg.rate_limiter_window)
             )
-            logger.info(
-                "Agente '%s': rate limiter de grupos wired (autonomous, window=%ds)",
-                agent_cfg.id,
-                groups_cfg.rate_limiter_window,
+            startup_event(
+                logger,
+                "group_rate_limiter",
+                status="ok",
+                agent=agent_cfg.id,
+                window_seconds=groups_cfg.rate_limiter_window,
             )
 
         # (2) Adapter TCP de broadcast — solo si hay bloque broadcast habilitado.
         broadcast_cfg = tg_cfg.broadcast
         if broadcast_cfg is None:
             # Sin transporte LAN (el rate limiter de grupos ya se resolvió arriba).
+            startup_event(
+                logger,
+                "broadcast",
+                status="skip",
+                agent=agent_cfg.id,
+                reason="sin bloque broadcast",
+            )
             return
         if not broadcast_cfg.enabled:
-            logger.info(
-                "Agente '%s': broadcast deshabilitado (enabled=false) — transporte no wired",
-                agent_cfg.id,
+            startup_event(
+                logger, "broadcast", status="skip", agent=agent_cfg.id, reason="enabled=false"
             )
             return
 
@@ -2074,12 +2101,8 @@ class AppContainer:
         container.broadcast_adapter = adapter
         self._broadcast_adapters.append(adapter)
 
-        logger.info(
-            "Agente '%s': broadcast adapter wired (role=%s, host=%s, port=%d)",
-            agent_cfg.id,
-            role,
-            host,
-            port,
+        startup_event(
+            logger, "broadcast", status="ok", agent=agent_cfg.id, role=role, host=host, port=port
         )
 
     def register_telegram_bot(self, agent_id: str, bot: object) -> None:

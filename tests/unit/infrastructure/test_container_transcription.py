@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.domain.errors import InakiError
+from inaki.shared.errors import InakiError
 from core.ports.outbound.transcription_port import ITranscriptionProvider
 from infrastructure.config import (
     AgentConfig,

@@ -573,7 +573,7 @@ async def test_deleted_task_id_no_se_reusa_si_dejo_logs(repo: SQLiteSchedulerRep
 async def test_oneshot_schedule_invalido_lanza_invalid_schedule_error(
     repo: SQLiteSchedulerRepo,
 ) -> None:
-    from core.domain.errors import InvalidScheduleError
+    from inaki.shared.errors import InvalidScheduleError
 
     bad = _make_task("bad")
     bad = bad.model_copy(update={"schedule": "esto-no-es-iso"})

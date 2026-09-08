@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
 
-from core.domain.entities.message import Message
+from inaki.shared.message import Message
 from core.domain.value_objects.conversation_state import ConversationState
 
 

@@ -25,6 +25,7 @@ lint-imports                     # ley de dependencias entre capas (import-linte
 inaki config show --origin       # config efectiva con la capa de cada valor
 inaki config show --secrets      # qué credenciales están puestas y cuáles faltan
 inaki                            # interactive chat (default agent)
+inaki --debug daemon             # modo diagnóstico: nivel DEBUG + trazas de turno en <home>/debug/turns/
 inaki chat --agent dev           # specific agent
 inaki daemon                     # systemd service mode
 ```
@@ -44,6 +45,17 @@ Cuatro capas. La dirección de dependencias es `adapters → core ← infrastruc
 | **`inaki/`** | Composition root: `cli.py`, `daemon_runner.py`, sub-CLIs | Fuera de la regla hexagonal (ensamblar es su trabajo). Los entry points NUEVOS van acá, **no** bajo `adapters/inbound/` |
 
 `ext/` — extensiones de usuario, auto-descubiertas vía `manifest.py`.
+
+> **Refactor modular en curso (2026-09).** El código se está reorganizando por
+> FEATURE bajo el namespace `inaki/` (monolito modular: kernel + módulos +
+> canales + composition root). Ya existen `inaki/shared/` (primitivas de dominio
+> compartidas: `Message`/`Role`, gramática de attachments, `ChannelContext`,
+> errores, skip marker — **no importa nada del proyecto**) e
+> `inaki/observability/` (logging unificado, modo debug, trazas de turno,
+> eventos de arranque). La ley de dependencias vive en `pyproject.toml` →
+> `[tool.importlinter]` y la verifica `lint-imports`. Mientras dure el refactor,
+> las capas `core/`, `adapters/` e `infrastructure/` siguen vigentes con sus
+> reglas; los módulos se mudan de a uno.
 
 Las reglas las verifica `tests/unit/test_architecture.py` (incluye `TYPE_CHECKING` e
 imports locales). Dos de ellas son **ratchet** — el allowlist de terceros en `core/` y la
@@ -184,7 +196,7 @@ Cada una salió de un fallo en producción. El caso completo está en
   distintas causó el bug de doble ejecución por DST.
 - **NUNCA** agregar `index()` a `IKnowledgeSource`: rompería las fuentes read-only.
 - **NUNCA** inventar un formato de persistencia por tipo de media o por canal — la
-  gramática se extiende en `core/domain/value_objects/attachment.py`. → `attachment-grammar`
+  gramática se extiende en `inaki/shared/attachment.py`. → `attachment-grammar`
 - **NUNCA** dejar un bloque de config sin tipar "para que el merge no se queje": el
   merge opera sobre dicts crudos ANTES de validar, así que tipar el destino no le
   cuesta nada. Sin tipo no se valida jamás, sus defaults se duplican en cada

@@ -17,7 +17,7 @@ from adapters.outbound.transcription.base import (
     BaseTranscriptionProvider,
     ResolvedTranscriptionConfig,
 )
-from core.domain.errors import ConfigError, UnknownTranscriptionProviderError
+from inaki.shared.errors import ConfigError, UnknownTranscriptionProviderError
 from core.ports.outbound.transcription_port import ITranscriptionProvider
 from infrastructure.config import ProviderConfig, TranscriptionConfig
 

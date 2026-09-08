@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from adapters.inbound.telegram.ports import TelegramChannelSettings
-from core.domain.errors import TaskNotFoundError
+from inaki.shared.errors import TaskNotFoundError
 from core.domain.value_objects.manual_run_result import ManualRunResult
 
 

@@ -86,7 +86,7 @@ def test_reload_callback_calls_scheduler_reload(tmp_path: Path) -> None:
 
 def test_reload_callback_silences_connect_error() -> None:
     from inaki.scheduler_cli import _notify_daemon_reload
-    from core.domain.errors import DaemonNotRunningError
+    from inaki.shared.errors import DaemonNotRunningError
 
     with patch("adapters.outbound.daemon_client.DaemonClient") as MockClient:
         instance = MockClient.return_value
@@ -146,7 +146,7 @@ def test_run_cmd_trigger_failed_exit_1(tmp_path: Path) -> None:
 def test_run_cmd_task_not_found_exit_1(tmp_path: Path) -> None:
     from typer.testing import CliRunner
 
-    from core.domain.errors import TaskNotFoundError
+    from inaki.shared.errors import TaskNotFoundError
     from inaki.scheduler_cli import scheduler_app
 
     mock_client = MagicMock()

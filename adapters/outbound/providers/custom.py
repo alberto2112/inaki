@@ -37,7 +37,7 @@ from typing import ClassVar
 
 from adapters.outbound.providers.base import ResolvedLLMConfig
 from adapters.outbound.providers.openai_compatible import OpenAICompatibleProvider
-from core.domain.errors import ConfigError
+from inaki.shared.errors import ConfigError
 
 PROVIDER_NAME = "custom"
 

@@ -12,7 +12,7 @@ import logging
 
 import httpx
 
-from core.domain.errors import SceneDescriptionError
+from inaki.shared.errors import SceneDescriptionError
 
 logger = logging.getLogger(__name__)
 

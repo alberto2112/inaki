@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 from adapters.outbound.delegation.background_queue_adapter import (
     BackgroundDelegationQueueAdapter,
 )
-from core.domain.skip_marker import SKIP_MARKER
+from inaki.shared.skip_marker import SKIP_MARKER
 
 
 # ---------------------------------------------------------------------------

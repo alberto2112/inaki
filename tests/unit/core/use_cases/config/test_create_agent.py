@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.domain.errors import AgentYaExisteError
+from inaki.shared.errors import AgentYaExisteError
 from core.ports.config_repository import IConfigRepository, LayerName
 from core.use_cases.config.create_agent import CreateAgentUseCase
 

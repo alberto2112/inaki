@@ -16,6 +16,7 @@ from typing import Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
+from core.ports.outbound.turn_tracer_port import NullTurnTracer
 from adapters.outbound.tools.delegate_tool import DelegateTool
 from adapters.outbound.tools.tool_registry import ToolRegistry
 from core.use_cases.run_agent import RunAgentUseCase
@@ -113,6 +114,7 @@ def _build_minimal_container(
     container.agent_config = agent_config
     container._global_config = global_config
     container._delegation_wired = False
+    container._tracer = NullTurnTracer()
     container._llm = AsyncMock()
     container._embedder = FakeEmbedder()
     container._tools = ToolRegistry(embedder=container._embedder)
@@ -425,6 +427,7 @@ def _build_target_container(
     target.agent_config = target_cfg
     target._global_config = global_config
     target._delegation_wired = False
+    target._tracer = NullTurnTracer()
     target._llm = AsyncMock()
     target._embedder = FakeEmbedder()
     target._tools = ToolRegistry(embedder=target._embedder)

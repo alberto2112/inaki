@@ -20,7 +20,10 @@ from core.use_cases.config._merge import CampoTriestado, TristadoValor
 
 def _leaf(path: tuple[str, ...], kind: str = "scalar", value: object = "") -> SchemaNode:
     return SchemaNode(
-        path=path, label=path[-1], is_section=False, field=Field(path[-1], value, kind)  # type: ignore[arg-type]
+        path=path,
+        label=path[-1],
+        is_section=False,
+        field=Field(path[-1], value, kind),  # type: ignore[arg-type]
     )
 
 
@@ -101,7 +104,9 @@ class TestAgentPersistAdd:
 
     def test_anadir_campo_usa_su_default(self):
         page = _agent_page()
-        parent = SchemaNode(path=("channels", "telegram", "groups"), label="groups", is_section=True)
+        parent = SchemaNode(
+            path=("channels", "telegram", "groups"), label="groups", is_section=True
+        )
         opt = AddableOption("rate_limiter", "rate_limiter", is_section=False, default_value=5)
         _run(page, page.persist_add, parent, opt)
 

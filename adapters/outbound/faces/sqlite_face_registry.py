@@ -27,7 +27,7 @@ import numpy as np
 import sqlite_vec
 
 from core.domain.entities.face import BBox, FaceMatch, MatchStatus, Person
-from core.domain.errors import EmbeddingDimensionMismatchError, FaceRegistryError
+from inaki.shared.errors import EmbeddingDimensionMismatchError, FaceRegistryError
 from core.ports.outbound.face_registry_port import IFaceRegistryPort
 
 logger = logging.getLogger(__name__)

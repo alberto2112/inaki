@@ -28,7 +28,7 @@ from adapters.inbound.rest.admin.schemas import (
 )
 from adapters.inbound.turn_dispatch import dispatch_inbound_turn
 from adapters.outbound.intermediate_sinks.buffering import BufferingIntermediateSink
-from core.domain.value_objects.channel_context import ChannelContext
+from inaki.shared.channel_context import ChannelContext
 
 logger = logging.getLogger(__name__)
 

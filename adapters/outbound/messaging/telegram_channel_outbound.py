@@ -15,7 +15,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from core.domain.entities.message import Message, Role
+from inaki.shared.message import Message, Role
 from core.domain.value_objects.outbound_kind import OutboundKind
 from core.ports.outbound.channel_outbound_port import IChannelOutbound
 from core.ports.outbound.history_port import IHistoryStore

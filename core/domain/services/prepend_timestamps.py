@@ -7,7 +7,7 @@ antes de invocar el tool loop, cuando el canal lo solicite.
 
 from __future__ import annotations
 
-from core.domain.entities.message import Message, Role
+from inaki.shared.message import Message, Role
 
 _FORMATO_TS = "%Y-%m-%d %H:%M:%S %Z"
 

@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 
 from core.domain.entities.face import BBox, FaceDetection
-from core.domain.errors import VisionError
+from inaki.shared.errors import VisionError
 
 
 # ---------------------------------------------------------------------------

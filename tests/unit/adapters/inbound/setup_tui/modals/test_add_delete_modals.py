@@ -42,7 +42,9 @@ class TestResumen:
 class TestConfirmDeleteModal:
     def test_guarda_contexto_de_seccion(self):
         modal = ConfirmDeleteModal(
-            "channels.telegram.groups", es_seccion=True, campos_afectados=["behavior", "rate_limiter"]
+            "channels.telegram.groups",
+            es_seccion=True,
+            campos_afectados=["behavior", "rate_limiter"],
         )
         assert modal._titulo == "channels.telegram.groups"
         assert modal._es_seccion is True

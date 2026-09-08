@@ -195,7 +195,7 @@ def test_agente_inexistente_lanza_error_en_vez_de_vista_global() -> None:
     convincente y equivocado."""
     import pytest
 
-    from core.domain.errors import AgentNotFoundError
+    from inaki.shared.errors import AgentNotFoundError
 
     repo = _repo({"app": {"name": "I"}})
     repo.layer_exists.return_value = False

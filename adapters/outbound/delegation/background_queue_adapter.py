@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from core.domain.entities.background_task import BackgroundTask, BackgroundTaskView
-from core.domain.skip_marker import SKIP_MARKER, is_skip_response
+from inaki.shared.skip_marker import SKIP_MARKER, is_skip_response
 
 if TYPE_CHECKING:
     from core.ports.outbound.llm_dispatcher_port import ILLMDispatcher

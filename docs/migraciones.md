@@ -75,6 +75,7 @@ existe este documento— y la contradicción no queda flotando.
 | [`broadcast-topology-config`](#broadcast-topology-config) | Rol explícito `server` XOR `client`; config vieja falla al cargar |
 | [`broadcast-arranque-observable`](#broadcast-arranque-observable) | El fallo de `bind()` y la config de broadcast que no valida ahora salen como `ERROR` en el log |
 | [`formato-en-el-borde-del-transporte`](#formato-en-el-borde-del-transporte) | Todo lo que Telegram manda fuera del turno conversacional (scheduler, `bg-N`, intermedios, media) sale **formateado** y troceado, no en markdown crudo |
+| [`observabilidad-un-solo-stack`](#observabilidad-un-solo-stack) | Cada línea de log lleva hora, nivel, logger y los campos `extra` (antes solo el mensaje); `structlog` deja de ser dependencia; nuevos `app.log_format`, `app.debug` y `inaki --debug` con trazas de turno en `<home>/debug/turns/` |
 | [`user-timezone-default`](#user-timezone-default) | Un `global.yaml` sin bloque `user:` arranca (timezone autodetectada); antes el container moría con un `ValueError` de `ZoneInfo` |
 | [`broadcast-human-reset`](#broadcast-human-reset) | Un `user_input_voice`/`user_input_photo` recibido por broadcast **resetea** el rate limiter del grupo, igual que un mensaje humano nativo |
 
@@ -102,6 +103,58 @@ existe este documento— y la contradicción no queda flotando.
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `observabilidad-un-solo-stack`
+
+**Contexto (2026-09-08, fase 1 del refactor modular).** El proceso tenía DOS stacks
+de logging: `logging_setup.py` configuraba `structlog` (procesadores, renderer de
+consola, filtro por nivel) pero ningún módulo lo usaba — todo el código hacía
+`logging.getLogger(__name__)`. Lo que de verdad salía por stdout era el
+`basicConfig` de la stdlib con `format="%(message)s"`: sin hora, sin nivel, sin
+nombre de logger, y sin NINGUNO de los campos `extra` que varios módulos
+adjuntaban con cuidado. El transporte de broadcast, por ejemplo, logueaba
+`broadcast.message.received` con `extra={"from_agent_id", "chat_id"}` — en
+`journalctl` aparecía la etiqueta pelada, sin de quién ni para qué chat. Un log
+que descarta lo que el emisor quiso decir no sirve para diagnosticar.
+
+**Cambio.** Nace `inaki/observability/`:
+
+- `setup_logging(level, format)` sobre la stdlib, un solo stack. `console`
+  imprime `HH:MM:SS NIVEL logger: mensaje  clave=valor ...`; `json` imprime una
+  línea por evento con `ts`, `level`, `logger`, `msg` y los `extra`. Idempotente
+  (el reload la vuelve a llamar) y respetuosa con handlers ajenos.
+- `structlog` sale de las dependencias (`pyproject.toml`). No hay que
+  reinstalar: quedar instalado sin uso no rompe nada.
+- Config nueva en `app:`: `log_format` (`console` | `json`, default `console`) y
+  `debug` (default `false`). Flag `inaki --debug` que gana sobre el YAML para un
+  arranque.
+- Modo debug: nivel `DEBUG` y **trazas de turno** en
+  `<home>/debug/turns/<agent_id>.jsonl` — `turn.start`, `turn.routing` (tools y
+  skills elegidas), `turn.prompt` (system prompt entero + mensajes),
+  `llm.response` por cada llamada, `tool.call`/`tool.result` por cada tool,
+  `turn.end`. Puerto `ITurnTracer` en `core/ports/outbound/turn_tracer_port.py`
+  (nulo por default: costo cero); implementación `JsonlTurnTracer` en
+  observability; la inyecta `AppContainer`. Los strings largos se recortan a
+  4000 caracteres.
+- `startup_event(logger, resource, status, agent, reason, ...)`: una línea
+  uniforme `[startup] <resource>` con `event=startup.resource` por recurso que el
+  wiring construye (`ok`), saltea (`skip`) o no puede construir (`error`).
+  Aplicado al broadcast, al rate limiter de grupos y al bot de Telegram; el
+  resto del wiring lo adopta cuando se disuelva por módulo.
+
+**Comportamiento observable.** Las líneas de log cambian de forma (ahora traen
+hora, nivel y logger); cualquier grep sobre el journal que dependiera del
+mensaje pelado sigue funcionando porque el mensaje va intacto al final del
+prefijo. Las trazas de debug contienen conversaciones enteras: el modo viene
+apagado y hay que encenderlo a propósito.
+
+**Invariante que dejó.** **NUNCA** volver a un formato de log que descarte los
+`extra`: si un módulo adjunta datos estructurados a un log, el formatter los
+publica en los dos formatos. Y **NUNCA** dos stacks de logging: un paquete que
+"configura" un logger que nadie usa es peor que no tenerlo, porque parece que
+hay observabilidad.
 
 ---
 

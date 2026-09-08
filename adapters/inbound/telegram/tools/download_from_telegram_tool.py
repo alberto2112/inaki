@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from core.domain.value_objects.channel_context import ChannelContext
+from inaki.shared.channel_context import ChannelContext
 from core.domain.value_objects.telegram_file import (
     DownloadableContentType,
     TelegramFileRecord,

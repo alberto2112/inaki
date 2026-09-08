@@ -26,7 +26,7 @@ from typing import AsyncIterator
 
 import aiosqlite
 
-from core.domain.entities.message import Message, Role
+from inaki.shared.message import Message, Role
 from core.domain.value_objects.conversation_state import ConversationState
 from core.ports.outbound.history_port import IHistoryStore
 

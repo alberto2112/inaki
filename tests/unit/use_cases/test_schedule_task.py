@@ -13,7 +13,7 @@ from core.domain.entities.task import (
     TaskStatus,
     TriggerType,
 )
-from core.domain.errors import BuiltinTaskProtectedError, TaskNotFoundError
+from inaki.shared.errors import BuiltinTaskProtectedError, TaskNotFoundError
 from core.use_cases.schedule_task import ScheduleTaskUseCase
 
 
@@ -291,7 +291,7 @@ async def test_update_invalidating_recomputes_for_pending_task(
 async def test_create_recurrente_con_cron_invalido_lanza(
     uc: ScheduleTaskUseCase, mock_repo: AsyncMock
 ) -> None:
-    from core.domain.errors import InvalidScheduleError
+    from inaki.shared.errors import InvalidScheduleError
 
     bad = _make_task().model_copy(
         update={"task_kind": TaskKind.RECURRENT, "schedule": "esto no es cron"}
@@ -306,7 +306,7 @@ async def test_create_recurrente_con_cron_invalido_lanza(
 async def test_update_recurrente_con_cron_invalido_lanza(
     uc: ScheduleTaskUseCase, mock_repo: AsyncMock
 ) -> None:
-    from core.domain.errors import InvalidScheduleError
+    from inaki.shared.errors import InvalidScheduleError
 
     existing = _make_task(task_id=150).model_copy(
         update={"task_kind": TaskKind.RECURRENT, "schedule": "0 3 * * *"}

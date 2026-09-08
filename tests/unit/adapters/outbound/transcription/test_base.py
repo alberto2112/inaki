@@ -17,7 +17,7 @@ from adapters.outbound.transcription.base import (
     BaseTranscriptionProvider,
     ResolvedTranscriptionConfig,
 )
-from core.domain.errors import TranscriptionError
+from inaki.shared.errors import TranscriptionError
 from core.ports.outbound.transcription_port import ITranscriptionProvider
 
 

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from core.domain.entities.message import Message, Role
+from inaki.shared.message import Message, Role
 from core.domain.value_objects.dispatch_result import DispatchResult
 from core.ports.outbound.intermediate_sink_port import IIntermediateSink
 from core.ports.outbound.outbound_sink_port import IOutboundSink
@@ -178,9 +178,7 @@ class ChannelHistoryRecorderAdapter:
         self._agents = agents
         self._conversational = conversational_channels
 
-    async def record_channel_send(
-        self, agent_id: str, resolved_target: str, text: str
-    ) -> None:
+    async def record_channel_send(self, agent_id: str, resolved_target: str, text: str) -> None:
         channel, sep, chat_id = resolved_target.partition(":")
         if not sep or channel not in self._conversational:
             # No es canal conversacional (ej: file:///... del fallback) → el

@@ -46,7 +46,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable, Sequence
 
-from core.domain.errors import ConfigError
+from inaki.shared.errors import ConfigError
 
 __all__ = [
     "SENTINEL_ELIMINAR",

@@ -29,8 +29,8 @@ from adapters.inbound.telegram.message_mapper import (
     send_html_or_plain,
 )
 from adapters.inbound.turn_dispatch import INFLIGHT_ACK
-from core.domain.errors import TranscriptionError
-from core.domain.value_objects.attachment import (
+from inaki.shared.errors import TranscriptionError
+from inaki.shared.attachment import (
     IncomingAttachment,
     format_album,
     format_analysis_delta,

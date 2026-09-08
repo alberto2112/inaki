@@ -24,7 +24,7 @@ import numpy as np
 import pytest
 
 from adapters.outbound.faces.sqlite_face_registry import SqliteFaceRegistryAdapter
-from core.domain.errors import EmbeddingDimensionMismatchError
+from inaki.shared.errors import EmbeddingDimensionMismatchError
 
 
 # ---------------------------------------------------------------------------

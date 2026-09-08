@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from core.ports.outbound.turn_tracer_port import NullTurnTracer
 from adapters.outbound.tools.delegate_tool import DelegateTool, _RESULT_FORMAT_FOOTER
 from adapters.outbound.tools.tool_registry import ToolRegistry
 from core.domain.value_objects.conversation_state import ConversationState
@@ -167,6 +168,7 @@ def _build_container(
     container.agent_config = agent_config
     container._global_config = global_config
     container._delegation_wired = False
+    container._tracer = NullTurnTracer()
     container._llm = llm
     container._embedder = FakeEmbedder()
     container._tools = ToolRegistry(embedder=container._embedder)
@@ -773,7 +775,9 @@ async def test_failure_modes_canonical_reason_strings(scenario: str, expected_re
 
     if scenario == "target_not_allowed":
         # Delegate to an agent not in allowed_targets → el hijo NUNCA se alcanza.
-        parent_llm = _scripted_parent_llm(target="other_agent", task="task", child=None, final="Done.")
+        parent_llm = _scripted_parent_llm(
+            target="other_agent", task="task", child=None, final="Done."
+        )
         parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
         child_container = _build_container(child_cfg, global_cfg, _make_scripted_llm([]))
         _wire_both(parent_container, child_container)
@@ -1062,7 +1066,9 @@ async def test_same_sub_def_inherits_each_callers_llm():
     )
     p_cfg = _make_agent_config(agent_id="P", delegation_enabled=True, allowed_targets=["s"])
     p = _build_container(p_cfg, global_cfg, p_llm)
-    s_for_p = _build_container(s_cfg, global_cfg, _make_scripted_llm([]))  # llm del sub: jamás usado
+    s_for_p = _build_container(
+        s_cfg, global_cfg, _make_scripted_llm([])
+    )  # llm del sub: jamás usado
     _wire_both(p, s_for_p, sub_delta=sub_delta)
     await p.run_agent.execute("ask P")
 
@@ -1097,7 +1103,9 @@ async def test_sub_llm_override_builds_new_llm_via_factory():
     }
     s_cfg = _make_agent_config(agent_id="s", delegation_enabled=True, allowed_targets=[])
 
-    parent_llm = _make_scripted_llm([_tool_call_response("s", "t"), "P done"])  # solo turnos del parent
+    parent_llm = _make_scripted_llm(
+        [_tool_call_response("s", "t"), "P done"]
+    )  # solo turnos del parent
     override_llm = _make_scripted_llm([_valid_child_response(summary="from sub's own llm")])
 
     p_cfg = _make_agent_config(agent_id="P", delegation_enabled=True, allowed_targets=["s"])

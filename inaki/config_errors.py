@@ -42,7 +42,7 @@ def _errores_del_operador() -> tuple[type[BaseException], ...]:
     from pydantic import ValidationError
     from ruamel.yaml import YAMLError as RuamelYAMLError
 
-    from core.domain.errors import ConfigError
+    from inaki.shared.errors import ConfigError
 
     return (ConfigError, ValidationError, yaml.YAMLError, RuamelYAMLError, OSError)
 

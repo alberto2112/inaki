@@ -29,7 +29,7 @@ def warn_on_invalid_refs(container: Any, notify: _Notifier) -> None:
     if container is None:
         return
 
-    from core.domain.errors import ReferenciaInvalidaError
+    from inaki.shared.errors import ReferenciaInvalidaError
 
     try:
         from adapters.inbound.setup_tui.validators.cross_refs import validate_global_config

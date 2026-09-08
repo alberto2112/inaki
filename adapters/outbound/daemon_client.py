@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 
-from core.domain.errors import (
+from inaki.shared.errors import (
     DaemonAuthError,
     DaemonClientError,
     DaemonNotRunningError,

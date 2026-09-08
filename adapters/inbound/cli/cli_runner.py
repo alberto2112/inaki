@@ -12,7 +12,7 @@ import uuid
 
 from rich.console import Console
 
-from core.domain.errors import (
+from inaki.shared.errors import (
     DaemonClientError,
     DaemonNotRunningError,
     DaemonTimeoutError,

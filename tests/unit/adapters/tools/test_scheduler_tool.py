@@ -46,13 +46,13 @@ from core.domain.entities.task import (
     TriggerType,
 )
 from core.domain.entities.task_log import TaskLog
-from core.domain.errors import (
+from inaki.shared.errors import (
     BuiltinTaskProtectedError,
     SchedulerError,
     TaskNotFoundError,
     TooManyActiveTasksError,
 )
-from core.domain.value_objects.channel_context import ChannelContext
+from inaki.shared.channel_context import ChannelContext
 from core.domain.value_objects.manual_run_result import ManualRunResult
 from core.ports.outbound.tool_port import ToolResult
 

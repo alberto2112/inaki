@@ -267,7 +267,7 @@ class BasePage(Screen):
         if container is None:
             return
 
-        from core.domain.errors import ReferenciaInvalidaError
+        from inaki.shared.errors import ReferenciaInvalidaError
 
         try:
             from adapters.inbound.setup_tui.validators.cross_refs import (

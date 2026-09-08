@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 from unittest.mock import AsyncMock
 
-from core.domain.entities.message import Message, Role
+from inaki.shared.message import Message, Role
 from core.use_cases.run_agent import RunAgentUseCase
 from infrastructure.container import build_run_agent_settings
 

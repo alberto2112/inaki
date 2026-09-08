@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.domain.skip_marker import SKIP_MARKER, is_skip_response
+from inaki.shared.skip_marker import SKIP_MARKER, is_skip_response
 
 
 def test_skip_marker_constante() -> None:

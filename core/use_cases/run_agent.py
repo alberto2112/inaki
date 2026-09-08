@@ -21,18 +21,19 @@ guardan con ``persist_tool_calls`` activo (ver nota de migración
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
-from core.domain.entities.message import Message, Role
+from inaki.shared.message import Message, Role
 from core.domain.entities.skill import Skill
-from core.domain.errors import ToolLoopMaxIterationsError
+from inaki.shared.errors import ToolLoopMaxIterationsError
 from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
-from core.domain.skip_marker import is_skip_response
+from inaki.shared.skip_marker import is_skip_response
 from core.domain.value_objects.agent_context import AgentContext
 from core.domain.value_objects.agent_info import AgentInfoDTO
-from core.domain.value_objects.channel_context import (
+from inaki.shared.channel_context import (
     ChannelContext,
     current_channel_context,
     reset_current_channel_context,
@@ -48,6 +49,7 @@ from core.ports.outbound.memory_port import IMemoryRepository
 from core.ports.outbound.scope_registry_port import IScopeRegistry
 from core.ports.outbound.skill_port import ISkillRepository
 from core.ports.outbound.tool_port import IToolExecutor
+from core.ports.outbound.turn_tracer_port import ITurnTracer, NullTurnTracer
 from core.use_cases._tool_loop import run_tool_loop
 from core.use_cases._turn_pipeline import (
     ATTACHMENTS_SECTION,
@@ -105,6 +107,7 @@ class RunAgentUseCase:
         background_queue: IBackgroundDelegationQueue | None = None,
         thinking_indicator: bool = False,
         scope_registry: IScopeRegistry | None = None,
+        tracer: ITurnTracer | None = None,
     ) -> None:
         self._llm = llm
         self._memory = memory
@@ -127,6 +130,8 @@ class RunAgentUseCase:
         # cancelación del scope en sus checkpoints. None → sin kill-switch
         # (tests que construyen el use case directo).
         self._scope_registry = scope_registry
+        # ITurnTracer — trazas del modo debug. Null por default: costo cero.
+        self._tracer: ITurnTracer = tracer or NullTurnTracer()
         # Extra sections injected by wire_delegation (task 6.1).
         # Empty by default — non-breaking when delegation is disabled.
         self._extra_system_sections: list[str] = []
@@ -418,6 +423,12 @@ class RunAgentUseCase:
         sticky state, debug de foto).
         """
         agent_id = self._settings.agent_id
+        turno = self._tracer.bind(
+            agent_id=agent_id, turn_id=uuid.uuid4().hex[:12], channel=channel, chat_id=chat_id
+        )
+        turno.trace(
+            "turn.start", user_input=user_input, ephemeral=ephemeral, skip_marker=skip_marker
+        )
 
         # Snapshot antes del primer await para evitar carrera con flushes concurrentes
         # de distintos grupos: set_extra_system_sections puede ser sobreescrito por otro
@@ -480,6 +491,12 @@ class RunAgentUseCase:
             skills=self._skills,
             tools=self._tools,
         )
+        turno.trace(
+            "turn.routing",
+            bypass=routing.routing_bypass,
+            tools=[s.get("function", {}).get("name", "") for s in routing.tool_schemas],
+            skills=[s.name for s in routing.retrieved_skills],
+        )
         knowledge_chunks, _ = await prefetch_knowledge(
             routing_bypass=routing.routing_bypass,
             orchestrator=self._knowledge_orchestrator,
@@ -526,6 +543,13 @@ class RunAgentUseCase:
             user_input=user_input,
             channel=channel,
             timestamp_channels=self._settings.timestamp_channels,
+        )
+
+        turno.trace(
+            "turn.prompt",
+            system_prompt=system_prompt,
+            knowledge_chunks=len(knowledge_chunks),
+            messages=[{"role": m.role.value, "content": m.content} for m in messages],
         )
 
         if self._photo_debug_path:
@@ -694,6 +718,7 @@ class RunAgentUseCase:
                 # sin degradar la selección del LLM.
                 reroute_tools=_reroute_tools_for_drain,
                 reroute_max_extra_tools=self._settings.tools_top_k,
+                tracer=turno,
             )
         except ToolLoopMaxIterationsError as e:
             response = e.last_response or (
@@ -701,7 +726,7 @@ class RunAgentUseCase:
                 "iteraciones de tools sin obtener una respuesta final."
             )
 
-        # Detección tolerante del skip_marker (ver core.domain.skip_marker): si el
+        # Detección tolerante del skip_marker (ver inaki.shared.skip_marker): si el
         # marcador aparece en cualquier parte de la respuesta, descartamos persistencia.
         skip_persist = is_skip_response(response, skip_marker)
 
@@ -747,6 +772,7 @@ class RunAgentUseCase:
                 chat_id=chat_id,
             )
 
+        turno.trace("turn.end", response=response, skip_persist=skip_persist)
         return response
 
     def _truncate_tool_result(self, message: Message) -> Message:

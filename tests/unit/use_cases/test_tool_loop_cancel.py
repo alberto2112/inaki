@@ -13,7 +13,7 @@ import json
 from unittest.mock import AsyncMock
 
 from adapters.outbound.scope_registry_adapter import InMemoryScopeRegistryAdapter
-from core.domain.entities.message import Message, Role
+from inaki.shared.message import Message, Role
 from core.domain.value_objects.llm_response import LLMResponse
 from core.ports.outbound.scope_registry_port import Scope
 from core.ports.outbound.tool_port import ToolResult

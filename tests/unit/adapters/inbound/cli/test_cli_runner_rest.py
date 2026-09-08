@@ -25,7 +25,7 @@ from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
 
-from core.domain.errors import DaemonNotRunningError, DaemonTimeoutError
+from inaki.shared.errors import DaemonNotRunningError, DaemonTimeoutError
 from core.domain.value_objects.chat_turn_result import ChatTurnResult
 from core.ports.outbound.daemon_client_port import IDaemonClient
 
@@ -279,7 +279,7 @@ def test_agents_llama_list_agents_y_muestra_resultado(mock_client: MagicMock, ca
 def test_agents_maneja_error_de_conexion(mock_client: MagicMock, capsys) -> None:
     """/agents con daemon no disponible → imprime error, el loop continúa y procesa el siguiente input."""
     from adapters.inbound.cli.cli_runner import run_cli
-    from core.domain.errors import DaemonNotRunningError
+    from inaki.shared.errors import DaemonNotRunningError
 
     mock_client.list_agents.side_effect = DaemonNotRunningError()
     mock_client.chat_turn.return_value = ChatTurnResult(reply="respuesta post-error")

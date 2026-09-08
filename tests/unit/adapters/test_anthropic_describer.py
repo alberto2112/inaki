@@ -24,7 +24,7 @@ from adapters.outbound.scene.anthropic_describer import (
     PROVIDER_NAME,
     AnthropicSceneDescriberAdapter,
 )
-from core.domain.errors import SceneDescriptionError
+from inaki.shared.errors import SceneDescriptionError
 
 ENDPOINT = "https://api.anthropic.com/v1/messages"
 FAKE_IMAGE = b"\xff\xd8\xff\xe0fake-jpeg-bytes"

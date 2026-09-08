@@ -21,7 +21,7 @@ from pathlib import Path
 
 import typer
 
-from core.domain.errors import KnowledgeError
+from inaki.shared.errors import KnowledgeError
 
 knowledge_app = typer.Typer(help="Manage document knowledge sources.")
 
@@ -151,9 +151,7 @@ def knowledge_ingest(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1)
 
-    typer.echo(
-        f"Done. Stored at: {result['stored_path']}, new chunks: {result['chunks_nuevos']}"
-    )
+    typer.echo(f"Done. Stored at: {result['stored_path']}, new chunks: {result['chunks_nuevos']}")
 
 
 @knowledge_app.command("list")
@@ -261,9 +259,7 @@ def knowledge_delete(
     borrados = asyncio.run(_run())
 
     if borrados == 0:
-        typer.echo(
-            f"Error: '{file_path}' not found in the index of '{source_id}'.", err=True
-        )
+        typer.echo(f"Error: '{file_path}' not found in the index of '{source_id}'.", err=True)
         raise typer.Exit(code=1)
 
     typer.echo(f"Done. Deleted {borrados} chunk(s) of '{file_path}' from '{source_id}'.")

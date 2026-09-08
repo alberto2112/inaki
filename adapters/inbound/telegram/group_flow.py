@@ -23,8 +23,8 @@ from adapters.inbound.telegram.message_mapper import (
     hay_destinatario_explicito,
     send_html_or_plain,
 )
-from core.domain.skip_marker import SKIP_MARKER, is_skip_response
-from core.domain.value_objects.channel_context import ChannelContext
+from inaki.shared.skip_marker import SKIP_MARKER, is_skip_response
+from inaki.shared.channel_context import ChannelContext
 
 
 if TYPE_CHECKING:

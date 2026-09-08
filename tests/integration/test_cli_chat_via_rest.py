@@ -35,7 +35,7 @@ from starlette.testclient import TestClient
 from adapters.outbound import daemon_client as daemon_client_module
 from adapters.outbound.daemon_client import DaemonClient
 from adapters.outbound.scope_registry_adapter import InMemoryScopeRegistryAdapter
-from core.domain.entities.message import Message, Role
+from inaki.shared.message import Message, Role
 from core.domain.value_objects.agent_info import AgentInfoDTO
 
 _AGENT_ID = "general"

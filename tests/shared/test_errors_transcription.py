@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.domain.errors import (
+from inaki.shared.errors import (
     InakiError,
     TranscriptionError,
     TranscriptionFileTooLargeError,

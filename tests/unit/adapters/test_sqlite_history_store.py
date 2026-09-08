@@ -8,7 +8,7 @@ from adapters.outbound.history.sqlite_history_store import (
     HistoryStoreSettings,
     SQLiteHistoryStore,
 )
-from core.domain.entities.message import Message, Role
+from inaki.shared.message import Message, Role
 from core.domain.value_objects.conversation_state import ConversationState
 
 

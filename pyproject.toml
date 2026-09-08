@@ -15,7 +15,6 @@ dependencies = [
     "sqlite-vec>=0.1",
     "onnxruntime>=1.18",
     "numpy>=1.26",
-    "structlog>=24.0",
     "python-telegram-bot>=21.0",
     "markdown-it-py>=3.0",
     "fastapi>=0.111",
@@ -126,11 +125,59 @@ ignore_missing_imports = true
 [tool.importlinter]
 root_packages = ["core", "adapters", "infrastructure", "inaki"]
 
+# Módulos de `inaki/` que el dominio NO puede conocer. `inaki.shared` (primitivas)
+# es la excepción deliberada: el dominio la consume. Cuando `core/` se disuelva en
+# `inaki/kernel` (fase 9) esta lista se convierte en el contrato de capas final.
 [[tool.importlinter.contracts]]
 name = "core/ no conoce adapters/, infrastructure/ ni el composition root"
 type = "forbidden"
 source_modules = ["core"]
-forbidden_modules = ["adapters", "infrastructure", "inaki"]
+forbidden_modules = [
+    "adapters",
+    "infrastructure",
+    "inaki.cli",
+    "inaki.daemon_runner",
+    "inaki.config_cli",
+    "inaki.config_errors",
+    "inaki.knowledge_cli",
+    "inaki.scheduler_cli",
+    "inaki.setup_cli",
+    "inaki.observability",
+]
+
+[[tool.importlinter.contracts]]
+name = "inaki/shared no conoce a nadie del proyecto"
+type = "forbidden"
+source_modules = ["inaki.shared"]
+forbidden_modules = [
+    "core",
+    "adapters",
+    "infrastructure",
+    "inaki.cli",
+    "inaki.daemon_runner",
+    "inaki.config_cli",
+    "inaki.config_errors",
+    "inaki.knowledge_cli",
+    "inaki.scheduler_cli",
+    "inaki.setup_cli",
+    "inaki.observability",
+]
+
+[[tool.importlinter.contracts]]
+name = "inaki/observability solo conoce core (ports) y shared"
+type = "forbidden"
+source_modules = ["inaki.observability"]
+forbidden_modules = [
+    "adapters",
+    "infrastructure",
+    "inaki.cli",
+    "inaki.daemon_runner",
+    "inaki.config_cli",
+    "inaki.config_errors",
+    "inaki.knowledge_cli",
+    "inaki.scheduler_cli",
+    "inaki.setup_cli",
+]
 
 [[tool.importlinter.contracts]]
 name = "adapters/ no conoce infrastructure/"

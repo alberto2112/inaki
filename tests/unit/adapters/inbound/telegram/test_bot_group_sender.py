@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from adapters.inbound.telegram.ports import TelegramChannelSettings, TelegramGroupSettings
-from core.domain.value_objects.channel_context import ChannelContext
+from inaki.shared.channel_context import ChannelContext
 
 
 # ---------------------------------------------------------------------------

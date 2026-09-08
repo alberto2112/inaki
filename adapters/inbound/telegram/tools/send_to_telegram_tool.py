@@ -30,7 +30,7 @@ from adapters.outbound.tools.path_resolution import (
     WorkspaceEscapeError,
     resolve_path,
 )
-from core.domain.value_objects.channel_context import ChannelContext
+from inaki.shared.channel_context import ChannelContext
 from core.domain.value_objects.outbound_kind import OutboundKind
 from core.ports.outbound.tool_port import ITool, ToolResult
 

@@ -11,7 +11,7 @@ from adapters.outbound.history.sqlite_history_store import (
     SQLiteHistoryStore,
 )
 from adapters.outbound.tools.search_history_tool import SearchHistoryTool
-from core.domain.entities.message import Message, Role
+from inaki.shared.message import Message, Role
 
 
 @pytest.fixture
@@ -21,17 +21,23 @@ def store(tmp_path):
 
 async def _seed(store: SQLiteHistoryStore) -> None:
     await store.append(
-        "agent1", Message(role=Role.USER, content="hola por telegram"),
-        channel="telegram", chat_id="100",
+        "agent1",
+        Message(role=Role.USER, content="hola por telegram"),
+        channel="telegram",
+        chat_id="100",
     )
     await store.append(
-        "agent1", Message(role=Role.ASSISTANT, content="respuesta del bot"),
-        channel="telegram", chat_id="100",
+        "agent1",
+        Message(role=Role.ASSISTANT, content="respuesta del bot"),
+        channel="telegram",
+        chat_id="100",
     )
     # Otro agente — la tool de agent1 NO debe verlo.
     await store.append(
-        "agent2", Message(role=Role.USER, content="secreto de otro agente"),
-        channel="telegram", chat_id="100",
+        "agent2",
+        Message(role=Role.USER, content="secreto de otro agente"),
+        channel="telegram",
+        chat_id="100",
     )
 
 
@@ -152,8 +158,10 @@ async def test_horizonte_es_el_peor_scope_no_el_menos_podado(store):
     """
     await _seed(store)  # chat 100
     await store.append(
-        "agent1", Message(role=Role.USER, content="otro chat"),
-        channel="telegram", chat_id="999",
+        "agent1",
+        Message(role=Role.USER, content="otro chat"),
+        channel="telegram",
+        chat_id="999",
     )
 
     chat_100 = await store.retention_horizon("agent1", chat_id="100")

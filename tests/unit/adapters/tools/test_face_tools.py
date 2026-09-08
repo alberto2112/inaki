@@ -24,7 +24,7 @@ from core.domain.entities.face import (
     MessageFaceMetadata,
     Person,
 )
-from core.domain.value_objects.channel_context import ChannelContext
+from inaki.shared.channel_context import ChannelContext
 
 
 # ----------------------------------------------------------------------

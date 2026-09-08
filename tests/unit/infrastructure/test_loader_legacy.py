@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from core.domain.errors import ConfigError
+from inaki.shared.errors import ConfigError
 from infrastructure.config import load_agent_config, load_global_config
 
 

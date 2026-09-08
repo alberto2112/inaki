@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from core.domain.entities.message import Message, Role
+from inaki.shared.message import Message, Role
 from core.domain.services.prepend_timestamps import prepend_timestamps
 
 

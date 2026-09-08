@@ -22,7 +22,7 @@ from adapters.outbound.transcription.groq import (
     PROVIDER_NAME,
     GroqTranscriptionProvider,
 )
-from core.domain.errors import TranscriptionError, TranscriptionFileTooLargeError
+from inaki.shared.errors import TranscriptionError, TranscriptionFileTooLargeError
 from adapters.outbound.transcription.base import ResolvedTranscriptionConfig
 
 DEFAULT_ENDPOINT = "https://api.groq.com/openai/v1/audio/transcriptions"

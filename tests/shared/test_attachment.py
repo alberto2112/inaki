@@ -7,7 +7,7 @@ ATTACHMENTS_SECTION.
 
 from __future__ import annotations
 
-from core.domain.value_objects.attachment import (
+from inaki.shared.attachment import (
     IncomingAttachment,
     format_album,
     format_analysis_delta,

@@ -12,7 +12,7 @@ from core.domain.entities.task import (
     TaskKind,
     TriggerType,
 )
-from core.domain.errors import TooManyActiveTasksError
+from inaki.shared.errors import TooManyActiveTasksError
 from core.use_cases.schedule_task import ScheduleTaskUseCase
 
 

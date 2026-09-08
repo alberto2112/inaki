@@ -15,7 +15,7 @@ Ejemplos de referencias cruzadas que pueden estar rotas:
 
 from __future__ import annotations
 
-from core.domain.errors import ReferenciaInvalidaError
+from inaki.shared.errors import ReferenciaInvalidaError
 
 # ---------------------------------------------------------------------------
 # Funciones de validación individuales

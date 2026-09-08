@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 from adapters.inbound.telegram.tools.send_telegram_message_tool import (
     SendTelegramMessageTool,
 )
-from adapters.outbound.messaging.channel_outbound_registry import ChannelOutboundRegistry
+from core.domain.services.channel_outbound_registry import ChannelOutboundRegistry
 from core.domain.value_objects.outbound_kind import OutboundKind
 
 

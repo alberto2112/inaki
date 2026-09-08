@@ -53,7 +53,7 @@ The scheduler is a background task execution engine that runs continuously withi
 │  └──────────────────────────────────────────────────┘   │
 │                                                         │
 │  SchedulerDispatchPorts:                                │
-│    ChannelSenderAdapter  →  Telegram / other gateways   │
+│    ChannelRouter → IChannelOutbound del agente dueño    │
 │    LLMDispatcherAdapter  →  AgentContainer.run_agent    │
 │    ConsolidationAdapter  →  ConsolidateAllAgentsUC      │
 └─────────────────────────────────────────────────────────┘
@@ -852,7 +852,7 @@ CREATE TABLE IF NOT EXISTS task_logs (
 | Outbound port | [core/ports/outbound/scheduler_port.py](../core/ports/outbound/scheduler_port.py) | `ISchedulerRepository` (Protocol) |
 | Repository | [adapters/outbound/scheduler/sqlite_scheduler_repo.py](../adapters/outbound/scheduler/sqlite_scheduler_repo.py) | `SQLiteSchedulerRepo` |
 | Dispatch adapters | [adapters/outbound/scheduler/dispatch_adapters.py](../adapters/outbound/scheduler/dispatch_adapters.py) | `ChannelRouter`, `LLMDispatcherAdapter`, `ConsolidationDispatchAdapter`, `HttpCallerAdapter`, `SchedulerDispatchPorts` |
-| Outbound sinks | [adapters/outbound/sinks/](../adapters/outbound/sinks/) | `TelegramSink`, `FileSink`, `NullSink`, `SinkFactory` (port: `core/ports/outbound/outbound_sink_port.py::IOutboundSink`) |
+| Egress | [core/domain/services/channel_router.py](../core/domain/services/channel_router.py) | `ChannelRouter`, `FileOutbound`, `NullOutbound` sobre el port único `core/ports/outbound/channel_port.py::IChannelOutbound` (el de Telegram vive con su canal: `adapters/inbound/telegram/outbound.py`) |
 | Value objects | [core/domain/value_objects/dispatch_result.py](../core/domain/value_objects/dispatch_result.py) | `DispatchResult(original_target, resolved_target)` |
 | Builtin tasks | [adapters/outbound/scheduler/builtin_tasks.py](../adapters/outbound/scheduler/builtin_tasks.py) | `build_consolidate_memory_task()`, `CONSOLIDATE_MEMORY_TASK_ID` |
 | Config | [inaki/config/schema/scheduler.py](../inaki/config/schema/scheduler.py) | `SchedulerConfig`, `GlobalConfig` |
@@ -870,7 +870,7 @@ CLI ──► ScheduleTaskUseCase ──► ISchedulerRepository
                 │
                 ▼
         SchedulerDispatchPorts
-         ├── ChannelSenderAdapter   → TelegramGateway (etc.)
+         ├── ChannelRouter          → IChannelOutbound (Telegram, file, null)
          ├── LLMDispatcherAdapter   → AgentContainer.run_agent
          └── ConsolidationAdapter  → ConsolidateAllAgentsUseCase
 ```
@@ -887,7 +887,7 @@ schedule_task_uc = ScheduleTaskUseCase(
 )
 
 dispatch_ports = SchedulerDispatchPorts(
-    channel_sender=ChannelSenderAdapter(self),
+    channel_sender=self._channel_router,  # ChannelRouter del kernel
     llm_dispatcher=LLMDispatcherAdapter(self.agents),
     consolidator=ConsolidationDispatchAdapter(self.consolidate_all_agents),
 )

@@ -13,7 +13,7 @@ FIX bg-result-delivery: el dispatch corre un turno completo del agente padre,
 pero su valor de retorno (la respuesta digerida del padre) se DESCARTABA — se
 persistía en el historial y jamás llegaba al canal, así que el usuario esperaba
 un anuncio que nunca veía. Ahora, cuando el scope original es un canal
-conversacional vivo (``conversational_channels``), la respuesta se entrega vía
+conversacional vivo (lo decide el router: ``is_conversational``), la respuesta se entrega vía
 ``result_sender`` al mismo ``channel:chat_id``, la narración intermedia fluye
 en vivo por un ``IIntermediateSink`` del sender (mismo patrón que ``agent_send``
 en el scheduler), y el turno recibe ``skip_marker`` para que el LLM pueda optar
@@ -61,7 +61,6 @@ class BackgroundDelegationQueueAdapter:
         timeout_seconds: int,
         max_concurrent: int = 3,
         result_sender: "IChannelSender | None" = None,
-        conversational_channels: set[str] | frozenset[str] = frozenset(),
     ) -> None:
         self._dispatcher = dispatcher
         self._one_shot_resolver = one_shot_resolver
@@ -70,7 +69,6 @@ class BackgroundDelegationQueueAdapter:
         # Sin sender no hay entrega al canal (modo headless: tests / instancias
         # sin canales conversacionales). Producción siempre inyecta el router.
         self._result_sender = result_sender
-        self._conversational = conversational_channels
         self._tasks: dict[str, BackgroundTask] = {}
         self._queue: asyncio.Queue[BackgroundTask] = asyncio.Queue()
         self._semaphore = asyncio.Semaphore(max_concurrent)
@@ -211,7 +209,7 @@ class BackgroundDelegationQueueAdapter:
         """
         target = self._conversational_target(task)
         live_sink = (
-            self._result_sender.build_intermediate_sink(target)
+            self._result_sender.build_intermediate_sink(target, agent_id=task.caller_agent_id)
             if self._result_sender is not None and target is not None
             else None
         )
@@ -243,7 +241,11 @@ class BackgroundDelegationQueueAdapter:
     def _conversational_target(self, task: BackgroundTask) -> str | None:
         """Target ``channel:chat_id`` si el scope original es un canal
         conversacional vivo; ``None`` si no (CLI/REST sin canal, tests)."""
-        if task.channel in self._conversational and task.chat_id:
+        if (
+            self._result_sender is not None
+            and task.chat_id
+            and self._result_sender.is_conversational(task.channel, task.caller_agent_id)
+        ):
             return f"{task.channel}:{task.chat_id}"
         return None
 
@@ -267,7 +269,10 @@ class BackgroundDelegationQueueAdapter:
             )
             return
         try:
-            await self._result_sender.send_message(target, response)
+            # record_history=False: el turno del dispatch ya persistió la respuesta.
+            await self._result_sender.send_message(
+                target, response, agent_id=task.caller_agent_id, record_history=False
+            )
         except Exception as send_exc:  # noqa: BLE001
             logger.error(
                 "background-delegation %s: la respuesta quedó en el historial pero "

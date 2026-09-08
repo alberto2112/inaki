@@ -37,7 +37,6 @@ def _make_dispatch() -> MagicMock:
     dispatch.consolidator.consolidate_all = AsyncMock(return_value="ok")
     dispatch.http_caller = AsyncMock()
     dispatch.http_caller.call = AsyncMock(return_value="webhook response")
-    dispatch.history_recorder = AsyncMock()
     return dispatch
 
 
@@ -426,18 +425,17 @@ async def test_dispatch_trigger_consolidate_devuelve_metadata_none(
 async def test_channel_send_persiste_en_historial_del_agente_dueno(
     service: SchedulerService,
 ) -> None:
-    """channel_send con created_by → delega al recorder con (agent_id,
-    resolved_target, text). El recorder decide si es canal conversacional."""
+    """channel_send con created_by → el envío sale por el outbound del agente dueño
+    (``agent_id``) y se persiste en su historial (``record_history=True``)."""
     task = _make_channel_task().model_copy(update={"created_by": "main"})
-    service._dispatch.channel_sender.send_message = AsyncMock(  # type: ignore[method-assign]
+    sender = AsyncMock(
         return_value=DispatchResult(original_target="telegram:42", resolved_target="telegram:42")
     )
-    recorder = AsyncMock()
-    service._dispatch.history_recorder.record_channel_send = recorder  # type: ignore[method-assign]
+    service._dispatch.channel_sender.send_message = sender  # type: ignore[method-assign]
 
     await service._dispatch_trigger(task)
 
-    recorder.assert_awaited_once_with("main", "telegram:42", "hola")
+    sender.assert_awaited_once_with("cli:local", "hola", agent_id="main", record_history=True)
 
 
 async def test_channel_send_agent_id_override_gana_a_created_by(
@@ -454,15 +452,14 @@ async def test_channel_send_agent_id_override_gana_a_created_by(
             ),
         }
     )
-    service._dispatch.channel_sender.send_message = AsyncMock(  # type: ignore[method-assign]
+    sender = AsyncMock(
         return_value=DispatchResult(original_target="telegram:42", resolved_target="telegram:42")
     )
-    recorder = AsyncMock()
-    service._dispatch.history_recorder.record_channel_send = recorder  # type: ignore[method-assign]
+    service._dispatch.channel_sender.send_message = sender  # type: ignore[method-assign]
 
     await service._dispatch_trigger(task)
 
-    recorder.assert_awaited_once_with("anacleto", "telegram:42", "hola")
+    sender.assert_awaited_once_with("telegram:42", "hola", agent_id="anacleto", record_history=True)
 
 
 async def test_channel_send_agent_id_sin_created_by_persiste(
@@ -477,32 +474,30 @@ async def test_channel_send_agent_id_sin_created_by_persiste(
             ),
         }
     )  # created_by="" por default
-    service._dispatch.channel_sender.send_message = AsyncMock(  # type: ignore[method-assign]
+    sender = AsyncMock(
         return_value=DispatchResult(original_target="telegram:42", resolved_target="telegram:42")
     )
-    recorder = AsyncMock()
-    service._dispatch.history_recorder.record_channel_send = recorder  # type: ignore[method-assign]
+    service._dispatch.channel_sender.send_message = sender  # type: ignore[method-assign]
 
     await service._dispatch_trigger(task)
 
-    recorder.assert_awaited_once_with("anacleto", "telegram:42", "hola")
+    sender.assert_awaited_once_with("telegram:42", "hola", agent_id="anacleto", record_history=True)
 
 
 async def test_channel_send_sin_created_by_no_persiste(
     service: SchedulerService,
 ) -> None:
-    """channel_send de origen CLI (created_by vacío) → no hay agente dueño,
-    no se intenta persistir."""
+    """channel_send de origen CLI (created_by vacío) → no hay agente dueño:
+    el router recibe ``agent_id=None`` y no persiste nada."""
     task = _make_channel_task()  # created_by="" por default
-    service._dispatch.channel_sender.send_message = AsyncMock(  # type: ignore[method-assign]
+    sender = AsyncMock(
         return_value=DispatchResult(original_target="telegram:42", resolved_target="telegram:42")
     )
-    recorder = AsyncMock()
-    service._dispatch.history_recorder.record_channel_send = recorder  # type: ignore[method-assign]
+    service._dispatch.channel_sender.send_message = sender  # type: ignore[method-assign]
 
     await service._dispatch_trigger(task)
 
-    recorder.assert_not_awaited()
+    assert sender.await_args.kwargs["agent_id"] is None  # type: ignore[union-attr]
 
 
 async def test_channel_send_ephemeral_no_persiste(
@@ -511,15 +506,14 @@ async def test_channel_send_ephemeral_no_persiste(
     """Una corrida manual (ephemeral=True) NO debe ensuciar el historial real,
     aunque la tarea tenga created_by."""
     task = _make_channel_task().model_copy(update={"created_by": "main"})
-    service._dispatch.channel_sender.send_message = AsyncMock(  # type: ignore[method-assign]
+    sender = AsyncMock(
         return_value=DispatchResult(original_target="telegram:42", resolved_target="telegram:42")
     )
-    recorder = AsyncMock()
-    service._dispatch.history_recorder.record_channel_send = recorder  # type: ignore[method-assign]
+    service._dispatch.channel_sender.send_message = sender  # type: ignore[method-assign]
 
     await service._dispatch_trigger(task, ephemeral=True)
 
-    recorder.assert_not_awaited()
+    assert sender.await_args.kwargs["record_history"] is False  # type: ignore[union-attr]
 
 
 # ---------------------------------------------------------------------------
@@ -559,7 +553,13 @@ async def test_agent_send_con_output_channel_pasa_sink_construido_al_dispatcher(
 
     await service._dispatch_trigger(task)
 
-    service._dispatch.channel_sender.build_intermediate_sink.assert_called_once_with("telegram:7")
+    service._dispatch.channel_sender.build_intermediate_sink.assert_called_once_with(
+        "telegram:7", agent_id="dev"
+    )
+    # El reply final NO se vuelve a persistir: el turno del dispatch ya lo hizo.
+    assert (
+        service._dispatch.channel_sender.send_message.await_args.kwargs["record_history"] is False  # type: ignore[union-attr]
+    )
     service._dispatch.llm_dispatcher.dispatch.assert_awaited_once()
     call_kwargs = service._dispatch.llm_dispatcher.dispatch.await_args.kwargs  # type: ignore[union-attr]
     assert call_kwargs["intermediate_sink"] is sentinel_sink

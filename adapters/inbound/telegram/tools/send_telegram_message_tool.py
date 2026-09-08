@@ -23,7 +23,7 @@ import json
 import logging
 from typing import Any
 
-from adapters.outbound.messaging.channel_outbound_registry import ChannelOutboundRegistry
+from core.domain.services.channel_outbound_registry import ChannelOutboundRegistry
 from core.domain.value_objects.outbound_kind import OutboundKind
 from core.ports.outbound.tool_port import ITool, ToolResult
 

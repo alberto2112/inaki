@@ -14,16 +14,32 @@ from typing import Protocol
 
 from core.domain.entities.task import ShellExecPayload, WebhookPayload
 from core.domain.value_objects.dispatch_result import DispatchResult
-from core.ports.outbound.intermediate_sink_port import IIntermediateSink
+from core.ports.outbound.channel_port import IIntermediateSink
 from core.ports.outbound.llm_dispatcher_port import ILLMDispatcher
 
 
 class IChannelSender(Protocol):
-    """Resuelve un ``target`` (ej: ``"telegram:123"``) y entrega texto a ese canal."""
+    """Resuelve un ``target`` (ej: ``"telegram:123"``) y entrega por el outbound del agente.
 
-    async def send_message(self, target: str, text: str) -> DispatchResult: ...
+    Lo satisface ``core.domain.services.channel_router.ChannelRouter``. ``agent_id``
+    es el DUEÑO del envío (decide bot e historial); ``record_history=False`` cuando
+    el caller ya es dueño del rastro (turno de ``agent_send``, resultado ``bg-N``).
+    """
 
-    def build_intermediate_sink(self, target: str) -> IIntermediateSink: ...
+    async def send_message(
+        self,
+        target: str,
+        text: str,
+        *,
+        agent_id: str | None = None,
+        record_history: bool = True,
+    ) -> DispatchResult: ...
+
+    def build_intermediate_sink(
+        self, target: str, *, agent_id: str | None = None
+    ) -> IIntermediateSink: ...
+
+    def is_conversational(self, channel: str, agent_id: str | None) -> bool: ...
 
 
 class IConsolidator(Protocol):
@@ -55,24 +71,6 @@ class IShellExecutor(Protocol):
     async def run(self, payload: ShellExecPayload) -> str: ...
 
 
-class IChannelHistoryRecorder(Protocol):
-    """Persiste el texto de un ``channel_send`` como mensaje del asistente en el
-    historial del agente dueño de la tarea.
-
-    Un ``channel_send`` es el asistente emitiendo un mensaje dentro de una
-    conversación — sin esto, el agente no tendría rastro en su historial de lo
-    que envió y perdería la continuidad si el usuario responde. Simetría con
-    ``agent_send``, que ya persiste su intercambio vía ``llm_dispatcher``.
-
-    El recorder es el ÚNICO que conoce qué canales son conversacionales y cómo
-    resolver el historial de cada agente — el ``SchedulerService`` solo delega.
-    Implementaciones que apunten a un fallback no-conversacional (ej: archivo)
-    o a un agente desconocido DEBEN ser no-op.
-    """
-
-    async def record_channel_send(self, agent_id: str, resolved_target: str, text: str) -> None: ...
-
-
 @dataclass(frozen=True)
 class SchedulerDispatchPorts:
     """Bundle de ports que el ``SchedulerService`` recibe en el constructor."""
@@ -83,4 +81,3 @@ class SchedulerDispatchPorts:
     reconciler: IReconciler
     http_caller: IHttpCaller
     shell_executor: IShellExecutor
-    history_recorder: IChannelHistoryRecorder

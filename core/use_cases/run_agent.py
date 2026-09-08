@@ -43,7 +43,7 @@ from core.domain.value_objects.conversation_state import ConversationState
 from core.ports.outbound.background_delegation_port import IBackgroundDelegationQueue
 from core.ports.outbound.embedding_port import IEmbeddingProvider
 from core.ports.outbound.history_port import IHistoryStore
-from core.ports.outbound.intermediate_sink_port import IIntermediateSink
+from core.ports.outbound.channel_port import IIntermediateSink
 from core.ports.outbound.llm_port import ILLMProvider
 from core.ports.outbound.memory_port import IMemoryRepository
 from core.ports.outbound.scope_registry_port import IScopeRegistry

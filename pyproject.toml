@@ -179,6 +179,14 @@ forbidden_modules = [
     "inaki.config",
 ]
 
+# Un outbound nunca conoce a un inbound: el egress de un canal vive CON su canal
+# (contrato de canal, fase 3), no del otro lado de la carpeta.
+[[tool.importlinter.contracts]]
+name = "adapters/outbound no conoce adapters/inbound"
+type = "forbidden"
+source_modules = ["adapters.outbound"]
+forbidden_modules = ["adapters.inbound"]
+
 # inaki/config es un módulo de feature: conoce shared y los ports de core, nada más.
 [[tool.importlinter.contracts]]
 name = "inaki/config solo conoce core (ports) y shared"

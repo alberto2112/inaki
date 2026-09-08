@@ -26,7 +26,7 @@ from collections.abc import Awaitable, Callable
 from inaki.shared.message import Message, Role
 from inaki.shared.errors import ToolLoopMaxIterationsError
 from core.ports.outbound.history_port import IHistoryStore
-from core.ports.outbound.intermediate_sink_port import (
+from core.ports.outbound.channel_port import (
     IIntermediateSink,
     NullIntermediateSink,
 )

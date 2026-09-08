@@ -75,6 +75,7 @@ existe este documento— y la contradicción no queda flotando.
 | [`broadcast-topology-config`](#broadcast-topology-config) | Rol explícito `server` XOR `client`; config vieja falla al cargar |
 | [`broadcast-arranque-observable`](#broadcast-arranque-observable) | El fallo de `bind()` y la config de broadcast que no valida ahora salen como `ERROR` en el log |
 | [`formato-en-el-borde-del-transporte`](#formato-en-el-borde-del-transporte) | Todo lo que Telegram manda fuera del turno conversacional (scheduler, `bg-N`, intermedios, media) sale **formateado** y troceado, no en markdown crudo |
+| [`egress-unico`](#egress-unico) | Un `channel_send` sale por el bot del agente DUEÑO (antes, por el primer bot registrado) y lo persiste el outbound; sin dueño no persiste. Desaparecen `IOutboundSink`, `TelegramSink`, `SinkFactory`, `ChannelHistoryRecorderAdapter` y los sinks intermedios de Telegram/router |
 | [`modulo-config-y-retiro-del-tui`](#modulo-config-y-retiro-del-tui) | Desaparece `inaki setup` (TUI retirado; la config se edita en YAML con `inaki config show --origin` de espejo); `textual` deja de ser dependencia; la config vive en `inaki/config/` con el schema partido por secciones |
 | [`observabilidad-un-solo-stack`](#observabilidad-un-solo-stack) | Cada línea de log lleva hora, nivel, logger y los campos `extra` (antes solo el mensaje); `structlog` deja de ser dependencia; nuevos `app.log_format`, `app.debug` y `inaki --debug` con trazas de turno en `<home>/debug/turns/` |
 | [`user-timezone-default`](#user-timezone-default) | Un `global.yaml` sin bloque `user:` arranca (timezone autodetectada); antes el container moría con un `ValueError` de `ZoneInfo` |
@@ -104,6 +105,64 @@ existe este documento— y la contradicción no queda flotando.
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `egress-unico`
+
+**Contexto (2026-09-08, fase 3 del refactor modular).** Había TRES ports para
+"mandar algo a un canal" y CUATRO caminos de salida hacia Telegram:
+`IOutboundSink` (scheduler: `TelegramSink`, `FileSink`, `NullSink`, `SinkFactory`,
+`ChannelRouter` en los dispatch adapters), `IChannelOutbound` (tools y
+`/admin/send`: `TelegramChannelOutbound` con registro por agente) e
+`IIntermediateSink` (tool loop: `TelegramLiveIntermediateSink`,
+`ChannelRouterIntermediateSink`, `BufferingIntermediateSink`). Convergían en
+`TelegramBot.send_*` (el borde, ver `formato-en-el-borde-del-transporte`), pero
+cada familia tenía su propia idea de qué persistir: `TelegramSink` no persistía
+nada, así que `channel_send` necesitaba un `ChannelHistoryRecorderAdapter`
+aparte para dejar rastro en el historial del dueño. Y el `TelegramSink` del
+router resolvía "el primer bot registrado": un cronista publicando EN NOMBRE DE
+otro agente salía por el bot equivocado si el suyo se registraba antes.
+
+**Cambio.**
+
+- **Contrato de canal** en `core/ports/outbound/channel_port.py`: `IChannel`
+  (ciclo de vida `start`/`stop`; lo implementa Telegram en la fase 4),
+  `IChannelOutbound` (el egress ÚNICO: texto, media, álbum, `record_history`) e
+  `IIntermediateSink` como VISTA del outbound (`OutboundIntermediateSink` =
+  "texto al canal sin historial", `BufferingIntermediateSink` para REST/CLI).
+- **`ChannelRouter` pasa al kernel** (`core/domain/services/channel_router.py`)
+  y trabaja sobre `IChannelOutbound`: resuelve el target contra los outbounds
+  del kernel (`FileOutbound`, `NullOutbound`) y el **registro del agente
+  DUEÑO** (`resolve_outbounds(agent_id)`), con la misma cascada de fallback
+  (`overrides` → `default` → hardcoded). `send_message(target, text, agent_id,
+  record_history)`; `is_conversational(channel, agent_id)`.
+- El outbound de Telegram vive CON su canal (`adapters/inbound/telegram/outbound.py`)
+  y se registra ANTES de las tools, tenga o no repo de ficheros. El bot construye
+  su sink de intermedios sobre él (`TelegramBotPorts.channel_outbound`).
+- Desaparecen `IOutboundSink`, `adapters/outbound/sinks/`,
+  `adapters/outbound/intermediate_sinks/`, `adapters/outbound/messaging/`,
+  `IChannelHistoryRecorder` + `ChannelHistoryRecorderAdapter` y el parámetro
+  `conversational_channels` de la cola de background (lo responde el router).
+- Contrato `lint-imports` nuevo: `adapters/outbound` no importa `adapters/inbound`.
+
+**Comportamiento observable.**
+
+- Un `channel_send` sale por el bot del agente dueño (`payload.agent_id` o
+  `task.created_by`) y ESE outbound lo persiste en su historial. Sin dueño
+  (tarea creada desde el CLI, `created_by=""`) sale por el primer agente con
+  canales, como antes, pero NO se persiste en el historial de nadie.
+- Una corrida manual (`ephemeral`) sigue sin persistir: `record_history=False`.
+- El reply final de un `agent_send` y el resultado de una delegación en
+  background viajan con `record_history=False`: el turno ya los persistió
+  (dueño único del rastro, `outbound-send-single-owner`).
+- El wire format del broadcast y el esquema de DB no cambian.
+
+**Invariante que dejó.** **NUNCA** un segundo port para "mandar algo a un canal":
+texto, media, intermedios y fallbacks pasan por `IChannelOutbound`, y la
+política del transporte (formato, historial) vive en la implementación del
+canal. Y **NUNCA** resolver un envío por "el primer bot que haya": el dueño del
+envío decide bot e historial.
 
 ---
 

@@ -38,7 +38,7 @@ from core.domain.value_objects.agent_settings import RunAgentSettings
 from core.domain.value_objects.conversation_state import ConversationState
 from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
 from core.ports.outbound.embedding_port import IEmbeddingProvider
-from core.ports.outbound.intermediate_sink_port import IIntermediateSink
+from core.ports.outbound.channel_port import IIntermediateSink
 from core.ports.outbound.skill_port import ISkillRepository
 from core.ports.outbound.tool_port import IToolExecutor
 

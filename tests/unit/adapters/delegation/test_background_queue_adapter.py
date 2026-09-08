@@ -54,8 +54,13 @@ def _build_adapter(
         timeout_seconds=timeout_seconds,
         max_concurrent=max_concurrent,
         result_sender=result_sender,
-        conversational_channels=conversational_channels,
     )
+    # Los canales conversacionales los decide el router (``is_conversational``);
+    # el sender mock responde según el set que el test declara.
+    if result_sender is not None:
+        result_sender.is_conversational = MagicMock(
+            side_effect=lambda channel, agent_id: channel in conversational_channels
+        )
     return adapter, dispatcher
 
 
@@ -620,7 +625,10 @@ class TestResultDelivery:
         task_id = await _enqueue_and_run(adapter)
 
         sender.send_message.assert_awaited_once_with(
-            "telegram:42", "Listo: el informe quedó en estudios/informe.md"
+            "telegram:42",
+            "Listo: el informe quedó en estudios/informe.md",
+            agent_id="inaki",
+            record_history=False,
         )
         assert task_id not in adapter._tasks
 
@@ -683,7 +691,7 @@ class TestResultDelivery:
 
         await _enqueue_and_run(adapter)
 
-        sender.build_intermediate_sink.assert_called_once_with("telegram:42")
+        sender.build_intermediate_sink.assert_called_once_with("telegram:42", agent_id="inaki")
         assert dispatcher.dispatch.await_args.kwargs["intermediate_sink"] is sink_sentinel
 
     async def test_fallo_del_send_no_bloquea_la_purga(self) -> None:

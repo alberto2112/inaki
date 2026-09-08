@@ -29,7 +29,7 @@ from adapters.inbound.telegram.message_mapper import (
     telegram_update_to_input,
 )
 from adapters.inbound.turn_dispatch import dispatch_inbound_turn
-from adapters.outbound.intermediate_sinks.telegram_live import TelegramLiveIntermediateSink
+from core.ports.outbound.channel_port import IIntermediateSink, OutboundIntermediateSink
 from inaki.shared.skip_marker import SKIP_MARKER, is_skip_response
 from inaki.shared.channel_context import ChannelContext
 from core.ports.outbound.broadcast_port import BroadcastEmitter, BroadcastReceiver
@@ -412,8 +412,10 @@ class TelegramBot(
         # acompaña tool_calls) se emitirían directo al chat vía sink y NO se incluirían
         # en el ``response`` final → el broadcast saldría con texto vacío/residual y
         # los otros bots del grupo no verían la respuesta. Alineado con _run_group_pipeline.
-        live_sink: TelegramLiveIntermediateSink | None = (
-            None if es_grupo else TelegramLiveIntermediateSink(bot=self, chat_id=chat_id)
+        live_sink: IIntermediateSink | None = (
+            OutboundIntermediateSink(self._ports.channel_outbound, str(chat_id))
+            if not es_grupo and self._ports.channel_outbound is not None
+            else None
         )
         # In-flight-message-injection: para chats PRIVADOS, si ya hay un turno
         # corriendo en este scope, persistimos el mensaje y ACK rápido. El loop

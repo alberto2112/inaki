@@ -12,7 +12,7 @@ import pytest
 from adapters.inbound.telegram.tools.download_from_telegram_tool import (
     DownloadFromTelegramTool,
 )
-from core.domain.value_objects.channel_context import ChannelContext
+from inaki.shared.channel_context import ChannelContext
 from core.domain.value_objects.telegram_file import TelegramFileRecord
 
 

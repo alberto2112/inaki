@@ -20,7 +20,7 @@ from adapters.inbound.rest.admin.schemas import (
     SchedulerRunRequest,
     SchedulerRunResponse,
 )
-from core.domain.errors import TaskNotFoundError
+from inaki.shared.errors import TaskNotFoundError
 
 logger = logging.getLogger(__name__)
 

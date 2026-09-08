@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from core.domain.errors import ConfigError
+from inaki.shared.errors import ConfigError
 from infrastructure.config import AgentRegistry
 
 

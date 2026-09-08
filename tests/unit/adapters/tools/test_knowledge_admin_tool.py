@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 from adapters.outbound.tools.knowledge_admin_tool import KnowledgeAdminTool
-from core.domain.errors import KnowledgeError
+from inaki.shared.errors import KnowledgeError
 
 
 def _make_uc() -> MagicMock:

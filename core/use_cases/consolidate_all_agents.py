@@ -20,7 +20,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 
-from core.domain.errors import ConsolidationError
+from inaki.shared.errors import ConsolidationError
 from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
 
 logger = logging.getLogger(__name__)

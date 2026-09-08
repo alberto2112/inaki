@@ -24,7 +24,7 @@ from adapters.outbound.knowledge.sqlite_knowledge_source import (
     EXPECTED_EMBEDDING_DIM,
     SqliteKnowledgeSource,
 )
-from core.domain.errors import KnowledgeConfigError
+from inaki.shared.errors import KnowledgeConfigError
 
 
 # ---------------------------------------------------------------------------

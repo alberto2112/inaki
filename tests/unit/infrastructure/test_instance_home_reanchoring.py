@@ -41,7 +41,9 @@ def test_todos_los_paths_reanclan_con_home(tmp_path, monkeypatch):
 
     # Derivados del home que arma el composition root (container / builders)
     assert get_inaki_home() / "users" == tmp_path / "users"
-    assert get_inaki_home() / "config" / "tool_config.yaml" == tmp_path / "config" / "tool_config.yaml"
+    assert (
+        get_inaki_home() / "config" / "tool_config.yaml" == tmp_path / "config" / "tool_config.yaml"
+    )
     assert get_inaki_home() / "secret.key" == tmp_path / "secret.key"
 
 

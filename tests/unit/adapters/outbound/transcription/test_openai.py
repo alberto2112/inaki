@@ -17,7 +17,7 @@ from adapters.outbound.transcription.openai import (
     PROVIDER_NAME,
     OpenAITranscriptionProvider,
 )
-from core.domain.errors import TranscriptionError
+from inaki.shared.errors import TranscriptionError
 
 DEFAULT_ENDPOINT = "https://api.openai.com/v1/audio/transcriptions"
 

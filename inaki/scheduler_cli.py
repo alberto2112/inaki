@@ -32,7 +32,7 @@ from rich.console import Console
 from rich.table import Table
 
 from core.domain.entities.task import ScheduledTask
-from core.domain.errors import BuiltinTaskProtectedError, TaskNotFoundError
+from inaki.shared.errors import BuiltinTaskProtectedError, TaskNotFoundError
 
 if TYPE_CHECKING:
     from core.ports.inbound.scheduler_port import ISchedulerUseCase

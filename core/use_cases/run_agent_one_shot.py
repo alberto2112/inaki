@@ -21,11 +21,13 @@ Contratos clave:
 from __future__ import annotations
 
 import asyncio
+import uuid
 import logging
 
-from core.domain.entities.message import Message, Role
+from inaki.shared.message import Message, Role
 from core.ports.outbound.llm_port import ILLMProvider
 from core.ports.outbound.tool_port import IToolExecutor
+from core.ports.outbound.turn_tracer_port import ITurnTracer, NullTurnTracer
 from core.use_cases._tool_loop import run_tool_loop
 from core.domain.value_objects.agent_settings import OneShotSettings
 
@@ -48,10 +50,12 @@ class RunAgentOneShotUseCase:
         tools: IToolExecutor,
         settings: OneShotSettings,
         thinking_indicator: bool = False,
+        tracer: ITurnTracer | None = None,
     ) -> None:
         self._llm = llm
         self._tools = tools
         self._cfg = settings
+        self._tracer: ITurnTracer = tracer or NullTurnTracer()
         # Flag transversal del bloque global ``channels.thinking_indicator``.
         # Default False para no-op si nadie lo wirea (el one-shot suele correr sin sink).
         self._thinking_indicator = thinking_indicator
@@ -111,7 +115,8 @@ class RunAgentOneShotUseCase:
         tool_schemas = [
             s
             for s in all_schemas
-            if _tool_name(s) != _DELEGATE_TOOL_NAME and (allowed is None or _tool_name(s) in allowed)
+            if _tool_name(s) != _DELEGATE_TOOL_NAME
+            and (allowed is None or _tool_name(s) in allowed)
         ]
 
         if len(tool_schemas) < len(all_schemas):
@@ -140,6 +145,9 @@ class RunAgentOneShotUseCase:
                 agent_id=self._cfg.agent_id,
                 thinking_indicator=self._thinking_indicator,
                 request_delay_seconds=self._cfg.request_delay_seconds,
+                tracer=self._tracer.bind(
+                    agent_id=self._cfg.agent_id, turn_id=uuid.uuid4().hex[:12], mode="one_shot"
+                ),
             ),
             timeout=timeout_seconds,
         )

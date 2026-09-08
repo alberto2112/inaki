@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 from core.use_cases.run_agent import RunAgentUseCase
 from infrastructure.container import build_run_agent_settings
-from core.domain.entities.message import Message, Role
+from inaki.shared.message import Message, Role
 from core.domain.entities.skill import Skill
 from core.domain.value_objects.llm_response import LLMResponse
 from infrastructure.config import (
@@ -119,7 +119,7 @@ async def test_execute_persists_user_msg_before_llm_call_so_errors_dont_lose_inp
     la persistencia del user_msg precede al LLM call: el assistant message NO
     se persiste en el path de error, pero el user_msg sí.
     """
-    from core.domain.errors import LLMError
+    from inaki.shared.errors import LLMError
 
     mock_llm.complete.side_effect = LLMError("DeepSeek HTTP error: ReadTimeout")
 
@@ -137,7 +137,7 @@ async def test_execute_persists_user_msg_before_llm_call_so_errors_dont_lose_inp
 
 async def test_execute_does_not_persist_user_msg_when_ephemeral(use_case, mock_llm, mock_history):
     """En modo ephemeral nada se persiste, ni siquiera con error del LLM."""
-    from core.domain.errors import LLMError
+    from inaki.shared.errors import LLMError
 
     mock_llm.complete.side_effect = LLMError("boom")
 

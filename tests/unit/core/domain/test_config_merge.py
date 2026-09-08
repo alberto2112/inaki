@@ -16,7 +16,7 @@ from core.domain.config_merge import (
     merge_capas,
     resolver_inherit,
 )
-from core.domain.errors import ConfigError
+from inaki.shared.errors import ConfigError
 
 
 # ---------------------------------------------------------------------------

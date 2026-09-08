@@ -39,8 +39,8 @@ from core.domain.entities.task import (
     WebhookPayload,
 )
 from core.domain.entities.task_log import TaskLog
-from core.domain.errors import InvalidTriggerTypeError, TaskNotFoundError
-from core.domain.skip_marker import SKIP_MARKER, is_skip_response
+from inaki.shared.errors import InvalidTriggerTypeError, TaskNotFoundError
+from inaki.shared.skip_marker import SKIP_MARKER, is_skip_response
 from core.domain.utils.cron import next_cron_occurrence, resolve_timezone
 from core.domain.value_objects.manual_run_result import ManualRunResult
 from core.ports.inbound.scheduler_port import IManualTaskRunner

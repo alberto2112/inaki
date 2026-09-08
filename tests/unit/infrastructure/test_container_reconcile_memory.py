@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from core.ports.outbound.turn_tracer_port import NullTurnTracer
 from adapters.outbound.scheduler.builtin_tasks import (
     _RECONCILE_MEMORY_BASE_ID,
     build_reconcile_memory_task,
@@ -137,6 +138,7 @@ def _build_minimal_container(
     container.agent_config = agent_config
     container._global_config = global_config
     container._delegation_wired = False
+    container._tracer = NullTurnTracer()
     container._scheduler_wired = False
     container._photos_wired = False
     container._telegram_tools_wired = False

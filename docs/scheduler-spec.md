@@ -767,7 +767,7 @@ Tasks are added/removed automatically when agents enable or disable reconciliati
 
 ## 10. Error handling
 
-File: [core/domain/errors.py](../core/domain/errors.py)
+File: [inaki/shared/errors.py](../inaki/shared/errors.py)
 
 | Error | When raised |
 |-------|-------------|
@@ -857,7 +857,7 @@ CREATE TABLE IF NOT EXISTS task_logs (
 | Builtin tasks | [adapters/outbound/scheduler/builtin_tasks.py](../adapters/outbound/scheduler/builtin_tasks.py) | `build_consolidate_memory_task()`, `CONSOLIDATE_MEMORY_TASK_ID` |
 | Config | [infrastructure/config.py](../infrastructure/config.py) | `SchedulerConfig`, `GlobalConfig` |
 | DI Container | [infrastructure/container.py](../infrastructure/container.py) | `AppContainer` |
-| Errors | [core/domain/errors.py](../core/domain/errors.py) | `SchedulerError`, `BuiltinTaskProtectedError`, `InvalidTriggerTypeError`, `TaskNotFoundError` |
+| Errors | [inaki/shared/errors.py](../inaki/shared/errors.py) | `SchedulerError`, `BuiltinTaskProtectedError`, `InvalidTriggerTypeError`, `TaskNotFoundError` |
 
 ### Dependency flow
 

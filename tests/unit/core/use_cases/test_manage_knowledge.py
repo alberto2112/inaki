@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from core.domain.errors import KnowledgeError
+from inaki.shared.errors import KnowledgeError
 from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
 from core.ports.outbound.knowledge_port import (
     IIndexableKnowledgeSource,

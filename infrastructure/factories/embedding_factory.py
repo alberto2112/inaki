@@ -14,7 +14,7 @@ import pkgutil
 from pathlib import Path
 
 from adapters.outbound.embedding.base import BaseEmbeddingProvider, ResolvedEmbeddingConfig
-from core.domain.errors import ConfigError
+from inaki.shared.errors import ConfigError
 from core.ports.outbound.embedding_port import IEmbeddingProvider
 from infrastructure.config import EmbeddingConfig, ProviderConfig
 

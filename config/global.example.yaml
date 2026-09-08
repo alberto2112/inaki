@@ -38,6 +38,8 @@ app:
   # Nivel mínimo de log del proceso: ``DEBUG``, ``INFO``, ``WARNING``, ``ERROR`` o
   # ``CRITICAL``.
   log_level: INFO
+  log_format: console   # Formato de cada línea de log.
+  debug: false   # Modo diagnóstico del proceso.
   # Directorios donde se auto-descubren las extensiones de usuario, en orden.
   ext_dirs: [ext, ~/.inaki/ext]
   # Agente que usan los comandos de CLI cuando no se pasa ``--agent``.

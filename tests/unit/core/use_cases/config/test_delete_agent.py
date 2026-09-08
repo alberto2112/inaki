@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.domain.errors import AgentNotFoundError
+from inaki.shared.errors import AgentNotFoundError
 from core.ports.config_repository import IConfigRepository, LayerName
 from core.use_cases.config.delete_agent import DeleteAgentUseCase
 

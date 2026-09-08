@@ -30,8 +30,8 @@ from typing import ClassVar
 import httpx
 
 from adapters.outbound.providers.base import BaseLLMProvider, ResolvedLLMConfig
-from core.domain.entities.message import Message
-from core.domain.errors import LLMError
+from inaki.shared.message import Message
+from inaki.shared.errors import LLMError
 from core.domain.value_objects.llm_response import LLMResponse
 
 logger = logging.getLogger(__name__)

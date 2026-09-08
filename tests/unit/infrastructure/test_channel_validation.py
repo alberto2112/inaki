@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from core.domain.errors import ConfigError
+from inaki.shared.errors import ConfigError
 
 from infrastructure.config import (
     CHANNEL_SCHEMAS,

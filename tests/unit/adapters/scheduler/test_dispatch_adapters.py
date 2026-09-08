@@ -16,7 +16,7 @@ from adapters.outbound.scheduler.dispatch_adapters import (
 )
 from adapters.outbound.sinks.sink_factory import SinkFactory
 from adapters.outbound.sinks.telegram_sink import TelegramSink
-from core.domain.entities.message import Role
+from inaki.shared.message import Role
 from core.domain.entities.task import WebhookPayload
 
 
@@ -463,9 +463,7 @@ class TestChannelHistoryRecorderAdapter:
     async def test_agente_desconocido_es_no_op(self) -> None:
         """Tarea cuyo created_by ya no existe (agente renombrado/eliminado) →
         no-op sin excepción."""
-        recorder = ChannelHistoryRecorderAdapter(
-            {}, conversational_channels={"telegram"}
-        )
+        recorder = ChannelHistoryRecorderAdapter({}, conversational_channels={"telegram"})
 
         # No debe lanzar.
         await recorder.record_channel_send("fantasma", "telegram:42", "hola")

@@ -21,6 +21,8 @@ import signal
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, Callable
 
+from inaki.observability import startup_event
+
 if TYPE_CHECKING:
     from infrastructure.config import AgentRegistry
     from infrastructure.container import AppContainer
@@ -87,7 +89,7 @@ async def _run_telegram_bot(agent_cfg, container, app_container=None) -> None:
             reloader=reloader,
         )
     except ValueError as exc:
-        logger.warning("Telegram bot no iniciado para '%s': %s", agent_cfg.id, exc)
+        startup_event(logger, "telegram_bot", status="error", agent=agent_cfg.id, reason=str(exc))
         return
 
     # Registrar el bot en el gateway para que ChannelSenderAdapter pueda encontrarlo
@@ -122,7 +124,7 @@ async def _run_telegram_bot(agent_cfg, container, app_container=None) -> None:
         # arranca con ``drop_pending_updates=False``: ya no queda nada que descartar.
         await bot._announce_back_online(bot._app)
         await updater.start_polling(drop_pending_updates=False)
-        logger.info("Telegram bot '%s' en polling", agent_cfg.id)
+        startup_event(logger, "telegram_bot", status="ok", agent=agent_cfg.id, mode="polling")
         try:
             await asyncio.get_running_loop().create_future()  # bloquear hasta cancelación
         except asyncio.CancelledError:
@@ -153,9 +155,12 @@ def _build_channel_tasks(app_container, registry) -> tuple[list[asyncio.Task], l
     for agent_cfg in registry.agents_with_channel("telegram"):
         tg_cfg = agent_cfg.telegram
         if tg_cfg is None or not tg_cfg.token:
-            logger.warning(
-                "Agente '%s': channels.telegram.token no configurado — bot Telegram no levantado",
-                agent_cfg.id,
+            startup_event(
+                logger,
+                "telegram_bot",
+                status="skip",
+                agent=agent_cfg.id,
+                reason="channels.telegram.token no configurado",
             )
             continue
         try:

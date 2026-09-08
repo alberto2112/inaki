@@ -12,7 +12,7 @@ serializa como ``reasoning_content`` al lado de ``content`` y ``tool_calls``.
 from __future__ import annotations
 
 from adapters.outbound.providers.deepseek import DeepSeekProvider
-from core.domain.entities.message import Message, Role
+from inaki.shared.message import Message, Role
 from adapters.outbound.providers.base import ResolvedLLMConfig
 
 

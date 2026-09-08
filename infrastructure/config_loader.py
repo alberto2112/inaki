@@ -608,7 +608,7 @@ def _check_legacy_shape(merged: dict) -> None:
     DEBE correr ANTES de ``model_validate`` porque pydantic strict rechazaría
     el field desconocido con un mensaje genérico, perdiendo el ejemplo.
     """
-    from core.domain.errors import ConfigError
+    from inaki.shared.errors import ConfigError
 
     for section, key in _LEGACY_FIELDS:
         node = merged.get(section)
@@ -642,7 +642,7 @@ def _check_top_level(
     """
     from difflib import get_close_matches
 
-    from core.domain.errors import ConfigError
+    from inaki.shared.errors import ConfigError
 
     conocidas = set(modelo.model_fields)
     desconocidas = [k for k in raw if isinstance(k, str) and k not in conocidas]
@@ -683,7 +683,7 @@ def _parse_providers(merged: dict) -> dict[str, ProviderConfig]:
     """Construye el dict ``{key: ProviderConfig}`` desde el merged raw."""
     providers_raw = merged.get("providers") or {}
     if not isinstance(providers_raw, dict):
-        from core.domain.errors import ConfigError
+        from inaki.shared.errors import ConfigError
 
         raise ConfigError("El bloque 'providers:' debe ser un diccionario de entradas por vendor.")
     return {key: ProviderConfig(**(entry or {})) for key, entry in providers_raw.items()}
@@ -927,14 +927,14 @@ def load_agent_config(
         # Un KeyError stringifica a la clave PELADA (`'description'`), que leído
         # detrás de dos puntos no dice si sobra, falta o está mal escrita. La
         # clave obligatoria que falta hay que NOMBRARLA como tal.
-        from core.domain.errors import ConfigError
+        from inaki.shared.errors import ConfigError
 
         raise ConfigError(
             f"Config inválida para el agente '{agent_id}' ({agent_yaml}): "
             f"falta la clave obligatoria {exc}"
         ) from exc
     except ValueError as exc:
-        from core.domain.errors import ConfigError
+        from inaki.shared.errors import ConfigError
 
         raise ConfigError(
             f"Config inválida para el agente '{agent_id}' ({agent_yaml}): {exc}"
@@ -1010,7 +1010,7 @@ class AgentRegistry:
 
     def get(self, agent_id: str) -> AgentConfig:
         if agent_id not in self._agents:
-            from core.domain.errors import AgentNotFoundError
+            from inaki.shared.errors import AgentNotFoundError
 
             raise AgentNotFoundError(
                 f"Agente '{agent_id}' no encontrado. Disponibles: {list(self._agents)}"
@@ -1066,7 +1066,7 @@ def _validate_channel_uniqueness(agents: dict[str, AgentConfig]) -> None:
     declarar el mismo ``broadcast.server.port`` — ambos intentarían hacer
     ``bind()`` en el mismo puerto del host.
     """
-    from core.domain.errors import ConfigError
+    from inaki.shared.errors import ConfigError
 
     telegram_tokens: dict[str, list[str]] = {}
 

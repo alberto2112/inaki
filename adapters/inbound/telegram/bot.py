@@ -30,8 +30,8 @@ from adapters.inbound.telegram.message_mapper import (
 )
 from adapters.inbound.turn_dispatch import dispatch_inbound_turn
 from adapters.outbound.intermediate_sinks.telegram_live import TelegramLiveIntermediateSink
-from core.domain.skip_marker import SKIP_MARKER, is_skip_response
-from core.domain.value_objects.channel_context import ChannelContext
+from inaki.shared.skip_marker import SKIP_MARKER, is_skip_response
+from inaki.shared.channel_context import ChannelContext
 from core.ports.outbound.broadcast_port import BroadcastEmitter, BroadcastReceiver
 from adapters.inbound.telegram.broadcast import TelegramBroadcastMixin
 from adapters.inbound.telegram.commands import TelegramCommandsMixin

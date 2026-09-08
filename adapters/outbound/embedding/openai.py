@@ -19,7 +19,7 @@ import random
 import httpx
 
 from adapters.outbound.embedding.base import BaseEmbeddingProvider, ResolvedEmbeddingConfig
-from core.domain.errors import EmbeddingError
+from inaki.shared.errors import EmbeddingError
 
 PROVIDER_NAME = "openai"
 

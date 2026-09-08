@@ -27,7 +27,7 @@ from pydantic import BaseModel
 from ruamel.yaml import YAMLError as RuamelYAMLError
 from typer.testing import CliRunner
 
-from core.domain.errors import ConfigError
+from inaki.shared.errors import ConfigError
 from inaki.config_errors import borde_de_config
 from infrastructure.home import set_inaki_home
 

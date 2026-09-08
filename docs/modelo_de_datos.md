@@ -208,7 +208,7 @@ class AgentContext(BaseModel):
 
 ---
 
-## Error Hierarchy (`core/domain/errors.py`)
+## Error Hierarchy (`inaki/shared/errors.py`)
 
 ```
 InakiError

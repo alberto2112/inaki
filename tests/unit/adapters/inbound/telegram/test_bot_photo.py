@@ -478,7 +478,7 @@ async def test_sin_vision_local_avisa_por_el_canal_y_no_tumba_el_bot(
     real que produce la falta de la librería, y exige que el aviso mencione la
     causa (no un "algo falló" mudo).
     """
-    from core.domain.errors import VisionError
+    from inaki.shared.errors import VisionError
 
     mock_container.process_photo.execute.side_effect = VisionError(
         "Error en detección facial (modelo 'buffalo_sc'): No module named 'insightface.app'"

@@ -8,7 +8,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from adapters.inbound.rest.admin.app import create_admin_app
-from core.domain.errors import TaskNotFoundError
+from inaki.shared.errors import TaskNotFoundError
 from core.domain.value_objects.manual_run_result import ManualRunResult
 from core.use_cases.run_agent import AgentInfoDTO, InspectResult
 

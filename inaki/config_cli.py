@@ -83,7 +83,7 @@ def show(
         _, global_raw = load_global_config(config_dir)
         AgentRegistry(agents_dir, global_raw)
 
-    from core.domain.errors import AgentNotFoundError
+    from inaki.shared.errors import AgentNotFoundError
 
     try:
         vista = _construir_use_case().execute(agent)

@@ -17,7 +17,7 @@ from adapters.inbound.setup_tui.validators.cross_refs import (
     validate_global_config,
     validate_provider_reference,
 )
-from core.domain.errors import ReferenciaInvalidaError
+from inaki.shared.errors import ReferenciaInvalidaError
 
 
 # ---------------------------------------------------------------------------

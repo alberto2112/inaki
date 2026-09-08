@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from core.domain.errors import KnowledgeError
+from inaki.shared.errors import KnowledgeError
 from core.ports.outbound.knowledge_port import (
     IIndexableKnowledgeSource,
     IKnowledgeSource,
@@ -66,8 +66,7 @@ class ManageKnowledgeUseCase:
         fuente = indexables.get(source_id)
         if fuente is None:
             raise KnowledgeError(
-                f"La fuente indexable '{source_id}' no existe. "
-                f"Disponibles: {sorted(indexables)}."
+                f"La fuente indexable '{source_id}' no existe. Disponibles: {sorted(indexables)}."
             )
         return fuente
 

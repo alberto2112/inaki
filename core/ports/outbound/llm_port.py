@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
-from core.domain.entities.message import Message
+from inaki.shared.message import Message
 from core.domain.value_objects.llm_response import LLMResponse
 
 

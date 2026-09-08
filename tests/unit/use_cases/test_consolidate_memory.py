@@ -7,8 +7,8 @@ from unittest.mock import patch
 import pytest
 
 from core.domain.entities.memory import MemoryEntry
-from core.domain.entities.message import Message, Role
-from core.domain.errors import ConsolidationError
+from inaki.shared.message import Message, Role
+from inaki.shared.errors import ConsolidationError
 from core.domain.value_objects.llm_response import LLMResponse
 from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
 from core.domain.value_objects.agent_settings import ConsolidationSettings, MemorySettings

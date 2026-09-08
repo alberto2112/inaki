@@ -45,6 +45,7 @@ from inaki.scheduler_cli import scheduler_app
 from inaki.setup_cli import setup_app
 from inaki import __version__
 from infrastructure.home import get_inaki_home, set_inaki_home
+from inaki.observability import is_debug_enabled, set_debug_override, setup_logging
 
 app = typer.Typer(
     name="inaki",
@@ -77,14 +78,16 @@ def _get_agents_dir() -> Path:
 def _bootstrap(config_dir: Path, agents_dir: Path):
     """Carga config, logging y registry. Retorna (global_config, registry)."""
     from infrastructure.config import load_global_config, AgentRegistry
-    from infrastructure.logging_setup import setup_logging
 
     from inaki.config_errors import borde_de_config
 
     with borde_de_config(str(config_dir)):
         global_config, global_raw = load_global_config(config_dir)
 
-    setup_logging(global_config.app.log_level)
+    # --debug gana sobre app.debug; con debug el nivel es DEBUG sin importar log_level.
+    app_cfg = global_config.app
+    nivel = "DEBUG" if is_debug_enabled(app_cfg.debug) else app_cfg.log_level
+    setup_logging(nivel, app_cfg.log_format)
 
     # El registry va DENTRO del borde: los YAML de agente validan acá
     # (`_check_top_level`, shape legacy, unicidad de canal), y su `ConfigError`
@@ -197,7 +200,7 @@ def _build_daemon_client(
 
 def _handle_daemon_errors(fn):
     """Ejecuta `fn` y mapea errores del daemon a mensajes limpios + typer.Exit(1)."""
-    from core.domain.errors import (
+    from inaki.shared.errors import (
         DaemonAuthError,
         DaemonClientError,
         DaemonNotRunningError,
@@ -348,9 +351,17 @@ def _root(
             "porque Click confunde el '-' inicial con una flag corta."
         ),
     ),
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help="Modo diagnóstico para ESTE arranque: nivel DEBUG y trazas de turno en "
+        "<home>/debug/turns/. Gana sobre app.debug del YAML.",
+    ),
 ) -> None:
     """Inaki — asistente personal agentico."""
     ctx.ensure_object(dict)
+    if debug:
+        set_debug_override(True)
     if home is not None:
         set_inaki_home(home)
         # Propagar a env: los adapters que NO pueden importar infra (setup TUI,

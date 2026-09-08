@@ -46,7 +46,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from adapters.inbound.rest.admin.app import create_admin_app
-from core.domain.entities.message import Message, Role
+from inaki.shared.message import Message, Role
 
 
 # ---------------------------------------------------------------------------

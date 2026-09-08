@@ -296,9 +296,7 @@ def test_campo_marcado_secret_se_infiere_kind_secret():
     schema real llega al árbol como kind='secret' (no por su nombre)."""
     from infrastructure.config import TelegramChannelConfig
 
-    tree = build_schema_tree(
-        TelegramChannelConfig, {"token": "TKN"}, root_label="telegram"
-    )
+    tree = build_schema_tree(TelegramChannelConfig, {"token": "TKN"}, root_label="telegram")
     token = _hijo(tree, "token")
     assert token.field.kind == "secret"  # type: ignore[union-attr]
     # 'token' ausente → sigue ofreciéndose como addable; al añadirlo vuelve a

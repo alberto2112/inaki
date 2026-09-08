@@ -25,7 +25,7 @@ from adapters.outbound.scene.openai_describer import (
     PROVIDER_NAME,
     OpenAISceneDescriberAdapter,
 )
-from core.domain.errors import SceneDescriptionError
+from inaki.shared.errors import SceneDescriptionError
 
 ENDPOINT = "https://api.openai.com/v1/chat/completions"
 FAKE_IMAGE = b"\xff\xd8\xff\xe0fake-jpeg-bytes"

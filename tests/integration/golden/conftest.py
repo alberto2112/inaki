@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from core.domain.entities.message import Message
+from inaki.shared.message import Message
 from core.domain.value_objects.llm_response import LLMResponse
 from core.ports.outbound.embedding_port import IEmbeddingProvider
 from core.ports.outbound.llm_port import ILLMProvider

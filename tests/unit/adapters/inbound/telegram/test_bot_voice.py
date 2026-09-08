@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from adapters.inbound.telegram.ports import TelegramChannelSettings
-from core.domain.errors import TranscriptionError
+from inaki.shared.errors import TranscriptionError
 
 
 # ---------------------------------------------------------------------------

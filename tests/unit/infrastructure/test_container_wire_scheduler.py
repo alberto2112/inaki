@@ -15,6 +15,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 
+from core.ports.outbound.turn_tracer_port import NullTurnTracer
 from adapters.outbound.tools.scheduler_tool import SchedulerTool
 from adapters.outbound.tools.tool_registry import ToolRegistry
 from core.use_cases.run_agent import RunAgentUseCase
@@ -105,6 +106,7 @@ def _build_minimal_container(
     container.agent_config = agent_config
     container._global_config = global_config
     container._delegation_wired = False
+    container._tracer = NullTurnTracer()
     container._scheduler_wired = False
     container._llm = AsyncMock()
     container._embedder = FakeEmbedder()

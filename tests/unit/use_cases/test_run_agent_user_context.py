@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.domain.value_objects.channel_context import ChannelContext
+from inaki.shared.channel_context import ChannelContext
 from core.use_cases.run_agent import RunAgentUseCase
 from infrastructure.container import build_run_agent_settings
 
@@ -102,9 +102,7 @@ def test_username_ya_no_participa_del_lookup(use_case, users_root):
     (users_root / "telegram").mkdir()
     (users_root / "telegram" / "alberto.md").write_text("no debería leerse", encoding="utf-8")
 
-    ctx = ChannelContext(
-        channel_type="telegram", user_id="999", chat_id="555", username="alberto"
-    )
+    ctx = ChannelContext(channel_type="telegram", user_id="999", chat_id="555", username="alberto")
 
     # context_id = "555" → no existe 555.md → "" (alberto.md se ignora)
     assert use_case._read_user_context(ctx) == ""

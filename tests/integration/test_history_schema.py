@@ -17,7 +17,7 @@ from adapters.outbound.history.sqlite_history_store import (
     HistoryStoreSettings,
     SQLiteHistoryStore,
 )
-from core.domain.entities.message import Message, Role
+from inaki.shared.message import Message, Role
 
 
 # ---------------------------------------------------------------------------

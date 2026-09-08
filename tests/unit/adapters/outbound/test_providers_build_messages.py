@@ -17,7 +17,7 @@ from adapters.outbound.providers.groq import GroqProvider
 from adapters.outbound.providers.ollama import OllamaProvider
 from adapters.outbound.providers.openai import OpenAIProvider
 from adapters.outbound.providers.openrouter import OpenRouterProvider
-from core.domain.entities.message import Message, Role
+from inaki.shared.message import Message, Role
 from adapters.outbound.providers.base import ResolvedLLMConfig
 
 

@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 from adapters.inbound.setup_tui.screens._base import BasePage
 from adapters.inbound.setup_tui.domain.field import Field
-from core.domain.errors import ReferenciaInvalidaError
+from inaki.shared.errors import ReferenciaInvalidaError
 
 
 # ---------------------------------------------------------------------------

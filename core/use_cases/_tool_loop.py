@@ -23,8 +23,8 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 
-from core.domain.entities.message import Message, Role
-from core.domain.errors import ToolLoopMaxIterationsError
+from inaki.shared.message import Message, Role
+from inaki.shared.errors import ToolLoopMaxIterationsError
 from core.ports.outbound.history_port import IHistoryStore
 from core.ports.outbound.intermediate_sink_port import (
     IIntermediateSink,
@@ -33,6 +33,7 @@ from core.ports.outbound.intermediate_sink_port import (
 from core.ports.outbound.llm_port import ILLMProvider
 from core.ports.outbound.scope_registry_port import IScopeRegistry, Scope
 from core.ports.outbound.tool_port import IToolExecutor
+from core.ports.outbound.turn_tracer_port import ITurnTracer, NullTurnTracer
 
 logger = logging.getLogger(__name__)
 
@@ -221,6 +222,7 @@ async def run_tool_loop(
     persist_message: Callable[[Message], Awaitable[None]] | None = None,
     reroute_tools: Callable[[str], Awaitable[list[dict]]] | None = None,
     reroute_max_extra_tools: int = 0,
+    tracer: ITurnTracer | None = None,
 ) -> str:
     """
     Ejecuta el loop LLM + tool-dispatch hasta obtener respuesta final o
@@ -309,6 +311,11 @@ async def run_tool_loop(
             visible y degradan la selección del LLM. Default ``0`` → el
             re-routing no agrega nada aunque haya callback.
 
+        tracer: Trazas del modo debug (``ITurnTracer`` ya bindeado al turno por
+            el caller). El loop emite ``llm.response`` por cada llamada al
+            provider y ``tool.call``/``tool.result`` por cada tool. Solo
+            observa: no cambia el flujo. Default ``None`` → tracer nulo.
+
     Returns:
         El texto de respuesta final del LLM (sin tool calls).
 
@@ -318,6 +325,7 @@ async def run_tool_loop(
             del LLM en ese momento.
     """
     sink: IIntermediateSink = intermediate_sink or NullIntermediateSink()
+    tracer = tracer or NullTurnTracer()
     working_messages = list(messages)
     failure_counts: dict[str, int] = {}
     tripped: set[str] = set()
@@ -414,6 +422,13 @@ async def run_tool_loop(
         )
         made_llm_call = True
         last_text = response.text
+        tracer.trace(
+            "llm.response",
+            iteration=iteration,
+            text=response.text,
+            tool_calls=[tc.get("function", {}).get("name", "") for tc in response.tool_calls],
+            thinking=response.thinking is not None,
+        )
 
         if not response.tool_calls:
             # Checkpoint C — última chance de drenar antes de cerrar el turno.
@@ -555,7 +570,15 @@ async def run_tool_loop(
                     agent_id,
                 )
 
+            tracer.trace("tool.call", tool=tool_name, call_id=tc_id, args=kwargs)
             result = await tools.execute(tool_name, **kwargs)
+            tracer.trace(
+                "tool.result",
+                tool=tool_name,
+                call_id=tc_id,
+                success=result.success,
+                output=result.output,
+            )
             result_msg = Message(
                 role=Role.TOOL,
                 content=result.output,
@@ -637,6 +660,7 @@ async def run_tool_loop(
             if made_llm_call and request_delay_seconds > 0:
                 await asyncio.sleep(request_delay_seconds)
             wrapup = await llm.complete(working_messages, system_prompt, tools=None)
+            tracer.trace("llm.response", iteration="wrapup", text=wrapup.text, tool_calls=[])
             if wrapup.text.strip():
                 return wrapup.text
         except Exception as exc:  # noqa: BLE001
@@ -666,6 +690,7 @@ async def run_tool_loop(
                 tools=None,
             )
             last_text = fallback.text
+            tracer.trace("llm.response", iteration="fallback", text=last_text, tool_calls=[])
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Fallback LLM call tras max_iterations falló para '%s': %s",

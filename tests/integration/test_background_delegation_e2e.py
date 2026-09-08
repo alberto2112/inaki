@@ -22,7 +22,7 @@ from adapters.outbound.delegation.background_queue_adapter import (
     BackgroundDelegationQueueAdapter,
 )
 from adapters.outbound.scheduler.dispatch_adapters import LLMDispatcherAdapter
-from core.domain.entities.message import Role
+from inaki.shared.message import Role
 
 
 async def test_end_to_end_async_delegation() -> None:

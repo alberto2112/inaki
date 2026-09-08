@@ -70,9 +70,7 @@ class IChannelHistoryRecorder(Protocol):
     o a un agente desconocido DEBEN ser no-op.
     """
 
-    async def record_channel_send(
-        self, agent_id: str, resolved_target: str, text: str
-    ) -> None: ...
+    async def record_channel_send(self, agent_id: str, resolved_target: str, text: str) -> None: ...
 
 
 @dataclass(frozen=True)

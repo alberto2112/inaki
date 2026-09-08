@@ -27,7 +27,7 @@ from adapters.outbound.scene.groq_describer import (
     PROVIDER_NAME,
     GroqSceneDescriberAdapter,
 )
-from core.domain.errors import SceneDescriptionError
+from inaki.shared.errors import SceneDescriptionError
 
 ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
 FAKE_IMAGE = b"\xff\xd8\xff\xe0fake-jpeg-bytes"

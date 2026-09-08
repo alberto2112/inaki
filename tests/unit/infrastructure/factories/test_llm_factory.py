@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 
 from adapters.outbound.providers.base import BaseLLMProvider, ResolvedLLMConfig
-from core.domain.errors import ConfigError
+from inaki.shared.errors import ConfigError
 from infrastructure.config import (
     LLMConfig,
     ProviderConfig,

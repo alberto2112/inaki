@@ -20,9 +20,10 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
+from core.ports.outbound.turn_tracer_port import NullTurnTracer
 from adapters.outbound.tools.scheduler_tool import SchedulerTool
 from adapters.outbound.tools.tool_registry import ToolRegistry
-from core.domain.value_objects.channel_context import (
+from inaki.shared.channel_context import (
     ChannelContext,
     reset_current_channel_context,
     set_current_channel_context,
@@ -107,6 +108,7 @@ def _build_minimal_container(
     container.agent_config = agent_config
     container._global_config = global_config
     container._delegation_wired = False
+    container._tracer = NullTurnTracer()
     container._scheduler_wired = False
     container._llm = AsyncMock()
     container._embedder = FakeEmbedder()

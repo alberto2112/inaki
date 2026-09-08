@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from core.domain.entities.task import USER_TASK_ID_START, ScheduledTask, TaskKind, TaskStatus
 from core.domain.entities.task_log import TaskLog
-from core.domain.errors import BuiltinTaskProtectedError, TaskNotFoundError, TooManyActiveTasksError
+from inaki.shared.errors import (
+    BuiltinTaskProtectedError,
+    TaskNotFoundError,
+    TooManyActiveTasksError,
+)
 from core.domain.utils.cron import validate_cron
 from core.ports.inbound.scheduler_port import ISchedulerUseCase
 

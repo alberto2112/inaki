@@ -17,8 +17,8 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from core.domain.entities.message import Message, Role
-from core.domain.errors import ToolLoopMaxIterationsError
+from inaki.shared.message import Message, Role
+from inaki.shared.errors import ToolLoopMaxIterationsError
 from core.domain.value_objects.llm_response import LLMResponse
 from core.ports.outbound.tool_port import ToolResult
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase

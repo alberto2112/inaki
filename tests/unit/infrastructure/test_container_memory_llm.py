@@ -134,7 +134,7 @@ def test_resolve_memories_llm_propaga_config_error_de_validacion() -> None:
     el registry, la factory (``create_from_resolved``) levanta ``ConfigError``
     al instanciar el adapter.
     """
-    from core.domain.errors import ConfigError
+    from inaki.shared.errors import ConfigError
 
     cfg = _mk_cfg(
         memory_llm=MemoryLLMConfig(provider="openai", model="gpt-4o-mini"),

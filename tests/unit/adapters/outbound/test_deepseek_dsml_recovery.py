@@ -26,7 +26,7 @@ from adapters.outbound.providers.deepseek import (
     _parse_dsml_tool_calls,
     _strip_dsml,
 )
-from core.domain.entities.message import Message, Role
+from inaki.shared.message import Message, Role
 
 # Markup DSML real reportado por el usuario (｜ es FULLWIDTH VERTICAL LINE U+FF5C).
 DSML_INBOX = (

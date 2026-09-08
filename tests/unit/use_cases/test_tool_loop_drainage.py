@@ -17,8 +17,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from core.domain.entities.message import Message, Role
-from core.domain.errors import ToolLoopMaxIterationsError
+from inaki.shared.message import Message, Role
+from inaki.shared.errors import ToolLoopMaxIterationsError
 from core.domain.value_objects.conversation_state import ConversationState
 from core.domain.value_objects.llm_response import LLMResponse
 from core.ports.outbound.history_port import IHistoryStore

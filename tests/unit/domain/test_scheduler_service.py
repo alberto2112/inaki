@@ -19,7 +19,7 @@ from core.domain.entities.task import (
     WebhookPayload,
 )
 from core.domain.entities.task_log import TaskLog
-from core.domain.errors import TaskNotFoundError
+from inaki.shared.errors import TaskNotFoundError
 from core.domain.services.scheduler_service import SchedulerService
 from core.domain.value_objects.dispatch_result import DispatchResult
 
@@ -430,9 +430,7 @@ async def test_channel_send_persiste_en_historial_del_agente_dueno(
     resolved_target, text). El recorder decide si es canal conversacional."""
     task = _make_channel_task().model_copy(update={"created_by": "main"})
     service._dispatch.channel_sender.send_message = AsyncMock(  # type: ignore[method-assign]
-        return_value=DispatchResult(
-            original_target="telegram:42", resolved_target="telegram:42"
-        )
+        return_value=DispatchResult(original_target="telegram:42", resolved_target="telegram:42")
     )
     recorder = AsyncMock()
     service._dispatch.history_recorder.record_channel_send = recorder  # type: ignore[method-assign]
@@ -457,9 +455,7 @@ async def test_channel_send_agent_id_override_gana_a_created_by(
         }
     )
     service._dispatch.channel_sender.send_message = AsyncMock(  # type: ignore[method-assign]
-        return_value=DispatchResult(
-            original_target="telegram:42", resolved_target="telegram:42"
-        )
+        return_value=DispatchResult(original_target="telegram:42", resolved_target="telegram:42")
     )
     recorder = AsyncMock()
     service._dispatch.history_recorder.record_channel_send = recorder  # type: ignore[method-assign]
@@ -482,9 +478,7 @@ async def test_channel_send_agent_id_sin_created_by_persiste(
         }
     )  # created_by="" por default
     service._dispatch.channel_sender.send_message = AsyncMock(  # type: ignore[method-assign]
-        return_value=DispatchResult(
-            original_target="telegram:42", resolved_target="telegram:42"
-        )
+        return_value=DispatchResult(original_target="telegram:42", resolved_target="telegram:42")
     )
     recorder = AsyncMock()
     service._dispatch.history_recorder.record_channel_send = recorder  # type: ignore[method-assign]
@@ -501,9 +495,7 @@ async def test_channel_send_sin_created_by_no_persiste(
     no se intenta persistir."""
     task = _make_channel_task()  # created_by="" por default
     service._dispatch.channel_sender.send_message = AsyncMock(  # type: ignore[method-assign]
-        return_value=DispatchResult(
-            original_target="telegram:42", resolved_target="telegram:42"
-        )
+        return_value=DispatchResult(original_target="telegram:42", resolved_target="telegram:42")
     )
     recorder = AsyncMock()
     service._dispatch.history_recorder.record_channel_send = recorder  # type: ignore[method-assign]
@@ -520,9 +512,7 @@ async def test_channel_send_ephemeral_no_persiste(
     aunque la tarea tenga created_by."""
     task = _make_channel_task().model_copy(update={"created_by": "main"})
     service._dispatch.channel_sender.send_message = AsyncMock(  # type: ignore[method-assign]
-        return_value=DispatchResult(
-            original_target="telegram:42", resolved_target="telegram:42"
-        )
+        return_value=DispatchResult(original_target="telegram:42", resolved_target="telegram:42")
     )
     recorder = AsyncMock()
     service._dispatch.history_recorder.record_channel_send = recorder  # type: ignore[method-assign]

@@ -25,7 +25,7 @@ import aiosqlite
 import sqlite_vec
 
 from adapters.outbound.knowledge._chunker import chunkear_archivo
-from core.domain.errors import KnowledgeError
+from inaki.shared.errors import KnowledgeError
 from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
 from core.ports.outbound.embedding_port import IEmbeddingProvider
 from core.ports.outbound.knowledge_port import IIndexableKnowledgeSource

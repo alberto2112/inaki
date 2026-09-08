@@ -27,6 +27,7 @@ from adapters.inbound.setup_tui.modals._dialog import dialog_css
 # Flag de bienvenida
 # ---------------------------------------------------------------------------
 
+
 def _welcome_flag_path() -> Path:
     """Ruta del flag de bienvenida: ``<home>/setup_welcome_seen``.
 

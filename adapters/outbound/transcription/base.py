@@ -22,7 +22,7 @@ from typing import Any, ClassVar
 import httpx
 from pydantic import BaseModel
 
-from core.domain.errors import TranscriptionError, TranscriptionFileTooLargeError
+from inaki.shared.errors import TranscriptionError, TranscriptionFileTooLargeError
 from core.ports.outbound.transcription_port import ITranscriptionProvider
 
 logger = logging.getLogger(__name__)

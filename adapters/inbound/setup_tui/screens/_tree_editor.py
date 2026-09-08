@@ -243,7 +243,9 @@ class TreeEditorPage(Screen):
             rows.append(row)
 
         if not rows:
-            await detail.mount(Label("  (sección contenedora — elegí una subsección)", classes="empty"))
+            await detail.mount(
+                Label("  (sección contenedora — elegí una subsección)", classes="empty")
+            )
         for row in rows:
             await detail.mount(row)
         self._detail_rows = rows

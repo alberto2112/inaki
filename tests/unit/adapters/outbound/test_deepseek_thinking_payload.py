@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from adapters.outbound.providers.deepseek import DeepSeekProvider
-from core.domain.entities.message import Message, Role
+from inaki.shared.message import Message, Role
 from adapters.outbound.providers.base import ResolvedLLMConfig
 
 
@@ -195,7 +195,7 @@ async def test_http_error_message_includes_exception_type_and_timeout() -> None:
     que el operador pueda diagnosticar sin tirar de los logs raw de httpx."""
     import httpx
 
-    from core.domain.errors import LLMError
+    from inaki.shared.errors import LLMError
 
     provider = DeepSeekProvider(_cfg(None, timeout_seconds=120))
 

@@ -44,8 +44,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from core.domain.entities.memory import MemoryEntry
-from core.domain.entities.message import Message, Role
-from core.domain.errors import ConsolidationError
+from inaki.shared.message import Message, Role
+from inaki.shared.errors import ConsolidationError
 from core.ports.outbound.embedding_port import IEmbeddingProvider
 from core.ports.outbound.history_port import IHistoryStore
 from core.ports.outbound.llm_port import ILLMProvider

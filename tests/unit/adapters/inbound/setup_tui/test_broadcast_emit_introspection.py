@@ -25,7 +25,13 @@ def test_broadcast_directo_expone_emit_con_sus_flags():
     sub-sección emit y sus 3 flags como hojas."""
     tree = build_schema_tree(
         BroadcastConfig,
-        {"emit": {"assistant_response": True, "user_input_voice": False, "user_input_photo": False}},
+        {
+            "emit": {
+                "assistant_response": True,
+                "user_input_voice": False,
+                "user_input_photo": False,
+            }
+        },
         root_label="broadcast",
     )
     emit = _hijo(tree, "emit")

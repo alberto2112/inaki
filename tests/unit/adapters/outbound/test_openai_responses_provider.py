@@ -16,8 +16,8 @@ import httpx
 import pytest
 
 from adapters.outbound.providers.openai_responses import OpenAIResponsesProvider
-from core.domain.entities.message import Message, Role
-from core.domain.errors import LLMError
+from inaki.shared.message import Message, Role
+from inaki.shared.errors import LLMError
 from adapters.outbound.providers.base import ResolvedLLMConfig
 
 

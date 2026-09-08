@@ -14,7 +14,7 @@ from telegram.ext import ContextTypes
 
 from adapters.inbound.telegram.message_mapper import split_message
 from core.domain.entities.task import ScheduledTask
-from core.domain.errors import TaskNotFoundError
+from inaki.shared.errors import TaskNotFoundError
 
 
 if TYPE_CHECKING:

@@ -75,6 +75,7 @@ existe este documento— y la contradicción no queda flotando.
 | [`broadcast-topology-config`](#broadcast-topology-config) | Rol explícito `server` XOR `client`; config vieja falla al cargar |
 | [`broadcast-arranque-observable`](#broadcast-arranque-observable) | El fallo de `bind()` y la config de broadcast que no valida ahora salen como `ERROR` en el log |
 | [`formato-en-el-borde-del-transporte`](#formato-en-el-borde-del-transporte) | Todo lo que Telegram manda fuera del turno conversacional (scheduler, `bg-N`, intermedios, media) sale **formateado** y troceado, no en markdown crudo |
+| [`user-timezone-default`](#user-timezone-default) | Un `global.yaml` sin bloque `user:` arranca (timezone autodetectada); antes el container moría con un `ValueError` de `ZoneInfo` |
 | [`broadcast-human-reset`](#broadcast-human-reset) | Un `user_input_voice`/`user_input_photo` recibido por broadcast **resetea** el rate limiter del grupo, igual que un mensaje humano nativo |
 
 ## Índice por subsistema
@@ -101,6 +102,37 @@ existe este documento— y la contradicción no queda flotando.
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `user-timezone-default`
+
+**Contexto (2026-09-08).** Al escribir los tests de camino dorado de la fase 0 del
+refactor modular (arranque REAL desde un `global.yaml` mínimo, sin bloque `user:`),
+el `AppContainer` murió construyendo el scheduler con
+`ValueError: ZoneInfo keys must be normalized relative paths, got:` — una
+timezone vacía. `UserConfig.timezone` tenía default `""` y un validador
+`_resolve_timezone` que autodetectaba desde el host, pero pydantic **no valida
+los defaults** salvo `validate_default=True`: el validador corría con
+`timezone: ""` explícito (que es lo que `ensure_user_config` escribe en el primer
+arranque) y NO cuando el bloque faltaba. Un operador que borrara `user:` de su
+YAML se quedaba sin daemon y sin una sola pista de config en el error.
+
+**Cambio.** `UserConfig` declara `model_config = ConfigDict(validate_default=True)`,
+el mismo patrón que ya usaban los bloques con `RuntimePath`. Test unitario en
+`tests/unit/infrastructure/test_user_timezone_default.py`.
+
+**Invariante que dejó.** Un validador de campo con default "vacío que se resuelve
+después" **exige `validate_default=True`**; si no, el default esquiva la
+resolución y el consumidor recibe el valor crudo. Es el mismo agujero que
+`config-falla-ruidoso` describe desde el otro lado: una config que no valida
+igual que arranca miente.
+
+**De paso.** Ningún test construía un `AppContainer` desde ficheros YAML: todos
+inyectaban a mano con `__new__` o usaban `MagicMock`. Por eso el bug vivió
+invisible. Los tests de `tests/integration/golden/` levantan el composition root
+de verdad con un home temporal, y solo falsean los bordes externos (LLM,
+embedder, API de Telegram).
 
 ---
 

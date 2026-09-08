@@ -44,6 +44,7 @@ dev = [
     "mypy>=1.10",
     "types-PyYAML>=6.0",
     "types-croniter>=2.0",
+    "import-linter>=2.0",
 ]
 
 [project.scripts]
@@ -110,3 +111,29 @@ ignore_missing_imports = true
 # Usado por el embedder e5-small ONNX (adapters/outbound/embedding/e5_onnx).
 module = "tokenizers"
 ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# Ley de dependencias entre capas — verificada por `lint-imports`.
+#
+# Codifica las reglas de tests/unit/test_architecture.py de forma declarativa.
+# grimp incluye imports locales y bajo TYPE_CHECKING: un import "solo de tipos"
+# también acopla. Regla 2 (allowlist de terceros en core/) sigue en el test de
+# pytest: import-linter solo sabe PROHIBIR paquetes, no permitir una lista cerrada.
+#
+# Refactor modular (2026-09): cada fase agrega o endurece un contrato acá. NUNCA se resuelve una violación con ignore_imports —
+# es la lista DEUDA_* con otro nombre.
+# ---------------------------------------------------------------------------
+[tool.importlinter]
+root_packages = ["core", "adapters", "infrastructure", "inaki"]
+
+[[tool.importlinter.contracts]]
+name = "core/ no conoce adapters/, infrastructure/ ni el composition root"
+type = "forbidden"
+source_modules = ["core"]
+forbidden_modules = ["adapters", "infrastructure", "inaki"]
+
+[[tool.importlinter.contracts]]
+name = "adapters/ no conoce infrastructure/"
+type = "forbidden"
+source_modules = ["adapters"]
+forbidden_modules = ["infrastructure"]

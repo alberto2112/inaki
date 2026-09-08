@@ -21,6 +21,7 @@ pytest                           # all tests
 pytest tests/unit/               # unit only
 pytest tests/integration/        # integration only
 pytest -k test_name              # single test
+lint-imports                     # ley de dependencias entre capas (import-linter)
 inaki config show --origin       # config efectiva con la capa de cada valor
 inaki config show --secrets      # qué credenciales están puestas y cuáles faltan
 inaki                            # interactive chat (default agent)

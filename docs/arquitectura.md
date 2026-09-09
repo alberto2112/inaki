@@ -32,7 +32,7 @@ Una **capacidad** (gestionar knowledge, agendar tareas, gestionar memoria, etc.)
 se implementa UNA vez y se expone por TRES superficies que comparten la misma
 lógica — NUNCA se re-implementa por canal:
 
-1. **Use case en `core/`** — la lógica vive acá (ej. `core/use_cases/manage_knowledge.py`).
+1. **Use case en `core/`** — la lógica vive acá (ej. `inaki/knowledge/use_cases/manage_knowledge.py`).
 2. **Tool del LLM** (`adapters/outbound/tools/`) — envuelve el use case; le da `routing_keywords` si los humanos la invocan en lenguaje natural. Así el LLM (y por ende CUALQUIER canal) llega a la capacidad.
 3. **Gateway admin único** — `POST /admin/tool/invoke` ya invoca cualquier tool; `inaki tool <name>` es su cliente. NO crear endpoints REST por capacidad (sería deuda redundante).
 

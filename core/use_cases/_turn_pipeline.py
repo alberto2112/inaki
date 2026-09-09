@@ -30,7 +30,6 @@ from pathlib import Path
 
 from core.domain.entities.background_task import BackgroundTaskView
 from core.domain.entities.skill import Skill
-from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
 from core.domain.services.prepend_timestamps import prepend_timestamps
 from core.domain.services.sticky_selector import apply_sticky
 from core.domain.value_objects.agent_settings import RunAgentSettings
@@ -38,6 +37,7 @@ from core.domain.value_objects.conversation_state import ConversationState
 from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
 from core.ports.outbound.channel_port import IIntermediateSink
 from core.ports.outbound.embedding_port import IEmbeddingProvider
+from core.ports.outbound.knowledge_port import IKnowledgeRetriever
 from core.ports.outbound.skill_port import ISkillRepository
 from core.ports.outbound.tool_port import IToolExecutor
 from inaki.shared.message import Message, Role
@@ -418,7 +418,7 @@ async def run_semantic_routing(
 async def prefetch_knowledge(
     *,
     routing_bypass: bool,
-    orchestrator: KnowledgeOrchestrator | None,
+    orchestrator: IKnowledgeRetriever | None,
     embedder: IEmbeddingProvider,
     query: str,
     query_vec: list[float] | None,
@@ -452,7 +452,7 @@ async def prefetch_knowledge(
 
 def warn_if_token_budget_exceeded(
     *,
-    orchestrator: KnowledgeOrchestrator | None,
+    orchestrator: IKnowledgeRetriever | None,
     knowledge_chunks: list[KnowledgeChunk],
     digest_text: str,
     retrieved_skills: list[Skill],

@@ -5,11 +5,11 @@ from __future__ import annotations
 import hashlib
 import logging
 
-from adapters.outbound.embedding import resolve_provider_name
-from core.domain.services.similarity import cosine_similarity
 from core.ports.outbound.embedding_cache_port import IEmbeddingCache
 from core.ports.outbound.embedding_port import IEmbeddingProvider
 from core.ports.outbound.tool_port import ITool, IToolExecutor, ToolResult
+from inaki.embedding import resolve_provider_name
+from inaki.embedding.similarity import cosine_similarity
 
 logger = logging.getLogger(__name__)
 

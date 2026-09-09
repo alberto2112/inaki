@@ -14,11 +14,11 @@ from dataclasses import dataclass, field
 from core.ports.inbound.scheduler_port import IManualTaskRunner
 from core.ports.outbound.channel_port import IChannelOutbound
 from core.ports.outbound.scope_registry_port import IScopeRegistry
-from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
-from core.use_cases.reconcile_memory import ReconcileMemoryUseCase
 from core.use_cases.run_agent import RunAgentUseCase
 from core.use_cases.schedule_task import ScheduleTaskUseCase
 from inaki.channels.telegram.files.ports import IFileDownloader, IFileRecordRepo
+from inaki.memory.use_cases.consolidate_memory import ConsolidateMemoryUseCase
+from inaki.memory.use_cases.reconcile_memory import ReconcileMemoryUseCase
 from inaki.perception.use_cases.process_photo import ProcessPhotoUseCase
 from inaki.perception.use_cases.transcribe_audio import TranscribeAudioUseCase
 

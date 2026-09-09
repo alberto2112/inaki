@@ -15,10 +15,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Literal
 
 if TYPE_CHECKING:
-    from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
     from core.ports.outbound.background_delegation_port import IBackgroundDelegationQueue
     from core.ports.outbound.knowledge_port import IKnowledgeSource
     from inaki.channels.telegram.files.ports import IFileDownloader, IFileRecordRepo
+    from inaki.knowledge.orchestrator import KnowledgeOrchestrator
     from inaki.perception.use_cases.process_photo import ProcessPhotoUseCase
     from inaki.shared.channel_context import ChannelContext
 
@@ -26,12 +26,6 @@ from adapters.outbound.config_repository.yaml_tool_config_store import YamlToolC
 from adapters.outbound.delegation.background_queue_adapter import (
     BackgroundDelegationQueueAdapter,
 )
-from adapters.outbound.embedding.sqlite_embedding_cache import SqliteEmbeddingCache
-from adapters.outbound.history.sqlite_history_store import (
-    HistoryStoreSettings,
-    SQLiteHistoryStore,
-)
-from adapters.outbound.memory.sqlite_memory_repo import SQLiteMemoryRepository
 from adapters.outbound.scheduler.builtin_tasks import (
     _RECONCILE_MEMORY_BASE_ID,
     build_consolidate_memory_task,
@@ -47,7 +41,6 @@ from adapters.outbound.scheduler.dispatch_adapters import (
 )
 from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRepo
 from adapters.outbound.scope_registry_adapter import InMemoryScopeRegistryAdapter
-from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
 from adapters.outbound.tools.tool_registry import ToolRegistry
 from core.domain.services.channel_outbound_registry import ChannelOutboundRegistry
 from core.domain.services.channel_router import ChannelFallbackSettings, ChannelRouter
@@ -66,9 +59,6 @@ from core.ports.outbound.scheduler_dispatch_port import SchedulerDispatchPorts
 from core.ports.outbound.scope_registry_port import IScopeRegistry
 from core.ports.outbound.tool_config_port import IToolConfigStore
 from core.ports.outbound.turn_tracer_port import ITurnTracer, NullTurnTracer
-from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
-from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
-from core.use_cases.reconcile_memory import ReconcileMemoryUseCase
 from core.use_cases.run_agent import RunAgentUseCase
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from core.use_cases.schedule_task import ScheduleTaskUseCase
@@ -103,12 +93,22 @@ from inaki.config.merge import deep_merge, resolver_inherit
 from inaki.config.tools.config_tool import ConfigTool
 from inaki.config.use_cases.runtime_config import RuntimeConfigUseCase
 from inaki.config.use_cases.show_effective import ShowEffectiveConfigUseCase
+from inaki.embedding.cache import SqliteEmbeddingCache
+from inaki.memory.adapters.sqlite_history_store import (
+    HistoryStoreSettings,
+    SQLiteHistoryStore,
+)
+from inaki.memory.adapters.sqlite_memory_repo import SQLiteMemoryRepository
+from inaki.memory.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
+from inaki.memory.use_cases.consolidate_memory import ConsolidateMemoryUseCase
+from inaki.memory.use_cases.reconcile_memory import ReconcileMemoryUseCase
 from inaki.observability import JsonlTurnTracer, is_debug_enabled, startup_event
 from inaki.perception.ports.transcription import ITranscriptionProvider
 from inaki.perception.settings import PhotosSettings, TranscriptionSettings
 from inaki.perception.use_cases.transcribe_audio import TranscribeAudioUseCase
 from inaki.shared.channel_context import current_channel_context
 from inaki.shared.errors import AgentNotFoundError, ConfigError, InakiError
+from inaki.skills.yaml_skill_repo import YamlSkillRepository
 from infrastructure.factories.embedding_factory import EmbeddingProviderFactory
 from infrastructure.factories.llm_factory import LLMProviderFactory
 from infrastructure.factories.transcription_factory import TranscriptionProviderFactory
@@ -524,7 +524,7 @@ class AgentContainer:
         Las fuentes de nivel 3 (extensiones) se añaden en _register_extensions().
         Orden garantizado: (1) memoria, (2) fuentes configuradas.
         """
-        from adapters.outbound.knowledge.sqlite_memory_knowledge_source import (
+        from inaki.knowledge.adapters.sqlite_memory_knowledge_source import (
             SqliteMemoryKnowledgeSource,
         )
 
@@ -597,7 +597,7 @@ class AgentContainer:
         _collect_knowledge_sources() para que _register_extensions() pueda añadir
         fuentes de nivel 3 antes de que se construya el orquestrador definitivo.
         """
-        from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
+        from inaki.knowledge.orchestrator import KnowledgeOrchestrator
 
         return KnowledgeOrchestrator(
             sources=fuentes,
@@ -610,7 +610,7 @@ class AgentContainer:
 
     def _build_document_source(self, fuente_cfg: "KnowledgeSourceConfig") -> "IKnowledgeSource":
         """Instancia un DocumentKnowledgeSource a partir de la config de fuente."""
-        from adapters.outbound.knowledge.document_knowledge_source import (
+        from inaki.knowledge.adapters.document_knowledge_source import (
             DocumentKnowledgeSource,
         )
 
@@ -644,7 +644,7 @@ class AgentContainer:
         Si hay un error de config irrecuperable, loguea y retorna None para que el
         container omita esta fuente sin abortar el arranque del agente.
         """
-        from adapters.outbound.knowledge.sqlite_knowledge_source import (
+        from inaki.knowledge.adapters.sqlite_knowledge_source import (
             SqliteKnowledgeSource,
         )
         from inaki.shared.errors import KnowledgeConfigError
@@ -680,17 +680,17 @@ class AgentContainer:
         from pathlib import Path
 
         from adapters.outbound.tools.edit_file_tool import EditFileTool
-        from adapters.outbound.tools.knowledge_search_tool import KnowledgeSearchTool
-        from adapters.outbound.tools.memory_tools import (
+        from adapters.outbound.tools.patch_file_tool import PatchFileTool
+        from adapters.outbound.tools.read_file_tool import ReadFileTool
+        from adapters.outbound.tools.web_search_tool import WebSearchTool
+        from adapters.outbound.tools.write_file_tool import WriteFileTool
+        from inaki.knowledge.tools.knowledge_search_tool import KnowledgeSearchTool
+        from inaki.memory.tools.memory_tools import (
             DeleteMemoryTool,
             SearchMemoryTool,
             UpdateMemoryTool,
         )
-        from adapters.outbound.tools.patch_file_tool import PatchFileTool
-        from adapters.outbound.tools.read_file_tool import ReadFileTool
-        from adapters.outbound.tools.search_history_tool import SearchHistoryTool
-        from adapters.outbound.tools.web_search_tool import WebSearchTool
-        from adapters.outbound.tools.write_file_tool import WriteFileTool
+        from inaki.memory.tools.search_history_tool import SearchHistoryTool
 
         ws_cfg = self.agent_config.workspace
         workspace_path = Path(ws_cfg.path).expanduser().resolve()
@@ -733,8 +733,8 @@ class AgentContainer:
         # Comparte la MISMA lista viva de fuentes que el orchestrator: las fuentes
         # indexables añadidas por extensiones en _register_extensions() quedan
         # incluidas sin reconstruir el use case.
-        from adapters.outbound.tools.knowledge_admin_tool import KnowledgeAdminTool
-        from core.use_cases.manage_knowledge import ManageKnowledgeUseCase
+        from inaki.knowledge.tools.knowledge_admin_tool import KnowledgeAdminTool
+        from inaki.knowledge.use_cases.manage_knowledge import ManageKnowledgeUseCase
 
         self._manage_knowledge = ManageKnowledgeUseCase(sources=self._pending_knowledge_sources)
         self._tools.register(KnowledgeAdminTool(manage_knowledge=self._manage_knowledge))

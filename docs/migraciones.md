@@ -75,6 +75,7 @@ existe este documento— y la contradicción no queda flotando.
 | [`broadcast-topology-config`](#broadcast-topology-config) | Rol explícito `server` XOR `client`; config vieja falla al cargar |
 | [`broadcast-arranque-observable`](#broadcast-arranque-observable) | El fallo de `bind()` y la config de broadcast que no valida ahora salen como `ERROR` en el log |
 | [`formato-en-el-borde-del-transporte`](#formato-en-el-borde-del-transporte) | Todo lo que Telegram manda fuera del turno conversacional (scheduler, `bg-N`, intermedios, media) sale **formateado** y troceado, no en markdown crudo |
+| [`modulos-embedding-memory-knowledge-skills`](#modulos-embedding-memory-knowledge-skills) | Sin cambios de comportamiento: nacen `inaki/embedding`, `inaki/memory`, `inaki/knowledge` e `inaki/skills`; el kernel depende de `IKnowledgeRetriever` (Protocol) en vez del orquestador concreto |
 | [`modulo-perception`](#modulo-perception) | Sin cambios de comportamiento: fotos, caras, escena, imaging y transcripción pasan a `inaki/perception/`; la transcripción de voz es un use case (`TranscribeAudioUseCase`) y el canal Telegram deja de conocer el provider |
 | [`composition-root-y-canales-rest-cli`](#composition-root-y-canales-rest-cli) | Sin cambios de comandos ni de API: `inaki/cli.py` (895 líneas) pasa a `inaki/cli/` (un módulo por comando), el bootstrap y el runner a `inaki/app/`, el admin REST a `inaki/channels/rest/` y el chat interactivo a `inaki/channels/cli/`; desaparece `adapters/inbound/` |
 | [`canal-telegram-vertical`](#canal-telegram-vertical) | `POST /admin/send` pierde `broadcast`/`broadcasted` e `inaki send` pierde `--no-broadcast`: la emisión al LAN la decide el borde del canal, así que `channel_send`, tools y resultados `bg-N` hacia un grupo AHORA se replican por broadcast; el módulo config deja de conocer canales (registro) |
@@ -108,6 +109,51 @@ existe este documento— y la contradicción no queda flotando.
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `modulos-embedding-memory-knowledge-skills`
+
+**Contexto (2026-09-09, fase 7a del refactor modular).** Cuatro capacidades del
+núcleo repartidas por dirección técnica: los providers de embedding y su cache en
+`adapters/outbound/embedding/` con la similitud coseno en `core/domain/services/`;
+los repos SQLite de memoria e historial en dos paquetes distintos, los use cases
+de consolidación/reconciliación en `core/use_cases/` y las tools de memoria entre
+las tools genéricas; las fuentes de knowledge, su orquestador (`core/domain/
+services/`), su use case y sus tools en cuatro sitios; el repo de skills solo.
+
+**Cambio.**
+
+- `inaki/embedding/` (providers `e5_onnx`/`openai`, `base`, `cache`, `similarity`,
+  `resolve_provider_name`), `inaki/memory/` (`adapters/` SQLite de memoria e
+  historial, `use_cases/` consolidación, consolidación de todos y reconciliación,
+  `tools/` memoria e historial), `inaki/knowledge/` (`adapters/` fuentes y chunker,
+  `orchestrator`, `use_cases/manage_knowledge`, `tools/`), `inaki/skills/`
+  (`yaml_skill_repo`).
+- **Qué se queda en `core/` y por qué**: los ports (`IEmbeddingProvider`,
+  `IEmbeddingCache`, `IMemoryRepository`, `IHistoryStore`, `ISkillRepository`,
+  `IKnowledgeSource`), las entidades (`Memory`, `Skill`, `KnowledgeChunk`) y
+  `MemorySettings` los consume el TURNO. El kernel no puede depender de un módulo
+  de feature: el que consume el port lo posee; el módulo lo implementa.
+- El orquestador de knowledge lo consumía el kernel como clase concreta. Ahora el
+  kernel depende de `IKnowledgeRetriever` (Protocol en `core/ports/outbound/
+  knowledge_port.py`) y `inaki.knowledge.orchestrator.KnowledgeOrchestrator` lo
+  satisface estructuralmente.
+- Los dispatch adapters del scheduler (que se mudan en la fase 8) dejan de importar
+  los use cases de memoria: tipan contra un `_Ejecutable` (Protocol con
+  `execute()`), que es lo único que disparan.
+- Las factories (`EmbeddingProviderFactory`) siguen en `infrastructure/factories/`
+  (wiring) escaneando `inaki.embedding`.
+- Contratos: `embedding` solo conoce `core` y `shared`; `memory`, `knowledge` y
+  `skills` conocen además `embedding` y son independientes entre sí; nadie del
+  núcleo, de `config`, `perception` ni de los canales los importa. `adapters/`
+  (las tools, hasta la fase 7b) puede importar `embedding` de forma transitoria.
+
+**Comportamiento observable.** Ninguno. Cambian paths de import.
+
+**Invariante que dejó.** **NUNCA** el kernel importando un módulo de feature: si
+el turno necesita algo de un módulo, declara un port en `core/ports/` y el módulo
+lo implementa. La flecha va del módulo al kernel, jamás al revés.
 
 ---
 

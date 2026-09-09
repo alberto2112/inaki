@@ -217,9 +217,9 @@ If `enabled: false`, pre-fetch is skipped but the user can still invoke `knowled
 |------|------|
 | Full YAML reference | `docs/config-reference.md` — `KnowledgeConfig` |
 | Ports (read-only + indexable) | `core/ports/outbound/knowledge_port.py` |
-| Management use case | `core/use_cases/manage_knowledge.py` |
-| Document adapter | `adapters/outbound/knowledge/document_knowledge_source.py` |
-| SQLite adapter | `adapters/outbound/knowledge/sqlite_knowledge_source.py` |
-| Explicit search tool | `adapters/outbound/tools/knowledge_search_tool.py` |
-| Management tool (LLM) | `adapters/outbound/tools/knowledge_admin_tool.py` |
+| Management use case | `inaki/knowledge/use_cases/manage_knowledge.py` |
+| Document adapter | `inaki/knowledge/adapters/document_knowledge_source.py` |
+| SQLite adapter | `inaki/knowledge/adapters/sqlite_knowledge_source.py` |
+| Explicit search tool | `inaki/knowledge/tools/knowledge_search_tool.py` |
+| Management tool (LLM) | `inaki/knowledge/tools/knowledge_admin_tool.py` |
 | Management CLI | `inaki/cli/knowledge.py` |

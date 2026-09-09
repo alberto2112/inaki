@@ -58,7 +58,9 @@ Cuatro capas. La dirección de dependencias es `adapters → core ← infrastruc
 > emisión de broadcast, transporte TCP, ficheros y su sección de config registrada).
 > Después: `inaki/channels/{rest,cli}/`, `inaki/cli/` (un módulo por comando), `inaki/app/`
 > (bootstrap, runner, reloader) e `inaki/perception/` (fotos, caras, escena y voz,
-> independientes del canal; `TranscribeAudioUseCase` reemplaza la transcripción inline). La ley de dependencias vive en `pyproject.toml` →
+> independientes del canal; `TranscribeAudioUseCase` reemplaza la transcripción inline).
+> Y los módulos del núcleo `inaki/embedding/`, `inaki/memory/`, `inaki/knowledge/` e
+> `inaki/skills/` (adapters, use cases y tools; los ports que consume el turno siguen en `core/`). La ley de dependencias vive en `pyproject.toml` →
 > `[tool.importlinter]` y la verifica `lint-imports`. Mientras dure el refactor,
 > las capas `core/`, `adapters/` e `infrastructure/` siguen vigentes con sus
 > reglas; los módulos se mudan de a uno.

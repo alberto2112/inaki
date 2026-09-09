@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Protocol
 
 from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
 
@@ -122,3 +123,32 @@ class IIndexableKnowledgeSource(IKnowledgeSource):
             Número de chunks eliminados.
         """
         ...
+
+
+class IKnowledgeRetriever(Protocol):
+    """Lo que el TURNO necesita de knowledge: recuperar fragmentos y conocer su presupuesto.
+
+    Lo implementa ``inaki.knowledge.orchestrator.KnowledgeOrchestrator`` (la
+    recuperación paralela sobre N ``IKnowledgeSource``). El kernel depende de esta
+    interfaz y no del orquestador: knowledge es un módulo de feature, y el kernel
+    no conoce módulos de feature.
+    """
+
+    @property
+    def source_ids(self) -> list[str]: ...
+
+    @property
+    def token_budget_threshold(self) -> int: ...
+
+    @property
+    def pre_fetch_enabled(self) -> bool: ...
+
+    @property
+    def default_top_k_per_source(self) -> int: ...
+
+    @property
+    def default_min_score(self) -> float: ...
+
+    async def retrieve_all(
+        self, query_vec: list[float], top_k: int, min_score: float
+    ) -> list[KnowledgeChunk]: ...

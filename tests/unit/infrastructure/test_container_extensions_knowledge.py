@@ -17,10 +17,10 @@ from pathlib import Path
 
 import pytest
 
-from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
 from adapters.outbound.tools.tool_registry import ToolRegistry
 from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
 from core.ports.outbound.knowledge_port import IKnowledgeSource
+from inaki.skills.yaml_skill_repo import YamlSkillRepository
 from infrastructure.container import AgentContainer
 
 # ---------------------------------------------------------------------------
@@ -121,7 +121,7 @@ def _make_container(tmp_path: Path) -> AgentContainer:
     Crea un AgentContainer con _tools, _skills, _knowledge_orchestrator y
     _pending_knowledge_sources inicializados sin ejecutar __init__ completo.
     """
-    from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
+    from inaki.knowledge.orchestrator import KnowledgeOrchestrator
 
     container = AgentContainer.__new__(AgentContainer)
     container._tools = ToolRegistry(embedder=FakeEmbedder())
@@ -217,7 +217,7 @@ def test_orden_descubrimiento_memoria_config_ext(tmp_path: Path) -> None:
     Luego registramos una ext que añade una fuente de nivel 3.
     Verificamos el orden resultante en source_ids.
     """
-    from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
+    from inaki.knowledge.orchestrator import KnowledgeOrchestrator
 
     ext_dir = tmp_path / "ext"
     ext_dir.mkdir()

@@ -162,7 +162,7 @@ page-in turns the routing from a wall into a cache for every other tool.
 
 ## Cosine Similarity
 
-Implemented in `core/domain/services/similarity.py`:
+Implemented in `inaki/embedding/similarity.py`:
 
 ```
 cos_sim(a, b) = dot(a, b) / (||a|| * ||b||)
@@ -188,7 +188,7 @@ put(content_hash, provider, dimension, embedding) → None
 
 ### SQLite Implementation
 
-`adapters/outbound/embedding/sqlite_embedding_cache.py` — `SqliteEmbeddingCache`:
+`inaki/embedding/cache.py` — `SqliteEmbeddingCache`:
 
 **Table schema:**
 
@@ -342,11 +342,11 @@ Only skills retrieved by routing (or all if routing is inactive) appear in the p
 | **Core — Port** | `core/ports/outbound/embedding_cache_port.py` | `IEmbeddingCache` interface |
 | **Core — Port** | `core/ports/outbound/embedding_port.py` | `IEmbeddingProvider` interface |
 | **Core — Port** | `core/ports/outbound/skill_port.py` | `ISkillRepository` interface |
-| **Core — Service** | `core/domain/services/similarity.py` | `cosine_similarity` function |
+| **Embedding** | `inaki/embedding/similarity.py` | `cosine_similarity` function |
 | **Core — Value Object** | `core/domain/value_objects/agent_context.py` | System prompt construction |
 | **Core — Use Case** | `core/use_cases/run_agent.py` | Routing pipeline orchestration |
-| **Adapter** | `adapters/outbound/embedding/sqlite_embedding_cache.py` | SQLite cache implementation |
-| **Adapter** | `adapters/outbound/skills/yaml_skill_repo.py` | Skill loading + routing |
+| **Adapter** | `inaki/embedding/cache.py` | SQLite cache implementation |
+| **Adapter** | `inaki/skills/yaml_skill_repo.py` | Skill loading + routing |
 | **Adapter** | `adapters/outbound/tools/tool_registry.py` | Tool registration + routing |
 | **Infrastructure** | `infrastructure/container.py` | Wiring: instantiates and connects everything |
 | **Config** | `inaki/config/schema/` | `EmbeddingConfig`, `SkillsConfig`, `ToolsConfig`, `SemanticRoutingConfig` |

@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Mapping
 from contextlib import suppress
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import httpx
 
 from core.ports.outbound.channel_port import IIntermediateSink
-from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
-from core.use_cases.reconcile_memory import ReconcileMemoryUseCase
 
 if TYPE_CHECKING:
     from core.domain.entities.task import ShellExecPayload, WebhookPayload
@@ -66,10 +65,16 @@ class LLMDispatcherAdapter:
             )
 
 
+class _Ejecutable(Protocol):
+    """Un use case con ``execute()`` — el scheduler no conoce los de memoria, solo los dispara."""
+
+    async def execute(self) -> str: ...
+
+
 class ConsolidationDispatchAdapter:
     """Thin wrapper so the scheduler service doesn't import the use case directly."""
 
-    def __init__(self, use_case: ConsolidateAllAgentsUseCase) -> None:
+    def __init__(self, use_case: _Ejecutable) -> None:
         self._uc = use_case
 
     async def consolidate_all(self) -> str:
@@ -85,7 +90,8 @@ class ReconcileDispatchAdapter:
     scheduler lo captura como fallo del trigger y aplica backoff + log).
     """
 
-    def __init__(self, reconcilers: dict[str, ReconcileMemoryUseCase]) -> None:
+    # Mapping (no dict): covariante en el valor, así el container pasa su dict tipado.
+    def __init__(self, reconcilers: Mapping[str, _Ejecutable]) -> None:
         self._reconcilers = reconcilers
 
     async def reconcile(self, agent_id: str) -> str:

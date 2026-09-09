@@ -19,8 +19,8 @@ if TYPE_CHECKING:
     from core.domain.services.channel_outbound_registry import ChannelOutboundRegistry
     from core.ports.outbound.scope_registry_port import IScopeRegistry
     from core.ports.outbound.tool_port import IToolExecutor
-    from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
     from core.use_cases.run_agent import RunAgentUseCase
+    from inaki.memory.use_cases.consolidate_memory import ConsolidateMemoryUseCase
 
 
 class _HasChannels(Protocol):

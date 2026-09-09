@@ -27,7 +27,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from core.domain.entities.skill import Skill
-from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
 from core.domain.value_objects.agent_context import AgentContext
 from core.domain.value_objects.agent_info import AgentInfoDTO
 from core.domain.value_objects.agent_settings import RunAgentSettings
@@ -36,6 +35,7 @@ from core.ports.outbound.background_delegation_port import IBackgroundDelegation
 from core.ports.outbound.channel_port import IIntermediateSink
 from core.ports.outbound.embedding_port import IEmbeddingProvider
 from core.ports.outbound.history_port import IHistoryStore
+from core.ports.outbound.knowledge_port import IKnowledgeRetriever
 from core.ports.outbound.llm_port import ILLMProvider
 from core.ports.outbound.memory_port import IMemoryRepository
 from core.ports.outbound.scope_registry_port import IScopeRegistry
@@ -103,7 +103,7 @@ class RunAgentUseCase:
         history: IHistoryStore,
         tools: IToolExecutor,
         settings: RunAgentSettings,
-        knowledge_orchestrator: KnowledgeOrchestrator | None = None,
+        knowledge_orchestrator: IKnowledgeRetriever | None = None,
         background_queue: IBackgroundDelegationQueue | None = None,
         thinking_indicator: bool = False,
         scope_registry: IScopeRegistry | None = None,
@@ -120,7 +120,7 @@ class RunAgentUseCase:
         # Lo wirea el container desde ``GlobalConfig.channels.thinking_indicator``;
         # default ``False`` para tests que construyen el use case directo.
         self._thinking_indicator = thinking_indicator
-        # KnowledgeOrchestrator — None si no hay fuentes configuradas
+        # IKnowledgeRetriever — None si no hay fuentes configuradas
         self._knowledge_orchestrator = knowledge_orchestrator
         # IBackgroundDelegationQueue — None hasta que se wiree en AppContainer.
         # Cuando está set, execute() inyecta una sección con el snapshot de

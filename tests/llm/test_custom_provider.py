@@ -21,7 +21,7 @@ from inaki.llm.base import ResolvedLLMConfig
 from inaki.llm.custom import CustomProvider
 from inaki.shared.errors import ConfigError
 from inaki.shared.message import Message, Role
-from infrastructure.factories.llm_factory import LLMProviderFactory
+from inaki.llm.wiring import LLMProviderFactory
 
 _BASE_URL = "http://192.168.1.50:8000/v1"
 

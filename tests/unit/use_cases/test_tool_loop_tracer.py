@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-from core.domain.value_objects.llm_response import LLMResponse
-from core.ports.outbound.tool_port import ToolResult
-from core.ports.outbound.turn_tracer_port import ITurnTracer
-from core.use_cases._tool_loop import run_tool_loop
+from inaki.kernel.domain.value_objects.llm_response import LLMResponse
+from inaki.kernel.ports.outbound.tool_port import ToolResult
+from inaki.kernel.ports.outbound.turn_tracer_port import ITurnTracer
+from inaki.kernel.use_cases._tool_loop import run_tool_loop
 from inaki.shared.message import Message, Role
 
 

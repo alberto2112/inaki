@@ -14,7 +14,7 @@ import logging
 import re
 
 from inaki.llm.openai_compatible import OpenAICompatibleProvider
-from core.domain.value_objects.llm_response import LLMResponse
+from inaki.kernel.domain.value_objects.llm_response import LLMResponse
 from inaki.shared.message import Message
 
 PROVIDER_NAME = "deepseek"

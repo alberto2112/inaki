@@ -1,6 +1,6 @@
 """Resolución del modo debug: flag de proceso (``--debug``) sobre config (``app.debug``).
 
-Mismo patrón que ``infrastructure/home.py``: un override de proceso que el
+Mismo patrón que ``inaki/config/home.py``: un override de proceso que el
 bootstrap fija UNA vez, antes de cargar config, y que gana sobre el YAML.
 ``None`` limpia el override (pensado para aislar tests).
 """

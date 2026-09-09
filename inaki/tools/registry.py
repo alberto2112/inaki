@@ -5,10 +5,10 @@ from __future__ import annotations
 import hashlib
 import logging
 
-from core.ports.outbound.embedding_cache_port import IEmbeddingCache
-from core.ports.outbound.embedding_port import IEmbeddingProvider
-from core.ports.outbound.tool_config_port import IToolConfigStore
-from core.ports.outbound.tool_port import ITool, IToolExecutor, ToolResult
+from inaki.kernel.ports.outbound.embedding_cache_port import IEmbeddingCache
+from inaki.kernel.ports.outbound.embedding_port import IEmbeddingProvider
+from inaki.kernel.ports.outbound.tool_config_port import IToolConfigStore
+from inaki.kernel.ports.outbound.tool_port import ITool, IToolExecutor, ToolResult
 from inaki.embedding import resolve_provider_name
 from inaki.embedding.similarity import cosine_similarity
 

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from core.use_cases.run_agent import InspectResult
+from inaki.kernel.use_cases.run_agent import InspectResult
 from inaki.channels.rest.app import create_admin_app
 
 

@@ -19,9 +19,9 @@ from pathlib import Path
 
 import pytest
 
-from core.domain.value_objects.llm_response import LLMResponse
-from core.ports.outbound.embedding_port import IEmbeddingProvider
-from core.ports.outbound.llm_port import ILLMProvider
+from inaki.kernel.domain.value_objects.llm_response import LLMResponse
+from inaki.kernel.ports.outbound.embedding_port import IEmbeddingProvider
+from inaki.kernel.ports.outbound.llm_port import ILLMProvider
 from inaki.shared.message import Message
 
 # Nombre que ``resolve_provider_name`` lee del módulo del embedder (clave del cache).
@@ -146,7 +146,7 @@ def bordes_externos(monkeypatch: pytest.MonkeyPatch, fake_llm: FakeLLM) -> FakeL
     invoca; cuando el wiring se disuelva por módulo (fase 9) este fixture cambia
     de target, no de idea.
     """
-    from infrastructure import container as container_module
+    from inaki.app import container as container_module
 
     monkeypatch.setattr(
         container_module.LLMProviderFactory, "create", lambda *args, **kwargs: fake_llm
@@ -163,7 +163,7 @@ def bordes_externos(monkeypatch: pytest.MonkeyPatch, fake_llm: FakeLLM) -> FakeL
 def app_container(config_files: tuple[Path, Path], bordes_externos: FakeLLM):
     """El composition root REAL: mismo camino que ``inaki daemon``."""
     from inaki.config import AgentRegistry, ensure_user_config, load_global_config
-    from infrastructure.container import AppContainer
+    from inaki.app.container import AppContainer
 
     config_dir, agents_dir = config_files
     ensure_user_config(config_dir, agents_dir)

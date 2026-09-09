@@ -25,7 +25,7 @@ def _make_mock_client(health_ok: bool = True) -> MagicMock:
     """Construye un DaemonClient mock con health controlable."""
     client = MagicMock()
     client.health.return_value = health_ok
-    from core.domain.value_objects.chat_turn_result import ChatTurnResult
+    from inaki.kernel.domain.value_objects.chat_turn_result import ChatTurnResult
 
     client.chat_turn.return_value = ChatTurnResult(reply="resp")
     return client
@@ -49,7 +49,7 @@ def test_chat_command_no_instancia_app_container() -> None:
         return_value=(mock_client, MagicMock(app=MagicMock(default_agent="dev"))),
     ):
         with patch("inaki.channels.cli.runner.run_cli"):
-            with patch("infrastructure.container.AppContainer") as mock_app_container:
+            with patch("inaki.app.container.AppContainer") as mock_app_container:
                 runner.invoke(app, ["chat", "--agent", "dev"])
                 (
                     mock_app_container.assert_not_called(),
@@ -165,7 +165,7 @@ def test_chat_daemon_inalcanzable_imprime_mensaje_accionable() -> None:
 
 def _make_mock_task_client() -> MagicMock:
     """Mock de DaemonClient para flujo --task: health OK + task_turn devuelve ChatTurnResult."""
-    from core.domain.value_objects.chat_turn_result import ChatTurnResult
+    from inaki.kernel.domain.value_objects.chat_turn_result import ChatTurnResult
 
     client = MagicMock()
     client.health.return_value = True

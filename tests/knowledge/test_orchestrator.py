@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
-from core.ports.outbound.knowledge_port import IKnowledgeSource
+from inaki.kernel.domain.value_objects.knowledge_chunk import KnowledgeChunk
+from inaki.kernel.ports.outbound.knowledge_port import IKnowledgeSource
 from inaki.knowledge.orchestrator import KnowledgeOrchestrator
 
 # ---------------------------------------------------------------------------

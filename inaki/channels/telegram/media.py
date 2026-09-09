@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from core.use_cases.turn_dispatch import INFLIGHT_ACK
+from inaki.kernel.use_cases.turn_dispatch import INFLIGHT_ACK
 from inaki.channels.telegram.files.model import FileContentType, TelegramFileRecord
 from inaki.channels.telegram.message_mapper import (
     _TIPOS_GRUPO,

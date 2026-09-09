@@ -9,11 +9,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from core.domain.value_objects.llm_response import LLMResponse
-from core.ports.outbound.tool_port import ToolResult
-from core.use_cases.run_agent import RunAgentUseCase
+from inaki.kernel.domain.value_objects.llm_response import LLMResponse
+from inaki.kernel.ports.outbound.tool_port import ToolResult
+from inaki.kernel.use_cases.run_agent import RunAgentUseCase
 from inaki.shared.message import Message, Role
-from infrastructure.container import build_run_agent_settings
+from inaki.app.container import build_run_agent_settings
 
 
 def _tool_then_final_llm(mock_llm, narration="ok, escribo el archivo", final="Listo, quedó en /x"):
@@ -196,7 +196,7 @@ async def test_turno_skip_capaz_que_skipea_no_persiste_rastro(agent_config, mock
 async def test_incremental_narracion_sin_flag_persiste_cada_emit(agent_config, mocks):
     """Flag persist_tool_calls OFF + turno conversacional: la narración que el
     sink entrega en vivo se persiste en caliente como assistant plano."""
-    from core.ports.outbound.channel_port import NullIntermediateSink
+    from inaki.kernel.ports.outbound.channel_port import NullIntermediateSink
 
     mock_llm, _, _, _, mock_history, _ = mocks
     _tool_then_final_llm(mock_llm, narration="voy a escribir el archivo")

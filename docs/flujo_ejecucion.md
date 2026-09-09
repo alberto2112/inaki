@@ -198,7 +198,7 @@ inaki consolidate
 
 ## Dynamic Provider Discovery
 
-### LLMProviderFactory (`infrastructure/factories/llm_factory.py`)
+### LLMProviderFactory (`inaki/llm/wiring.py`)
 
 ```
 LLMProviderFactory.create(agent_cfg)
@@ -268,7 +268,7 @@ AgentContainer.__init__(agent_config, global_config, scope_registry)
 ```
 
 **Note:** use cases never receive `AgentConfig` — each one declares its parameters
-as a frozen settings VO (`core/domain/value_objects/agent_settings.py`); the
+as a frozen settings VO (`inaki/kernel/domain/value_objects/agent_settings.py`); the
 config→VO mapping lives only in the `build_*_settings` builders of `container.py`.
 
 **Note:** the `delegate` tool is NOT registered in `__init__` — it is wired in the second pass

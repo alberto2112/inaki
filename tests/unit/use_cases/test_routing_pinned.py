@@ -12,9 +12,9 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-from core.domain.value_objects.agent_settings import RunAgentSettings
-from core.domain.value_objects.conversation_state import ConversationState
-from core.use_cases._turn_pipeline import _union_pinned_schemas, run_semantic_routing
+from inaki.kernel.domain.value_objects.agent_settings import RunAgentSettings
+from inaki.kernel.domain.value_objects.conversation_state import ConversationState
+from inaki.kernel.use_cases._turn_pipeline import _union_pinned_schemas, run_semantic_routing
 
 # ---------------------------------------------------------------------------
 # Helpers

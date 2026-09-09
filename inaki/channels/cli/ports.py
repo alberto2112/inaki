@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from core.domain.value_objects.chat_turn_result import ChatTurnResult
+from inaki.kernel.domain.value_objects.chat_turn_result import ChatTurnResult
 
 
 class IDaemonClient(Protocol):

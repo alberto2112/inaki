@@ -32,13 +32,13 @@ from contextlib import suppress
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from core.domain.entities.background_task import BackgroundTask, BackgroundTaskView
+from inaki.kernel.domain.entities.background_task import BackgroundTask, BackgroundTaskView
 from inaki.shared.skip_marker import SKIP_MARKER, is_skip_response
 
 if TYPE_CHECKING:
-    from core.ports.outbound.llm_dispatcher_port import ILLMDispatcher
-    from core.ports.outbound.channel_port import IChannelSender
-    from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
+    from inaki.kernel.ports.outbound.llm_dispatcher_port import ILLMDispatcher
+    from inaki.kernel.ports.outbound.channel_port import IChannelSender
+    from inaki.kernel.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 
 logger = logging.getLogger(__name__)
 

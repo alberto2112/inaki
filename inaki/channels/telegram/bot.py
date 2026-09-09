@@ -19,8 +19,8 @@ from telegram import Update
 from telegram.error import BadRequest, NetworkError
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-from core.ports.outbound.channel_port import IIntermediateSink, OutboundIntermediateSink
-from core.use_cases.turn_dispatch import dispatch_inbound_turn
+from inaki.kernel.ports.outbound.channel_port import IIntermediateSink, OutboundIntermediateSink
+from inaki.kernel.use_cases.turn_dispatch import dispatch_inbound_turn
 from inaki.channels.telegram.broadcast.egress import BroadcastEgress
 from inaki.channels.telegram.broadcast.mixin import TelegramBroadcastMixin
 from inaki.channels.telegram.broadcast.port import BroadcastEmitter, BroadcastReceiver

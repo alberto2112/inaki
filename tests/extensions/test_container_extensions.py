@@ -11,9 +11,9 @@ import pytest
 from unittest.mock import MagicMock
 
 from inaki.tools.registry import ToolRegistry
-from core.ports.outbound.tool_port import ITool, ToolResult
+from inaki.kernel.ports.outbound.tool_port import ITool, ToolResult
 from inaki.skills.yaml_skill_repo import YamlSkillRepository
-from infrastructure.container import AgentContainer
+from inaki.app.container import AgentContainer
 
 # ---------------------------------------------------------------------------
 # Fakes

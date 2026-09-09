@@ -2,14 +2,14 @@ from abc import abstractmethod
 
 from pydantic import BaseModel
 
-from core.ports.outbound.embedding_port import IEmbeddingProvider
+from inaki.kernel.ports.outbound.embedding_port import IEmbeddingProvider
 
 
 class ResolvedEmbeddingConfig(BaseModel):
     """EmbeddingConfig + credenciales resueltas del registry.
 
-    Vive en adapters: es el contrato de entrada que los providers declaran en
-    SU capa. La factory de infrastructure lo compone desde la config YAML.
+    Vive en el módulo: es el contrato de entrada que los providers declaran en
+    SU módulo. Su ``wiring.py`` lo compone desde la config YAML.
     """
 
     provider: str

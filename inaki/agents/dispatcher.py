@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 
-from core.ports.outbound.channel_port import IIntermediateSink
+from inaki.kernel.ports.outbound.channel_port import IIntermediateSink
 
 
 class LLMDispatcherAdapter:

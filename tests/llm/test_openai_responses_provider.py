@@ -469,7 +469,7 @@ async def test_stream_raises_not_implemented() -> None:
 
 def test_provider_name_and_factory_discovery() -> None:
     """El factory debe descubrir 'openai_responses' como provider disponible."""
-    from infrastructure.factories.llm_factory import LLMProviderFactory
+    from inaki.llm.wiring import LLMProviderFactory
 
     LLMProviderFactory._registry.clear()  # forzar reload
     LLMProviderFactory._load()

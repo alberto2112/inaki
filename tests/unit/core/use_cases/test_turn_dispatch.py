@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.use_cases.turn_dispatch import INFLIGHT_ACK, dispatch_inbound_turn
+from inaki.kernel.use_cases.turn_dispatch import INFLIGHT_ACK, dispatch_inbound_turn
 
 SCOPE = ("dev", "telegram", "123")
 

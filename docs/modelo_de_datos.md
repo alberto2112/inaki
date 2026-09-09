@@ -1,11 +1,11 @@
 # Data Model — Inaki v2
 
-All domain entities live in `core/domain/` and are **Pydantic BaseModel**.
-The core never imports from `infrastructure/`, a feature module of `inaki/`, or infrastructure libraries.
+All domain entities live in `inaki/kernel/domain/` and are **Pydantic BaseModel**.
+The kernel never imports a feature module of `inaki/`, the composition root, or infrastructure libraries.
 
 ---
 
-## Entities (`core/domain/entities/`)
+## Entities (`inaki/kernel/domain/entities/`)
 
 ### `Message` — `message.py`
 
@@ -167,7 +167,7 @@ class ScheduledTask(BaseModel):
 
 ---
 
-## Value Objects (`core/domain/value_objects/`)
+## Value Objects (`inaki/kernel/domain/value_objects/`)
 
 ### `Embedding` — `embedding.py`
 
@@ -222,12 +222,12 @@ InakiError
 
 ---
 
-## Ports (`core/ports/`)
+## Ports (`inaki/kernel/ports/`)
 
 Ports are contracts (ABC) that the core defines and adapters implement.
 
-> **The authoritative list is the directory itself** — `core/ports/outbound/` and
-> `core/ports/inbound/` (27 ports today), each with its docstrings. The table below
+> **The authoritative list is the directory itself** — `inaki/kernel/ports/outbound/` and
+> `inaki/kernel/ports/inbound/` (27 ports today), each with its docstrings. The table below
 > is an orientation map of the ones you meet first, not an inventory: a
 > hand-maintained copy of every signature rots, and this one did.
 

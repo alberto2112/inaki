@@ -1,8 +1,8 @@
 """Contratos de entrada del TelegramBot — Ports y Settings VOs.
 
-El bot NO recibe ``AgentContainer`` ni ``AgentConfig`` (infrastructure): declara
-acá exactamente lo que consume, todo tipado contra ``core/``. El mapeo desde el
-mundo config/container vive en los builders de ``infrastructure/container.py``
+El bot NO recibe ``AgentContainer`` ni ``AgentConfig`` (composition root): declara
+acá exactamente lo que consume, todo tipado contra el kernel. El mapeo desde el
+mundo config/container vive en los builders de ``inaki/app/container.py``
 (``build_telegram_bot_settings`` / ``build_telegram_bot_ports``) — único punto
 donde ambos mundos se tocan, igual que los Settings VOs de los use cases.
 """
@@ -12,9 +12,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from inaki.scheduler.ports.use_case import IManualTaskRunner
-from core.ports.outbound.channel_port import IChannelOutbound
-from core.ports.outbound.scope_registry_port import IScopeRegistry
-from core.use_cases.run_agent import RunAgentUseCase
+from inaki.kernel.ports.outbound.channel_port import IChannelOutbound
+from inaki.kernel.ports.outbound.scope_registry_port import IScopeRegistry
+from inaki.kernel.use_cases.run_agent import RunAgentUseCase
 from inaki.scheduler.use_cases.schedule_task import ScheduleTaskUseCase
 from inaki.channels.telegram.files.ports import IFileDownloader, IFileRecordRepo
 from inaki.memory.use_cases.consolidate_memory import ConsolidateMemoryUseCase

@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from core.ports.outbound.tool_port import ITool, ToolResult
+from inaki.kernel.ports.outbound.tool_port import ITool, ToolResult
 from inaki.knowledge.use_cases.manage_knowledge import ManageKnowledgeUseCase
 from inaki.shared.errors import KnowledgeError
 

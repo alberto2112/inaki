@@ -56,7 +56,7 @@ class AgentConfig(_ConfigBaseModel):
     override silencioso.
 
     Los use cases NO reciben este objeto: ``container.py`` lo traduce a Settings
-    VOs (``core/domain/value_objects/agent_settings.py``) para que el dominio no
+    VOs (``inaki/kernel/domain/value_objects/agent_settings.py``) para que el dominio no
     dependa del schema de infraestructura.
     """
 

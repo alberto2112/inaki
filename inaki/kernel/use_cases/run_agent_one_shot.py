@@ -1,0 +1,155 @@
+"""
+RunAgentOneShotUseCase — ejecución stateless de un agente para una sola tarea.
+
+Usado internamente por DelegateTool (y cualquier consumidor futuro que necesite
+una ejecución aislada sin side-effects sobre el estado persistido).
+
+Contratos clave:
+- REQ-OS-1: NO carga ni persiste historial. NO lee el memory digest.
+- REQ-OS-2: Usa `system_prompt` del caller verbatim cuando no es None.
+             Si es None, usa el system prompt por defecto del agente.
+- REQ-OS-3: `asyncio.wait_for` con timeout_seconds; ToolLoopMaxIterationsError
+             propagados al caller — ninguno se captura aquí.
+- REQ-OS-4: Pasa `tool_registry.get_schemas()` completo al LLM — sin RAG.
+- REQ-OS-5: Si `settings.allowed_tools` no es None, restringe el schema a ese subset
+             (intersección con el registry recibido). Usado por el sub-agente efímero
+             del flujo delegate para acotar qué tools del caller ve el hijo.
+- REQ-DG-9: Filtra la tool "delegate" de los schemas antes de pasarlos al loop
+             (prevención de recursión por construcción).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import uuid
+
+from inaki.kernel.domain.value_objects.agent_settings import OneShotSettings
+from inaki.kernel.ports.outbound.llm_port import ILLMProvider
+from inaki.kernel.ports.outbound.tool_port import IToolExecutor
+from inaki.kernel.ports.outbound.turn_tracer_port import ITurnTracer, NullTurnTracer
+from inaki.kernel.use_cases._tool_loop import run_tool_loop
+from inaki.shared.message import Message, Role
+
+logger = logging.getLogger(__name__)
+
+_DELEGATE_TOOL_NAME = "delegate"
+
+
+class RunAgentOneShotUseCase:
+    """
+    Ejecuta un agente de forma stateless para una única tarea.
+
+    No carga ni escribe historial. No lee digest. No aplica RAG sobre tools.
+    Excluye la tool "delegate" del schema del hijo (REQ-DG-9).
+    """
+
+    def __init__(
+        self,
+        llm: ILLMProvider,
+        tools: IToolExecutor,
+        settings: OneShotSettings,
+        thinking_indicator: bool = False,
+        tracer: ITurnTracer | None = None,
+    ) -> None:
+        self._llm = llm
+        self._tools = tools
+        self._cfg = settings
+        self._tracer: ITurnTracer = tracer or NullTurnTracer()
+        # Flag transversal del bloque global ``channels.thinking_indicator``.
+        # Default False para no-op si nadie lo wirea (el one-shot suele correr sin sink).
+        self._thinking_indicator = thinking_indicator
+
+    @property
+    def system_prompt(self) -> str:
+        """Prompt base del agente (sin footer ni sections extra).
+
+        ``DelegateTool`` lo lee para construir el ``effective_system_prompt`` cuando el
+        caller no pasa uno propio: el hijo efímero ya no es un container con
+        ``agent_config``, así que el prompt default se expone acá.
+        """
+        return self._cfg.system_prompt
+
+    async def execute(
+        self,
+        task: str,
+        system_prompt: str | None,
+        max_iterations: int,
+        timeout_seconds: int,
+    ) -> str:
+        """
+        Ejecuta el agente sobre `task` y retorna la respuesta final del LLM.
+
+        Args:
+            task: Texto de la tarea a ejecutar (mensaje inicial del user).
+            system_prompt: Prompt de sistema a usar. Si es None, usa el
+                           system_prompt por defecto del agente (sin digest
+                           ni sections extra — solo el base prompt).
+            max_iterations: Límite de iteraciones del loop de tools.
+                            Al superarse, propaga ToolLoopMaxIterationsError.
+            timeout_seconds: Límite de tiempo en segundos. Al superarse,
+                             propaga asyncio.TimeoutError.
+
+        Returns:
+            Respuesta final en texto del LLM.
+
+        Raises:
+            asyncio.TimeoutError: Si la ejecución supera timeout_seconds.
+            ToolLoopMaxIterationsError: Si el loop supera max_iterations.
+        """
+        # REQ-OS-2: usa el system_prompt del caller, o el default del agente.
+        effective_prompt = system_prompt if system_prompt is not None else self._cfg.system_prompt
+
+        # REQ-OS-4: toolkit completo sin RAG.
+        # REQ-DG-9: excluir "delegate" para prevenir recursión por construcción.
+        # REQ-OS-5: si hay allow-list, recortar al subset declarado por el sub-agente
+        #           (intersección con el registry — un nombre inexistente se ignora).
+        all_schemas = self._tools.get_schemas()
+        allowed = self._cfg.allowed_tools
+
+        # ToolRegistry.get_schemas() devuelve {"type": "function", "function": {"name": ...}}.
+        # El nombre vive en s["function"]["name"], no en s["name"].
+        def _tool_name(schema: dict) -> str:
+            return schema.get("function", {}).get("name", "")
+
+        tool_schemas = [
+            s
+            for s in all_schemas
+            if _tool_name(s) != _DELEGATE_TOOL_NAME
+            and (allowed is None or _tool_name(s) in allowed)
+        ]
+
+        if len(tool_schemas) < len(all_schemas):
+            logger.debug(
+                "RunAgentOneShotUseCase: schema del hijo recortado a %d/%d tools "
+                "(delegate excluida; allow-list=%s)",
+                len(tool_schemas),
+                len(all_schemas),
+                "todas" if allowed is None else sorted(allowed),
+            )
+
+        # REQ-OS-1: historial limpio — solo el mensaje de la tarea actual.
+        messages = [Message(role=Role.USER, content=task)]
+
+        # REQ-OS-3: timeout + iteraciones.
+        # asyncio.TimeoutError y ToolLoopMaxIterationsError se propagan al caller.
+        response = await asyncio.wait_for(
+            run_tool_loop(
+                llm=self._llm,
+                tools=self._tools,
+                messages=messages,
+                system_prompt=effective_prompt,
+                tool_schemas=tool_schemas,
+                max_iterations=max_iterations,
+                circuit_breaker_threshold=self._cfg.circuit_breaker_threshold,
+                agent_id=self._cfg.agent_id,
+                thinking_indicator=self._thinking_indicator,
+                request_delay_seconds=self._cfg.request_delay_seconds,
+                tracer=self._tracer.bind(
+                    agent_id=self._cfg.agent_id, turn_id=uuid.uuid4().hex[:12], mode="one_shot"
+                ),
+            ),
+            timeout=timeout_seconds,
+        )
+
+        return response

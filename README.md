@@ -37,18 +37,13 @@ inaki/
   extensions/   ← Discovery of user extensions (`<home>/ext/*/manifest.py`)
   scheduler/    ← Scheduled tasks: domain, ports, service, SQLite repo, the `scheduler` tool (one object per operation)
   agents/       ← Delegation (`delegate` tool, background queue), per-scope dispatcher, scope registry
-  embedding/ memory/ knowledge/ skills/ perception/ ← Feature modules
-core/
-  domain/       ← Entities, value objects, services — zero external imports
-  ports/        ← Interfaces, including the channel contract (IChannel, IChannelOutbound)
-  use_cases/    ← RunAgentUseCase · ConsolidateMemoryUseCase · ScheduleTaskUseCase
-infrastructure/
-  container.py  ← Single wiring point (DI composition root)
+  embedding/ memory/ knowledge/ skills/ perception/ ← Feature modules (each with its adapters, use cases and tools)
+  kernel/       ← The turn: RunAgentUseCase, tool loop, the ports it consumes, the channel contract
 ```
 
-The layout is mid-refactor towards a modular monolith under `inaki/` (dependency rules are enforced by `lint-imports`, see `pyproject.toml`).
+A modular monolith under a single namespace: kernel + feature modules + channels + composition root (`inaki/app`, `inaki/cli`). Dependency rules are enforced by `lint-imports` (see `[tool.importlinter]` in `pyproject.toml`).
 
-**Dependency direction is inviolable:** `inaki/<module> → core/`. The `core/` kernel never imports a feature module or any infrastructure library; modules only know the kernel, `inaki/shared` and what their `import-linter` contract allows. `infrastructure/container.py` is the only place where concrete adapters are instantiated.
+**Dependency direction is inviolable:** `composition root → modules → kernel`. The kernel never imports a feature module; modules only know the kernel, `inaki/shared` and what their contract allows (a module's `wiring.py` is the only file allowed to read the config). `inaki/app/container.py` is the only place where concrete adapters are instantiated.
 
 ---
 

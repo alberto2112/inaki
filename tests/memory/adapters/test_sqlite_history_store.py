@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from core.domain.value_objects.conversation_state import ConversationState
+from inaki.kernel.domain.value_objects.conversation_state import ConversationState
 from inaki.memory.adapters.sqlite_history_store import (
     HistoryStoreSettings,
     SQLiteHistoryStore,

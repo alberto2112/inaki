@@ -55,7 +55,7 @@ def run_daemon_mode(config_dir: Path, agents_dir: Path, global_config, registry)
     import logging
 
     from inaki.app.runner import run_daemon
-    from infrastructure.container import AppContainer
+    from inaki.app.container import AppContainer
 
     logger = logging.getLogger(__name__)
     logger.info("Iniciando Inaki en modo daemon")

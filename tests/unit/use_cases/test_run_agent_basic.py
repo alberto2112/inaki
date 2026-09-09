@@ -5,9 +5,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from core.domain.entities.skill import Skill
-from core.domain.value_objects.llm_response import LLMResponse
-from core.use_cases.run_agent import RunAgentUseCase
+from inaki.kernel.domain.entities.skill import Skill
+from inaki.kernel.domain.value_objects.llm_response import LLMResponse
+from inaki.kernel.use_cases.run_agent import RunAgentUseCase
 from inaki.config import (
     AgentConfig,
     ChatHistoryConfig,
@@ -18,7 +18,7 @@ from inaki.config import (
     ToolsConfig,
 )
 from inaki.shared.message import Message, Role
-from infrastructure.container import build_run_agent_settings
+from inaki.app.container import build_run_agent_settings
 
 
 @pytest.fixture
@@ -511,7 +511,7 @@ async def test_execute_tools_override_forces_schemas_and_bypasses_rag(
 
     override = [{"name": "solo_esta_tool"}]
     with patch(
-        "core.use_cases.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")
+        "inaki.kernel.use_cases.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")
     ) as mock_loop:
         await uc.execute("hola", tools_override=override)
 
@@ -545,7 +545,7 @@ async def test_execute_no_override_uses_full_schemas_when_routing_inactive(
     )
 
     with patch(
-        "core.use_cases.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")
+        "inaki.kernel.use_cases.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")
     ) as mock_loop:
         await uc.execute("hola")
 
@@ -577,7 +577,7 @@ async def test_execute_tools_override_empty_list_disables_all_tools(
     )
 
     with patch(
-        "core.use_cases.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")
+        "inaki.kernel.use_cases.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")
     ) as mock_loop:
         await uc.execute("hola", tools_override=[])
 
@@ -595,7 +595,7 @@ async def test_skip_marker_no_persiste_assistant_response(use_case, mock_history
     history. Solo el user_msg queda persistido (para que el bot tenga contexto
     en el próximo turno). Garantiza que ``skip_persist`` corta el path correcto."""
     with patch(
-        "core.use_cases.run_agent.run_tool_loop",
+        "inaki.kernel.use_cases.run_agent.run_tool_loop",
         new=AsyncMock(return_value="__SKIP__"),
     ):
         await use_case.execute("pregunta al grupo", skip_marker="__SKIP__")
@@ -610,7 +610,7 @@ async def test_skip_marker_tolerante_no_persiste_aunque_haya_preamble(use_case, 
     """Detección case-insensitive + posicional: 'Ok, __SKIP__ no aporto nada'
     también suprime persistencia del assistant."""
     with patch(
-        "core.use_cases.run_agent.run_tool_loop",
+        "inaki.kernel.use_cases.run_agent.run_tool_loop",
         new=AsyncMock(return_value="Ok, __SKIP__ no aporto nada relevante."),
     ):
         await use_case.execute("pregunta al grupo", skip_marker="__SKIP__")
@@ -624,7 +624,7 @@ async def test_skip_marker_no_persiste_state(use_case, mock_history):
     no contaminamos sticky_skills/sticky_tools con un turno que el bot decidió
     ignorar."""
     with patch(
-        "core.use_cases.run_agent.run_tool_loop",
+        "inaki.kernel.use_cases.run_agent.run_tool_loop",
         new=AsyncMock(return_value="__SKIP__"),
     ):
         await use_case.execute("pregunta al grupo", skip_marker="__SKIP__")
@@ -636,7 +636,7 @@ async def test_sin_skip_marker_si_persiste_response(use_case, mock_history):
     """Control: sin ``skip_marker`` o con respuesta limpia, el assistant SÍ se
     persiste (garantiza que el guard no rompe el flow normal)."""
     with patch(
-        "core.use_cases.run_agent.run_tool_loop",
+        "inaki.kernel.use_cases.run_agent.run_tool_loop",
         new=AsyncMock(return_value="respuesta normal"),
     ):
         await use_case.execute("hola", skip_marker="__SKIP__")
@@ -685,7 +685,7 @@ async def _tool_loop_con_intermedios(**kwargs):
 async def test_recording_intermediate_sink_acumula_y_reenvia_en_orden():
     """Unidad: RecordingIntermediateSink guarda cada emit() en orden Y lo
     reenvía al sink interno — no reemplaza la entrega, solo la observa."""
-    from core.use_cases._turn_pipeline import RecordingIntermediateSink
+    from inaki.kernel.use_cases._turn_pipeline import RecordingIntermediateSink
 
     inner = _RecordingSink()
     wrapper = RecordingIntermediateSink(inner)
@@ -710,7 +710,7 @@ async def test_intermedios_se_persisten_en_orden_antes_de_la_respuesta_final(
     real_sink = _RecordingSink()
 
     with patch(
-        "core.use_cases.run_agent.run_tool_loop",
+        "inaki.kernel.use_cases.run_agent.run_tool_loop",
         new=AsyncMock(side_effect=_tool_loop_con_intermedios),
     ):
         response = await use_case_sin_trace.execute("hacé algo largo", intermediate_sink=real_sink)
@@ -740,7 +740,7 @@ async def test_intermedios_no_se_persisten_en_modo_ephemeral(use_case, mock_hist
     real_sink = _RecordingSink()
 
     with patch(
-        "core.use_cases.run_agent.run_tool_loop",
+        "inaki.kernel.use_cases.run_agent.run_tool_loop",
         new=AsyncMock(side_effect=_tool_loop_con_intermedios),
     ):
         await use_case.execute("hacé algo largo", intermediate_sink=real_sink, ephemeral=True)
@@ -761,7 +761,7 @@ async def test_intermedios_no_se_persisten_con_skip_marker(use_case, mock_histor
         return "__SKIP__"
 
     with patch(
-        "core.use_cases.run_agent.run_tool_loop",
+        "inaki.kernel.use_cases.run_agent.run_tool_loop",
         new=AsyncMock(side_effect=_tool_loop_skip),
     ):
         await use_case.execute(

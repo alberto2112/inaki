@@ -34,15 +34,15 @@ No Makefile or CI. All commands are direct calls.
 
 ## Architecture
 
-Tres capas. La dirección de dependencias es `módulos de inaki/ → core ← infrastructure`,
-con `inaki/cli` e `inaki/app` (composition root) por encima de todo. **Nunca al revés.**
+Todo vive bajo `inaki/`. Tres capas: el kernel, los módulos y el composition root. La
+dirección de dependencias es `composition root → módulos → kernel`. **Nunca al revés.**
 
 | Capa | Qué contiene | Regla dura |
 |---|---|---|
-| **`core/`** | El kernel: entidades, ports, el turno (`run_agent`, tool loop), servicios y errores de dominio | **NUNCA** importa `infrastructure/` ni un módulo de feature de `inaki/`. Terceros permitidos: solo `pydantic`, `croniter`, `numpy` |
-| **módulos de `inaki/`** | Un paquete por feature (`llm`, `embedding`, `tools`, `skills`, `memory`, `knowledge`, `scheduler`, `agents`, `perception`, `extensions`, `config`, `observability`) y un paquete por canal en `inaki/channels/`. Cada uno implementa los ports que el kernel declara | **NUNCA** importa `infrastructure/` ni otro módulo de feature salvo los que su contrato en `pyproject.toml` permite. Si "necesita" el container o el schema → declara un Protocol/Settings VO y el composition root se lo inyecta |
-| **`infrastructure/`** | Wiring y cross-cutting. `container.py` y `factories/` | Único lugar donde se instancian los adapters de los módulos y se inyectan en use cases |
-| **`inaki/`** | Composition root: `inaki/cli/` (un módulo por comando, `_common` con los helpers) e `inaki/app/` (`bootstrap`, `runner`, `reloader`) | Fuera de la regla hexagonal (ensamblar es su trabajo). Los entry points NUEVOS van a `inaki/cli/`; los canales, a `inaki/channels/` |
+| **`inaki/kernel/`** | El kernel: el turno (`run_agent`, tool loop), los ports que consume, entidades, VOs y servicios de dominio | **NUNCA** importa un módulo de feature ni el composition root. Terceros permitidos: solo `pydantic`, `croniter`, `numpy` |
+| **módulos de `inaki/`** | Un paquete por feature (`llm`, `embedding`, `tools`, `skills`, `memory`, `knowledge`, `scheduler`, `agents`, `perception`, `extensions`, `config`, `observability`) y un paquete por canal en `inaki/channels/`. Cada uno implementa los ports que el kernel declara | **NUNCA** importa el composition root ni otro módulo de feature salvo los que su contrato en `pyproject.toml` permite. Si "necesita" el container o el schema → declara un Protocol/Settings VO y el composition root se lo inyecta |
+| **`wiring.py` de cada módulo** | La factory que compone los adapters del módulo desde la config (`inaki/llm/wiring.py`, `inaki/embedding/wiring.py`, `inaki/perception/wiring.py`) | Es el ÚNICO fichero de un módulo con permiso para importar `inaki.config` (excepción declarada en su contrato) |
+| **composition root** | `inaki/app/` (`bootstrap`, `runner`, `reloader` y, hasta la fase 9b, `container.py`) e `inaki/cli/` (un módulo por comando, `_common` con los helpers) | Fuera de la regla hexagonal (ensamblar es su trabajo): conoce a todos. Los entry points NUEVOS van a `inaki/cli/`; los canales, a `inaki/channels/` |
 
 `<home>/ext/` (`app.ext_dirs`) — extensiones de usuario, auto-descubiertas vía `manifest.py` por `inaki/extensions/`.
 
@@ -60,20 +60,21 @@ con `inaki/cli` e `inaki/app` (composition root) por encima de todo. **Nunca al 
 > (bootstrap, runner, reloader) e `inaki/perception/` (fotos, caras, escena y voz,
 > independientes del canal; `TranscribeAudioUseCase` reemplaza la transcripción inline).
 > Y los módulos del núcleo `inaki/embedding/`, `inaki/memory/`, `inaki/knowledge/` e
-> `inaki/skills/` (adapters, use cases y tools; los ports que consume el turno siguen en `core/`),
+> `inaki/skills/` (adapters, use cases y tools; los ports que consume el turno viven en el kernel),
 > `inaki/tools/` (registro con routing, builtins, store del Tool Config Protocol), `inaki/llm/`
 > (providers), `inaki/extensions/` (descubrimiento de `manifest.py`), `inaki/scheduler/` (tier
 > harness-global entero: dominio, ports, servicio, repo, reconciler y la tool partida por operación)
 > e `inaki/agents/` (dispatcher por scope, scope registry, `delegate` y la cola background). La ley de
 > dependencias vive en `pyproject.toml` → `[tool.importlinter]` y la verifica `lint-imports`.
-> `adapters/` ya no existe; `core/` e `infrastructure/` siguen vigentes hasta que el kernel se
-> mude a `inaki/kernel/` y `container.py` se disuelva en un `wiring.py` por módulo.
+> `core/` es ahora `inaki/kernel/` y las factories son el `wiring.py` de su módulo; `adapters/` e
+> `infrastructure/` ya no existen. Falta (fase 9b) disolver `inaki/app/container.py` en un
+> `wiring.py` por módulo y componer runtimes tipados desde `inaki/app/`.
 
-Las reglas de `core/` las verifica `tests/unit/test_architecture.py` (incluye `TYPE_CHECKING` e
-imports locales). Una es **ratchet** — el allowlist de terceros en `core/`: su lista
-`DEUDA_TERCEROS_CORE` quedó vacía el 2026-06-13. **NUNCA agregar entradas a `DEUDA_*`**; resolvé
-el acoplamiento con Settings VOs, Protocols estructurales, o reubicando el composition root a
-`inaki/`. La ley entre módulos la verifica `lint-imports`.
+La ley entre paquetes la verifica `lint-imports`. Lo único que import-linter no expresa, el
+allowlist de terceros del kernel, lo verifica `tests/kernel/test_terceros_del_kernel.py`
+(incluye `TYPE_CHECKING` e imports locales) como **ratchet**: `DEUDA_TERCEROS_KERNEL` quedó
+vacía el 2026-06-13. **NUNCA agregar entradas a `DEUDA_*`**; resolvé el acoplamiento con
+Settings VOs, Protocols estructurales, o reubicando el wiring al composition root.
 
 ### Las tres reglas estructurales — leer antes de agregar código
 
@@ -81,11 +82,11 @@ Resumen operativo. El texto completo, con el porqué y los antipatrones, está e
 [`docs/arquitectura.md`](docs/arquitectura.md).
 
 1. **Canal THIN** (antes de agregar un canal) — Una **capacidad** se implementa UNA vez
-   y se expone por tres superficies que comparten lógica: use case en `core/` → tool del
+   y se expone por tres superficies que comparten lógica: use case en su módulo → tool del
    LLM → gateway admin único (`POST /admin/tool/invoke`, cliente `inaki tool <name>`). Un
    **canal** (Telegram, mañana Slack) es un inbound adapter que solo traduce su I/O a un
    turno. Un canal nuevo es UN paquete bajo `inaki/channels/<nombre>/` que implementa el
-   contrato del kernel (`core/ports/outbound/channel_port.py`: `IChannel` + `IChannelOutbound`)
+   contrato del kernel (`inaki/kernel/ports/outbound/channel_port.py`: `IChannel` + `IChannelOutbound`)
    y REGISTRA su sección de config con `registrar_canal(...)` (`inaki/config/channels.py`)
    desde `inaki/channels/__init__.py`. El módulo config no conoce ningún canal: el loader
    (validación y migraciones), la introspección y `config-reference.md` leen el registro. **Antipatrón**: que cada canal implemente pasarelas de los CLI — es una
@@ -107,7 +108,7 @@ Resumen operativo. El texto completo, con el porqué y los antipatrones, está e
 
 3. **Wiring / DI** — `container.py` es el único lugar donde se registra un tool, provider
    o repo. Los use cases **no reciben `AgentConfig`**: reciben Settings VOs
-   (`core/domain/value_objects/agent_settings.py`), mapeados en los builders públicos de
+   (`inaki/kernel/domain/value_objects/agent_settings.py`), mapeados en los builders públicos de
    `container.py`. Los módulos de providers usan sus propios DTOs (`Resolved*Config`) en su
    `base.py` (`inaki/llm`, `inaki/embedding`, transcripción en `inaki/perception`) — **NUNCA**
    moverlos de vuelta a `inaki/config/`.

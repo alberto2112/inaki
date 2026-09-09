@@ -24,10 +24,10 @@ from pathlib import Path
 
 import yaml
 
-from core.domain.entities.skill import Skill
-from core.ports.outbound.embedding_cache_port import IEmbeddingCache
-from core.ports.outbound.embedding_port import IEmbeddingProvider
-from core.ports.outbound.skill_port import ISkillRepository
+from inaki.kernel.domain.entities.skill import Skill
+from inaki.kernel.ports.outbound.embedding_cache_port import IEmbeddingCache
+from inaki.kernel.ports.outbound.embedding_port import IEmbeddingProvider
+from inaki.kernel.ports.outbound.skill_port import ISkillRepository
 from inaki.embedding import resolve_provider_name
 from inaki.embedding.similarity import cosine_similarity
 

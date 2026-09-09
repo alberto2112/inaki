@@ -45,6 +45,7 @@ existe este documento— y la contradicción no queda flotando.
 | [`channel-contextid`](#channel-contextid) | `mv` de los ficheros de contexto a `{context_id}.md` + cambiar la variable del prompt |
 | [`per-user-context-files`](#per-user-context-files) | *(superseded)* `mv` de `USER.md` a `users/{channel}/…` |
 | [`config-falla-ruidoso`](#config-falla-ruidoso) | **Puede impedir el arranque**: corregir el typo/valor que el error nombra (antes se ignoraba en silencio) |
+| [`kernel-y-fachada-de-tools`](#kernel-y-fachada-de-tools) | **Extensiones**: reemplazar `from core.ports.outbound.*` por `from inaki.tools import ...` (dos `sd`); una extensión sin migrar se saltea con `WARNING` |
 | [`modulos-tools-llm-extensions`](#modulos-tools-llm-extensions) | `app.ext_dirs` relativo pasa a anclarse al **home**, no al cwd: si las extensiones viven en el árbol del código, poner el path absoluto |
 
 ### Migración automática en caliente — sin acción
@@ -106,11 +107,61 @@ existe este documento— y la contradicción no queda flotando.
 - **Memoria**: `memory-management-tools`, `memory-scoped-by-channel-chat`,
   `agent-state-scoped-by-channel-chat`
 - **Scheduler**: `modulos-scheduler-y-agents`, `scheduler-trigger-type-mutable`, `channel-send-history-persist`
-- **Tools y config**: `modulos-tools-llm-extensions`, `write-file-explicit-mode`, `tool-config-protocol`,
+- **Tools y config**: `kernel-y-fachada-de-tools`, `modulos-tools-llm-extensions`, `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `kernel-y-fachada-de-tools`
+
+**Contexto (2026-09-09, fase 9a del refactor modular).** Tras la fase 8 quedaban
+dos paquetes fuera del namespace: `core/` (el kernel) e `infrastructure/`
+(`container.py` y las tres factories). Y el contrato de las extensiones apuntaba
+a un path INTERNO del kernel: `from core.ports.outbound.tool_port import ITool,
+ToolResult` en 16 manifests, más `IToolConfigStore` en otros 16. Cada mudanza
+interna rompía a los terceros.
+
+**Cambio.**
+
+- `core/` → `inaki/kernel/`, misma estructura interna (`domain/`, `ports/`,
+  `use_cases/`; aplanarlo es de la fase 10). Reescritura de imports en todo el
+  árbol.
+- Las factories pasaron a ser el `wiring.py` de su módulo (`inaki/llm/wiring.py`,
+  `inaki/embedding/wiring.py`, `inaki/perception/wiring.py`): el único fichero de
+  un módulo con permiso para importar `inaki.config`, declarado como
+  `ignore_imports` en su contrato. Ahí está el borde config → módulo.
+- `container.py` se mudó a `inaki/app/container.py` SIN tocarlo. Sigue siendo el
+  dios, pero vive en el composition root, el único sitio donde uno es tolerable
+  hasta que se disuelva (fase 9b). `infrastructure/` desapareció.
+- **BREAKING para extensiones**: el contrato pasa a la fachada pública
+  `from inaki.tools import ITool, ToolResult, IToolConfigStore` (también
+  `IToolExecutor`). Los contratos siguen viviendo en el kernel, pero una
+  extensión ya no sabe dónde: la próxima mudanza interna no la toca.
+- `packages.find include = ["inaki*"]`; `root_packages = ["inaki"]`; contrato
+  "el kernel no conoce ningún módulo salvo shared". De `test_architecture.py`
+  sobrevive solo lo que `lint-imports` no expresa: el allowlist de terceros del
+  kernel, como `tests/kernel/test_terceros_del_kernel.py` (ratchet
+  `DEUDA_TERCEROS_KERNEL`).
+
+**Acción del operador.** En cada extensión (`<ext_dir>/*/`):
+
+```bash
+sd 'from core\.ports\.outbound\.tool_port import ITool, ToolResult' 'from inaki.tools import ITool, ToolResult' <ext_dir>/*/*.py
+sd 'from core\.ports\.outbound\.tool_config_port import IToolConfigStore' 'from inaki.tools import IToolConfigStore' <ext_dir>/*/*.py
+```
+
+Una extensión que siga importando `core` falla al cargar su manifest con
+`WARNING` y se saltea (no tumba el arranque); el smoke test
+`tests/extensions/test_loader.py` lista las que fallan en la máquina.
+
+**Comportamiento observable.** Ninguno en el daemon. Cambian paths de import.
+
+**Invariante que dejó.** **NUNCA** exponer a terceros un path interno como
+contrato: lo que una extensión importa es una fachada del módulo que la aloja
+(`inaki.tools`), y esa fachada re-exporta lo que haga falta de donde viva hoy.
 
 ---
 

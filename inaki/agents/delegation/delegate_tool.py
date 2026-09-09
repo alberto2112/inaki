@@ -27,14 +27,14 @@ import copy
 import logging
 from typing import TYPE_CHECKING, Callable, Protocol
 
-from core.domain.value_objects.delegation_result import DelegationResult
-from core.ports.outbound.tool_port import ITool, ToolResult
-from core.use_cases._result_parser import parse_delegation_result
+from inaki.kernel.domain.value_objects.delegation_result import DelegationResult
+from inaki.kernel.ports.outbound.tool_port import ITool, ToolResult
+from inaki.kernel.use_cases._result_parser import parse_delegation_result
 from inaki.shared.errors import ToolLoopMaxIterationsError
 
 if TYPE_CHECKING:
-    from core.ports.outbound.background_delegation_port import IBackgroundDelegationQueue
-    from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
+    from inaki.kernel.ports.outbound.background_delegation_port import IBackgroundDelegationQueue
+    from inaki.kernel.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
     from inaki.shared.channel_context import ChannelContext
 
 logger = logging.getLogger(__name__)
@@ -42,9 +42,9 @@ logger = logging.getLogger(__name__)
 
 # Interfaces estructurales que `delegate` necesita de los containers — declaradas
 # acá (el consumidor define lo que requiere) para no acoplar el tool a
-# `infrastructure.container.AgentContainer`. El `AgentContainer` real las
+# `inaki.app.container.AgentContainer`. El `AgentContainer` real las
 # satisface por duck-typing; la dirección hexagonal queda intacta
-# (adapters NO importa infrastructure).
+# (un módulo NO importa el composition root).
 class DelegationCaller(Protocol):
     """Container llamador: el contexto del turno en curso para resolver el scope."""
 

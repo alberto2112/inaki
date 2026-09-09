@@ -27,7 +27,7 @@ from typing import Any
 
 import numpy as np
 
-from core.ports.outbound.tool_port import ITool, ToolResult
+from inaki.kernel.ports.outbound.tool_port import ITool, ToolResult
 from inaki.perception.domain.face import Person
 from inaki.perception.ports.face_metadata import IMessageFaceMetadataRepo
 from inaki.perception.ports.face_registry import IFaceRegistryPort

@@ -8,10 +8,9 @@ Responde "¿qué config está viendo el runtime, y de dónde sale cada valor?" s
 tener que abrir los YAML y hacer el merge a mano. Los secretos SIEMPRE salen
 redactados: el output está pensado para pegarse en un issue.
 
-Composition root: acá es legítimo importar de ``infrastructure`` lo que el use
-case necesita (los defaults del schema y qué campos son credenciales), para que
-``core/`` no lo conozca. Esa introspección vive en
-``infrastructure/config_introspection.py`` — la comparte con el container, que
+Acá se inyecta lo que el use case necesita (los defaults del schema y qué
+campos son credenciales) para que el use case no lo conozca. Esa introspección
+vive en ``inaki/config/introspection.py`` — la comparte con el container, que
 arma la misma vista para la tool ``config`` del LLM.
 """
 

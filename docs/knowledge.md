@@ -130,7 +130,7 @@ def _build_mi_fuente(agent_config, global_config, embedder):
 KNOWLEDGE_SOURCES = [_build_mi_fuente]
 ```
 
-The factory receives `(agent_config, global_config, embedder)` and must return an object that implements `IKnowledgeSource` (`core/ports/outbound/knowledge_port.py`). If the factory raises an exception, it is logged as WARNING and the remaining sources continue working.
+The factory receives `(agent_config, global_config, embedder)` and must return an object that implements `IKnowledgeSource` (`inaki/kernel/ports/outbound/knowledge_port.py`). If the factory raises an exception, it is logged as WARNING and the remaining sources continue working.
 
 If you also want the source to be **manageable** (ingest/reindex/list/delete via the `knowledge_admin` tool and the CLI), implement `IIndexableKnowledgeSource` instead — it extends `IKnowledgeSource` with the management methods. Plain `IKnowledgeSource` sources stay read-only and are skipped by management operations (this is intentional, to preserve Liskov: a read-only source must not be forced to implement `index()`).
 
@@ -216,7 +216,7 @@ If `enabled: false`, pre-fetch is skipped but the user can still invoke `knowled
 | Role | File |
 |------|------|
 | Full YAML reference | `docs/config-reference.md` — `KnowledgeConfig` |
-| Ports (read-only + indexable) | `core/ports/outbound/knowledge_port.py` |
+| Ports (read-only + indexable) | `inaki/kernel/ports/outbound/knowledge_port.py` |
 | Management use case | `inaki/knowledge/use_cases/manage_knowledge.py` |
 | Document adapter | `inaki/knowledge/adapters/document_knowledge_source.py` |
 | SQLite adapter | `inaki/knowledge/adapters/sqlite_knowledge_source.py` |

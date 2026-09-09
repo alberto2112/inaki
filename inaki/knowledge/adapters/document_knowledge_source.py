@@ -24,9 +24,9 @@ from typing import AsyncIterator
 import aiosqlite
 import sqlite_vec
 
-from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
-from core.ports.outbound.embedding_port import IEmbeddingProvider
-from core.ports.outbound.knowledge_port import IIndexableKnowledgeSource
+from inaki.kernel.domain.value_objects.knowledge_chunk import KnowledgeChunk
+from inaki.kernel.ports.outbound.embedding_port import IEmbeddingProvider
+from inaki.kernel.ports.outbound.knowledge_port import IIndexableKnowledgeSource
 from inaki.knowledge.adapters._chunker import chunkear_archivo
 from inaki.shared.errors import KnowledgeError
 

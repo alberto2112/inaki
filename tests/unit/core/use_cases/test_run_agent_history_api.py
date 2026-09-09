@@ -11,9 +11,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from core.use_cases.run_agent import RunAgentUseCase
+from inaki.kernel.use_cases.run_agent import RunAgentUseCase
 from inaki.shared.message import Message, Role
-from infrastructure.container import build_run_agent_settings
+from inaki.app.container import build_run_agent_settings
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -26,8 +26,8 @@ from typing import AsyncIterator
 
 import aiosqlite
 
-from core.domain.value_objects.conversation_state import ConversationState
-from core.ports.outbound.history_port import IHistoryStore
+from inaki.kernel.domain.value_objects.conversation_state import ConversationState
+from inaki.kernel.ports.outbound.history_port import IHistoryStore
 from inaki.shared.message import Message, Role
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ class HistoryStoreSettings:
     """Settings VO del store — el container lo mapea desde ``ChatHistoryConfig``.
 
     El adapter declara lo que necesita (path ya resuelto + límite de mensajes)
-    sin conocer el schema YAML de infrastructure. ``merge_chats`` no viaja acá:
+    sin conocer el schema YAML de ``inaki/config``. ``merge_chats`` no viaja acá:
     es semántica del use case (``MemorySettings``), no del storage.
     """
 

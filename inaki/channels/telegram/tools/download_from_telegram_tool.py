@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from core.ports.outbound.tool_port import ITool, ToolResult
+from inaki.kernel.ports.outbound.tool_port import ITool, ToolResult
 from inaki.channels.telegram.files.model import (
     DownloadableContentType,
     TelegramFileRecord,

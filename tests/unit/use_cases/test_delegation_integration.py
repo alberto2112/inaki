@@ -22,13 +22,13 @@ import pytest
 
 from inaki.agents.delegation.delegate_tool import _RESULT_FORMAT_FOOTER, DelegateTool
 from inaki.tools.registry import ToolRegistry
-from core.domain.value_objects.agent_settings import OneShotSettings
-from core.domain.value_objects.conversation_state import ConversationState
-from core.domain.value_objects.delegation_result import DelegationResult
-from core.domain.value_objects.llm_response import LLMResponse
-from core.ports.outbound.turn_tracer_port import NullTurnTracer
-from core.use_cases.run_agent import RunAgentUseCase
-from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
+from inaki.kernel.domain.value_objects.agent_settings import OneShotSettings
+from inaki.kernel.domain.value_objects.conversation_state import ConversationState
+from inaki.kernel.domain.value_objects.delegation_result import DelegationResult
+from inaki.kernel.domain.value_objects.llm_response import LLMResponse
+from inaki.kernel.ports.outbound.turn_tracer_port import NullTurnTracer
+from inaki.kernel.use_cases.run_agent import RunAgentUseCase
+from inaki.kernel.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from inaki.config import (
     AgentConfig,
     AgentDelegationConfig,
@@ -40,7 +40,7 @@ from inaki.config import (
     MemoriesConfig,
     ProviderConfig,
 )
-from infrastructure.container import AgentContainer, build_run_agent_settings
+from inaki.app.container import AgentContainer, build_run_agent_settings
 
 # ===========================================================================
 # Shared helpers and fixtures
@@ -690,7 +690,7 @@ async def test_failure_max_iterations_exceeded():
     )
 
     # dummy_tool ejecutable EN EL PARENT: bajo C el hijo efímero usa el toolkit del caller.
-    from core.ports.outbound.tool_port import ToolResult
+    from inaki.kernel.ports.outbound.tool_port import ToolResult
 
     dummy_tool = _make_dummy_tool("dummy_tool")
     dummy_tool.execute = AsyncMock(
@@ -1113,7 +1113,7 @@ async def test_sub_llm_override_builds_new_llm_via_factory():
     _wire_both(p, s_container, sub_delta=sub_delta)
 
     with patch(
-        "infrastructure.container.LLMProviderFactory.create", return_value=override_llm
+        "inaki.app.container.LLMProviderFactory.create", return_value=override_llm
     ) as mock_create:
         await p.run_agent.execute("ask P")
 

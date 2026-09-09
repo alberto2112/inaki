@@ -16,7 +16,7 @@ from inaki.config import (
 )
 from inaki.config.home import set_inaki_home
 from inaki.config.loader import _render_default_global_yaml
-from infrastructure.factories.llm_factory import LLMProviderFactory
+from inaki.llm.wiring import LLMProviderFactory
 
 HOME = str(Path.home())
 INAKI_HOME = f"{HOME}/.inaki"

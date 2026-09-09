@@ -13,9 +13,9 @@ import logging
 import pkgutil
 from pathlib import Path
 
-from adapters.outbound.embedding.base import BaseEmbeddingProvider, ResolvedEmbeddingConfig
 from core.ports.outbound.embedding_port import IEmbeddingProvider
 from inaki.config import EmbeddingConfig, ProviderConfig
+from inaki.embedding.base import BaseEmbeddingProvider, ResolvedEmbeddingConfig
 from inaki.shared.errors import ConfigError
 
 logger = logging.getLogger(__name__)
@@ -29,14 +29,14 @@ class EmbeddingProviderFactory:
         if cls._registry:
             return
 
-        import adapters.outbound.embedding as embedding_pkg
-        from adapters.outbound.embedding.base import BaseEmbeddingProvider
+        import inaki.embedding as embedding_pkg
+        from inaki.embedding.base import BaseEmbeddingProvider
 
         pkg_path = Path(embedding_pkg.__file__).parent
         for _, module_name, _ in pkgutil.iter_modules([str(pkg_path)]):
-            if module_name == "base":
+            if module_name in ("base", "cache", "similarity"):
                 continue
-            module = importlib.import_module(f"adapters.outbound.embedding.{module_name}")
+            module = importlib.import_module(f"inaki.embedding.{module_name}")
             provider_name = getattr(module, "PROVIDER_NAME", None)
             if provider_name is None:
                 continue

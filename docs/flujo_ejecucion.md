@@ -215,7 +215,7 @@ LLMProviderFactory.create(agent_cfg)
     # E.g.: registry["openrouter"](llm_config) → OpenRouterProvider instance
 ```
 
-Same mechanism for `EmbeddingProviderFactory` pointing to `adapters/outbound/embedding/`.
+Same mechanism for `EmbeddingProviderFactory` pointing to `inaki/embedding/`.
 
 ---
 

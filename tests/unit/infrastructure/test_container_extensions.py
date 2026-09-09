@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from adapters.outbound.skills.yaml_skill_repo import YamlSkillRepository
 from adapters.outbound.tools.tool_registry import ToolRegistry
 from core.ports.outbound.tool_port import ITool, ToolResult
+from inaki.skills.yaml_skill_repo import YamlSkillRepository
 from infrastructure.container import AgentContainer
 
 # ---------------------------------------------------------------------------

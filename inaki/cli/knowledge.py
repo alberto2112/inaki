@@ -76,7 +76,7 @@ def _build_document_source(fuente_cfg, global_cfg):
         )
         raise typer.Exit(code=1)
 
-    from adapters.outbound.knowledge.document_knowledge_source import DocumentKnowledgeSource
+    from inaki.knowledge.adapters.document_knowledge_source import DocumentKnowledgeSource
 
     try:
         embedder = EmbeddingProviderFactory.create(global_cfg.embedding, global_cfg.providers)

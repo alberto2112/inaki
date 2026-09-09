@@ -28,7 +28,6 @@ from adapters.outbound.tools.tool_registry import ToolRegistry
 from core.domain.entities.task import TriggerType
 from core.domain.value_objects.agent_settings import MemorySettings, OneShotSettings
 from core.ports.outbound.turn_tracer_port import NullTurnTracer
-from core.use_cases.reconcile_memory import ReconcileMemoryUseCase
 from core.use_cases.run_agent import RunAgentUseCase
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from inaki.config import (
@@ -44,6 +43,7 @@ from inaki.config import (
     ProviderConfig,
     ReconciliationConfig,
 )
+from inaki.memory.use_cases.reconcile_memory import ReconcileMemoryUseCase
 from infrastructure.container import AgentContainer, build_memory_settings
 
 # ---------------------------------------------------------------------------

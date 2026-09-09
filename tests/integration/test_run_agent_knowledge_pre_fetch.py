@@ -13,14 +13,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from adapters.outbound.knowledge.sqlite_memory_knowledge_source import (
-    SqliteMemoryKnowledgeSource,
-)
-from adapters.outbound.memory.sqlite_memory_repo import SQLiteMemoryRepository
 from core.domain.entities.memory import MemoryEntry
-from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
 from core.domain.value_objects.llm_response import LLMResponse
 from core.use_cases.run_agent import RunAgentUseCase
+from inaki.knowledge.adapters.sqlite_memory_knowledge_source import (
+    SqliteMemoryKnowledgeSource,
+)
+from inaki.knowledge.orchestrator import KnowledgeOrchestrator
+from inaki.memory.adapters.sqlite_memory_repo import SQLiteMemoryRepository
 from infrastructure.container import build_run_agent_settings
 
 

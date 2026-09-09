@@ -1,0 +1,722 @@
+"""Tests unitarios para ConsolidateMemoryUseCase — transaccionalidad crítica."""
+
+from datetime import datetime, timezone
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+from core.domain.entities.memory import MemoryEntry
+from core.domain.value_objects.agent_settings import ConsolidationSettings, MemorySettings
+from core.domain.value_objects.llm_response import LLMResponse
+from inaki.memory.use_cases.consolidate_memory import ConsolidateMemoryUseCase
+from inaki.shared.errors import ConsolidationError
+from inaki.shared.message import Message, Role
+
+
+@pytest.fixture
+def memory_config(tmp_path: Path) -> MemorySettings:
+    return MemorySettings(
+        digest_size=3,
+        digest_template=str(tmp_path / "mem" / "digest.md"),
+        consolidation=ConsolidationSettings(min_relevance_score=0.5, keep_last_messages=20),
+    )
+
+
+@pytest.fixture
+def use_case(mock_llm, mock_memory, mock_embedder, mock_history, memory_config):
+    mock_memory.get_recent.return_value = []
+    return ConsolidateMemoryUseCase(
+        llm=mock_llm,
+        memory=mock_memory,
+        embedder=mock_embedder,
+        history=mock_history,
+        agent_id="test",
+        memory_config=memory_config,
+    )
+
+
+@pytest.fixture
+def messages_in_history(mock_history):
+    mock_history.load_uninfused.return_value = [
+        Message(role=Role.USER, content="me gusta Python"),
+        Message(role=Role.ASSISTANT, content="Anotado."),
+    ]
+
+
+async def test_consolidation_trims_on_success(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        '[{"content": "Le gusta Python", "relevance": 0.9, "tags": ["tech"]}]'
+    )
+
+    result = await use_case.execute()
+
+    mock_memory.store.assert_called_once()
+    mock_history.trim.assert_called_once_with("test", keep_last=20)
+    mock_history.clear.assert_not_called()
+    assert "1 recuerdo" in result
+
+
+async def test_consolidation_attributes_agent_id_to_stored_memory(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
+    """Cada MemoryEntry persistido debe llevar el agent_id del agente que lo extrajo."""
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        '[{"content": "fact A", "relevance": 0.9, "tags": []},'
+        ' {"content": "fact B", "relevance": 0.8, "tags": []}]'
+    )
+
+    await use_case.execute()
+
+    assert mock_memory.store.call_count == 2
+    for call in mock_memory.store.call_args_list:
+        entry = call.args[0]
+        assert entry.agent_id == "test", (
+            f"Se esperaba agent_id='test', se obtuvo {entry.agent_id!r}"
+        )
+
+
+async def test_consolidation_marks_messages_as_infused_after_persist(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
+    """Tras persistir los recuerdos del scope, se marcan los mensajes como infused."""
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        '[{"content": "Le gusta Python", "relevance": 0.9, "tags": []}]'
+    )
+
+    await use_case.execute()
+
+    # messages_in_history no tiene channel/chat_id → scope (None, None).
+    mock_history.mark_infused.assert_called_once_with("test", channel=None, chat_id=None)
+
+
+async def test_consolidation_mark_infused_called_before_trim(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
+    """mark_infused por-scope debe ocurrir ANTES del trim para que el gate cierre a tiempo."""
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
+    call_order: list[str] = []
+    mock_history.mark_infused.side_effect = lambda *a, **kw: call_order.append("mark_infused") or 0
+    mock_history.trim.side_effect = lambda *a, **kw: call_order.append("trim")
+
+    await use_case.execute()
+
+    assert call_order == ["mark_infused", "trim"]
+
+
+async def test_consolidation_mark_infused_failure_aborts_and_skips_trim(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
+    """Si mark_infused del scope falla, propagamos ConsolidationError y NO truncamos."""
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        '[{"content": "fact", "relevance": 0.9, "tags": []}]'
+    )
+    mock_history.mark_infused.side_effect = Exception("UPDATE failed")
+
+    with pytest.raises(ConsolidationError):
+        await use_case.execute()
+
+    mock_history.trim.assert_not_called()
+
+
+async def test_consolidation_is_idempotent_when_no_uninfused_messages(use_case, mock_history):
+    """Ejecutar /consolidate dos veces seguidas → la segunda es no-op total."""
+    mock_history.load_uninfused.return_value = []
+
+    result = await use_case.execute()
+
+    assert "No hay mensajes nuevos" in result
+    mock_history.mark_infused.assert_not_called()
+    mock_history.trim.assert_not_called()
+
+
+async def test_consolidation_does_not_trim_on_llm_failure(
+    use_case, mock_llm, mock_history, messages_in_history
+):
+    mock_llm.complete.side_effect = Exception("LLM timeout")
+
+    with pytest.raises(ConsolidationError):
+        await use_case.execute()
+
+    mock_history.trim.assert_not_called()
+    mock_history.clear.assert_not_called()
+
+
+async def test_consolidation_does_not_trim_on_store_failure(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        '[{"content": "Le gusta Python", "relevance": 0.9, "tags": []}]'
+    )
+    mock_memory.store.side_effect = Exception("DB error")
+
+    with pytest.raises(ConsolidationError):
+        await use_case.execute()
+
+    mock_history.trim.assert_not_called()
+
+
+async def test_consolidation_returns_message_when_no_pending_messages(use_case, mock_history):
+    """Sin mensajes uninfused → no-op idempotente."""
+    mock_history.load_uninfused.return_value = []
+    result = await use_case.execute()
+    assert "No hay mensajes nuevos" in result
+    mock_history.trim.assert_not_called()
+    mock_history.mark_infused.assert_not_called()
+
+
+async def test_consolidation_handles_empty_facts_list(
+    use_case, mock_llm, mock_history, messages_in_history
+):
+    """LLM dice no hay recuerdos relevantes → truncamos igual."""
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
+    await use_case.execute()
+    mock_history.trim.assert_called_once_with("test", keep_last=20)
+
+
+async def test_consolidation_strips_markdown_json(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
+    """El LLM a veces envuelve el JSON en ```json ... ```"""
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        '```json\n[{"content": "test", "relevance": 0.8, "tags": []}]\n```'
+    )
+    await use_case.execute()
+    mock_memory.store.assert_called_once()
+
+
+async def test_consolidation_raises_on_invalid_json(
+    use_case, mock_llm, mock_history, messages_in_history
+):
+    mock_llm.complete.return_value = LLMResponse.of_text("esto no es json")
+    with pytest.raises(ConsolidationError):
+        await use_case.execute()
+    mock_history.trim.assert_not_called()
+
+
+async def test_consolidation_extracts_json_with_preamble(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
+    """El LLM agrega texto antes/después del array JSON — fallback debe rescatarlo."""
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        "Aquí están los recuerdos relevantes:\n"
+        '[{"content": "prefiere café sin azúcar", "relevance": 0.9, "tags": ["preferencia"]}]\n'
+        "Eso es todo lo que encontré."
+    )
+    await use_case.execute()
+    mock_memory.store.assert_called_once()
+
+
+async def test_consolidation_empty_array_with_trailing_reasoning(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
+    """Caso real: modelo con razonamiento devuelve [] y dumpea reasoning después.
+
+    El reasoning contiene brackets (links, listas), que rompían el fallback
+    ingenuo basado en rfind(']'). No debe lanzar ConsolidationError ni guardar nada.
+    """
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        "[]\n\n## Reasoning\n\nThis is a humorous exchange referencing a "
+        "list [1, 2, 3] and a markdown [link](http://x.com). Nothing to save."
+    )
+    await use_case.execute()
+    mock_memory.store.assert_not_called()
+    # [] válido → la consolidación completa y trunca normalmente.
+    mock_history.trim.assert_called_once()
+
+
+async def test_consolidation_extracts_array_with_brackets_in_string_value(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
+    """Un bracket DENTRO de un string value del JSON no debe cortar la extracción."""
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        "Here you go:\n"
+        '[{"content": "dijo: revisa la lista [a, b]", "relevance": 0.8, "tags": ["nota"]}]\n'
+        "Trailing reasoning [with brackets]."
+    )
+    await use_case.execute()
+    mock_memory.store.assert_called_once()
+    stored = mock_memory.store.call_args[0][0]
+    assert stored.content == "dijo: revisa la lista [a, b]"
+
+
+# SC-15
+async def test_consolidation_formats_message_with_timestamp(
+    use_case, mock_llm, mock_memory, mock_history
+):
+    ts = datetime(2026, 4, 9, 15, 30, 0, tzinfo=timezone.utc)
+    mock_history.load_uninfused.return_value = [
+        Message(role=Role.USER, content="prefiero café sin azúcar", timestamp=ts),
+    ]
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
+
+    await use_case.execute()
+
+    call_args = mock_llm.complete.call_args
+    system_prompt = (
+        call_args.kwargs.get("system_prompt") or call_args.args[1]
+        if len(call_args.args) > 1
+        else call_args.kwargs["system_prompt"]
+    )
+    assert "user [2026-04-09T15:30:00Z]: prefiero café sin azúcar" in system_prompt
+
+
+# SC-16
+async def test_consolidation_formats_message_without_timestamp(
+    use_case, mock_llm, mock_memory, mock_history
+):
+    mock_history.load_uninfused.return_value = [
+        Message(role=Role.USER, content="prefiero café sin azúcar", timestamp=None),
+    ]
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
+
+    await use_case.execute()
+
+    call_args = mock_llm.complete.call_args
+    system_prompt = call_args.kwargs.get("system_prompt") or call_args.kwargs["system_prompt"]
+    assert "user: prefiero café sin azúcar" in system_prompt
+    assert "[" not in system_prompt.split("user:")[1].split("\n")[0]
+
+
+# SC-17
+async def test_consolidation_sets_created_at_from_llm_timestamp(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        '[{"content": "test", "relevance": 0.9, "tags": [], "timestamp": "2026-04-09T15:30:00Z"}]'
+    )
+
+    await use_case.execute()
+
+    entry = mock_memory.store.call_args.args[0]
+    assert entry.created_at == datetime(2026, 4, 9, 15, 30, 0, tzinfo=timezone.utc)
+
+
+async def test_consolidation_filters_below_min_relevance_score(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
+    """Hechos con relevance < min_relevance_score no se embedean ni persisten."""
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        '[{"content": "alto", "relevance": 0.9, "tags": []},'
+        ' {"content": "medio-alto", "relevance": 0.51, "tags": []},'
+        ' {"content": "bajo", "relevance": 0.3, "tags": []},'
+        ' {"content": "muy bajo", "relevance": 0.1, "tags": []}]'
+    )
+
+    await use_case.execute()
+
+    # Solo los dos primeros pasan el umbral 0.5
+    assert mock_memory.store.call_count == 2
+    stored_contents = {c.args[0].content for c in mock_memory.store.call_args_list}
+    assert stored_contents == {"alto", "medio-alto"}
+    # Trim igual (el LLM corrió con éxito)
+    mock_history.trim.assert_called_once_with("test", keep_last=20)
+
+
+async def test_consolidation_filters_all_when_all_below_threshold(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
+    """Si TODOS los hechos están por debajo del umbral, no persistimos pero truncamos."""
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        '[{"content": "bajo", "relevance": 0.1, "tags": []}]'
+    )
+
+    await use_case.execute()
+
+    mock_memory.store.assert_not_called()
+    mock_history.trim.assert_called_once_with("test", keep_last=20)
+
+
+async def test_consolidation_uses_sentinel_fallback_when_keep_last_is_zero(
+    tmp_path: Path, mock_llm, mock_memory, mock_embedder, mock_history
+):
+    """keep_last_messages=0 es sentinel → resuelve al fallback del sistema (84)."""
+    cfg = MemorySettings(
+        digest_size=3,
+        digest_template=str(tmp_path / "mem" / "digest.md"),
+        consolidation=ConsolidationSettings(
+            min_relevance_score=0.5,
+            keep_last_messages=0,  # sentinel
+        ),
+    )
+    mock_memory.get_recent.return_value = []
+    mock_history.load_uninfused.return_value = [
+        Message(role=Role.USER, content="hola"),
+    ]
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
+
+    uc = ConsolidateMemoryUseCase(
+        llm=mock_llm,
+        memory=mock_memory,
+        embedder=mock_embedder,
+        history=mock_history,
+        agent_id="test",
+        memory_config=cfg,
+    )
+
+    await uc.execute()
+
+    mock_history.trim.assert_called_once_with("test", keep_last=84)
+
+
+# SC-18
+async def test_consolidation_falls_back_to_now_when_no_timestamp(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        '[{"content": "test", "relevance": 0.9, "tags": []}]'
+    )
+    before = datetime.now(timezone.utc)
+
+    await use_case.execute()
+
+    after = datetime.now(timezone.utc)
+    entry = mock_memory.store.call_args.args[0]
+    assert before <= entry.created_at <= after
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — digest write tests
+# ---------------------------------------------------------------------------
+
+
+def _make_entry(content: str, tags: list[str], created_at: datetime) -> MemoryEntry:
+    return MemoryEntry(
+        content=content,
+        embedding=[0.1] * 384,
+        relevance=0.9,
+        tags=tags,
+        created_at=created_at,
+    )
+
+
+# SC-03, SC-12, SC-13, AC-04 (a)
+async def test_digest_file_written_with_correct_format(
+    mock_llm, mock_memory, mock_embedder, mock_history, memory_config
+):
+    mock_history.load_uninfused.return_value = [
+        Message(role=Role.USER, content="me gusta Python"),
+        Message(role=Role.ASSISTANT, content="Anotado."),
+    ]
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        '[{"content": "Le gusta Python", "relevance": 0.9, "tags": ["tech", "python"]}]'
+    )
+
+    entry_with_tags = _make_entry(
+        "Le gusta Python", ["tech", "python"], datetime(2026, 4, 9, tzinfo=timezone.utc)
+    )
+    entry_no_tags = _make_entry("Usa LazyVim", [], datetime(2026, 4, 8, tzinfo=timezone.utc))
+    mock_memory.get_recent.return_value = [entry_with_tags, entry_no_tags]
+
+    uc = ConsolidateMemoryUseCase(
+        llm=mock_llm,
+        memory=mock_memory,
+        embedder=mock_embedder,
+        history=mock_history,
+        agent_id="test",
+        memory_config=memory_config,
+    )
+    await uc.execute()
+
+    digest_file = Path(memory_config.digest_template)
+    assert digest_file.exists()
+    content = digest_file.read_text(encoding="utf-8")
+    assert content.startswith("# Recuerdos sobre el usuario")
+    assert "<!-- Generado por /consolidate —" in content
+    assert "- [2026-04-09] Le gusta Python (tech, python)" in content
+    assert "- [2026-04-08] Usa LazyVim" in content
+    # No parenthetical for entry without tags
+    assert "- [2026-04-08] Usa LazyVim\n" in content or content.endswith(
+        "- [2026-04-08] Usa LazyVim\n"
+    )
+
+
+# SC-10, SC-11, AC-05 (b)
+async def test_get_recent_called_with_configured_digest_size(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history, memory_config
+):
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
+
+    await use_case.execute()
+
+    # `messages_in_history` mete mensajes sin channel/chat_id → scope (None, None).
+    # `get_recent` debe llamarse con el digest_size configurado y filtros por scope.
+    mock_memory.get_recent.assert_called_once_with(
+        memory_config.digest_size,
+        agent_id="test",
+        channel=None,
+        chat_id=None,
+    )
+
+
+# SC-09, FR-05, AC-04 (c)
+async def test_trim_called_after_digest(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
+    call_order = []
+    mock_memory.get_recent.side_effect = lambda *a, **kw: call_order.append("get_recent") or []
+    mock_history.trim.side_effect = lambda *a, **kw: call_order.append("trim")
+
+    await use_case.execute()
+
+    assert "get_recent" in call_order
+    assert "trim" in call_order
+    assert call_order.index("trim") > call_order.index("get_recent")
+
+
+# FR-09, NFR-03 (d)
+async def test_write_digest_ioerror_does_not_abort_consolidation(
+    use_case, mock_llm, mock_memory, mock_history, messages_in_history
+):
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
+
+    with patch.object(Path, "write_text", side_effect=OSError("disk full")):
+        result = await use_case.execute()
+
+    mock_history.trim.assert_called_once_with("test", keep_last=20)
+    assert result is not None
+
+
+# SC-19, NFR-02 (e)
+async def test_parent_directory_created_for_digest(
+    mock_llm, mock_memory, mock_embedder, mock_history, tmp_path
+):
+    nested_path = tmp_path / "a" / "b" / "c" / "digest.md"
+    assert not nested_path.parent.exists()
+
+    cfg = MemorySettings(digest_size=2, digest_template=str(nested_path))
+    mock_memory.get_recent.return_value = []
+    mock_history.load_uninfused.return_value = [
+        Message(role=Role.USER, content="hola"),
+    ]
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
+
+    uc = ConsolidateMemoryUseCase(
+        llm=mock_llm,
+        memory=mock_memory,
+        embedder=mock_embedder,
+        history=mock_history,
+        agent_id="test",
+        memory_config=cfg,
+    )
+    await uc.execute()
+
+    assert nested_path.parent.exists()
+    assert nested_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — scoping por (channel, chat_id)
+# ---------------------------------------------------------------------------
+
+
+async def test_consolidation_groups_by_channel_and_chat_id(
+    use_case, mock_llm, mock_memory, mock_history
+):
+    """Mensajes de scopes distintos deben extraerse por separado (1 LLM call por scope)."""
+    mock_history.load_uninfused.return_value = [
+        Message(role=Role.USER, content="hola en grupo A", channel="telegram", chat_id="-1001"),
+        Message(role=Role.ASSISTANT, content="ack A", channel="telegram", chat_id="-1001"),
+        Message(role=Role.USER, content="hola en grupo B", channel="telegram", chat_id="-1002"),
+        Message(role=Role.USER, content="hola en CLI", channel="cli", chat_id=""),
+    ]
+    mock_llm.complete.return_value = LLMResponse.of_text(
+        '[{"content": "fact", "relevance": 0.9, "tags": []}]'
+    )
+
+    await use_case.execute()
+
+    # 3 scopes → 3 LLM calls → 3 stored entries
+    assert mock_llm.complete.call_count == 3
+    assert mock_memory.store.call_count == 3
+
+    # Cada MemoryEntry persistido lleva el scope de su grupo de origen.
+    scopes_persisted = {
+        (call.args[0].channel, call.args[0].chat_id) for call in mock_memory.store.call_args_list
+    }
+    assert scopes_persisted == {("telegram", "-1001"), ("telegram", "-1002"), ("cli", "")}
+
+    # mark_infused se llama una vez por scope con el scope correcto.
+    assert mock_history.mark_infused.call_count == 3
+    scopes_marked = {
+        (call.kwargs["channel"], call.kwargs["chat_id"])
+        for call in mock_history.mark_infused.call_args_list
+    }
+    assert scopes_marked == {
+        ("telegram", "-1001"),
+        ("telegram", "-1002"),
+        ("cli", ""),
+    }
+
+
+async def test_consolidation_isolates_messages_per_scope_in_extractor_prompt(
+    use_case, mock_llm, mock_memory, mock_history
+):
+    """Cada llamada al LLM debe ver SOLO los mensajes de su scope — no debe haber mezcla."""
+    mock_history.load_uninfused.return_value = [
+        Message(role=Role.USER, content="grupo A privado", channel="telegram", chat_id="100"),
+        Message(role=Role.USER, content="grupo B privado", channel="telegram", chat_id="200"),
+    ]
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
+
+    await use_case.execute()
+
+    assert mock_llm.complete.call_count == 2
+    prompts = [call.kwargs["system_prompt"] for call in mock_llm.complete.call_args_list]
+    assert any("grupo A privado" in p and "grupo B privado" not in p for p in prompts), (
+        "El scope (telegram, 100) no debe ver mensajes del scope (telegram, 200)"
+    )
+    assert any("grupo B privado" in p and "grupo A privado" not in p for p in prompts), (
+        "El scope (telegram, 200) no debe ver mensajes del scope (telegram, 100)"
+    )
+
+
+async def test_consolidation_sleeps_between_scopes_with_delay(
+    mock_llm, mock_memory, mock_embedder, mock_history, memory_config
+):
+    """Con delay_seconds > 0, espera entre scopes (no antes del primero, no después del último)."""
+    mock_history.load_uninfused.return_value = [
+        Message(role=Role.USER, content="A", channel="telegram", chat_id="1"),
+        Message(role=Role.USER, content="B", channel="telegram", chat_id="2"),
+        Message(role=Role.USER, content="C", channel="telegram", chat_id="3"),
+    ]
+    mock_memory.get_recent.return_value = []
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
+
+    uc = ConsolidateMemoryUseCase(
+        llm=mock_llm,
+        memory=mock_memory,
+        embedder=mock_embedder,
+        history=mock_history,
+        agent_id="test",
+        memory_config=memory_config,
+        delay_seconds=2,
+    )
+
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(s):
+        sleep_calls.append(s)
+
+    with patch("inaki.memory.use_cases.consolidate_memory.asyncio.sleep", side_effect=fake_sleep):
+        await uc.execute()
+
+    # 3 scopes → 2 sleeps (entre el 1° y 2°, y entre 2° y 3°)
+    assert sleep_calls == [2, 2]
+
+
+async def test_consolidation_does_not_sleep_with_zero_delay(
+    mock_llm, mock_memory, mock_embedder, mock_history, memory_config
+):
+    """delay_seconds=0 (default) → no se llama a asyncio.sleep entre scopes."""
+    mock_history.load_uninfused.return_value = [
+        Message(role=Role.USER, content="A", channel="telegram", chat_id="1"),
+        Message(role=Role.USER, content="B", channel="telegram", chat_id="2"),
+    ]
+    mock_memory.get_recent.return_value = []
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
+
+    uc = ConsolidateMemoryUseCase(
+        llm=mock_llm,
+        memory=mock_memory,
+        embedder=mock_embedder,
+        history=mock_history,
+        agent_id="test",
+        memory_config=memory_config,
+        delay_seconds=0,
+    )
+
+    with patch("inaki.memory.use_cases.consolidate_memory.asyncio.sleep") as mock_sleep:
+        await uc.execute()
+
+    mock_sleep.assert_not_called()
+
+
+async def test_digest_written_per_scope_to_distinct_files(
+    mock_llm, mock_memory, mock_embedder, mock_history, tmp_path
+):
+    """Cada scope debe producir su propio archivo de digest, sanitizado."""
+    cfg = MemorySettings(
+        digest_size=3,
+        digest_template=str(tmp_path / "mem" / "digest_{channel}_{chat_id}.md"),
+        consolidation=ConsolidationSettings(min_relevance_score=0.5, keep_last_messages=20),
+    )
+    mock_history.load_uninfused.return_value = [
+        Message(role=Role.USER, content="msg telegram", channel="telegram", chat_id="-1001"),
+        Message(role=Role.USER, content="msg cli", channel="cli", chat_id=""),
+    ]
+
+    def fake_get_recent(limit, agent_id=None, channel=None, chat_id=None):
+        return [
+            _make_entry(
+                f"recuerdo de ({channel},{chat_id})",
+                [],
+                datetime(2026, 4, 1, tzinfo=timezone.utc),
+            )
+        ]
+
+    mock_memory.get_recent.side_effect = fake_get_recent
+    mock_llm.complete.return_value = LLMResponse.of_text("[]")
+
+    uc = ConsolidateMemoryUseCase(
+        llm=mock_llm,
+        memory=mock_memory,
+        embedder=mock_embedder,
+        history=mock_history,
+        agent_id="test",
+        memory_config=cfg,
+    )
+    await uc.execute()
+
+    # Sanitización: chat_id "-1001" → "-1001" (válido), chat_id "" → "default".
+    digest_telegram = tmp_path / "mem" / "digest_telegram_-1001.md"
+    digest_cli = tmp_path / "mem" / "digest_cli_default.md"
+    assert digest_telegram.exists()
+    assert digest_cli.exists()
+    assert "(telegram,-1001)" in digest_telegram.read_text()
+    assert "(cli,)" in digest_cli.read_text()
+
+
+async def test_consolidation_aborts_when_one_scope_fails_marks_prev_scopes_no_trim(
+    mock_llm, mock_memory, mock_embedder, mock_history, memory_config
+):
+    """
+    Si el 2º scope falla en el extractor, se aborta sin truncar.
+    El 1º scope (ya procesado exitosamente) SÍ queda marcado como infused.
+    El trim NO corre.
+
+    Semántica nueva: mark_infused se llama por-scope dentro del loop.
+    Si el scope fallido es el 2º, el 1º ya fue marcado y no se reprocesará
+    en la próxima corrida.
+    """
+    mock_history.load_uninfused.return_value = [
+        Message(role=Role.USER, content="A", channel="telegram", chat_id="1"),
+        Message(role=Role.USER, content="B", channel="telegram", chat_id="2"),
+    ]
+    mock_memory.get_recent.return_value = []
+    # Primer scope OK (LLM devuelve []) → mark_infused llamado para ese scope.
+    # Segundo scope falla en el LLM → ConsolidationError propagado, trim no corre.
+    mock_llm.complete.side_effect = [
+        LLMResponse.of_text("[]"),
+        Exception("LLM 503"),
+    ]
+
+    uc = ConsolidateMemoryUseCase(
+        llm=mock_llm,
+        memory=mock_memory,
+        embedder=mock_embedder,
+        history=mock_history,
+        agent_id="test",
+        memory_config=memory_config,
+    )
+
+    with pytest.raises(ConsolidationError):
+        await uc.execute()
+
+    # El primer scope SÍ fue marcado — no se reprocesará en la próxima corrida.
+    mock_history.mark_infused.assert_called_once_with("test", channel="telegram", chat_id="1")
+    # El trim NO corre — el segundo scope falló y no fue procesado.
+    mock_history.trim.assert_not_called()

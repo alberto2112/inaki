@@ -131,6 +131,10 @@ forbidden_modules = [
     "inaki.config",
     "inaki.channels",
     "inaki.perception",
+    "inaki.embedding",
+    "inaki.memory",
+    "inaki.knowledge",
+    "inaki.skills",
 ]
 
 # adapters/ solo conoce core/ e inaki.shared: ni el wiring ni el módulo de config
@@ -147,6 +151,9 @@ forbidden_modules = [
     "inaki.config",
     "inaki.channels",
     "inaki.perception",
+    "inaki.memory",
+    "inaki.knowledge",
+    "inaki.skills",
 ]
 
 [[tool.importlinter.contracts]]
@@ -163,6 +170,10 @@ forbidden_modules = [
     "inaki.config",
     "inaki.channels",
     "inaki.perception",
+    "inaki.embedding",
+    "inaki.memory",
+    "inaki.knowledge",
+    "inaki.skills",
 ]
 
 [[tool.importlinter.contracts]]
@@ -177,6 +188,10 @@ forbidden_modules = [
     "inaki.config",
     "inaki.channels",
     "inaki.perception",
+    "inaki.embedding",
+    "inaki.memory",
+    "inaki.knowledge",
+    "inaki.skills",
 ]
 
 
@@ -193,6 +208,10 @@ forbidden_modules = [
     "inaki.observability",
     "inaki.channels",
     "inaki.perception",
+    "inaki.embedding",
+    "inaki.memory",
+    "inaki.knowledge",
+    "inaki.skills",
 ]
 
 # Un canal conoce el kernel (core), shared, observability y config (su sección se
@@ -223,4 +242,34 @@ forbidden_modules = [
     "inaki.channels",
     "inaki.config",
     "inaki.observability",
+    "inaki.embedding",
+    "inaki.memory",
+    "inaki.knowledge",
+    "inaki.skills",
 ]
+
+# Módulos de feature del núcleo: conocen el kernel (core), shared y —los que vectorizan—
+# embedding. Nunca a otro módulo de feature, a un canal, al wiring ni a config.
+[[tool.importlinter.contracts]]
+name = "inaki/embedding solo conoce core y shared"
+type = "forbidden"
+source_modules = ["inaki.embedding"]
+forbidden_modules = [
+    "adapters", "infrastructure", "inaki.cli", "inaki.app", "inaki.channels",
+    "inaki.config", "inaki.observability", "inaki.perception",
+    "inaki.memory", "inaki.knowledge", "inaki.skills",
+]
+
+[[tool.importlinter.contracts]]
+name = "inaki/memory, knowledge y skills solo conocen core, shared y embedding"
+type = "forbidden"
+source_modules = ["inaki.memory", "inaki.knowledge", "inaki.skills"]
+forbidden_modules = [
+    "adapters", "infrastructure", "inaki.cli", "inaki.app", "inaki.channels",
+    "inaki.config", "inaki.observability", "inaki.perception",
+]
+
+[[tool.importlinter.contracts]]
+name = "memory, knowledge y skills son independientes entre sí"
+type = "independence"
+modules = ["inaki.memory", "inaki.knowledge", "inaki.skills"]

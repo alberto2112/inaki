@@ -21,7 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from adapters.outbound.tools.delegate_tool import _RESULT_FORMAT_FOOTER, DelegateTool
-from adapters.outbound.tools.tool_registry import ToolRegistry
+from inaki.tools.registry import ToolRegistry
 from core.domain.value_objects.agent_settings import OneShotSettings
 from core.domain.value_objects.conversation_state import ConversationState
 from core.domain.value_objects.delegation_result import DelegationResult

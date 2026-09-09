@@ -24,7 +24,7 @@ from adapters.outbound.scheduler.builtin_tasks import (
     build_reconcile_memory_task,
 )
 from adapters.outbound.scheduler.dispatch_adapters import ReconcileDispatchAdapter
-from adapters.outbound.tools.tool_registry import ToolRegistry
+from inaki.tools.registry import ToolRegistry
 from core.domain.entities.task import TriggerType
 from core.domain.value_objects.agent_settings import MemorySettings, OneShotSettings
 from core.ports.outbound.turn_tracer_port import NullTurnTracer

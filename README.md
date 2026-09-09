@@ -16,7 +16,7 @@ Personal AI assistant designed to run as a systemd service on a **Raspberry Pi 5
 - **Voice transcription** — Whisper-based transcription for Telegram voice messages
 - **Knowledge sources** — RAG over local documents (Markdown, PDF) with configurable chunking
 - **Multi-Pi broadcast** — multiple Inaki instances on the same LAN can collaborate in a shared Telegram group via HMAC-signed TCP
-- **Extensions** — drop a `manifest.py` in `ext/` and the tools/skills are auto-discovered
+- **Extensions** — drop a `manifest.py` in `~/.inaki/ext/` and the tools/skills are auto-discovered
 
 ---
 
@@ -25,7 +25,6 @@ Personal AI assistant designed to run as a systemd service on a **Raspberry Pi 5
 Inaki follows **strict hexagonal (Ports & Adapters)** architecture:
 
 ```
-ext/            ← User extensions (auto-discovered)
 inaki/
   shared/       ← Domain primitives shared by every module (Message, attachments, errors)
   observability/← Logging, debug mode, turn traces
@@ -33,11 +32,15 @@ inaki/
   channels/     ← One package per channel: telegram (bot, outbound, broadcast, files), rest (admin API), cli (chat)
   cli/          ← Entry points (one module per command)
   app/          ← Bootstrap, daemon runner, reloader
+  llm/          ← LLM providers (OpenAI-compatible family, Anthropic, Ollama, Responses)
+  tools/        ← ToolRegistry with semantic routing, builtin tools, tool-config store
+  extensions/   ← Discovery of user extensions (`<home>/ext/*/manifest.py`)
+  embedding/ memory/ knowledge/ skills/ perception/ ← Feature modules
 core/
   domain/       ← Entities, value objects, services — zero external imports
   ports/        ← Interfaces, including the channel contract (IChannel, IChannelOutbound)
   use_cases/    ← RunAgentUseCase · ConsolidateMemoryUseCase · ScheduleTaskUseCase
-adapters/outbound/ ← LLM providers · tools · memory · embeddings · skills · scheduler
+adapters/outbound/ ← scheduler · delegation (moving into inaki/ next)
 infrastructure/
   container.py  ← Single wiring point (DI composition root)
 ```
@@ -205,17 +208,15 @@ Multiple Inaki instances on the same LAN can share a Telegram group conversation
 
 ## Extensions
 
-Drop a folder in `ext/` with a `manifest.py` and your tools/skills are auto-discovered at startup. No registration needed.
+Drop a folder in `~/.inaki/ext/` (`app.ext_dirs`) with a `manifest.py` and your tools/skills are auto-discovered at startup. No registration needed.
 
 ```
-ext/
+~/.inaki/ext/
 ├── my_extension/
 │   ├── manifest.py       # Declares package path for discovery
 │   ├── my_tool.py        # Implements ITool
 │   └── my_skill.yaml     # Skill instructions injected in system prompt
 ```
-
-Included extensions: `exchange_calendar`, `nominatim`, `notes_todo_list`, `replicate_music`, `shell_exec`.
 
 ### Tool Config Protocol
 
@@ -235,7 +236,7 @@ class MyTool(ITool):
 
 The agent can then configure credentials at runtime ("set my_tool api_key to …"), which are encrypted at rest in `~/.inaki/config/tool_config.yaml` and survive daemon restarts. No separate YAML file or `CryptoService` needed.
 
-See [`ext/USER.md`](ext/USER.md) and [`docs/tools_y_skills.md`](docs/tools_y_skills.md) for conventions.
+See [`docs/tools_y_skills.md`](docs/tools_y_skills.md) for conventions.
 
 ---
 

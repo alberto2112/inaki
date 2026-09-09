@@ -347,7 +347,7 @@ Only skills retrieved by routing (or all if routing is inactive) appear in the p
 | **Core — Use Case** | `core/use_cases/run_agent.py` | Routing pipeline orchestration |
 | **Adapter** | `inaki/embedding/cache.py` | SQLite cache implementation |
 | **Adapter** | `inaki/skills/yaml_skill_repo.py` | Skill loading + routing |
-| **Adapter** | `adapters/outbound/tools/tool_registry.py` | Tool registration + routing |
+| **Adapter** | `inaki/tools/registry.py` | Tool registration + routing |
 | **Infrastructure** | `infrastructure/container.py` | Wiring: instantiates and connects everything |
 | **Config** | `inaki/config/schema/` | `EmbeddingConfig`, `SkillsConfig`, `ToolsConfig`, `SemanticRoutingConfig` |
 

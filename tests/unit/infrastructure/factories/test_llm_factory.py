@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from adapters.outbound.providers.base import BaseLLMProvider, ResolvedLLMConfig
+from inaki.llm.base import BaseLLMProvider, ResolvedLLMConfig
 from inaki.config import (
     LLMConfig,
     ProviderConfig,

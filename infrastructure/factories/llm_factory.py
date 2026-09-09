@@ -13,7 +13,7 @@ import logging
 import pkgutil
 from pathlib import Path
 
-from adapters.outbound.providers.base import BaseLLMProvider, ResolvedLLMConfig
+from inaki.llm.base import BaseLLMProvider, ResolvedLLMConfig
 from core.ports.outbound.llm_port import ILLMProvider
 from inaki.config import LLMConfig, ProviderConfig
 from inaki.shared.errors import ConfigError
@@ -29,14 +29,14 @@ class LLMProviderFactory:
         if cls._registry:
             return
 
-        import adapters.outbound.providers as providers_pkg
-        from adapters.outbound.providers.base import BaseLLMProvider
+        import inaki.llm as providers_pkg
+        from inaki.llm.base import BaseLLMProvider
 
         pkg_path = Path(providers_pkg.__file__).parent
         for _, module_name, _ in pkgutil.iter_modules([str(pkg_path)]):
             if module_name == "base":
                 continue
-            module = importlib.import_module(f"adapters.outbound.providers.{module_name}")
+            module = importlib.import_module(f"inaki.llm.{module_name}")
             provider_name = getattr(module, "PROVIDER_NAME", None)
             if provider_name is None:
                 continue

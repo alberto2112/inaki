@@ -92,8 +92,8 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
 def config_files(home: Path) -> tuple[Path, Path]:
     """Escribe un ``global.yaml`` y un agente mínimos, como los escribiría un operador.
 
-    ``ext_dirs: []`` es deliberado: el default apunta al ``ext/`` del árbol del
-    código, que en esta máquina tiene extensiones reales con dependencias pesadas.
+    Sin ``ext_dirs``: el default es ``<home>/ext``, que en el home temporal no
+    existe, así que no entra ninguna extensión real de esta máquina.
     """
     config_dir = home / "config"
     agents_dir = home / "agents"
@@ -103,7 +103,6 @@ def config_files(home: Path) -> tuple[Path, Path]:
         textwrap.dedent(
             """\
             app:
-              ext_dirs: []
               log_level: WARNING
             llm:
               provider: openrouter

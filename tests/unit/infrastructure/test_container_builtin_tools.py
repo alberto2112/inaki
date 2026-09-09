@@ -7,8 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from adapters.outbound.config_repository.yaml_tool_config_store import YamlToolConfigStore
-from adapters.outbound.tools.tool_registry import ToolRegistry
+from inaki.tools.config_store import YamlToolConfigStore
+from inaki.tools.registry import ToolRegistry
 from inaki.config.home import set_inaki_home
 from inaki.memory.adapters.sqlite_history_store import (
     HistoryStoreSettings,

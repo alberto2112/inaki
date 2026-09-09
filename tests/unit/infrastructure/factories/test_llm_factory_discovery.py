@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import pytest
 
-from adapters.outbound.providers.deepseek import DeepSeekProvider
-from adapters.outbound.providers.groq import GroqProvider
-from adapters.outbound.providers.openai import OpenAIProvider
-from adapters.outbound.providers.openai_compatible import OpenAICompatibleProvider
-from adapters.outbound.providers.openrouter import OpenRouterProvider
+from inaki.llm.deepseek import DeepSeekProvider
+from inaki.llm.groq import GroqProvider
+from inaki.llm.openai import OpenAIProvider
+from inaki.llm.openai_compatible import OpenAICompatibleProvider
+from inaki.llm.openrouter import OpenRouterProvider
 from infrastructure.factories.llm_factory import LLMProviderFactory
 
 

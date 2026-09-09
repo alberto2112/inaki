@@ -45,6 +45,7 @@ existe este documento— y la contradicción no queda flotando.
 | [`channel-contextid`](#channel-contextid) | `mv` de los ficheros de contexto a `{context_id}.md` + cambiar la variable del prompt |
 | [`per-user-context-files`](#per-user-context-files) | *(superseded)* `mv` de `USER.md` a `users/{channel}/…` |
 | [`config-falla-ruidoso`](#config-falla-ruidoso) | **Puede impedir el arranque**: corregir el typo/valor que el error nombra (antes se ignoraba en silencio) |
+| [`modulos-tools-llm-extensions`](#modulos-tools-llm-extensions) | `app.ext_dirs` relativo pasa a anclarse al **home**, no al cwd: si las extensiones viven en el árbol del código, poner el path absoluto |
 
 ### Migración automática en caliente — sin acción
 
@@ -104,11 +105,65 @@ existe este documento— y la contradicción no queda flotando.
 - **Memoria**: `memory-management-tools`, `memory-scoped-by-channel-chat`,
   `agent-state-scoped-by-channel-chat`
 - **Scheduler**: `scheduler-trigger-type-mutable`, `channel-send-history-persist`
-- **Tools y config**: `write-file-explicit-mode`, `tool-config-protocol`,
+- **Tools y config**: `modulos-tools-llm-extensions`, `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `modulos-tools-llm-extensions`
+
+**Contexto (2026-09-09, fase 7b del refactor modular).** Las tools genéricas, el
+registro con routing semántico y el store del Tool Config Protocol repartidos en
+tres paquetes de `adapters/outbound/`; los providers LLM en
+`adapters/outbound/providers/`; y el cargador de extensiones como un método de
+140 líneas dentro de `AgentContainer` que descubría, instanciaba y registraba en
+tres registros (tools, skills, knowledge) de una sola pasada. Encima, el default
+de `app.ext_dirs` era `["ext", "~/.inaki/ext"]`: `ext` **relativo al cwd del
+proceso**, es decir al árbol del código —y un producto instalado con `pipx` no
+tiene árbol del código.
+
+**Cambio.**
+
+- `inaki/tools/` (`registry` con `ToolRegistry` e `instanciar_tool`,
+  `builtin/` con `read_file`, `write_file`, `patch_file`, `edit_file` y
+  `web_search`, `path_resolution`, `config_store` = `YamlToolConfigStore`),
+  `inaki/llm/` (`base` + los ocho providers) e `inaki/extensions/`
+  (`descubrir_extensiones` → `Extension`).
+- **Qué se queda en `core/` y por qué**: `ITool`, `ToolResult`, `IToolExecutor`,
+  `IToolConfigStore`, `ILLMProvider` y `LLMResponse` los consume el turno. El
+  contrato de las extensiones (`from core.ports.outbound.tool_port import ITool,
+  ToolResult`) siguió válido tal cual: ninguna de las 15 extensiones reales cambió.
+- **Descubrir ≠ registrar.** `inaki.extensions` solo importa manifests y devuelve
+  clases, paths y factories; instanciar (con el Tool Config Protocol, en
+  `instanciar_tool`) y registrar lo hace el composition root, que es quien tiene
+  los registros. Así el módulo no conoce a `tools`, `skills` ni `knowledge`, y el
+  contrato `manifest.py` quedó cubierto por un test que carga las extensiones
+  reales de la máquina (se salta en un clon limpio).
+- `LLMProviderFactory` siguió en `infrastructure/factories/` (wiring), escaneando
+  `inaki.llm`, igual que la de embedding en la fase 7a. `delegate_tool` y
+  `scheduler_tool` siguieron en `adapters/` hasta la fase 8.
+- **BREAKING `app.ext_dirs`**: pasó a `list[RuntimePath]` con default `["ext"]`,
+  o sea `<home>/ext`. Un path relativo se ancla al home de instancia (se reancla
+  con `--home` / `INAKI_HOME`), no al cwd; un absoluto se usa tal cual. Y un
+  directorio declarado que no existe se saltea con `WARNING` (antes, `DEBUG`).
+- Contratos `import-linter`: 14. `adapters/` perdió el permiso transitorio de
+  importar `inaki.embedding`.
+
+**Acción del operador.** Si `global.yaml` declaraba `ext_dirs: ["ext/", ...]`
+apuntando al `ext/` del árbol del código, ese valor pasó a significar
+`<home>/ext/`: escribí el path absoluto (`/home/pi/inaki/ext`) o mové las
+extensiones a `<home>/ext/`. La pista en el arranque es el `WARNING` "el
+directorio declarado en app.ext_dirs no existe".
+
+**Comportamiento observable.** Solo ese `WARNING`. Los paths de import cambian.
+
+**Invariante que dejó.** **NUNCA** un default de config relativo al cwd del
+proceso: un path de runtime se ancla al home de instancia (`RuntimePath`) o es
+absoluto. El cwd es un accidente de cómo se lanzó el proceso (systemd, `pipx`,
+una terminal), no una parte de la instancia.
 
 ---
 

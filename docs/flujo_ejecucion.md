@@ -204,7 +204,7 @@ inaki consolidate
 LLMProviderFactory.create(agent_cfg)
 │
 ├── _load()  [first time only — cached in _registry]
-│   ├── pkgutil.iter_modules("adapters/outbound/providers/")
+│   ├── pkgutil.iter_modules("inaki/llm/")
 │   ├── For each module (except "base"):
 │   │   ├── importlib.import_module(...)
 │   │   ├── read PROVIDER_NAME from the module

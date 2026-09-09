@@ -44,7 +44,7 @@ Cuatro capas. La dirección de dependencias es `adapters → core ← infrastruc
 | **`infrastructure/`** | Wiring y cross-cutting. `container.py` | Único lugar donde se instancian adapters y se inyectan en use cases |
 | **`inaki/`** | Composition root: `inaki/cli/` (un módulo por comando, `_common` con los helpers) e `inaki/app/` (`bootstrap`, `runner`, `reloader`) | Fuera de la regla hexagonal (ensamblar es su trabajo). Los entry points NUEVOS van a `inaki/cli/`; los canales, a `inaki/channels/` |
 
-`ext/` — extensiones de usuario, auto-descubiertas vía `manifest.py`.
+`<home>/ext/` (`app.ext_dirs`) — extensiones de usuario, auto-descubiertas vía `manifest.py` por `inaki/extensions/`.
 
 > **Refactor modular en curso (2026-09).** El código se está reorganizando por
 > FEATURE bajo el namespace `inaki/` (monolito modular: kernel + módulos +
@@ -60,7 +60,9 @@ Cuatro capas. La dirección de dependencias es `adapters → core ← infrastruc
 > (bootstrap, runner, reloader) e `inaki/perception/` (fotos, caras, escena y voz,
 > independientes del canal; `TranscribeAudioUseCase` reemplaza la transcripción inline).
 > Y los módulos del núcleo `inaki/embedding/`, `inaki/memory/`, `inaki/knowledge/` e
-> `inaki/skills/` (adapters, use cases y tools; los ports que consume el turno siguen en `core/`). La ley de dependencias vive en `pyproject.toml` →
+> `inaki/skills/` (adapters, use cases y tools; los ports que consume el turno siguen en `core/`),
+> `inaki/tools/` (registro con routing, builtins, store del Tool Config Protocol), `inaki/llm/`
+> (providers) e `inaki/extensions/` (descubrimiento de `manifest.py`). La ley de dependencias vive en `pyproject.toml` →
 > `[tool.importlinter]` y la verifica `lint-imports`. Mientras dure el refactor,
 > las capas `core/`, `adapters/` e `infrastructure/` siguen vigentes con sus
 > reglas; los módulos se mudan de a uno.

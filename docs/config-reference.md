@@ -108,7 +108,7 @@ Bloque SOLO global (``global.yaml`` → ``app:``). No admite override per-agente
 | `log_level` | `str` | `'INFO'` |  |
 | `log_format` | `Literal['console', 'json']` | `'console'` |  |
 | `debug` | `bool` | `False` |  |
-| `ext_dirs` | `list[str]` | `['ext', '~/.inaki/ext']` |  |
+| `ext_dirs` | `list[str]` | `['ext']` |  |
 | `default_agent` | `str` | `'general'` |  |
 
 **`name`** — Nombre de la instancia del asistente.
@@ -129,7 +129,7 @@ Activo: el nivel de log sube a ``DEBUG`` (ignora ``log_level``) y cada turno dej
 
 **`ext_dirs`** — Directorios donde se auto-descubren las extensiones de usuario, en orden.
 
-Cada directorio se escanea buscando ``*/manifest.py``, que registra tools, skills y fuentes de knowledge propias. Los paths relativos se resuelven contra el cwd del proceso; ``~`` se expande al cargar la config. Un directorio inexistente se saltea sin error.
+Cada directorio se escanea buscando ``*/manifest.py``, que declara tools, skills y fuentes de knowledge propias. Un path relativo se ancla al home de instancia (``<home>/ext`` por defecto; se reancla con ``--home`` / ``INAKI_HOME``); un path absoluto se usa tal cual y ``~`` se expande. Un directorio declarado que no existe se saltea con un ``WARNING`` en el log: nombra un recurso que el operador espera cargado.
 
 **`default_agent`** — Agente que usan los comandos de CLI cuando no se pasa ``--agent``.
 

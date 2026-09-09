@@ -23,7 +23,6 @@ def _hijo(raw: dict, *, llm: AsyncMock | None = None, tools: object | None = Non
         caller_llm=llm or AsyncMock(),
         tools=tools or MagicMock(),  # type: ignore[arg-type]
         tracer=NullTurnTracer(),
-        thinking_indicator=False,
     )
 
 

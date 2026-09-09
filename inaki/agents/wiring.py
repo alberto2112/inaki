@@ -57,7 +57,6 @@ def build_ephemeral_child(
     caller_llm: ILLMProvider,
     tools: IToolExecutor,
     tracer: ITurnTracer,
-    thinking_indicator: bool,
 ) -> RunAgentOneShotUseCase:
     """Instancia efímera one-shot de un sub-agente resuelta contra el CALLER.
 
@@ -98,7 +97,6 @@ def build_ephemeral_child(
             request_delay_seconds=child_cfg.llm.request_delay_seconds,
             allowed_tools=frozenset(allowed) if allowed is not None else None,
         ),
-        thinking_indicator=thinking_indicator,
         tracer=tracer,
     )
 

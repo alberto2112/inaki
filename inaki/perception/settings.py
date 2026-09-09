@@ -15,7 +15,6 @@ class PhotosSettings(BaseModel, frozen=True):
     """
 
     enabled: bool = True
-    debug: bool = False
     enrollment_chats: str = "private"
     match_threshold: float = 0.55
     ambiguous_threshold: float = 0.40

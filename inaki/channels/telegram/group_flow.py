@@ -119,7 +119,7 @@ class TelegramGroupFlowMixin:
             contenido_grupo = f"{extract_sender_name(update.message)} sent:\n{user_input}"
         else:
             contenido_grupo = format_group_message(update.message)
-        await self._ports.run_agent.record_user_message(
+        await self._ports.history.record_user_message(
             contenido_grupo,
             channel="telegram",
             chat_id=chat_id_str,

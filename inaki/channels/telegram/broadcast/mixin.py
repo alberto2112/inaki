@@ -157,7 +157,7 @@ class TelegramBroadcastMixin:
             )
 
             contenido = _format_history_prefix(msg)
-            await self._ports.run_agent.record_user_message(
+            await self._ports.history.record_user_message(
                 contenido,
                 channel="telegram",
                 chat_id=msg.chat_id,

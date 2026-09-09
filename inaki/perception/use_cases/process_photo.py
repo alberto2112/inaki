@@ -4,7 +4,7 @@ Orquesta visión + registro facial + descripción de escena + anotación + metad
 Produce un texto contextual en español que el agente principal recibe como
 ``user_input`` adicional, y opcionalmente una imagen anotada para enviar al usuario.
 
-Hexagonal: solo importa de ``core/ports/`` y ``core/domain/``. Nunca de adapters/.
+Solo conoce sus ports, su dominio y el tracer del kernel; nunca un adapter.
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ from __future__ import annotations
 import io
 import logging
 from datetime import datetime
-from pathlib import Path
 from typing import Protocol
 
 import numpy as np
@@ -29,6 +28,7 @@ from inaki.perception.ports.face_metadata import IMessageFaceMetadataRepo
 from inaki.perception.ports.face_registry import IFaceRegistryPort
 from inaki.perception.ports.scene import ISceneDescriberPort
 from inaki.perception.ports.vision import IVisionPort
+from inaki.kernel.ports.outbound.turn_tracer_port import ITurnTracer, NullTurnTracer
 from inaki.perception.settings import PhotosSettings
 
 logger = logging.getLogger(__name__)
@@ -63,6 +63,7 @@ class ProcessPhotoUseCase:
         annotator: IPhotoAnnotator,
         metadata_repo: IMessageFaceMetadataRepo,
         config: PhotosSettings,
+        tracer: ITurnTracer | None = None,
     ) -> None:
         self._vision = vision
         self._face_registry = face_registry
@@ -70,6 +71,9 @@ class ProcessPhotoUseCase:
         self._annotator = annotator
         self._metadata_repo = metadata_repo
         self._config = config
+        # Trazas del modo debug (``--debug`` / ``app.debug``): la traza
+        # ``photo.analysis`` reemplaza al viejo fichero /tmp/inaki.photo-debug.
+        self._tracer: ITurnTracer = tracer or NullTurnTracer()
 
     async def execute(
         self,
@@ -148,88 +152,41 @@ class ProcessPhotoUseCase:
                 chat_id=chat_id,
             )
 
-        debug_path: str | None = None
-        if self._config.debug:
-            debug_path = self._write_debug_phase1(
-                image_bytes=image_bytes,
-                detections=detections,
-                face_matches=face_matches,
-                scene_description=scene_description,
-                text_context=text_context,
-                chat_type=chat_type,
-                channel=channel,
-                chat_id=chat_id,
-                agent_id=agent_id,
-            )
+        self._tracer.trace(
+            "photo.analysis",
+            agent_id=agent_id,
+            channel=channel,
+            chat_id=chat_id,
+            chat_type=chat_type,
+            image_bytes=len(image_bytes),
+            detections=len(detections),
+            matches=[self._resumen_match(fm) for fm in face_matches],
+            scene=scene_description,
+            text_context=text_context,
+        )
 
         return ProcessPhotoResult(
             text_context=text_context,
             annotated_image=annotated_image,
             should_skip_run_agent=False,
-            debug_path=debug_path,
         )
 
     # ------------------------------------------------------------------
     # Helpers privados
     # ------------------------------------------------------------------
 
-    def _write_debug_phase1(
-        self,
-        *,
-        image_bytes: bytes,
-        detections: list,
-        face_matches: list,
-        scene_description: str | None,
-        text_context: str,
-        chat_type: str,
-        channel: str,
-        chat_id: str,
-        agent_id: str,
-    ) -> str:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        path = f"/tmp/inaki.photo-debug.{ts}.log"
-        lines: list[str] = [
-            "=== Inaki PHOTO DEBUG ===",
-            f"Timestamp: {datetime.now().isoformat()}",
-            f"Agent: {agent_id}",
-            f"Chat: channel={channel}, chat_id={chat_id}, chat_type={chat_type}",
-            f"Config: enabled={self._config.enabled}, enrollment_chats={self._config.enrollment_chats}",
-            "",
-            "--- Fase 1: ProcessPhotoUseCase ---",
-            f"Imagen: {len(image_bytes)} bytes",
-            f"Detecciones InsightFace: {len(detections)}",
-        ]
-        if face_matches:
-            lines.append("Face matches:")
-            for fm in face_matches:
-                top = ""
-                if fm.candidates:
-                    persona, score = fm.candidates[0]
-                    nombre = self._formatear_nombre(persona)
-                    top = f" top={nombre} ({score:.3f})"
-                lines.append(
-                    f"  {fm.face_ref}  status={fm.status.value}{top}  categoria={fm.categoria!r}"
-                )
-        else:
-            lines.append("Face matches: (ninguno)")
-        lines += [
-            "",
-            "--- Descripción de escena ---",
-            scene_description
-            if scene_description is not None
-            else "(scene describer no configurado o falló)",
-            "",
-            "--- text_context (salida de Phase 1, user_input del agente) ---",
-            text_context,
-            "",
-        ]
-        try:
-            Path(path).write_text("\n".join(lines), encoding="utf-8")
-            logger.debug("photo-debug Phase 1 escrito en %s", path)
-        except OSError as exc:
-            logger.warning("No se pudo escribir photo-debug Phase 1: %s", exc)
-            return ""
-        return path
+    def _resumen_match(self, fm: FaceMatch) -> dict[str, object]:
+        """Lo que la traza ``photo.analysis`` dice de cada cara, sin embeddings."""
+        top: dict[str, object] | None = None
+        if fm.candidates:
+            persona, score = fm.candidates[0]
+            top = {"persona": self._formatear_nombre(persona), "score": round(score, 3)}
+        return {
+            "face_ref": fm.face_ref,
+            "status": fm.status.value,
+            "categoria": fm.categoria,
+            "top": top,
+        }
 
     async def _construir_face_matches(
         self,

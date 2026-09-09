@@ -45,6 +45,7 @@ existe este documento— y la contradicción no queda flotando.
 | [`channel-contextid`](#channel-contextid) | `mv` de los ficheros de contexto a `{context_id}.md` + cambiar la variable del prompt |
 | [`per-user-context-files`](#per-user-context-files) | *(superseded)* `mv` de `USER.md` a `users/{channel}/…` |
 | [`config-falla-ruidoso`](#config-falla-ruidoso) | **Puede impedir el arranque**: corregir el typo/valor que el error nombra (antes se ignoraba en silencio) |
+| [`kernel-limpio`](#kernel-limpio) | `"Thinking..."` deja de persistirse en `history.db`; el análisis de fotos sale como traza `photo.analysis` en vez de `/tmp`; `user.timezone` por fin llega al prompt |
 | [`runtimes-tipados`](#runtimes-tipados) | Sin cambios de comportamiento: `container.py` desaparece; `inaki/app/assembly.py` entrega `AgentRuntime`/`HarnessRuntime` inmutables |
 | [`wiring-por-modulo`](#wiring-por-modulo) | Sin cambios de comportamiento: cada módulo se ensambla en su `wiring.py`; `container.py` queda como orquestador fino |
 | [`kernel-y-fachada-de-tools`](#kernel-y-fachada-de-tools) | **Extensiones**: reemplazar `from core.ports.outbound.*` por `from inaki.tools import ...` (dos `sd`); una extensión sin migrar se saltea con `WARNING` |
@@ -54,7 +55,8 @@ existe este documento— y la contradicción no queda flotando.
 
 `persist-tool-calls`, `groups-vs-broadcast`, `tool-config-own-file`,
 `agent-state-scoped-by-channel-chat`, `secrets-layer-eradication`,
-`channels-validados-al-cargar`, `motor-de-merge-unico`.
+`channels-validados-al-cargar`, `motor-de-merge-unico`, `kernel-limpio` (quita `photos.debug`
+de `global.yaml`).
 
 ### Sin migración — pero cambian comportamiento observable
 
@@ -92,7 +94,7 @@ existe este documento— y la contradicción no queda flotando.
 
 ## Índice por subsistema
 
-- **Historial y persistencia del turno**: `outbound-send-single-owner`,
+- **Historial y persistencia del turno**: `kernel-limpio`, `outbound-send-single-owner`,
   `persist-tool-calls`, `incremental-persist`, `intermediate-persist`,
   `in-flight-message-injection`, `turn-kill-switch`
 - **Retención y alcance del registro**: `trim-cuenta-conversacion`,
@@ -114,6 +116,69 @@ existe este documento— y la contradicción no queda flotando.
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `kernel-limpio`
+
+**Contexto (2026-09-09, fase 10 del refactor modular).** Con todo lo demás ya
+movido, el kernel: ``RunAgentUseCase`` con 930 líneas y 13 métodos públicos de
+los que solo tres corrían el turno; un flag de canal (``thinking_indicator``)
+viajando por tres constructores hasta el tool loop; un ``set_photo_debug_path``
+que un canal seteaba "para el próximo ``execute()``" (estado mutable en el use
+case, justo lo que la 9c erradicó) y que escribía en ``/tmp`` lo que la traza
+``turn.prompt`` ya emite; y ``wire_user_timezone``, un setter que no llamaba
+nadie.
+
+**Cambio.**
+
+- **``ConversationHistory``** (``inaki/kernel/use_cases/conversation_history.py``):
+  ``record_user_message``, ``record_photo_message``, ``record_assistant_message``,
+  ``update_message_content``, ``get_history`` y ``clear_history`` salen de
+  ``RunAgentUseCase``. Vive en el kernel (no en ``memory/``, como decía el plan)
+  porque ``turn_dispatch`` lo consume. ``AgentRuntime`` y ``TelegramBotPorts``
+  ganan ``history``; el store pasa a llamarse ``history_store`` en el runtime.
+  ``RunAgentUseCase`` queda con ``execute``, ``inspect``, ``get_agent_info`` y
+  los dos setters del ensamblado en dos pasadas.
+- **El indicador de thinking es una capacidad del outbound.** ``IIntermediateSink``
+  gana ``thinking()`` (no-op por defecto); el tool loop lo llama cuando
+  ``llm.thinking_active``, sin flag; ``IChannelOutbound.shows_thinking`` declara
+  la capacidad y ``OutboundIntermediateSink`` la honra. ``channels.thinking_indicator``
+  no se mueve de la config: el ``wiring.py`` de Telegram se lo pasa a su outbound.
+  El kernel pierde el parámetro en ``RunAgentUseCase``, ``RunAgentOneShotUseCase``
+  y ``build_ephemeral_child``.
+- **El debug de fotos muere a favor de las trazas.** ``set_photo_debug_path`` y
+  ``write_debug_phase2`` (Phase 2, redundante con ``turn.prompt``) se borran; la
+  Phase 1 de ``ProcessPhotoUseCase`` es ahora el evento ``photo.analysis`` del
+  ``ITurnTracer`` (detecciones, matches con su top candidato, escena,
+  ``text_context``), sin ficheros en ``/tmp``. ``ProcessPhotoResult.debug_path``
+  y ``PhotosSettings.debug`` desaparecen.
+- **BREAKING con migración automática: ``photos.debug`` se elimina del schema.**
+  Como una clave desconocida aborta el arranque, ``migrate_photos_debug`` la
+  quita de ``global.yaml`` al arrancar con un ``WARNING`` que dice qué usar
+  (``inaki --debug daemon`` o ``app.debug: true``).
+
+**Comportamiento observable.**
+
+- ``"Thinking..."`` ya no se persiste en ``history.db``: al viajar por ``emit()``
+  los wrappers que graban la narración lo guardaban, aunque el comentario
+  dijera "no persiste". Ahora es un método aparte y de verdad es efímero.
+- Sin ``/tmp/inaki.photo-debug.*.log``: el análisis de una foto está en
+  ``<home>/debug/turns/<agente>.jsonl`` con el modo debug activo.
+
+*Cerrado en el mismo PR (commit ``fix(kernel)``):* ``user.timezone`` no llegaba
+al prompt. Las variables de fecha y hora del system prompt salían de
+``AgentContext.timezone``, que solo seteaba ``wire_user_timezone``, y ese setter
+no lo llamaba nadie: el kernel caía a la zona del sistema e ignoraba la config
+(en la Pi coinciden, por eso nadie lo notó). Ahora ``RunAgentSettings.user_timezone``
+llega desde el bloque global ``user`` vía ``inaki/app/settings.py`` y el setter
+murió.
+
+**Invariante que dejó.** **NUNCA** un flag de un canal en el kernel: el kernel
+AVISA lo que pasa (``sink.thinking()``) y el canal decide qué mostrar. Y
+**NUNCA** estado mutable en un use case que un canal setea "para el próximo
+turno": lo que un turno necesita entra por ``execute()`` o por settings, y lo
+que un operador quiere ver sale por el tracer.
 
 ---
 

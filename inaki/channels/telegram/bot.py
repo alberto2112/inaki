@@ -452,7 +452,7 @@ class TelegramBot(
                 assert user_input is not None
                 result = await dispatch_inbound_turn(
                     scope_registry=self._ports.scope_registry,
-                    run_agent=self._ports.run_agent,
+                    history=self._ports.history,
                     scope=scope,
                     message=user_input,
                     execute=_ejecutar_turno,

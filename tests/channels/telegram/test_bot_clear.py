@@ -1,7 +1,7 @@
 """Tests para _cmd_clear del TelegramBot — verifica que usa la API pública clear_history().
 
 Cubre tareas 7.1, 7.2:
-  - _handle_clear llama run_agent.clear_history() (API pública)
+  - _handle_clear llama history.clear_history() (API pública)
   - NO accede a run_agent._history.clear(...) (privado)
 """
 
@@ -18,7 +18,7 @@ from inaki.channels.telegram.ports import TelegramChannelSettings
 def mock_container() -> MagicMock:
     """Mock de AgentContainer con run_agent que expone clear_history()."""
     container = MagicMock()
-    container.run_agent.clear_history = AsyncMock(return_value=None)
+    container.history.clear_history = AsyncMock(return_value=None)
     return container
 
 
@@ -49,7 +49,7 @@ def bot(agent_cfg, mock_container):
 
 
 async def test_cmd_clear_llama_clear_history_api_publica(bot, mock_container) -> None:
-    """_cmd_clear llama run_agent.clear_history() — la API pública, no el atributo privado."""
+    """_cmd_clear llama history.clear_history() — la API pública, no el atributo privado."""
     # Preparar update y context
     update = MagicMock()
     update.effective_user.id = 12345
@@ -59,7 +59,7 @@ async def test_cmd_clear_llama_clear_history_api_publica(bot, mock_container) ->
     await bot._cmd_clear(update, context)
 
     # Verificar que la API pública fue llamada
-    mock_container.run_agent.clear_history.assert_awaited_once()
+    mock_container.history.clear_history.assert_awaited_once()
     update.message.reply_text.assert_awaited_once_with("Historial de este chat limpiado.")
 
 
@@ -78,7 +78,7 @@ async def test_cmd_clear_no_accede_a_historial_privado(bot, mock_container) -> N
 
 async def test_cmd_clear_maneja_excepcion(bot, mock_container) -> None:
     """_cmd_clear captura excepciones y envía mensaje de error."""
-    mock_container.run_agent.clear_history.side_effect = RuntimeError("DB fallida")
+    mock_container.history.clear_history.side_effect = RuntimeError("DB fallida")
     update = MagicMock()
     update.effective_user.id = 12345
     update.message.reply_text = AsyncMock()

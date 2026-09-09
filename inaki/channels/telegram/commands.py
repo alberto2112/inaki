@@ -174,7 +174,7 @@ class TelegramCommandsMixin:
             return
         chat_id = str(chat.id)
         try:
-            await self._ports.run_agent.clear_history(
+            await self._ports.history.clear_history(
                 channel="telegram",
                 chat_id=chat_id,
             )
@@ -199,7 +199,7 @@ class TelegramCommandsMixin:
         if not self._is_allowed(user.id):
             return
         try:
-            await self._ports.run_agent.clear_history()
+            await self._ports.history.clear_history()
             await message.reply_text("Historial completo del agente limpiado.")
         except Exception as exc:
             logger.exception("Error en /clear_all Telegram para '%s'", self._settings.id)
@@ -239,7 +239,7 @@ class TelegramCommandsMixin:
 
         # Fase 2 — limpiar el historial del chat actual (solo si la fase 1 no falló).
         try:
-            await self._ports.run_agent.clear_history(
+            await self._ports.history.clear_history(
                 channel="telegram",
                 chat_id=chat_id,
             )

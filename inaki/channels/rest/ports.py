@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from inaki.kernel.domain.services.channel_outbound_registry import ChannelOutboundRegistry
     from inaki.kernel.ports.outbound.scope_registry_port import IScopeRegistry
     from inaki.kernel.ports.outbound.tool_port import IToolExecutor
+    from inaki.kernel.use_cases.conversation_history import ConversationHistory
     from inaki.kernel.use_cases.run_agent import RunAgentUseCase
     from inaki.memory.use_cases.consolidate_memory import ConsolidateMemoryUseCase
 
@@ -39,6 +40,7 @@ class AdminAgentRuntime(Protocol):
     """Lo que los routers del admin acceden de un ``AgentRuntime`` resuelto."""
 
     run_agent: RunAgentUseCase
+    history: ConversationHistory
     consolidate_memory: ConsolidateMemoryUseCase | None
     scope_registry: IScopeRegistry
     channel_outbound_registry: ChannelOutboundRegistry

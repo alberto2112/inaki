@@ -285,6 +285,7 @@ AgentConfig ──────────────────► AgentRunti
                                  Skills: ISkillRepository
 
 AgentRuntime
+    ├── history: ConversationHistory (record/get/clear sin correr un turno)
     ├── run_agent: RunAgentUseCase
     │       └── produce AgentContext (ephemeral, per-turn)
     │               └── build_system_prompt(base) → str

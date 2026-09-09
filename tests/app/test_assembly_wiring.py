@@ -24,6 +24,7 @@ from inaki.app.assembly import (
 from inaki.channels.telegram.files.downloader import TelegramFileDownloader
 from inaki.config import AgentConfig
 from inaki.kernel.ports.outbound.turn_tracer_port import NullTurnTracer
+from inaki.kernel.use_cases.conversation_history import ConversationHistory
 from inaki.kernel.use_cases.run_agent import RunAgentUseCase
 from inaki.kernel.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from inaki.memory.wiring import MemoryJobs
@@ -66,6 +67,7 @@ def borrador(cfg: AgentConfig, *, tools: tuple[str, ...] = ("dummy_tool",)) -> _
         transcribe_audio=None,
         run_agent=run_agent,
         run_agent_one_shot=one_shot,
+        conversation=ConversationHistory(AsyncMock(), cfg.id),
         jobs=MemoryJobs(None, None),
         scope_registry=MagicMock(),
         tracer=NullTurnTracer(),
@@ -261,7 +263,7 @@ async def test_dos_turnos_concurrentes_ven_cada_uno_su_contexto() -> None:
 def test_sin_token_no_hay_outbound_ni_tools_de_telegram() -> None:
     b = borrador(agent_cfg("a"))
 
-    _wire_telegram_tools(b, _harness(), _Registros())
+    _wire_telegram_tools(b, global_cfg(), _harness(), _Registros())
 
     assert b.outbounds.list_channels() == []
     assert not any(n.startswith(("send_to_telegram", "download_from")) for n in b.tools._tools)
@@ -271,7 +273,7 @@ def test_con_token_hay_outbound_y_las_tres_tools_resuelven_el_bot_tarde() -> Non
     b = borrador(agent_cfg("a", channels={"telegram": {"token": "T"}}))
     registros = _Registros()
 
-    _wire_telegram_tools(b, _harness(telegram_file_repo=MagicMock()), registros)
+    _wire_telegram_tools(b, global_cfg(), _harness(telegram_file_repo=MagicMock()), registros)
 
     assert b.outbounds.list_channels() == ["telegram"]
     assert {"send_to_telegram", "send_telegram_message", "download_from_telegram"} <= set(

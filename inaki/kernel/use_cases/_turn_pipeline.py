@@ -520,60 +520,6 @@ def assemble_turn_messages(
     return user_msg, messages
 
 
-def write_debug_phase2(
-    *,
-    debug_path: str,
-    user_input: str | None,
-    channel: str,
-    chat_id: str,
-    history: list[Message],
-    messages: list[Message],
-    extra_sections: list[str],
-    system_prompt: str,
-) -> None:
-    """Escribe la Fase 2 del archivo de debug de foto (historial + prompt + mensajes)."""
-    lines: list[str] = [
-        "",
-        "--- Fase 2: RunAgentUseCase.execute() ---",
-        f"Timestamp: {datetime.now().isoformat()}",
-        f"channel={channel!r}  chat_id={chat_id!r}",
-        f"user_input (photo text_context): {user_input!r}",
-        "",
-        f"Historial cargado ({len(history)} mensajes para channel={channel!r}, chat_id={chat_id!r}):",
-    ]
-    for i, msg in enumerate(history, 1):
-        content_preview = (msg.content or "")[:300].replace("\n", "\\n")
-        lines.append(f"  [{i}] role={msg.role.value}  content={content_preview!r}")
-    lines += [
-        "",
-        f"Mensajes enviados al LLM ({len(messages)} en total, historial + user_input):",
-    ]
-    for i, msg in enumerate(messages, 1):
-        content_preview = (msg.content or "")[:300].replace("\n", "\\n")
-        lines.append(f"  [{i}] role={msg.role.value}  content={content_preview!r}")
-    lines += [
-        "",
-        f"Extra sections inyectadas ({len(extra_sections)}):",
-    ]
-    for i, sec in enumerate(extra_sections, 1):
-        lines.append(f"  [{i}] {sec[:500]!r}")
-    if not extra_sections:
-        lines.append("  (ninguna)")
-    lines += [
-        "",
-        "--- System Prompt ---",
-        system_prompt,
-        "--- Fin System Prompt ---",
-        "",
-    ]
-    try:
-        with open(debug_path, "a", encoding="utf-8") as fh:
-            fh.write("\n".join(lines))
-        logger.debug("photo-debug Phase 2 escrito en %s", debug_path)
-    except OSError as exc:
-        logger.warning("No se pudo escribir photo-debug Phase 2: %s", exc)
-
-
 class RecordingIntermediateSink(IIntermediateSink):
     """Envuelve un sink real y además acumula cada emisión, en orden.
 
@@ -594,6 +540,10 @@ class RecordingIntermediateSink(IIntermediateSink):
     async def emit(self, text: str) -> None:
         self.messages.append(text)
         await self._inner.emit(text)
+
+    async def thinking(self) -> None:
+        # Efímero: se muestra, no se acumula ni se persiste.
+        await self._inner.thinking()
 
 
 class PersistingIntermediateSink(IIntermediateSink):
@@ -618,3 +568,6 @@ class PersistingIntermediateSink(IIntermediateSink):
     async def emit(self, text: str) -> None:
         await self._inner.emit(text)
         await self._persist(text)
+
+    async def thinking(self) -> None:
+        await self._inner.thinking()

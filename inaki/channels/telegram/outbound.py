@@ -38,6 +38,7 @@ class TelegramChannelOutbound(IChannelOutbound):
         history: IHistoryStore,
         agent_id: str,
         broadcast: BroadcastEgress | None = None,
+        shows_thinking: bool = False,
     ) -> None:
         """Inicializa el adapter.
 
@@ -54,6 +55,9 @@ class TelegramChannelOutbound(IChannelOutbound):
         # salga a un grupo por acá (scheduler, tools, /admin/send, bg-N) se emite
         # como ``assistant_response`` si los flags lo permiten.
         self._broadcast = broadcast
+        # Capacidad del canal (``channels.thinking_indicator``): mostrar "Thinking..."
+        # mientras el modelo razona. El kernel avisa; el canal decide.
+        self.shows_thinking = shows_thinking
 
     def capabilities(self) -> set[OutboundKind]:
         """Retorna los kinds soportados por Telegram."""

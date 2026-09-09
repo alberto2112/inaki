@@ -19,7 +19,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from inaki.kernel.ports.outbound.scope_registry_port import IScopeRegistry, Scope
-from inaki.kernel.use_cases.run_agent import RunAgentUseCase
+from inaki.kernel.use_cases.conversation_history import ConversationHistory
 
 # ACK único para todos los canales — antes cada adapter tenía su propio texto
 # y divergían silenciosamente. Si algún día un canal necesita otro tono, que
@@ -43,7 +43,7 @@ class InboundTurnResult:
 async def dispatch_inbound_turn(
     *,
     scope_registry: IScopeRegistry,
-    run_agent: RunAgentUseCase,
+    history: ConversationHistory,
     scope: Scope,
     message: str,
     execute: Callable[[], Awaitable[str]],
@@ -60,7 +60,7 @@ async def dispatch_inbound_turn(
 
     Args:
         scope_registry: Registry de scopes busy/idle del proceso.
-        run_agent: Use case del agente dueño del scope.
+        history: Historial del agente dueño del scope (persiste el mensaje si está ocupado).
         scope: Tupla ``(agent_id, channel, chat_id)`` del turno.
         message: Texto del usuario, ya formateado por el adapter.
         execute: Closure sin argumentos que corre el turno completo — el
@@ -74,5 +74,5 @@ async def dispatch_inbound_turn(
             await scope_registry.mark_idle(scope)
         return InboundTurnResult(reply=reply, executed=True)
 
-    await run_agent.record_user_message(message, channel, chat_id)
+    await history.record_user_message(message, channel, chat_id)
     return InboundTurnResult(reply=INFLIGHT_ACK, executed=False)

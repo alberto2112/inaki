@@ -9,6 +9,7 @@ import pytest
 
 from inaki.kernel.domain.value_objects.llm_response import LLMResponse
 from inaki.kernel.ports.outbound.tool_port import ToolResult
+from inaki.kernel.ports.outbound.channel_port import IIntermediateSink
 from inaki.kernel.use_cases._tool_loop import run_tool_loop
 from inaki.shared.errors import ToolLoopMaxIterationsError
 from inaki.shared.message import Message, Role
@@ -486,8 +487,9 @@ async def test_malformed_json_args_fall_back_to_empty_kwargs():
 # ---------------------------------------------------------------------------
 
 
-class _RecordingSink:
-    """Sink de test que registra en orden todos los mensajes emitidos."""
+class _RecordingSink(IIntermediateSink):
+    """Sink de test que registra en orden todos los mensajes emitidos.
+    Hereda el ``thinking()`` no-op del contrato: no muestra el indicador."""
 
     def __init__(self) -> None:
         self.emitted: list[str] = []
@@ -589,8 +591,15 @@ async def test_intermediate_sink_skips_empty_text_blocks():
 # ---------------------------------------------------------------------------
 
 
+class _RecordingSinkConThinking(_RecordingSink):
+    """Sink que SÍ muestra el indicador (como un outbound con ``shows_thinking``)."""
+
+    async def thinking(self) -> None:
+        await self.emit("Thinking...")
+
+
 async def test_thinking_indicator_emitted_once_when_thinking_active():
-    """Cuando el provider tiene thinking_active=True, el sink recibe 'Thinking...'
+    """Cuando el provider tiene thinking_active=True, el sink recibe ``thinking()``
     UNA SOLA vez al inicio del turno, no por cada iteración."""
     tool_call = LLMResponse(
         text_blocks=[],
@@ -601,7 +610,7 @@ async def test_thinking_indicator_emitted_once_when_thinking_active():
     final = LLMResponse(text_blocks=["listo"], tool_calls=[], thinking="cerrando", raw="")
     llm = _make_llm(tool_call, final, thinking_active=True)
     tools = _make_tools()
-    sink = _RecordingSink()
+    sink = _RecordingSinkConThinking()
 
     result = await run_tool_loop(
         llm=llm,
@@ -613,7 +622,6 @@ async def test_thinking_indicator_emitted_once_when_thinking_active():
         circuit_breaker_threshold=3,
         agent_id="agent",
         intermediate_sink=sink,
-        thinking_indicator=True,
     )
 
     assert result == "listo"
@@ -642,7 +650,8 @@ async def test_thinking_indicator_not_emitted_when_thinking_inactive():
 
 
 async def test_thinking_indicator_suppressed_when_indicator_disabled():
-    """thinking_active=True pero thinking_indicator=False (default) → no se emite 'Thinking...'."""
+    """thinking_active=True pero el sink no muestra el indicador (default de
+    ``IIntermediateSink.thinking``) → no se emite 'Thinking...'."""
     llm = _make_llm("respuesta directa", thinking_active=True)
     tools = _make_tools()
     sink = _RecordingSink()
@@ -657,7 +666,6 @@ async def test_thinking_indicator_suppressed_when_indicator_disabled():
         circuit_breaker_threshold=3,
         agent_id="agent",
         intermediate_sink=sink,
-        thinking_indicator=False,
     )
 
     assert "Thinking..." not in sink.emitted

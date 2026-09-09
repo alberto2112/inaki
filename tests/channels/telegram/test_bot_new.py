@@ -17,10 +17,10 @@ from inaki.channels.telegram.ports import TelegramChannelSettings
 
 @pytest.fixture
 def mock_container() -> MagicMock:
-    """Mock de AgentContainer con consolidate_memory y run_agent.clear_history()."""
+    """Mock de AgentContainer con consolidate_memory y history.clear_history()."""
     container = MagicMock()
     container.consolidate_memory.execute = AsyncMock(return_value="2 recuerdos extraídos")
-    container.run_agent.clear_history = AsyncMock(return_value=None)
+    container.history.clear_history = AsyncMock(return_value=None)
     return container
 
 
@@ -66,7 +66,7 @@ async def test_cmd_new_consolida_antes_de_limpiar(bot, mock_container) -> None:
         order.append("clear")
 
     mock_container.consolidate_memory.execute.side_effect = _consolidate
-    mock_container.run_agent.clear_history.side_effect = _clear
+    mock_container.history.clear_history.side_effect = _clear
 
     await bot._cmd_new(_make_update(), MagicMock())
 
@@ -77,7 +77,7 @@ async def test_cmd_new_limpia_scope_del_chat(bot, mock_container) -> None:
     """El clear apunta al chat actual, no a todo el agente."""
     await bot._cmd_new(_make_update(), MagicMock())
 
-    mock_container.run_agent.clear_history.assert_awaited_once_with(
+    mock_container.history.clear_history.assert_awaited_once_with(
         channel="telegram",
         chat_id="-100999",
     )
@@ -89,7 +89,7 @@ async def test_cmd_new_aborta_clear_si_consolidacion_falla(bot, mock_container) 
 
     await bot._cmd_new(_make_update(), MagicMock())
 
-    mock_container.run_agent.clear_history.assert_not_awaited()
+    mock_container.history.clear_history.assert_not_awaited()
 
 
 async def test_cmd_new_sin_consolidador_limpia_igual(bot, mock_container) -> None:
@@ -98,4 +98,4 @@ async def test_cmd_new_sin_consolidador_limpia_igual(bot, mock_container) -> Non
 
     await bot._cmd_new(_make_update(), MagicMock())
 
-    mock_container.run_agent.clear_history.assert_awaited_once()
+    mock_container.history.clear_history.assert_awaited_once()

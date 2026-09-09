@@ -56,7 +56,6 @@ from inaki.kernel.use_cases._turn_pipeline import (
     run_semantic_routing,
     should_bypass_routing_for_short_input,
     warn_if_token_budget_exceeded,
-    write_debug_phase2,
 )
 from inaki.shared.channel_context import (
     ChannelContext,
@@ -105,7 +104,6 @@ class RunAgentUseCase:
         settings: RunAgentSettings,
         knowledge_orchestrator: IKnowledgeRetriever | None = None,
         background_queue: IBackgroundDelegationQueue | None = None,
-        thinking_indicator: bool = False,
         scope_registry: IScopeRegistry | None = None,
         tracer: ITurnTracer | None = None,
     ) -> None:
@@ -116,10 +114,6 @@ class RunAgentUseCase:
         self._history = history
         self._tools = tools
         self._settings = settings
-        # Flag transversal del bloque global ``channels.thinking_indicator``.
-        # Lo wirea el container desde ``GlobalConfig.channels.thinking_indicator``;
-        # default ``False`` para tests que construyen el use case directo.
-        self._thinking_indicator = thinking_indicator
         # IKnowledgeRetriever — None si no hay fuentes configuradas
         self._knowledge_orchestrator = knowledge_orchestrator
         # IBackgroundDelegationQueue — None hasta que el ensamblador lo wiree.
@@ -138,8 +132,6 @@ class RunAgentUseCase:
         # Timezone del usuario para resolver {{TIMEZONE}}/{{DATETIME}}/etc. en el system prompt.
         # None → fallback a TZ local del sistema. Se puede inyectar via wire_user_timezone().
         self._user_timezone: str | None = None
-        # Ruta del archivo de debug de foto. Si está seteado, execute() escribe Phase 2 y lo limpia.
-        self._photo_debug_path: str | None = None
 
     def wire_user_timezone(self, tz: str | None) -> None:
         """Inyecta la timezone del usuario para la interpolación de variables en el system prompt."""
@@ -162,15 +154,6 @@ class RunAgentUseCase:
             name=self._settings.name,
             description=self._settings.description,
         )
-
-    def set_photo_debug_path(self, path: str | None) -> None:
-        """Registra la ruta del archivo de debug de foto para el próximo execute().
-
-        Llamado por el adapter de Telegram antes de invocar _run_pipeline cuando
-        photos.debug=True. execute() escribe Phase 2 (historial + system prompt +
-        mensajes al LLM) y limpia la ruta después de escribir.
-        """
-        self._photo_debug_path = path
 
     def set_extra_system_sections(self, sections: list[str]) -> None:
         """
@@ -267,67 +250,6 @@ class RunAgentUseCase:
         except OSError as exc:
             logger.warning("No se pudo leer el digest %s: %s", path, exc)
             return ""
-
-    async def record_user_message(
-        self,
-        content: str,
-        channel: str = "",
-        chat_id: str = "",
-    ) -> None:
-        """Persiste un mensaje `role=user` en el historial sin invocar al LLM.
-
-        Pensado para flujos de grupo donde múltiples mensajes (de varios usuarios o
-        bots vía broadcast) llegan dentro de una ventana de delay y se acumulan en
-        el historial individualmente. Cuando el delay vence, ``execute()`` se llama
-        sin ``user_input`` y deriva el "turno actual" del trailing batch del historial.
-        """
-        msg = Message(role=Role.USER, content=content)
-        await self._history.append(self._settings.agent_id, msg, channel=channel, chat_id=chat_id)
-
-    async def record_photo_message(
-        self,
-        content: str,
-        channel: str = "",
-        chat_id: str = "",
-    ) -> int:
-        """Persiste un mensaje `role=user` y devuelve el history_id de la fila insertada.
-
-        Usado por el handler de fotos de Telegram para obtener el ``history_id``
-        necesario en ``ProcessPhotoUseCase.execute()``. El contenido es el bloque
-        ``@photo`` de la gramática de attachments (``attachment.py``).
-        """
-        msg = Message(role=Role.USER, content=content)
-        row_id = await self._history.append(
-            self._settings.agent_id, msg, channel=channel, chat_id=chat_id
-        )
-        return row_id or 0
-
-    async def update_message_content(
-        self,
-        message_id: int,
-        new_content: str,
-    ) -> bool:
-        """Reemplaza el contenido de un mensaje persistido manteniendo su ``id`` y ``created_at``.
-
-        Usado por el handler de fotos para enriquecer el bloque ``@photo`` con
-        la línea ``@analysis`` final del descriptor de escena, evitando un segundo
-        mensaje ``role=user`` consecutivo en el historial.
-        """
-        return await self._history.update_content(self._settings.agent_id, message_id, new_content)
-
-    async def record_assistant_message(
-        self,
-        content: str,
-        channel: str = "",
-        chat_id: str = "",
-    ) -> None:
-        """Persiste un mensaje `role=assistant` en el historial sin invocar al LLM.
-
-        Usado cuando el sistema genera una respuesta directa (ej: transcripción de imagen)
-        que debe quedar en el historial para que el usuario pueda iterar sobre ella.
-        """
-        msg = Message(role=Role.ASSISTANT, content=content)
-        await self._history.append(self._settings.agent_id, msg, channel=channel, chat_id=chat_id)
 
     async def execute(
         self,
@@ -552,19 +474,6 @@ class RunAgentUseCase:
             messages=[{"role": m.role.value, "content": m.content} for m in messages],
         )
 
-        if self._photo_debug_path:
-            write_debug_phase2(
-                debug_path=self._photo_debug_path,
-                user_input=user_input,
-                channel=channel,
-                chat_id=chat_id,
-                history=history,
-                messages=messages,
-                extra_sections=extra_sections_snapshot,
-                system_prompt=system_prompt,
-            )
-            self._photo_debug_path = None
-
         # Persistir el user_msg ANTES del LLM call. Si el provider tira
         # (timeout, 4xx, 5xx, etc.) la pregunta del usuario queda guardada y
         # el próximo turno la puede ver. Antes la persistencia ocurría DESPUÉS
@@ -691,7 +600,6 @@ class RunAgentUseCase:
                 circuit_breaker_threshold=self._settings.circuit_breaker_threshold,
                 agent_id=self._settings.agent_id,
                 intermediate_sink=loop_sink,
-                thinking_indicator=self._thinking_indicator,
                 request_delay_seconds=self._settings.request_delay_seconds,
                 # in-flight-message-injection: activamos drainage pasando el
                 # history store y el scope del turno. El loop releerá history
@@ -789,30 +697,6 @@ class RunAgentUseCase:
             return message
         truncated = message.content[:max_chars] + "\n…[truncado]"
         return message.model_copy(update={"content": truncated})
-
-    async def get_history(self) -> list[Message]:
-        """Devuelve el historial activo del agente (sin archivados ni infused).
-
-        Oculta el plumbing de tool calls (mensajes ``role=tool`` de
-        persist-tool-calls): esta vista es para consumo humano (REST/CLI), el
-        rastro de herramientas solo interesa al LLM. Los mensajes ``assistant``
-        con tool_calls sí se muestran — su narración es conversación legítima.
-        """
-        history = await self._history.load(self._settings.agent_id)
-        return [m for m in history if m.role != Role.TOOL]
-
-    async def clear_history(
-        self,
-        channel: str | None = None,
-        chat_id: str | None = None,
-    ) -> None:
-        """Limpia el historial activo del agente.
-
-        Si ``channel`` y ``chat_id`` son ``None`` (default) borra TODO el
-        historial y resetea ``agent_state``. Si se proveen, borra solo los
-        mensajes de ese (channel, chat_id) y preserva ``agent_state``.
-        """
-        await self._history.clear(self._settings.agent_id, channel=channel, chat_id=chat_id)
 
     async def inspect(
         self,

@@ -200,7 +200,8 @@ when and with what. Five explicit passes:
                     builtin tools (knowledge, memory, files/web, config),
                     extensions (tools + skills + knowledge sources),
                     voice (resolver_transcripcion: the CHANNEL decides), RunAgentUseCase,
-                    RunAgentOneShotUseCase, memory jobs (consolidate / reconcile)
+                    RunAgentOneShotUseCase, ConversationHistory (record/get/clear without
+                    a turn), memory jobs (consolidate / reconcile)
 2. harness          ChannelRouter, LLMDispatcherAdapter, BackgroundDelegationQueue,
                     ConsolidateAllAgents, SchedulerBundle, photos singletons,
                     telegram file repo

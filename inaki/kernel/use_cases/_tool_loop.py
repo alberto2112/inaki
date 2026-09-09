@@ -211,7 +211,6 @@ async def run_tool_loop(
     circuit_breaker_threshold: int,
     agent_id: str,
     intermediate_sink: IIntermediateSink | None = None,
-    thinking_indicator: bool = False,
     request_delay_seconds: float = 0.0,
     history_store: IHistoryStore | None = None,
     scope: Scope | None = None,
@@ -364,12 +363,11 @@ async def run_tool_loop(
     # (una última llamada SIN tools para resumir dónde quedó el trabajo).
     cancelled = False
 
-    # Indicador "Thinking..." una sola vez por turno cuando el provider activa
-    # thinking mode y el operador lo habilitó via ``channels.thinking_indicator``.
-    # Es feedback efímero para el canal — no persiste en DB, no se broadcastea.
-    # Si el sink es Null (CLI sin streaming) no se ve.
-    if llm.thinking_active and thinking_indicator:
-        await sink.emit("Thinking...")
+    # El provider activa thinking mode: se AVISA una vez por turno y el sink
+    # decide si lo muestra (capacidad del outbound, ``shows_thinking``). Es
+    # feedback efímero: no persiste en DB ni se broadcastea.
+    if llm.thinking_active:
+        await sink.thinking()
 
     # Throttle del provider: una vez que hicimos al menos una llamada en este
     # turno, espaciamos las siguientes ``request_delay_seconds`` para no saturar

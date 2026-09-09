@@ -196,6 +196,14 @@ Cada una salió de un fallo en producción. El caso completo está en
 - **NUNCA** descartar el return del `dispatch()`: es la única vía por la que un resultado
   `bg-N` llega al usuario. → `background-delegation`
 
+**Kernel y canales**
+
+- **NUNCA** un flag de un canal en el kernel: el kernel AVISA lo que pasa
+  (`IIntermediateSink.thinking()`) y el canal decide qué mostrar (`shows_thinking`). → `kernel-limpio`
+- **NUNCA** estado mutable en un use case que un canal setea "para el próximo turno": lo que
+  un turno necesita entra por `execute()` o por settings; lo que un operador quiere ver sale
+  por el `ITurnTracer`. → `kernel-limpio`
+
 **Tools**
 
 - **NUNCA** darle a `write_file` un modo por default sobre ficheros con contenido — el

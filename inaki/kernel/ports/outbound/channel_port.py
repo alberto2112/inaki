@@ -81,6 +81,12 @@ class IChannelOutbound(ABC):
     #: Ejemplo: ``"telegram"``, ``"slack"``.
     channel_name: str
 
+    #: Capacidad: mostrar al usuario un indicador efímero mientras el modelo
+    #: razona (thinking mode). El kernel solo AVISA que está pasando
+    #: (``IIntermediateSink.thinking``); mostrarlo o no es del canal. Default
+    #: ``False``: un outbound que no lo declare no muestra nada.
+    shows_thinking: bool = False
+
     @abstractmethod
     def capabilities(self) -> set[OutboundKind]:
         """Retorna el conjunto de kinds que este canal soporta.
@@ -134,6 +140,15 @@ class IIntermediateSink(ABC):
         """
         ...
 
+    async def thinking(self) -> None:
+        """El modelo está razonando (thinking mode): feedback EFÍMERO.
+
+        No es narración del turno: no se persiste ni se broadcastea, por eso es
+        un método aparte de ``emit``. El kernel lo llama una vez por turno cuando
+        el provider activa thinking; el sink decide si lo muestra. Default: nada.
+        """
+        return None
+
 
 class NullIntermediateSink(IIntermediateSink):
     """Sink que descarta los mensajes intermedios.
@@ -177,6 +192,10 @@ class OutboundIntermediateSink(IIntermediateSink):
     def __init__(self, outbound: IChannelOutbound, chat_id: str) -> None:
         self._outbound = outbound
         self._chat_id = chat_id
+
+    async def thinking(self) -> None:
+        if self._outbound.shows_thinking:
+            await self.emit("Thinking...")
 
     async def emit(self, text: str) -> None:
         try:

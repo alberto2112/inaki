@@ -65,7 +65,7 @@ def _agent_cfg(agent_id: str, bot_username: str) -> MagicMock:
 
 def _container(respuesta: str) -> MagicMock:
     c = MagicMock()
-    c.run_agent.record_user_message = AsyncMock()
+    c.history.record_user_message = AsyncMock()
     c.run_agent.execute = AsyncMock(return_value=respuesta)
     c.run_agent.set_extra_system_sections = MagicMock()
     return c
@@ -171,8 +171,8 @@ async def test_broadcast_trigger_dispara_pipeline_del_otro_bot(par_bots):
             break
 
     # B persistió el broadcast con prefijo
-    bot_b._ports.run_agent.record_user_message.assert_awaited()
-    record_args = bot_b._ports.run_agent.record_user_message.await_args
+    bot_b._ports.history.record_user_message.assert_awaited()
+    record_args = bot_b._ports.history.record_user_message.await_args
     assert "anacleto said:" in record_args.args[0]
     assert "che inaki, qué hora es?" in record_args.args[0]
     assert record_args.kwargs.get("channel") == "telegram"

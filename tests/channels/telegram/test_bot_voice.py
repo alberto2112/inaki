@@ -71,7 +71,7 @@ def mock_container(mock_transcription) -> MagicMock:
     container.transcription = mock_transcription
     container.run_agent = MagicMock()
     container.run_agent.execute = AsyncMock(return_value="Respuesta del agente")
-    container.run_agent.record_user_message = AsyncMock(return_value=None)
+    container.history.record_user_message = AsyncMock(return_value=None)
     # Sin repo ni downloader: la persistencia de file_id es no-op y los
     # marcadores degradan a "pending" cuando no hay bytes en memoria.
     container.telegram_file_repo = None
@@ -192,8 +192,8 @@ async def test_voice_enabled_false_persiste_marcador_sin_transcribir(
 
     mock_container.transcription.transcribe.assert_not_called()
     mock_container.run_agent.execute.assert_not_called()
-    mock_container.run_agent.record_user_message.assert_awaited_once()
-    marker = mock_container.run_agent.record_user_message.await_args.args[0]
+    mock_container.history.record_user_message.assert_awaited_once()
+    marker = mock_container.history.record_user_message.await_args.args[0]
     assert marker.startswith("@audio")
     assert "pending (id: AUD-uniq)" in marker
 
@@ -277,8 +277,8 @@ async def test_audio_demasiado_grande_no_llama_provider(agent_cfg, mock_containe
     mock_container.transcription.transcribe.assert_not_called()
     mock_container.run_agent.execute.assert_not_called()
     # El bloque @audio igual queda en el historial (persistencia simétrica).
-    mock_container.run_agent.record_user_message.assert_awaited_once()
-    marker = mock_container.run_agent.record_user_message.await_args.args[0]
+    mock_container.history.record_user_message.assert_awaited_once()
+    marker = mock_container.history.record_user_message.await_args.args[0]
     assert marker.startswith("@audio")
     # Debe haber respondido al usuario con el error.
     update.message.reply_text.assert_awaited()
@@ -298,8 +298,8 @@ async def test_provider_raises_transcription_error(agent_cfg, mock_container) ->
     # Pipeline NO debe correr si la transcripción falla.
     mock_container.run_agent.execute.assert_not_called()
     # Pero el bloque @audio queda en el historial (sin @transcription).
-    mock_container.run_agent.record_user_message.assert_awaited_once()
-    marker = mock_container.run_agent.record_user_message.await_args.args[0]
+    mock_container.history.record_user_message.assert_awaited_once()
+    marker = mock_container.history.record_user_message.await_args.args[0]
     assert marker.startswith("@audio")
     assert "@transcription" not in marker
     # Debe haber replied con el error.

@@ -162,11 +162,13 @@ con diez operaciones y la lógica de `create` copiada en `update` (nota
   perdió la regla 3 ("adapters no importa infrastructure") y `DEUDA_ADAPTERS_INFRA`;
   la ley entre módulos es de `lint-imports` (15 contratos).
 
-**Comportamiento observable.** Ninguno. Cambian paths de import; la tool
-responde igual. Una asimetría histórica quedó explícita en vez de implícita:
-`create` hereda el canal activo como `output_channel` de un `agent_send` sin él y
-`update` no lo hacía; el helper compartido lo recibe como flag
-(`heredar_output_channel`), documentado y testeado, no decidido dos veces.
+**Comportamiento observable.** Uno, y salió de unificar las dos copias: `create`
+heredaba el canal activo como `output_channel` de un `agent_send` sin él, y
+`update` NO — un payload editado desde el chat mandaba el resultado del agente
+a los logs en vez de a la conversación. Ahora las dos operaciones aplican la
+MISMA regla que ya tenía el `target` de `channel_send`: sin dato, se conserva el
+de la tarea si ya lo tenía; si no, la conversación actual. El resto no cambia:
+paths de import, y la tool responde igual.
 
 **Invariante que dejó.** **NUNCA** dos copias de una regla de validación entre
 operaciones de una misma tool: cada regla compartida vive una vez en un helper,

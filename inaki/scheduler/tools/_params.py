@@ -122,16 +122,13 @@ def resolver_trigger_payload(
     payload_raw: dict[str, Any],
     *,
     existente: ScheduledTask | None,
-    heredar_output_channel: bool,
 ) -> TriggerPayload | ToolResult:
     """Completa y valida un ``trigger_payload`` contra ``trigger_type`` (el EFECTIVO).
 
-    ``existente`` es la tarea previa en ``update`` (``None`` en ``create``): un
-    ``channel_send`` sin destino conserva el ``target`` de la tarea si YA era
-    ``channel_send``; si no lo era, o en ``create``, cae a la conversación actual.
-    ``heredar_output_channel`` reproduce la diferencia histórica entre las dos
-    operaciones: ``create`` hereda el canal activo como ``output_channel`` de un
-    ``agent_send`` sin él; ``update`` no lo hacía. Muta ``payload_raw``.
+    ``existente`` es la tarea previa en ``update`` (``None`` en ``create``). La
+    MISMA regla para los dos destinos: un ``channel_send`` sin ``target`` y un
+    ``agent_send`` sin ``output_channel`` conservan el de la tarea si YA era de
+    ese tipo y lo tenía; si no, caen a la conversación actual. Muta ``payload_raw``.
     """
     if trigger_type == "channel_send":
         target, err = _resolver_target_channel_send(ctx, payload_raw)
@@ -158,10 +155,14 @@ def resolver_trigger_payload(
         raw_agent_id = payload_raw.get("agent_id")
         if raw_agent_id is None or str(raw_agent_id).strip().lower() == "self":
             payload_raw["agent_id"] = ctx.agent_id
-        if heredar_output_channel and payload_raw.get("output_channel") is None:
-            context = ctx.get_channel_context()
-            if context is not None:
-                payload_raw["output_channel"] = context.routing_key
+        if payload_raw.get("output_channel") is None:
+            previo = existente.trigger_payload if existente is not None else None
+            if isinstance(previo, AgentSendPayload) and previo.output_channel:
+                payload_raw["output_channel"] = previo.output_channel
+            else:
+                context = ctx.get_channel_context()
+                if context is not None:
+                    payload_raw["output_channel"] = context.routing_key
 
     modelo = TRIGGER_PAYLOAD_MODELS[trigger_type]
     try:

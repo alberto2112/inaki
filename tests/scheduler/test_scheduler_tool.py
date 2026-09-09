@@ -1116,6 +1116,32 @@ async def test_create_agent_send_hereda_output_channel() -> None:
     assert call_arg.trigger_payload.output_channel == ctx.routing_key
 
 
+async def test_update_agent_send_hereda_output_channel_como_create() -> None:
+    """Un payload nuevo sin output_channel en update hereda el canal activo, igual que create.
+
+    Antes update lo dejaba en ``None`` y el resultado del agente iba a los logs
+    en vez de a la conversación desde la que se editó la tarea."""
+    ctx = ChannelContext(channel_type="telegram", user_id="42")
+    tool, uc = _make_tool(get_channel_context=lambda: ctx)
+    existing = _make_task(task_id=12, trigger_type=TriggerType.AGENT_SEND).model_copy(
+        update={"trigger_payload": AgentSendPayload(agent_id="otro-agent", task="viejo")}
+    )
+    uc.get_task.return_value = existing
+    uc.update_task.return_value = existing
+
+    result = await tool.execute(
+        operation="update",
+        task_id=12,
+        trigger_payload={"agent_id": "otro-agent", "task": "nuevo"},
+    )
+
+    assert result.success is True
+    payload = uc.update_task.call_args.kwargs["trigger_payload"]
+    assert isinstance(payload, AgentSendPayload)
+    assert payload.task == "nuevo"
+    assert payload.output_channel == ctx.routing_key
+
+
 @pytest.mark.asyncio
 async def test_create_channel_send_target_explicito_se_respeta() -> None:
     """LLM envía 'target' explícito 'canal:id' → se RESPETA (enviar a otro chat),

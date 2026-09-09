@@ -66,9 +66,7 @@ class Crear(Operacion):
         if isinstance(schedule, ToolResult):
             return schedule
 
-        payload = resolver_trigger_payload(
-            self._ctx, trigger_type, payload_raw, existente=None, heredar_output_channel=True
-        )
+        payload = resolver_trigger_payload(self._ctx, trigger_type, payload_raw, existente=None)
         if isinstance(payload, ToolResult):
             return payload
 

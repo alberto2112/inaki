@@ -117,11 +117,7 @@ class Actualizar(Operacion):
                     f"Cannot update trigger_payload for system trigger type '{trigger_type}'."
                 )
             payload = resolver_trigger_payload(
-                self._ctx,
-                trigger_type,
-                payload_raw,
-                existente=existing,
-                heredar_output_channel=False,
+                self._ctx, trigger_type, payload_raw, existente=existing
             )
             if isinstance(payload, ToolResult):
                 return payload

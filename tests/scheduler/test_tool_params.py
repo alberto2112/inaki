@@ -74,9 +74,7 @@ def test_oneshot_normaliza_relativo_e_iso_y_rechaza_el_pasado() -> None:
 
 def test_channel_send_sin_destino_cae_a_la_conversacion_en_create() -> None:
     ctx = _ctx(ChannelContext(channel_type="telegram", user_id="42"))
-    payload = resolver_trigger_payload(
-        ctx, "channel_send", {"text": "hola"}, existente=None, heredar_output_channel=True
-    )
+    payload = resolver_trigger_payload(ctx, "channel_send", {"text": "hola"}, existente=None)
     assert isinstance(payload, ChannelSendPayload) and payload.target == "telegram:42"
 
 
@@ -87,34 +85,47 @@ def test_channel_send_sin_destino_conserva_el_target_de_la_tarea_en_update() -> 
         "channel_send",
         {"text": "hola"},
         existente=_tarea_channel_send("telegram:-100"),
-        heredar_output_channel=False,
     )
     assert isinstance(payload, ChannelSendPayload) and payload.target == "telegram:-100"
 
 
 def test_channel_send_sin_destino_ni_conversacion_es_error_accionable() -> None:
-    err = resolver_trigger_payload(
-        _ctx(None), "channel_send", {"text": "hola"}, existente=None, heredar_output_channel=True
-    )
+    err = resolver_trigger_payload(_ctx(None), "channel_send", {"text": "hola"}, existente=None)
     assert isinstance(err, ToolResult) and "'target' explícito" in err.output
 
 
-def test_agent_send_resuelve_self_y_solo_create_hereda_el_output_channel() -> None:
+def _tarea_agent_send(output_channel: str | None) -> ScheduledTask:
+    return ScheduledTask(
+        name="t",
+        task_kind=TaskKind.ONESHOT,
+        trigger_type=TriggerType.AGENT_SEND,
+        trigger_payload=AgentSendPayload(agent_id="otro", task="x", output_channel=output_channel),
+        schedule=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        created_by="agente",
+    )
+
+
+def test_agent_send_resuelve_self_y_hereda_el_canal_activo_en_create_y_update() -> None:
+    """La misma regla que el ``target`` de ``channel_send``: sin dato, la conversación."""
     ctx = _ctx(ChannelContext(channel_type="telegram", user_id="42"))
     en_create = resolver_trigger_payload(
-        ctx,
-        "agent_send",
-        {"task": "x", "agent_id": "self"},
-        existente=None,
-        heredar_output_channel=True,
+        ctx, "agent_send", {"task": "x", "agent_id": "self"}, existente=None
     )
     en_update = resolver_trigger_payload(
-        ctx, "agent_send", {"task": "x"}, existente=None, heredar_output_channel=False
+        ctx, "agent_send", {"task": "x"}, existente=_tarea_agent_send(None)
     )
     assert isinstance(en_create, AgentSendPayload) and isinstance(en_update, AgentSendPayload)
     assert en_create.agent_id == "agente" and en_update.agent_id == "agente"
     assert en_create.output_channel == "telegram:42"
-    assert en_update.output_channel is None
+    assert en_update.output_channel == "telegram:42"
+
+
+def test_agent_send_en_update_conserva_el_output_channel_de_la_tarea() -> None:
+    ctx = _ctx(ChannelContext(channel_type="telegram", user_id="42"))
+    payload = resolver_trigger_payload(
+        ctx, "agent_send", {"task": "y"}, existente=_tarea_agent_send("telegram:-100")
+    )
+    assert isinstance(payload, AgentSendPayload) and payload.output_channel == "telegram:-100"
 
 
 # --- la tabla de despacho ES el contrato ------------------------------------

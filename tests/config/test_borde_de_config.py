@@ -143,7 +143,7 @@ def test_el_arranque_no_tira_traceback_con_un_agente_roto(
     home: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """El agujero original: ``AgentRegistry`` quedaba fuera del ``try``."""
-    from inaki.cli import _bootstrap
+    from inaki.app.bootstrap import bootstrap
     from inaki.config import ensure_user_config
 
     config_dir, agents_dir = home / "config", home / "agents"
@@ -151,7 +151,7 @@ def test_el_arranque_no_tira_traceback_con_un_agente_roto(
     (agents_dir / "dev.yaml").write_text(_AGENTE_ROTO, encoding="utf-8")
 
     with pytest.raises(SystemExit) as exc:
-        _bootstrap(config_dir, agents_dir)
+        bootstrap(config_dir, agents_dir)
 
     assert exc.value.code == 1
     err = capsys.readouterr().err

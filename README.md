@@ -25,18 +25,24 @@ Personal AI assistant designed to run as a systemd service on a **Raspberry Pi 5
 Inaki follows **strict hexagonal (Ports & Adapters)** architecture:
 
 ```
-ext/          ← User extensions (auto-discovered)
-adapters/
-  inbound/    ← CLI · REST · daemon   (Telegram: inaki/channels/telegram/)
-  outbound/   ← LLM providers · tools · memory · embeddings · skills · scheduler
+ext/            ← User extensions (auto-discovered)
+inaki/
+  shared/       ← Domain primitives shared by every module (Message, attachments, errors)
+  observability/← Logging, debug mode, turn traces
+  config/       ← Schema (one section per area), 2-layer YAML loader, merge engine
+  channels/     ← One package per channel: telegram (bot, outbound, broadcast, files), rest (admin API), cli (chat)
+  cli/          ← Entry points (one module per command)
+  app/          ← Bootstrap, daemon runner, reloader
 core/
-  domain/     ← Entities, value objects, errors — zero external imports
-  ports/      ← Interfaces (inbound + outbound)
-  use_cases/  ← RunAgentUseCase · ConsolidateMemoryUseCase · ScheduleTaskUseCase
+  domain/       ← Entities, value objects, services — zero external imports
+  ports/        ← Interfaces, including the channel contract (IChannel, IChannelOutbound)
+  use_cases/    ← RunAgentUseCase · ConsolidateMemoryUseCase · ScheduleTaskUseCase
+adapters/outbound/ ← LLM providers · tools · memory · embeddings · skills · scheduler
 infrastructure/
-  container.py   ← Single wiring point (DI composition root)
-  config.py      ← 2-layer YAML loader
+  container.py  ← Single wiring point (DI composition root)
 ```
+
+The layout is mid-refactor towards a modular monolith under `inaki/` (dependency rules are enforced by `lint-imports`, see `pyproject.toml`).
 
 **Dependency direction is inviolable:** `adapters/ → core/`. The `core/` layer never imports from `adapters/` or any infrastructure library. `infrastructure/container.py` is the only place where concrete adapters are instantiated.
 

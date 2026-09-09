@@ -100,7 +100,7 @@ Recurso HARNESS-GLOBAL: se declara SOLO acá — no existe ``knowledge`` en ``Ag
 
 Arranque del proceso: identidad, logging, agente por defecto y extensiones.
 
-Bloque SOLO global (``global.yaml`` → ``app:``). No admite override per-agente: lo consumen el composition root (``inaki/cli.py``) y el ``AppContainer`` antes de que exista ningún agente.
+Bloque SOLO global (``global.yaml`` → ``app:``). No admite override per-agente: lo consumen el composition root (``inaki/app/bootstrap.py``) y el ``AppContainer`` antes de que exista ningún agente.
 
 | Field | Type | Default | Secret |
 |---|---|---|---|

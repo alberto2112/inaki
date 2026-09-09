@@ -54,18 +54,3 @@ class ChannelFallbackConfig(_ConfigBaseModel):
     Solo se consultan para prefijos SIN sink nativo registrado — un target de un
     canal vivo nunca se redirige. Ejemplo: ``{"cli": "telegram:123"}`` manda a ese
     chat las salidas de tareas que nacieron en la CLI, que si no nadie leería."""
-
-
-class CliChannelConfig(_ConfigBaseModel):
-    """
-    Config tipada del canal CLI/REST.
-
-    Es el bloque ``channels.cli`` que consume el admin server al armar el
-    ``ChannelContext`` de un turno conversacional sin canal de mensajería.
-    """
-
-    user: str | None = None
-    """Identidad ESTABLE del turno CLI/REST. Se usa como ``user_id`` y como
-    ``context_id`` (nombra ``~/.inaki/users/cli/{user}.md``) y puebla
-    ``{{CHANNEL.USERNAME}}``. ``None`` → el ``context_id`` es el ``session_id``
-    (UUID efímero por proceso, sin fichero pre-escribible)."""

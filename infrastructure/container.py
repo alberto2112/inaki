@@ -74,6 +74,7 @@ from core.use_cases.reconcile_memory import ReconcileMemoryUseCase
 from core.use_cases.run_agent import RunAgentUseCase
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from core.use_cases.schedule_task import ScheduleTaskUseCase
+from inaki.app.reloader import DaemonReloader
 from inaki.channels.telegram.broadcast.buffer import BroadcastBuffer
 from inaki.channels.telegram.broadcast.egress import BroadcastEgress
 from inaki.channels.telegram.broadcast.rate_limiter import FixedWindowRateLimiter
@@ -108,7 +109,6 @@ from inaki.config.use_cases.show_effective import ShowEffectiveConfigUseCase
 from inaki.observability import JsonlTurnTracer, is_debug_enabled, startup_event
 from inaki.shared.channel_context import current_channel_context
 from inaki.shared.errors import AgentNotFoundError, ConfigError, InakiError
-from infrastructure.daemon_reloader import DaemonReloader
 from infrastructure.factories.embedding_factory import EmbeddingProviderFactory
 from infrastructure.factories.llm_factory import LLMProviderFactory
 from infrastructure.factories.transcription_factory import TranscriptionProviderFactory

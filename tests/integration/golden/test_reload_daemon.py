@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from infrastructure.daemon_reloader import DaemonReloader
+from inaki.app.reloader import DaemonReloader
 
 
 def _container_falso(nombre: str) -> MagicMock:
@@ -33,7 +33,7 @@ async def _canal_eterno() -> None:
 
 
 async def test_reload_rebootstrappea_y_sigterm_apaga(monkeypatch: pytest.MonkeyPatch) -> None:
-    from inaki import daemon_runner
+    from inaki.app import runner as daemon_runner
 
     inicial = _container_falso("inicial")
     recargado = _container_falso("recargado")

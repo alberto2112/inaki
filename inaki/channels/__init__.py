@@ -15,11 +15,8 @@ from __future__ import annotations
 
 def registrar_canales_instalados() -> None:
     """Registra en ``inaki.config`` la sección de cada canal instalado. Idempotente."""
+    from inaki.channels.cli import config as cli_config
     from inaki.channels.telegram import config as telegram_config
-    from inaki.config.channels import registrar_canal
-    from inaki.config.schema.channels import CliChannelConfig
 
     telegram_config.registrar()
-    # El canal CLI (chat interactivo vía REST) se muda a su paquete en la fase 5;
-    # su sección sigue en el schema base hasta entonces.
-    registrar_canal("cli", CliChannelConfig)
+    cli_config.registrar()

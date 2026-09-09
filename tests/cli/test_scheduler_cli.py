@@ -1,0 +1,176 @@
+"""Tests para el bootstrap liviano del scheduler CLI."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import yaml
+
+
+def _write_minimal_config(config_dir: Path) -> None:
+    """Escribe un global.yaml mínimo para tests."""
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "global.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "app": {"name": "Test"},
+                "scheduler": {"db_filename": ":memory:"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_lightweight_bootstrap_does_not_import_app_container(tmp_path: Path) -> None:
+    """Verificar que el bootstrap liviano NO importa AppContainer."""
+    config_dir = tmp_path / "config"
+    _write_minimal_config(config_dir)
+
+    from inaki.cli.scheduler import _bootstrap_uc
+
+    ctx = MagicMock()
+    ctx.obj = {"config_dir": config_dir}
+
+    with patch("inaki.cli.scheduler._create_lightweight_uc") as mock_create:
+        mock_uc = MagicMock()
+        mock_create.return_value = (mock_uc, MagicMock())
+        _bootstrap_uc(ctx)
+
+    # No debe haber importado AppContainer durante el bootstrap
+    mock_create.assert_called_once()
+
+
+def test_lightweight_bootstrap_returns_use_case(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    _write_minimal_config(config_dir)
+
+    from inaki.cli.scheduler import _bootstrap_uc
+
+    ctx = MagicMock()
+    ctx.obj = {"config_dir": config_dir}
+
+    with patch("inaki.cli.scheduler._create_lightweight_uc") as mock_create:
+        mock_uc = MagicMock()
+        mock_cfg = MagicMock()
+        mock_create.return_value = (mock_uc, mock_cfg)
+        uc, cfg = _bootstrap_uc(ctx)
+
+    assert uc is mock_uc
+    assert cfg is mock_cfg
+
+
+def test_reload_callback_silences_all_exceptions(tmp_path: Path) -> None:
+    """El callback de reload no debe propagar ninguna excepción."""
+    from inaki.cli.scheduler import _notify_daemon_reload
+
+    # Simula que el daemon no está corriendo
+    with patch("inaki.cli.client.DaemonClient") as MockClient:
+        instance = MockClient.return_value
+        instance.scheduler_reload.side_effect = Exception("connection refused")
+        # No debe levantar excepción
+        _notify_daemon_reload("http://127.0.0.1:6497", None)
+
+
+def test_reload_callback_calls_scheduler_reload(tmp_path: Path) -> None:
+    from inaki.cli.scheduler import _notify_daemon_reload
+
+    with patch("inaki.cli.client.DaemonClient") as MockClient:
+        instance = MockClient.return_value
+        instance.scheduler_reload.return_value = True
+        _notify_daemon_reload("http://127.0.0.1:6497", "my-key")
+
+    MockClient.assert_called_once_with(admin_base_url="http://127.0.0.1:6497", auth_key="my-key")
+    instance.scheduler_reload.assert_called_once()
+
+
+def test_reload_callback_silences_connect_error() -> None:
+    from inaki.cli.scheduler import _notify_daemon_reload
+    from inaki.shared.errors import DaemonNotRunningError
+
+    with patch("inaki.cli.client.DaemonClient") as MockClient:
+        instance = MockClient.return_value
+        instance.scheduler_reload.side_effect = DaemonNotRunningError()
+        # No debe levantar
+        _notify_daemon_reload("http://127.0.0.1:6497", None)
+
+
+# ---------------------------------------------------------------------------
+# comando `run` — cliente THIN sobre el daemon
+# ---------------------------------------------------------------------------
+
+
+def test_run_cmd_success_imprime_output(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    from inaki.cli.scheduler import scheduler_app
+
+    mock_client = MagicMock()
+    mock_client.health.return_value = True
+    mock_client.scheduler_run.return_value = {
+        "task_id": 100,
+        "success": True,
+        "output": "resultado del trigger",
+        "error": None,
+    }
+
+    with patch("inaki.cli.scheduler._bootstrap_daemon_client", return_value=mock_client):
+        result = CliRunner().invoke(scheduler_app, ["run", "100"], obj={"config_dir": tmp_path})
+
+    assert result.exit_code == 0
+    assert "resultado del trigger" in result.stdout
+    assert "schedule unchanged" in result.stdout
+    mock_client.scheduler_run.assert_called_once_with(100)
+
+
+def test_run_cmd_trigger_failed_exit_1(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    from inaki.cli.scheduler import scheduler_app
+
+    mock_client = MagicMock()
+    mock_client.health.return_value = True
+    mock_client.scheduler_run.return_value = {
+        "task_id": 100,
+        "success": False,
+        "output": None,
+        "error": "boom",
+    }
+
+    with patch("inaki.cli.scheduler._bootstrap_daemon_client", return_value=mock_client):
+        result = CliRunner().invoke(scheduler_app, ["run", "100"], obj={"config_dir": tmp_path})
+
+    assert result.exit_code == 1
+
+
+def test_run_cmd_task_not_found_exit_1(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    from inaki.cli.scheduler import scheduler_app
+    from inaki.shared.errors import TaskNotFoundError
+
+    mock_client = MagicMock()
+    mock_client.health.return_value = True
+    mock_client.scheduler_run.side_effect = TaskNotFoundError("Task 999 not found")
+
+    with patch("inaki.cli.scheduler._bootstrap_daemon_client", return_value=mock_client):
+        result = CliRunner().invoke(scheduler_app, ["run", "999"], obj={"config_dir": tmp_path})
+
+    assert result.exit_code == 1
+    assert "not found" in result.output
+
+
+def test_run_cmd_requiere_daemon_vivo(tmp_path: Path) -> None:
+    """Si el daemon no responde health, el comando aborta sin llamar scheduler_run."""
+    from typer.testing import CliRunner
+
+    from inaki.cli.scheduler import scheduler_app
+
+    mock_client = MagicMock()
+    mock_client.health.return_value = False
+
+    with patch("inaki.cli.scheduler._bootstrap_daemon_client", return_value=mock_client):
+        result = CliRunner().invoke(scheduler_app, ["run", "100"], obj={"config_dir": tmp_path})
+
+    assert result.exit_code == 1
+    mock_client.scheduler_run.assert_not_called()

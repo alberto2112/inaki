@@ -75,6 +75,7 @@ existe este documento— y la contradicción no queda flotando.
 | [`broadcast-topology-config`](#broadcast-topology-config) | Rol explícito `server` XOR `client`; config vieja falla al cargar |
 | [`broadcast-arranque-observable`](#broadcast-arranque-observable) | El fallo de `bind()` y la config de broadcast que no valida ahora salen como `ERROR` en el log |
 | [`formato-en-el-borde-del-transporte`](#formato-en-el-borde-del-transporte) | Todo lo que Telegram manda fuera del turno conversacional (scheduler, `bg-N`, intermedios, media) sale **formateado** y troceado, no en markdown crudo |
+| [`composition-root-y-canales-rest-cli`](#composition-root-y-canales-rest-cli) | Sin cambios de comandos ni de API: `inaki/cli.py` (895 líneas) pasa a `inaki/cli/` (un módulo por comando), el bootstrap y el runner a `inaki/app/`, el admin REST a `inaki/channels/rest/` y el chat interactivo a `inaki/channels/cli/`; desaparece `adapters/inbound/` |
 | [`canal-telegram-vertical`](#canal-telegram-vertical) | `POST /admin/send` pierde `broadcast`/`broadcasted` e `inaki send` pierde `--no-broadcast`: la emisión al LAN la decide el borde del canal, así que `channel_send`, tools y resultados `bg-N` hacia un grupo AHORA se replican por broadcast; el módulo config deja de conocer canales (registro) |
 | [`egress-unico`](#egress-unico) | Un `channel_send` sale por el bot del agente DUEÑO (antes, por el primer bot registrado) y lo persiste el outbound; sin dueño no persiste. Desaparecen `IOutboundSink`, `TelegramSink`, `SinkFactory`, `ChannelHistoryRecorderAdapter` y los sinks intermedios de Telegram/router |
 | [`modulo-config-y-retiro-del-tui`](#modulo-config-y-retiro-del-tui) | Desaparece `inaki setup` (TUI retirado; la config se edita en YAML con `inaki config show --origin` de espejo); `textual` deja de ser dependencia; la config vive en `inaki/config/` con el schema partido por secciones |
@@ -106,6 +107,44 @@ existe este documento— y la contradicción no queda flotando.
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `composition-root-y-canales-rest-cli`
+
+**Contexto (2026-09-08, fase 5 del refactor modular).** El composition root era un
+fichero de 895 líneas (`inaki/cli.py`) que mezclaba el bootstrap del daemon, el
+cliente HTTP, el manejo de errores y ocho comandos, con los sub-CLIs de scheduler y
+knowledge importándole funciones privadas (`_resolve_dirs`, `_build_daemon_client`).
+El admin REST y el chat interactivo vivían bajo `adapters/inbound/` como si fueran
+adapters del dominio, cuando son CANALES (el contrato de la fase 3), y el cliente
+HTTP del CLI bajo `adapters/outbound/` como si fuera un port del kernel.
+
+**Cambio.**
+
+- `inaki/cli/`: un módulo por comando (`chat`, `daemon`, `admin` con `inspect`/`reload`/
+  `consolidate`/`gen-docs`, `tool`, `send`, `scheduler`, `knowledge`), `_common` con los
+  helpers compartidos (los comandos los invocan como `_common.<fn>` para que un test
+  pueda parchearlos en un solo sitio) y `client` (el `DaemonClient` HTTP). El entry
+  point sigue siendo `inaki.cli:app`.
+- `inaki/app/`: `bootstrap` (config → logging → registry → `AppContainer`), `runner`
+  (el loop del daemon, antes `inaki/daemon_runner.py`) y `reloader` (antes en
+  `infrastructure/`).
+- `inaki/channels/rest/` (app, ports, schemas, routers) e `inaki/channels/cli/`
+  (`runner` = el REPL, `ports` = `IDaemonClient`, `config` = `CliChannelConfig`, que
+  sale del schema base y se registra desde el canal como Telegram).
+- Desaparece `adapters/inbound/`: `adapters/` queda solo con outbound (tools,
+  providers, repos, scheduler…), a la espera de las fases 7–8.
+- Contratos: `inaki.channels` no conoce `infrastructure`, `inaki.cli` ni `inaki.app`;
+  los tres canales son **independientes** entre sí (`independence`).
+
+**Comportamiento observable.** Ninguno: mismos comandos, misma API, mismos YAML.
+Cambian los paths de import (tests y extensiones que importaran `inaki.cli` o
+`adapters.inbound.*`).
+
+**Invariante que dejó.** **NUNCA** un sub-CLI importando privados de otro: lo
+compartido vive en `_common`. Y **NUNCA** un canal bajo `adapters/`: un canal es un
+paquete de `inaki/channels/` que implementa el contrato del kernel.
 
 ---
 

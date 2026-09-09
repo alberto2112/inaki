@@ -222,4 +222,4 @@ If `enabled: false`, pre-fetch is skipped but the user can still invoke `knowled
 | SQLite adapter | `adapters/outbound/knowledge/sqlite_knowledge_source.py` |
 | Explicit search tool | `adapters/outbound/tools/knowledge_search_tool.py` |
 | Management tool (LLM) | `adapters/outbound/tools/knowledge_admin_tool.py` |
-| Management CLI | `inaki/knowledge_cli.py` |
+| Management CLI | `inaki/cli/knowledge.py` |

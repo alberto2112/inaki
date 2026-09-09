@@ -13,7 +13,6 @@ from inaki.config.schema.app import AppConfig
 from inaki.config.schema.channels import (
     ChannelFallbackConfig,
     ChannelsGlobalConfig,
-    CliChannelConfig,
 )
 from inaki.config.schema.chat_history import ChatHistoryConfig
 from inaki.config.schema.delegation import AgentDelegationConfig, DelegationConfig
@@ -44,7 +43,6 @@ __all__ = [
     "ChannelFallbackConfig",
     "ChannelsGlobalConfig",
     "ChatHistoryConfig",
-    "CliChannelConfig",
     "ConsolidationConfig",
     "ContainmentMode",
     "DedupConfig",

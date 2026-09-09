@@ -19,10 +19,10 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from inaki.channels.cli.config import CliChannelConfig
 from inaki.channels.telegram.config import TelegramChannelConfig, telegram_config
 from inaki.config import (
     AgentConfig,
-    CliChannelConfig,
     load_agent_config,
     load_global_config,
 )

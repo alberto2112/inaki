@@ -42,7 +42,7 @@ Cuatro capas. La dirección de dependencias es `adapters → core ← infrastruc
 | **`core/`** | Entidades, ports, use cases, servicios y errores de dominio | **NUNCA** importa `adapters/` ni `infrastructure/`. Terceros permitidos: solo `pydantic`, `croniter`, `numpy` |
 | **`adapters/`** | Implementaciones de ports. Inbound (REST admin, CLI chat) y outbound (LLM, tools, repos, embedding, skills, scheduler). Telegram ya NO vive acá: es el paquete vertical `inaki/channels/telegram/` | **NUNCA** importa `infrastructure/`. Si "necesita" el container o el schema → declara un Protocol/Settings VO y el composition root se lo inyecta |
 | **`infrastructure/`** | Wiring y cross-cutting. `container.py` | Único lugar donde se instancian adapters y se inyectan en use cases |
-| **`inaki/`** | Composition root: `cli.py`, `daemon_runner.py`, sub-CLIs | Fuera de la regla hexagonal (ensamblar es su trabajo). Los entry points NUEVOS van acá, **no** bajo `adapters/inbound/` |
+| **`inaki/`** | Composition root: `inaki/cli/` (un módulo por comando, `_common` con los helpers) e `inaki/app/` (`bootstrap`, `runner`, `reloader`) | Fuera de la regla hexagonal (ensamblar es su trabajo). Los entry points NUEVOS van a `inaki/cli/`; los canales, a `inaki/channels/` |
 
 `ext/` — extensiones de usuario, auto-descubiertas vía `manifest.py`.
 

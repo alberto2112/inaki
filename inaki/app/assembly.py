@@ -77,6 +77,7 @@ from inaki.kernel.ports.outbound.memory_port import IMemoryRepository
 from inaki.kernel.ports.outbound.scope_registry_port import IScopeRegistry
 from inaki.kernel.ports.outbound.tool_config_port import IToolConfigStore
 from inaki.kernel.ports.outbound.turn_tracer_port import ITurnTracer, NullTurnTracer
+from inaki.kernel.use_cases.conversation_history import ConversationHistory
 from inaki.kernel.use_cases.run_agent import RunAgentUseCase
 from inaki.kernel.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from inaki.knowledge.wiring import KnowledgeBundle, build_knowledge, build_knowledge_tools
@@ -139,6 +140,7 @@ class _Borrador:
     transcribe_audio: TranscribeAudioUseCase | None
     run_agent: RunAgentUseCase
     run_agent_one_shot: RunAgentOneShotUseCase
+    conversation: ConversationHistory
     jobs: MemoryJobs
     scope_registry: IScopeRegistry
     tracer: ITurnTracer
@@ -250,7 +252,7 @@ def ensamblar(
         _wire_scheduler(borrador, global_config, harness)
         _wire_broadcast(borrador)
         _wire_photos(borrador, global_config, harness)
-        _wire_telegram_tools(borrador, harness, registros)
+        _wire_telegram_tools(borrador, global_config, harness, registros)
     _wire_memory_sub_agents(global_config, registry, borradores)
 
     # 4. Canales
@@ -325,7 +327,6 @@ def _construir_agente(
         if transcription is not None and cfg.transcription is not None
         else None
     )
-    thinking = global_cfg.channels.thinking_indicator
     run_agent = RunAgentUseCase(
         llm=llm,
         memory=memory,
@@ -333,9 +334,8 @@ def _construir_agente(
         skills=skills,
         history=history,
         tools=tools,
-        settings=build_run_agent_settings(cfg),
+        settings=build_run_agent_settings(cfg, user_timezone=global_cfg.user.timezone),
         knowledge_orchestrator=knowledge.orchestrator,
-        thinking_indicator=thinking,
         scope_registry=scope_registry,
         tracer=tracer,
     )
@@ -343,7 +343,6 @@ def _construir_agente(
         llm=llm,
         tools=tools,
         settings=build_one_shot_settings(cfg),
-        thinking_indicator=thinking,
         tracer=tracer,
     )
     jobs = build_memory_jobs(cfg, base_llm=llm, memory=memory, embedder=embedder, history=history)
@@ -359,6 +358,7 @@ def _construir_agente(
         transcribe_audio=transcribe_audio,
         run_agent=run_agent,
         run_agent_one_shot=run_agent_one_shot,
+        conversation=ConversationHistory(history, cfg.id),
         jobs=jobs,
         scope_registry=scope_registry,
         tracer=tracer,
@@ -431,7 +431,6 @@ def _construir_harness(
             caller_llm=caller.llm,
             tools=caller.tools,
             tracer=caller.tracer,
-            thinking_indicator=global_cfg.channels.thinking_indicator,
         )
 
     background_queue = build_background_queue(
@@ -557,7 +556,6 @@ def _constructor_de_hijos(
     """Un hijo efímero por delegación, resuelto contra ESTE caller. Cierra sobre
     valores (config, llm, tools, tracer), no sobre el borrador."""
     caller_cfg, caller_llm, tools, tracer = b.cfg, b.llm, b.tools, b.tracer
-    thinking = global_cfg.channels.thinking_indicator
 
     def _build_child(target_id: str) -> RunAgentOneShotUseCase | None:
         raw = registry.get_sub_agent_raw(target_id)
@@ -569,7 +567,6 @@ def _constructor_de_hijos(
             caller_llm=caller_llm,
             tools=tools,
             tracer=tracer,
-            thinking_indicator=thinking,
         )
 
     return _build_child
@@ -623,6 +620,7 @@ def _wire_photos(b: _Borrador, global_cfg: GlobalConfig, harness: _Harness) -> N
             photos_cfg,
             harness.photos,
             get_channel_context=contexto_del_turno.get_channel_context,
+            tracer=b.tracer,
         )
     except Exception as exc:
         logger.error(
@@ -643,7 +641,9 @@ def _wire_photos(b: _Borrador, global_cfg: GlobalConfig, harness: _Harness) -> N
     )
 
 
-def _wire_telegram_tools(b: _Borrador, harness: _Harness, registros: _Registros) -> None:
+def _wire_telegram_tools(
+    b: _Borrador, global_cfg: GlobalConfig, harness: _Harness, registros: _Registros
+) -> None:
     """El egress del canal y las tools que dependen del bot, para agentes con token.
     El bot se resuelve por enlace tardío: existe recién en la pasada 4."""
     tg_cfg = telegram_config(b.cfg)
@@ -661,6 +661,7 @@ def _wire_telegram_tools(b: _Borrador, harness: _Harness, registros: _Registros)
                 history=b.history,
                 agent_id=agent_id,
                 egress=b.telegram.egress if b.telegram else None,
+                thinking_indicator=global_cfg.channels.thinking_indicator,
             )
         )
         if harness.telegram_file_repo is None:
@@ -762,6 +763,7 @@ class _FuenteDelBot:
 
     def __init__(self, b: _Borrador) -> None:
         self.run_agent = b.run_agent
+        self.history = b.conversation
         self.scope_registry = b.scope_registry
         self.consolidate_memory = b.jobs.consolidate
         self.reconcile_memory = b.jobs.reconcile
@@ -789,7 +791,8 @@ def _congelar(b: _Borrador) -> AgentRuntime:
         llm=b.llm,
         embedder=b.embedder,
         memory=b.memory,
-        history=b.history,
+        history_store=b.history,
+        history=b.conversation,
         skills=b.skills,
         tools=b.tools,
         knowledge=b.knowledge,

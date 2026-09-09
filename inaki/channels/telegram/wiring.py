@@ -41,6 +41,7 @@ from inaki.kernel.domain.services.channel_outbound_registry import ChannelOutbou
 from inaki.kernel.ports.outbound.history_port import IHistoryStore
 from inaki.kernel.ports.outbound.scope_registry_port import IScopeRegistry
 from inaki.kernel.ports.outbound.tool_port import ITool
+from inaki.kernel.use_cases.conversation_history import ConversationHistory
 from inaki.kernel.use_cases.run_agent import RunAgentUseCase
 from inaki.memory.use_cases.consolidate_memory import ConsolidateMemoryUseCase
 from inaki.memory.use_cases.reconcile_memory import ReconcileMemoryUseCase
@@ -123,6 +124,7 @@ class FuentesDelBot(Protocol):
     """
 
     run_agent: RunAgentUseCase
+    history: ConversationHistory
     scope_registry: IScopeRegistry
     consolidate_memory: ConsolidateMemoryUseCase | None
     reconcile_memory: ReconcileMemoryUseCase | None
@@ -142,6 +144,7 @@ def build_telegram_bot_ports(fuente: FuentesDelBot) -> TelegramBotPorts:
     registro = fuente.channel_outbound_registry
     return TelegramBotPorts(
         run_agent=fuente.run_agent,
+        history=fuente.history,
         scope_registry=fuente.scope_registry,
         consolidate_memory=fuente.consolidate_memory,
         reconcile_memory=fuente.reconcile_memory,
@@ -254,6 +257,7 @@ def build_telegram_outbound(
     history: IHistoryStore,
     agent_id: str,
     egress: BroadcastEgress | None,
+    thinking_indicator: bool = False,
 ) -> TelegramChannelOutbound:
     """El egress único del canal: por acá salen TODOS los envíos del agente."""
     return TelegramChannelOutbound(
@@ -261,6 +265,7 @@ def build_telegram_outbound(
         history=history,
         agent_id=agent_id,
         broadcast=egress,
+        shows_thinking=thinking_indicator,
     )
 
 

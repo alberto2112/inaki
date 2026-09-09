@@ -193,7 +193,7 @@ def test_el_wiring_de_fotos_degrada_y_dice_que_capacidad_queda_muda(
     from inaki.app.assembly import _wire_photos
 
     borrador = SimpleNamespace(
-        cfg=SimpleNamespace(id="inaki"), tools=MagicMock(), process_photo=None
+        cfg=SimpleNamespace(id="inaki"), tools=MagicMock(), process_photo=None, tracer=None
     )
     harness = SimpleNamespace(photos=MagicMock())
     global_config = MagicMock()

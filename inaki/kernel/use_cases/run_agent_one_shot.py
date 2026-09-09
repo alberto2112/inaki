@@ -49,16 +49,12 @@ class RunAgentOneShotUseCase:
         llm: ILLMProvider,
         tools: IToolExecutor,
         settings: OneShotSettings,
-        thinking_indicator: bool = False,
         tracer: ITurnTracer | None = None,
     ) -> None:
         self._llm = llm
         self._tools = tools
         self._cfg = settings
         self._tracer: ITurnTracer = tracer or NullTurnTracer()
-        # Flag transversal del bloque global ``channels.thinking_indicator``.
-        # Default False para no-op si nadie lo wirea (el one-shot suele correr sin sink).
-        self._thinking_indicator = thinking_indicator
 
     @property
     def system_prompt(self) -> str:
@@ -143,7 +139,6 @@ class RunAgentOneShotUseCase:
                 max_iterations=max_iterations,
                 circuit_breaker_threshold=self._cfg.circuit_breaker_threshold,
                 agent_id=self._cfg.agent_id,
-                thinking_indicator=self._thinking_indicator,
                 request_delay_seconds=self._cfg.request_delay_seconds,
                 tracer=self._tracer.bind(
                     agent_id=self._cfg.agent_id, turn_id=uuid.uuid4().hex[:12], mode="one_shot"

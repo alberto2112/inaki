@@ -204,6 +204,39 @@ def ensure_user_config(config_dir: Path, agents_dir: Path) -> None:
         for migracion in canal.migraciones:
             migracion(config_dir, agents_dir)
     migrate_secrets_into_main_layers(config_dir, agents_dir)
+    migrate_photos_debug(config_dir)
+
+
+def migrate_photos_debug(config_dir: Path) -> None:
+    """Migración one-shot: quita ``photos.debug`` de ``global.yaml`` (2026-09, fase 10).
+
+    El fichero ``/tmp/inaki.photo-debug.*.log`` que activaba murió: el análisis
+    de cada foto es ahora la traza ``photo.analysis`` del modo debug (``--debug``
+    o ``app.debug``), junto al resto del turno. Como una clave desconocida aborta
+    el arranque, la clave se elimina del YAML en vez de dejar un knob muerto.
+    Idempotente: sin la clave, no hace nada.
+    """
+    from ruamel.yaml import YAML
+
+    global_yaml = config_dir / "global.yaml"
+    if not global_yaml.exists():
+        return
+    yaml_rt = YAML()
+    yaml_rt.preserve_quotes = True
+    yaml_rt.width = 4096
+    data = yaml_rt.load(global_yaml.read_text(encoding="utf-8")) or {}
+    photos = data.get("photos")
+    if not isinstance(photos, dict) or "debug" not in photos:
+        return
+    del photos["debug"]
+    with global_yaml.open("w", encoding="utf-8") as fh:
+        yaml_rt.dump(data, fh)
+    logger.warning(
+        "Migración photos.debug: la clave se eliminó de %s. El fichero /tmp/inaki.photo-debug "
+        "ya no existe: el análisis de cada foto sale como traza `photo.analysis` en "
+        "<home>/debug/turns/ con `inaki --debug daemon` o `app.debug: true`.",
+        global_yaml,
+    )
 
 
 def migrate_tool_config_to_own_file(config_dir: Path) -> None:

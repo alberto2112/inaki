@@ -25,7 +25,7 @@ from inaki.channels.telegram.ports import TelegramChannelSettings, TelegramGroup
 @pytest.fixture
 def mock_container() -> MagicMock:
     container = MagicMock()
-    container.run_agent.record_user_message = AsyncMock()
+    container.history.record_user_message = AsyncMock()
     container.run_agent.execute = AsyncMock(return_value="respuesta del llm")
     container.run_agent.set_extra_system_sections = MagicMock()
     return container
@@ -161,8 +161,8 @@ async def test_on_broadcast_persiste_en_historial_y_programa_flush(
     msg = _msg("comentario sobre el clima")
     await bot._on_broadcast_received(msg)
 
-    mock_container.run_agent.record_user_message.assert_awaited_once()
-    call = mock_container.run_agent.record_user_message.await_args
+    mock_container.history.record_user_message.assert_awaited_once()
+    call = mock_container.history.record_user_message.await_args
     assert "anacleto said:" in call.args[0]
     assert "comentario sobre el clima" in call.args[0]
     assert call.kwargs.get("channel") == "telegram"
@@ -222,7 +222,7 @@ async def test_on_broadcast_assistant_response_respeta_rate_limiter(
     )
     await bot._on_broadcast_received(_msg("cualquier cosa"))
 
-    mock_container.run_agent.record_user_message.assert_awaited_once()
+    mock_container.history.record_user_message.assert_awaited_once()
     assert bot._pending_tasks == {}
     rl.check_and_increment.assert_called_once_with("inaki", "-100123", 5)
     # Un bot NO resetea el presupuesto: solo un humano lo hace.
@@ -258,7 +258,7 @@ async def test_on_broadcast_user_input_voice_no_consume_rate_limiter(
     )
     await bot._on_broadcast_received(msg)
 
-    mock_container.run_agent.record_user_message.assert_awaited_once()
+    mock_container.history.record_user_message.assert_awaited_once()
     assert "-100123" in bot._pending_tasks
     rl.check_and_increment.assert_not_called()
     rl.reset.assert_called_once_with("inaki", "-100123")
@@ -293,7 +293,7 @@ async def test_on_broadcast_user_input_photo_no_consume_rate_limiter(
     )
     await bot._on_broadcast_received(msg)
 
-    mock_container.run_agent.record_user_message.assert_awaited_once()
+    mock_container.history.record_user_message.assert_awaited_once()
     assert "-100123" in bot._pending_tasks
     rl.check_and_increment.assert_not_called()
     rl.reset.assert_called_once_with("inaki", "-100123")
@@ -327,7 +327,7 @@ async def test_on_broadcast_es_idempotente_si_hay_flush_activo(
     # Mismo task — no se reemplazó
     assert bot._pending_tasks["-100123"] is primer_task
     # Pero ambos broadcasts fueron persistidos
-    assert mock_container.run_agent.record_user_message.await_count == 2
+    assert mock_container.history.record_user_message.await_count == 2
 
     # Cleanup
     primer_task.cancel()
@@ -364,8 +364,8 @@ async def test_on_broadcast_user_input_voice_persiste_con_prefijo_audio(
     )
     await bot._on_broadcast_received(msg)
 
-    mock_container.run_agent.record_user_message.assert_awaited_once()
-    contenido = mock_container.run_agent.record_user_message.await_args.args[0]
+    mock_container.history.record_user_message.assert_awaited_once()
+    contenido = mock_container.history.record_user_message.await_args.args[0]
     assert contenido == "alberto (audio): cuánto es 5+5"
     # Flush programado
     assert "-100123" in bot._pending_tasks
@@ -397,8 +397,8 @@ async def test_on_broadcast_user_input_photo_persiste_con_prefijo_foto(
     )
     await bot._on_broadcast_received(msg)
 
-    mock_container.run_agent.record_user_message.assert_awaited_once()
-    contenido = mock_container.run_agent.record_user_message.await_args.args[0]
+    mock_container.history.record_user_message.assert_awaited_once()
+    contenido = mock_container.history.record_user_message.await_args.args[0]
     assert contenido == "alberto (foto): persona caminando"
     assert "-100123" in bot._pending_tasks
     bot._pending_tasks["-100123"].cancel()
@@ -428,7 +428,7 @@ async def test_on_broadcast_assistant_response_mantiene_prefijo_legacy(
     )
     await bot._on_broadcast_received(msg)
 
-    contenido = mock_container.run_agent.record_user_message.await_args.args[0]
+    contenido = mock_container.history.record_user_message.await_args.args[0]
     assert contenido == "anacleto said: hola humano"
     bot._pending_tasks["-100123"].cancel()
     try:
@@ -464,7 +464,7 @@ async def test_on_broadcast_chat_no_autorizado_no_persiste_ni_flushea(
     msg = _msg("respuesta en un grupo donde ya no estoy", chat_id="-999")
     await bot._on_broadcast_received(msg)
 
-    mock_container.run_agent.record_user_message.assert_not_awaited()
+    mock_container.history.record_user_message.assert_not_awaited()
     assert bot._pending_tasks == {}
     # Ni siquiera consumió el rate limiter — cortó antes de todo.
     mock_rate_limiter.check_and_increment.assert_not_called()
@@ -500,5 +500,5 @@ async def test_on_broadcast_allowed_chat_ids_vacio_ignora_todo(
     )
     await bot._on_broadcast_received(_msg("cualquier cosa", chat_id="-100123"))
 
-    mock_container.run_agent.record_user_message.assert_not_awaited()
+    mock_container.history.record_user_message.assert_not_awaited()
     assert bot._pending_tasks == {}

@@ -219,7 +219,7 @@ class TelegramMediaMixin:
             # El caption del usuario (o el prompt "!" verbatim) viaja como @caption.
             placeholder_caption = f"!{scene_prompt}" if scene_prompt else caption
             history_content = format_attachment(att, caption=placeholder_caption)
-            history_id = await self._ports.run_agent.record_photo_message(
+            history_id = await self._ports.history.record_photo_message(
                 history_content,
                 channel="telegram",
                 chat_id=chat_id,
@@ -271,7 +271,7 @@ class TelegramMediaMixin:
                 await send_html_or_plain(
                     lambda text, pm: message.reply_text(text, parse_mode=pm), direct_text
                 )
-                await self._ports.run_agent.record_assistant_message(
+                await self._ports.history.record_assistant_message(
                     f"photo_transcription: {direct_text}",
                     channel="telegram",
                     chat_id=chat_id,
@@ -314,7 +314,7 @@ class TelegramMediaMixin:
             # disparar otro execute().
             if not slot_acquired and chat_type not in _TIPOS_GRUPO:
                 if result.text_context:
-                    await self._ports.run_agent.record_user_message(
+                    await self._ports.history.record_user_message(
                         format_analysis_delta(att, result.text_context),
                         channel="telegram",
                         chat_id=chat_id,
@@ -326,7 +326,7 @@ class TelegramMediaMixin:
             # el @analysis final. Esto evita un segundo mensaje role=user
             # consecutivo en el historial. El history_id no cambia → face_ref sigue
             # válido y el orden cronológico se preserva.
-            await self._ports.run_agent.update_message_content(history_id, enriched_content)
+            await self._ports.history.update_message_content(history_id, enriched_content)
 
             # Emitir user_input_photo (solo grupos) ANTES de correr el pipeline, para que
             # otros agentes vean la descripción antes que la respuesta del LLM.
@@ -339,12 +339,6 @@ class TelegramMediaMixin:
                         sender=extract_sender_name(message),
                     )
                 )
-
-            # Si photos.debug está activo, registrar la ruta del archivo de debug
-            # en run_agent para que Phase 2 (historial + system prompt + mensajes al
-            # LLM) se agregue al archivo.
-            if result.debug_path:
-                self._ports.run_agent.set_photo_debug_path(result.debug_path)
 
             # Dispatch:
             # - Grupo: delegamos al buffer-flush idempotente. Si ya hay un flush
@@ -488,7 +482,7 @@ class TelegramMediaMixin:
                 # history-derived. La query se deriva del trailing batch
                 # (@album + lo recordado in-flight). No re-adquiere el slot
                 # (user_input=None ⇒ _run_pipeline salta dispatch_inbound_turn).
-                await self._ports.run_agent.record_user_message(
+                await self._ports.history.record_user_message(
                     user_input, channel="telegram", chat_id=chat_id_str
                 )
                 await self._set_reaction(update, "👀")
@@ -496,7 +490,7 @@ class TelegramMediaMixin:
             else:
                 # Había un turno corriendo cuando llegó el álbum: solo dejamos el
                 # bloque persistido para que ese turno lo drene entre iteraciones.
-                await self._ports.run_agent.record_user_message(
+                await self._ports.history.record_user_message(
                     user_input, channel="telegram", chat_id=chat_id_str
                 )
         except Exception:
@@ -533,7 +527,7 @@ class TelegramMediaMixin:
             mime=mime_type if content_type != "photo" else None,
             file_ref=payload.file_unique_id,
         )
-        await self._ports.run_agent.record_user_message(
+        await self._ports.history.record_user_message(
             format_attachment(att), channel="telegram", chat_id=chat_id
         )
 
@@ -789,7 +783,7 @@ class TelegramMediaMixin:
             block = format_attachment(att)
             if chat_type in _TIPOS_GRUPO:
                 block = f"{extract_sender_name(message)} sent:\n{block}"
-            await self._ports.run_agent.record_user_message(
+            await self._ports.history.record_user_message(
                 block, channel="telegram", chat_id=chat_id_str
             )
             return
@@ -853,7 +847,7 @@ class TelegramMediaMixin:
             block = format_attachment(att)
             if chat_type in _TIPOS_GRUPO:
                 block = f"{extract_sender_name(message)} sent:\n{block}"
-            await self._ports.run_agent.record_user_message(
+            await self._ports.history.record_user_message(
                 block, channel="telegram", chat_id=chat_id_str
             )
 

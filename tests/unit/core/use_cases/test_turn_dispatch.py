@@ -22,21 +22,19 @@ def scope_registry() -> MagicMock:
 
 
 @pytest.fixture
-def run_agent() -> MagicMock:
+def history() -> MagicMock:
     agent = MagicMock()
     agent.record_user_message = AsyncMock(return_value=None)
     return agent
 
 
 class TestScopeLibre:
-    async def test_ejecuta_el_turno_y_devuelve_la_respuesta(
-        self, scope_registry, run_agent
-    ) -> None:
+    async def test_ejecuta_el_turno_y_devuelve_la_respuesta(self, scope_registry, history) -> None:
         execute = AsyncMock(return_value="respuesta del agente")
 
         result = await dispatch_inbound_turn(
             scope_registry=scope_registry,
-            run_agent=run_agent,
+            history=history,
             scope=SCOPE,
             message="hola",
             execute=execute,
@@ -45,12 +43,12 @@ class TestScopeLibre:
         assert result.executed is True
         assert result.reply == "respuesta del agente"
         execute.assert_awaited_once()
-        run_agent.record_user_message.assert_not_called()
+        history.record_user_message.assert_not_called()
 
-    async def test_libera_el_slot_despues_de_ejecutar(self, scope_registry, run_agent) -> None:
+    async def test_libera_el_slot_despues_de_ejecutar(self, scope_registry, history) -> None:
         await dispatch_inbound_turn(
             scope_registry=scope_registry,
-            run_agent=run_agent,
+            history=history,
             scope=SCOPE,
             message="hola",
             execute=AsyncMock(return_value="ok"),
@@ -59,14 +57,14 @@ class TestScopeLibre:
         scope_registry.try_mark_busy.assert_awaited_once_with(SCOPE)
         scope_registry.mark_idle.assert_awaited_once_with(SCOPE)
 
-    async def test_libera_el_slot_aunque_execute_lance(self, scope_registry, run_agent) -> None:
+    async def test_libera_el_slot_aunque_execute_lance(self, scope_registry, history) -> None:
         """Garantía clave: un turno que explota NO deja el scope busy para siempre."""
         execute = AsyncMock(side_effect=RuntimeError("boom"))
 
         with pytest.raises(RuntimeError, match="boom"):
             await dispatch_inbound_turn(
                 scope_registry=scope_registry,
-                run_agent=run_agent,
+                history=history,
                 scope=SCOPE,
                 message="hola",
                 execute=execute,
@@ -76,16 +74,14 @@ class TestScopeLibre:
 
 
 class TestScopeOcupado:
-    async def test_persiste_el_mensaje_con_el_scope_correcto(
-        self, scope_registry, run_agent
-    ) -> None:
+    async def test_persiste_el_mensaje_con_el_scope_correcto(self, scope_registry, history) -> None:
         """El channel y chat_id del record salen de la tupla scope — el loop
         activo drena history filtrando por ese mismo scope."""
         scope_registry.try_mark_busy = AsyncMock(return_value=False)
 
         result = await dispatch_inbound_turn(
             scope_registry=scope_registry,
-            run_agent=run_agent,
+            history=history,
             scope=SCOPE,
             message="dato nuevo",
             execute=AsyncMock(),
@@ -93,9 +89,9 @@ class TestScopeOcupado:
 
         assert result.executed is False
         assert result.reply == INFLIGHT_ACK
-        run_agent.record_user_message.assert_awaited_once_with("dato nuevo", "telegram", "123")
+        history.record_user_message.assert_awaited_once_with("dato nuevo", "telegram", "123")
 
-    async def test_no_ejecuta_ni_libera_slot_ajeno(self, scope_registry, run_agent) -> None:
+    async def test_no_ejecuta_ni_libera_slot_ajeno(self, scope_registry, history) -> None:
         """No adquirimos el slot → no lo liberamos: lo tiene el turno en curso,
         que lo soltará en su propio finally."""
         scope_registry.try_mark_busy = AsyncMock(return_value=False)
@@ -103,7 +99,7 @@ class TestScopeOcupado:
 
         await dispatch_inbound_turn(
             scope_registry=scope_registry,
-            run_agent=run_agent,
+            history=history,
             scope=SCOPE,
             message="dato nuevo",
             execute=execute,

@@ -28,7 +28,7 @@ from inaki.shared.channel_context import ChannelContext
 @pytest.fixture
 def mock_container() -> MagicMock:
     container = MagicMock()
-    container.run_agent.record_user_message = AsyncMock()
+    container.history.record_user_message = AsyncMock()
     container.run_agent.execute = AsyncMock(return_value="respuesta")
     container.run_agent.set_extra_system_sections = MagicMock()
     return container
@@ -238,8 +238,8 @@ async def test_handle_group_message_preformatted_persiste_el_bloque(
 
     await bot._handle_group_message(update, bloque, "supergroup", preformatted=True)
 
-    mock_container.run_agent.record_user_message.assert_awaited_once()
-    persistido = mock_container.run_agent.record_user_message.await_args.args[0]
+    mock_container.history.record_user_message.assert_awaited_once()
+    persistido = mock_container.history.record_user_message.await_args.args[0]
     assert persistido == f"juan sent:\n{bloque}"
 
 
@@ -257,5 +257,5 @@ async def test_handle_group_message_texto_plano_sigue_usando_format_group_messag
 
     await bot._handle_group_message(update, "hola grupo", "supergroup")
 
-    persistido = mock_container.run_agent.record_user_message.await_args.args[0]
+    persistido = mock_container.history.record_user_message.await_args.args[0]
     assert persistido == "juan said: hola grupo"

@@ -21,6 +21,7 @@ from dataclasses import dataclass
 
 from inaki.config import AgentConfig, PhotosConfig, ProviderConfig, TranscriptionConfig
 from inaki.kernel.ports.outbound.tool_port import ITool
+from inaki.kernel.ports.outbound.turn_tracer_port import ITurnTracer
 from inaki.perception.adapters.face_metadata.sqlite_message_face_metadata_repo import (
     SqliteMessageFaceMetadataRepo,
 )
@@ -157,7 +158,6 @@ class TranscriptionProviderFactory:
 def build_photos_settings(photos_cfg: PhotosConfig) -> PhotosSettings:
     return PhotosSettings(
         enabled=photos_cfg.enabled,
-        debug=photos_cfg.debug,
         enrollment_chats=photos_cfg.enrollment_chats,
         match_threshold=photos_cfg.faces.match_threshold,
         ambiguous_threshold=photos_cfg.faces.ambiguous_threshold,
@@ -207,6 +207,7 @@ def build_photos_for_agent(
     singletons: PhotosSingletons,
     *,
     get_channel_context: Callable[[], ChannelContext | None],
+    tracer: ITurnTracer | None = None,
 ) -> PhotosBundle:
     """Adapters per-agente (describer de escena, anotador, repo de metadata) + use case + tools.
 
@@ -221,6 +222,7 @@ def build_photos_for_agent(
         annotator=PillowPhotoAnnotator(),
         metadata_repo=metadata_repo,
         config=build_photos_settings(photos_cfg),
+        tracer=tracer,
     )
     registry = singletons.face_registry
     tools: list[ITool] = [

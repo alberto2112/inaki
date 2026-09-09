@@ -36,8 +36,8 @@ def _make_bot(*, has_repo: bool = True, voice_enabled: bool = True, tmp_path=Non
     container.run_agent = MagicMock()
     container.run_agent.execute = AsyncMock(return_value="ok")
     container.run_agent.set_extra_system_sections = MagicMock()
-    container.run_agent.record_photo_message = AsyncMock(return_value=42)
-    container.run_agent.record_user_message = AsyncMock()
+    container.history.record_photo_message = AsyncMock(return_value=42)
+    container.history.record_user_message = AsyncMock()
     container.process_photo = None  # Para que photo handler haga early return
 
     repo = AsyncMock() if has_repo else None
@@ -152,7 +152,7 @@ def _flushed_album_block(container) -> str:
     flush persiste el @album como user message y corre el turno history-derived
     (``_run_pipeline(update, None)``) en vez de pasar el @album como user_input.
     """
-    return container.run_agent.record_user_message.await_args.args[0]
+    return container.history.record_user_message.await_args.args[0]
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +183,7 @@ async def test_album_persiste_file_id_sin_procesar_como_foto(monkeypatch):
     assert record.history_id is None
     # NO se procesa como foto individual (sin record_photo_message), pero SÍ
     # dispara el turno de álbum coalescido — history-derived con el slot tomado.
-    container.run_agent.record_photo_message.assert_not_awaited()
+    container.history.record_photo_message.assert_not_awaited()
     container.scope_registry.try_mark_busy.assert_awaited()
     container.scope_registry.mark_idle.assert_awaited()
     bot._run_pipeline.assert_awaited_once()
@@ -280,7 +280,7 @@ async def test_album_miembro_tardio_post_flush_persiste_rastro_sin_returno(monke
     bot._run_pipeline.assert_awaited_once()
 
     # El flush ya persistió el @album vía record_user_message (1ra llamada).
-    assert container.run_agent.record_user_message.await_args.args[0].startswith("@album")
+    assert container.history.record_user_message.await_args.args[0].startswith("@album")
 
     # Miembro tardío del MISMO álbum, llega tras el flush.
     tardio = _photo_update(media_group_id="grupo-tardio")
@@ -290,7 +290,7 @@ async def test_album_miembro_tardio_post_flush_persiste_rastro_sin_returno(monke
     assert repo.save.await_count == 2
     bot._run_pipeline.assert_awaited_once()
     # La ÚLTIMA persistencia es el straggler @photo (además del @album del flush).
-    marker = container.run_agent.record_user_message.await_args.args[0]
+    marker = container.history.record_user_message.await_args.args[0]
     assert marker.startswith("@photo")
 
 
@@ -478,7 +478,7 @@ async def test_texto_durante_album_no_arranca_turno_ciego(monkeypatch):
 
     # El texto NO arrancó un turno (execute no se llamó) — cayó a in-flight.
     container.run_agent.execute.assert_not_awaited()
-    recorded = [c.args[0] for c in container.run_agent.record_user_message.await_args_list]
+    recorded = [c.args[0] for c in container.history.record_user_message.await_args_list]
     assert "ahí están" in recorded
     # Y el usuario recibió el ACK, no una respuesta ciega.
     tmsg.reply_text.assert_awaited_once()
@@ -552,8 +552,8 @@ async def test_handle_silent_media_sin_caption_persiste_rastro_sin_turno():
 
     repo.save.assert_awaited_once()
     bot._run_pipeline.assert_not_awaited()
-    container.run_agent.record_user_message.assert_awaited_once()
-    marker = container.run_agent.record_user_message.await_args.args[0]
+    container.history.record_user_message.assert_awaited_once()
+    marker = container.history.record_user_message.await_args.args[0]
     assert marker.startswith("@file datos.pdf")
     # Sin downloader el bloque degrada a pending con el id estable.
     assert "pending (id: DOC-uniq)" in marker
@@ -582,7 +582,7 @@ async def test_silent_media_user_no_autorizado_no_persiste():
     await bot._handle_silent_media(update, ctx)
 
     repo.save.assert_not_awaited()
-    container.run_agent.record_user_message.assert_not_awaited()
+    container.history.record_user_message.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -614,7 +614,7 @@ async def test_silent_media_sin_repo_no_rompe():
     ctx = MagicMock()
     await bot._handle_silent_media(update, ctx)
     # El rastro @file se persiste igual aunque no haya repo de transporte.
-    container.run_agent.record_user_message.assert_awaited_once()
+    container.history.record_user_message.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -742,8 +742,8 @@ async def test_voice_disabled_persiste_pero_no_transcribe():
     # NO transcribió ni respondió, pero dejó el rastro @audio.
     bot._ports.transcription.transcribe.assert_not_awaited()
     msg.reply_text.assert_not_awaited()
-    container.run_agent.record_user_message.assert_awaited_once()
-    marker = container.run_agent.record_user_message.await_args.args[0]
+    container.history.record_user_message.assert_awaited_once()
+    marker = container.history.record_user_message.await_args.args[0]
     assert marker.startswith("@audio")
 
 

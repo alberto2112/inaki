@@ -771,7 +771,6 @@ Configuración del pipeline de fotos (reconocimiento facial + escena).
 |---|---|---|---|
 | `enabled` | `bool` | `True` |  |
 | `enrollment_chats` | `Literal['private', 'none']` | `'private'` |  |
-| `debug` | `bool` | `False` |  |
 | `faces` | `FacesConfig` | _(sub-config)_ |  |
 | `scene` | `SceneConfig` | _(sub-config)_ |  |
 | `dedup` | `DedupConfig` | _(sub-config)_ |  |
@@ -779,8 +778,6 @@ Configuración del pipeline de fotos (reconocimiento facial + escena).
 **`enabled`** — Si False, el bot ignora todas las fotos con warning. No se carga ningún modelo.
 
 **`enrollment_chats`** — Tipos de chat donde el agente ofrecerá registrar caras nuevas. 'private' = solo chats privados. 'none' = el agente nunca ofrece enrolar.
-
-**`debug`** — Si True, escribe /tmp/inaki.photo-debug.<timestamp>.log con el resultado del procesamiento y el prompt completo enviado al LLM. Útil para diagnosticar comportamientos extraños en grupos.
 
 **`faces`** — Reconocimiento facial local (InsightFace): qué modelo y con qué umbrales decide.
 

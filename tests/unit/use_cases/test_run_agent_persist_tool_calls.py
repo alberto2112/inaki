@@ -12,7 +12,7 @@ import pytest
 from inaki.kernel.domain.value_objects.llm_response import LLMResponse
 from inaki.kernel.ports.outbound.tool_port import ToolResult
 from inaki.kernel.use_cases.run_agent import RunAgentUseCase
-from inaki.shared.message import Message, Role
+from inaki.shared.message import Role
 from inaki.app.settings import build_run_agent_settings
 
 
@@ -93,20 +93,6 @@ async def test_persist_off_es_legacy_sin_mensajes_tool(agent_config, mocks):
     # Solo user + respuesta final; ningún mensaje role=tool.
     assert roles == [Role.USER, Role.ASSISTANT]
     assert Role.TOOL not in roles
-
-
-async def test_get_history_oculta_mensajes_tool(agent_config, mocks):
-    uc = _build_uc(agent_config, mocks, persist=True)
-    mocks[4].load.return_value = [
-        Message(role=Role.USER, content="guardá"),
-        Message(role=Role.ASSISTANT, content="ok", tool_calls=[{"id": "c"}]),
-        Message(role=Role.TOOL, content="{}", tool_call_id="c"),
-        Message(role=Role.ASSISTANT, content="listo"),
-    ]
-
-    visible = await uc.get_history()
-    assert [m.role for m in visible] == [Role.USER, Role.ASSISTANT, Role.ASSISTANT]
-    assert all(m.role != Role.TOOL for m in visible)
 
 
 # ---------------------------------------------------------------------------

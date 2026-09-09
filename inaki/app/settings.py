@@ -17,7 +17,11 @@ from inaki.kernel.domain.value_objects.agent_settings import OneShotSettings, Ru
 from inaki.memory.wiring import build_memory_settings
 
 
-def build_run_agent_settings(cfg: AgentConfig) -> RunAgentSettings:
+def build_run_agent_settings(
+    cfg: AgentConfig, *, user_timezone: str | None = None
+) -> RunAgentSettings:
+    """``user_timezone`` viene del bloque GLOBAL ``user`` (no existe en ``AgentConfig``):
+    el ensamblador lo pasa; los tests que construyen el VO sin él caen a la TZ local."""
     tg_cfg = telegram_config(cfg)
     timestamp_channels = (
         frozenset({"telegram"}) if tg_cfg is not None and tg_cfg.add_llm_timestamp else frozenset()
@@ -48,6 +52,7 @@ def build_run_agent_settings(cfg: AgentConfig) -> RunAgentSettings:
         persist_tool_calls=cfg.chat_history.persist_tool_calls,
         persist_tool_result_max_chars=cfg.chat_history.persist_tool_result_max_chars,
         memory=build_memory_settings(cfg.memories),
+        user_timezone=user_timezone,
     )
 
 

@@ -92,6 +92,9 @@ class _FakeAgentContainer:
 
     def __init__(self, agent_id: str) -> None:
         self.run_agent = _StatefulFakeRunAgent(agent_id)
+        # El fake guarda el historial en el mismo objeto: sirve como ``history``
+        # (``ConversationHistory``) y como ``run_agent`` a la vez.
+        self.history = self.run_agent
         self.scope_registry = InMemoryScopeRegistryAdapter()
         self.agent_config = _FakeAgentConfig()
 

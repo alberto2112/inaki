@@ -58,16 +58,24 @@ def mock_run_agent() -> MagicMock:
     """Mock de RunAgentUseCase con execute/get_history/clear_history."""
     agent = MagicMock()
     agent.execute = AsyncMock(return_value="Hola, ¿en qué te ayudo?")
-    agent.get_history = AsyncMock(return_value=[])
-    agent.clear_history = AsyncMock(return_value=None)
     return agent
 
 
 @pytest.fixture
-def mock_agent_container(mock_run_agent: MagicMock) -> MagicMock:
-    """Mock de AgentContainer con run_agent."""
+def mock_history() -> MagicMock:
+    """``ConversationHistory`` del agente: la vista humana del historial y el registro in-flight."""
+    history = MagicMock()
+    history.get_history = AsyncMock(return_value=[])
+    history.clear_history = AsyncMock(return_value=None)
+    return history
+
+
+@pytest.fixture
+def mock_agent_container(mock_run_agent: MagicMock, mock_history: MagicMock) -> MagicMock:
+    """Mock de AgentRuntime con run_agent e history."""
     container = MagicMock()
     container.run_agent = mock_run_agent
+    container.history = mock_history
     # scope_registry para in-flight-message-injection — try_mark_busy=True
     # significa "scope libre", el camino normal corre execute() como antes.
     container.scope_registry = MagicMock()
@@ -75,7 +83,7 @@ def mock_agent_container(mock_run_agent: MagicMock) -> MagicMock:
     container.scope_registry.mark_idle = AsyncMock(return_value=None)
     # record_user_message solo se llama en el branch busy — no se ejecuta en
     # los tests pero el mock evita TypeError si algún test futuro lo dispara.
-    mock_run_agent.record_user_message = AsyncMock(return_value=None)
+    mock_history.record_user_message = AsyncMock(return_value=None)
     # Sin bloque ``channels.cli`` declarado: el ``user_id``/``context_id`` del
     # turno cae al ``session_id``. Explícito porque los bloques de canal ya no
     # son dicts crudos — sin esto el MagicMock devolvería un mock como identidad.
@@ -125,7 +133,7 @@ async def test_post_turn_happy_path(chat_app, mock_run_agent) -> None:
 
 
 async def test_post_turn_scope_busy_persists_and_returns_ack(
-    chat_app, mock_run_agent, mock_agent_container
+    chat_app, mock_run_agent, mock_agent_container, mock_history
 ) -> None:
     """Scope ocupado (try_mark_busy=False) → no se llama execute(); se persiste
     el mensaje vía record_user_message y se devuelve un ACK al cliente.
@@ -148,7 +156,7 @@ async def test_post_turn_scope_busy_persists_and_returns_ack(
     # execute() NO se llamó — esa es la garantía clave del feature.
     mock_run_agent.execute.assert_not_called()
     # El mensaje SÍ se persistió en history para que el loop activo lo drene.
-    mock_run_agent.record_user_message.assert_awaited_once_with("hola", "", "")
+    mock_history.record_user_message.assert_awaited_once_with("hola", "", "")
     # mark_idle NO se llamó porque NO adquirimos el slot (lo tiene el turno
     # en curso, que lo liberará en su propio finally).
     mock_agent_container.scope_registry.mark_idle.assert_not_called()
@@ -286,7 +294,7 @@ async def test_post_turn_chat_id_sin_channel_422(chat_app) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_get_history_happy(chat_app, mock_run_agent) -> None:
+async def test_get_history_happy(chat_app, mock_run_agent, mock_history) -> None:
     """GET /history con agente válido → 200 con mensajes (incluyendo timestamp)."""
     from datetime import datetime
 
@@ -294,7 +302,7 @@ async def test_get_history_happy(chat_app, mock_run_agent) -> None:
         Message(role=Role.USER, content="hola", timestamp=datetime(2026, 1, 1, 12, 0)),
         Message(role=Role.ASSISTANT, content="¡hola!", timestamp=datetime(2026, 1, 1, 12, 1)),
     ]
-    mock_run_agent.get_history.return_value = msgs
+    mock_history.get_history.return_value = msgs
     async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as ac:
         resp = await ac.get("/admin/chat/history", params={"agent_id": "dev"}, headers=VALID_KEY)
     assert resp.status_code == 200
@@ -310,9 +318,9 @@ async def test_get_history_happy(chat_app, mock_run_agent) -> None:
     assert "timestamp" in data["messages"][1]
 
 
-async def test_get_history_vacia(chat_app, mock_run_agent) -> None:
+async def test_get_history_vacia(chat_app, mock_run_agent, mock_history) -> None:
     """GET /history con agente sin mensajes → 200 con lista vacía."""
-    mock_run_agent.get_history.return_value = []
+    mock_history.get_history.return_value = []
     async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as ac:
         resp = await ac.get("/admin/chat/history", params={"agent_id": "dev"}, headers=VALID_KEY)
     assert resp.status_code == 200
@@ -339,12 +347,12 @@ async def test_get_history_sin_auth_401(chat_app) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_delete_history_happy(chat_app, mock_run_agent) -> None:
+async def test_delete_history_happy(chat_app, mock_run_agent, mock_history) -> None:
     """DELETE /history con agente válido → 204."""
     async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as ac:
         resp = await ac.delete("/admin/chat/history", params={"agent_id": "dev"}, headers=VALID_KEY)
     assert resp.status_code == 204
-    mock_run_agent.clear_history.assert_awaited_once()
+    mock_history.clear_history.assert_awaited_once()
 
 
 async def test_delete_history_agente_invalido_404(chat_app) -> None:
@@ -363,9 +371,9 @@ async def test_delete_history_sin_auth_401(chat_app) -> None:
     assert resp.status_code == 401
 
 
-async def test_get_history_vacia_tras_delete(chat_app, mock_run_agent) -> None:
+async def test_get_history_vacia_tras_delete(chat_app, mock_run_agent, mock_history) -> None:
     """Después de DELETE, GET history devuelve lista vacía (fresh turn after DELETE)."""
-    mock_run_agent.get_history.return_value = []
+    mock_history.get_history.return_value = []
     async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as ac:
         del_resp = await ac.delete(
             "/admin/chat/history", params={"agent_id": "dev"}, headers=VALID_KEY

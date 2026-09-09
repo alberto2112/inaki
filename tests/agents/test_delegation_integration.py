@@ -27,6 +27,7 @@ from inaki.kernel.domain.value_objects.conversation_state import ConversationSta
 from inaki.kernel.domain.value_objects.delegation_result import DelegationResult
 from inaki.kernel.domain.value_objects.llm_response import LLMResponse
 from inaki.kernel.ports.outbound.turn_tracer_port import NullTurnTracer
+from inaki.kernel.use_cases.conversation_history import ConversationHistory
 from inaki.kernel.use_cases.run_agent import RunAgentUseCase
 from inaki.kernel.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from inaki.config import (
@@ -206,6 +207,7 @@ def _build_container(
         transcribe_audio=None,
         run_agent=run_agent,
         run_agent_one_shot=one_shot,
+        conversation=ConversationHistory(AsyncMock(), agent_config.id),
         jobs=MemoryJobs(None, None),
         scope_registry=MagicMock(),
         tracer=NullTurnTracer(),

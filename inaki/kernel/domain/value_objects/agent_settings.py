@@ -164,6 +164,10 @@ class RunAgentSettings(BaseModel, frozen=True):
     persist_tool_calls: bool = True
     persist_tool_result_max_chars: int = 2000
     memory: MemorySettings = MemorySettings()
+    user_timezone: str | None = None
+    """Zona IANA del usuario (``user.timezone``) para las variables de fecha y hora
+    del system prompt. ``None`` → zona local del sistema (tests que construyen el VO
+    a mano); en runtime el composition root SIEMPRE la pasa."""
 
 
 class OneShotSettings(BaseModel, frozen=True):

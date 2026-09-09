@@ -49,7 +49,7 @@ dev = [
 inaki = "inaki.cli:app"
 
 [tool.setuptools.packages.find]
-include = ["inaki*", "core*", "adapters*", "infrastructure*"]
+include = ["inaki*", "core*", "infrastructure*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -113,17 +113,16 @@ ignore_missing_imports = true
 # es la lista DEUDA_* con otro nombre.
 # ---------------------------------------------------------------------------
 [tool.importlinter]
-root_packages = ["core", "adapters", "infrastructure", "inaki"]
+root_packages = ["core", "infrastructure", "inaki"]
 
 # Módulos de `inaki/` que cada capa NO puede conocer. `inaki.shared` (primitivas)
 # la consumen todos. Cuando `core/` se disuelva en `inaki/kernel` (fase 9) estas
 # listas se convierten en el contrato de capas final.
 [[tool.importlinter.contracts]]
-name = "core/ no conoce adapters/, infrastructure/ ni los módulos de inaki/ salvo shared"
+name = "core/ no conoce infrastructure/ ni los módulos de inaki/ salvo shared"
 type = "forbidden"
 source_modules = ["core"]
 forbidden_modules = [
-    "adapters",
     "infrastructure",
     "inaki.cli",
     "inaki.app",
@@ -138,29 +137,8 @@ forbidden_modules = [
     "inaki.tools",
     "inaki.llm",
     "inaki.extensions",
-]
-
-# adapters/ (lo que queda: scheduler, delegación y sus tools, hasta la fase 8) solo
-# conoce core/ e inaki.shared: ni el wiring ni ningún módulo de feature.
-[[tool.importlinter.contracts]]
-name = "adapters/ no conoce infrastructure/ ni los módulos de inaki/ salvo shared"
-type = "forbidden"
-source_modules = ["adapters"]
-forbidden_modules = [
-    "infrastructure",
-    "inaki.cli",
-    "inaki.app",
-    "inaki.observability",
-    "inaki.config",
-    "inaki.channels",
-    "inaki.perception",
-    "inaki.embedding",
-    "inaki.memory",
-    "inaki.knowledge",
-    "inaki.skills",
-    "inaki.tools",
-    "inaki.llm",
-    "inaki.extensions",
+    "inaki.scheduler",
+    "inaki.agents",
 ]
 
 [[tool.importlinter.contracts]]
@@ -169,7 +147,6 @@ type = "forbidden"
 source_modules = ["inaki.shared"]
 forbidden_modules = [
     "core",
-    "adapters",
     "infrastructure",
     "inaki.cli",
     "inaki.app",
@@ -184,6 +161,8 @@ forbidden_modules = [
     "inaki.tools",
     "inaki.llm",
     "inaki.extensions",
+    "inaki.scheduler",
+    "inaki.agents",
 ]
 
 [[tool.importlinter.contracts]]
@@ -191,7 +170,6 @@ name = "inaki/observability solo conoce core (ports) y shared"
 type = "forbidden"
 source_modules = ["inaki.observability"]
 forbidden_modules = [
-    "adapters",
     "infrastructure",
     "inaki.cli",
     "inaki.app",
@@ -205,6 +183,8 @@ forbidden_modules = [
     "inaki.tools",
     "inaki.llm",
     "inaki.extensions",
+    "inaki.scheduler",
+    "inaki.agents",
 ]
 
 
@@ -214,7 +194,6 @@ name = "inaki/config solo conoce core (ports) y shared"
 type = "forbidden"
 source_modules = ["inaki.config"]
 forbidden_modules = [
-    "adapters",
     "infrastructure",
     "inaki.cli",
     "inaki.app",
@@ -228,6 +207,8 @@ forbidden_modules = [
     "inaki.tools",
     "inaki.llm",
     "inaki.extensions",
+    "inaki.scheduler",
+    "inaki.agents",
 ]
 
 # Un canal conoce el kernel (core), shared, observability, config (su sección se
@@ -251,7 +232,6 @@ name = "inaki/perception solo conoce core y shared"
 type = "forbidden"
 source_modules = ["inaki.perception"]
 forbidden_modules = [
-    "adapters",
     "infrastructure",
     "inaki.cli",
     "inaki.app",
@@ -265,6 +245,8 @@ forbidden_modules = [
     "inaki.tools",
     "inaki.llm",
     "inaki.extensions",
+    "inaki.scheduler",
+    "inaki.agents",
 ]
 
 # Módulos de feature del núcleo: conocen el kernel (core), shared y —los que vectorizan—
@@ -274,10 +256,12 @@ name = "inaki/embedding solo conoce core y shared"
 type = "forbidden"
 source_modules = ["inaki.embedding"]
 forbidden_modules = [
-    "adapters", "infrastructure", "inaki.cli", "inaki.app", "inaki.channels",
+    "infrastructure", "inaki.cli", "inaki.app", "inaki.channels",
     "inaki.config", "inaki.observability", "inaki.perception",
     "inaki.memory", "inaki.knowledge", "inaki.skills", "inaki.tools", "inaki.llm",
     "inaki.extensions",
+    "inaki.scheduler",
+    "inaki.agents",
 ]
 
 [[tool.importlinter.contracts]]
@@ -285,9 +269,9 @@ name = "inaki/memory, knowledge y skills solo conocen core, shared y embedding"
 type = "forbidden"
 source_modules = ["inaki.memory", "inaki.knowledge", "inaki.skills"]
 forbidden_modules = [
-    "adapters", "infrastructure", "inaki.cli", "inaki.app", "inaki.channels",
+    "infrastructure", "inaki.cli", "inaki.app", "inaki.channels",
     "inaki.config", "inaki.observability", "inaki.perception",
-    "inaki.tools", "inaki.llm", "inaki.extensions",
+    "inaki.tools", "inaki.llm", "inaki.extensions", "inaki.scheduler", "inaki.agents",
 ]
 
 [[tool.importlinter.contracts]]
@@ -301,9 +285,10 @@ name = "inaki/tools solo conoce core, shared y embedding"
 type = "forbidden"
 source_modules = ["inaki.tools"]
 forbidden_modules = [
-    "adapters", "infrastructure", "inaki.cli", "inaki.app", "inaki.channels",
+    "infrastructure", "inaki.cli", "inaki.app", "inaki.channels",
     "inaki.config", "inaki.observability", "inaki.perception",
     "inaki.memory", "inaki.knowledge", "inaki.skills", "inaki.llm", "inaki.extensions",
+    "inaki.scheduler", "inaki.agents",
 ]
 
 # llm es un gateway puro: recibe ResolvedLLMConfig del wiring y no conoce a nadie más.
@@ -312,9 +297,10 @@ name = "inaki/llm solo conoce core y shared"
 type = "forbidden"
 source_modules = ["inaki.llm"]
 forbidden_modules = [
-    "adapters", "infrastructure", "inaki.cli", "inaki.app", "inaki.channels",
+    "infrastructure", "inaki.cli", "inaki.app", "inaki.channels",
     "inaki.config", "inaki.observability", "inaki.perception", "inaki.embedding",
     "inaki.memory", "inaki.knowledge", "inaki.skills", "inaki.tools", "inaki.extensions",
+    "inaki.scheduler", "inaki.agents",
 ]
 
 # extensions solo DESCUBRE manifests: devuelve clases, paths y factories sin
@@ -324,7 +310,35 @@ name = "inaki/extensions no conoce a nadie del proyecto"
 type = "forbidden"
 source_modules = ["inaki.extensions"]
 forbidden_modules = [
-    "core", "adapters", "infrastructure", "inaki.cli", "inaki.app", "inaki.channels",
+    "core", "infrastructure", "inaki.cli", "inaki.app", "inaki.channels",
     "inaki.config", "inaki.observability", "inaki.perception", "inaki.embedding",
     "inaki.memory", "inaki.knowledge", "inaki.skills", "inaki.tools", "inaki.llm",
+    "inaki.scheduler", "inaki.agents",
+]
+
+# scheduler (tier harness-global) conoce el kernel y shared; recibe el dispatcher de
+# agentes y los use cases de memoria por sus ports, nunca por import.
+[[tool.importlinter.contracts]]
+name = "inaki/scheduler solo conoce core y shared"
+type = "forbidden"
+source_modules = ["inaki.scheduler"]
+forbidden_modules = [
+    "infrastructure", "inaki.cli", "inaki.app", "inaki.channels",
+    "inaki.config", "inaki.observability", "inaki.perception", "inaki.embedding",
+    "inaki.memory", "inaki.knowledge", "inaki.skills", "inaki.tools", "inaki.llm",
+    "inaki.extensions", "inaki.agents",
+]
+
+# agents conoce el kernel (one-shot, ports de delegación y scope) y shared. El
+# builder del hijo efímero y wire_delegation son wiring: viven en el composition
+# root hasta que exista agents/wiring.py (fase 9).
+[[tool.importlinter.contracts]]
+name = "inaki/agents solo conoce core y shared"
+type = "forbidden"
+source_modules = ["inaki.agents"]
+forbidden_modules = [
+    "infrastructure", "inaki.cli", "inaki.app", "inaki.channels",
+    "inaki.config", "inaki.observability", "inaki.perception", "inaki.embedding",
+    "inaki.memory", "inaki.knowledge", "inaki.skills", "inaki.tools", "inaki.llm",
+    "inaki.extensions", "inaki.scheduler",
 ]

@@ -1,0 +1,1910 @@
+"""
+Unit tests for adapters/outbound/tools/scheduler_tool.py — SchedulerTool.
+
+Coverage:
+- create: happy path (one_shot relative, one_shot ISO, recurring cron), all trigger types
+- list: response shape {"tasks": [...], "total": N}
+- get: happy path + TaskNotFoundError
+- update: happy path + BuiltinTaskProtectedError
+- delete: happy path + BuiltinTaskProtectedError
+- Validation rules:
+  - recurring + relative format → error
+  - zero-duration schedule → error (parse_schedule ValueError)
+  - unknown operation → error
+  - invalid trigger_payload → error
+- Error handling:
+  - TooManyActiveTasksError → ToolResult(success=False)
+  - TaskNotFoundError → ToolResult(success=False)
+  - BuiltinTaskProtectedError → ToolResult(success=False)
+  - Unexpected exception → ToolResult(success=False) with generic message
+- created_by is ALWAYS agent_id from constructor, never from kwargs
+- T4: channel_send → target auto-inyectado desde ChannelContext.routing_key (default)
+- T4: channel_send + user_id override → target reconstruido con channel_type del contexto
+- T4: channel_send sin contexto → error descriptivo
+- T4: trigger no channel_send → sin inyección (comportamiento existente)
+- T4: LLM envía 'target' explícito 'canal:id' → se RESPETA (enviar a otro chat)
+- T4: 'target' malformado (sin ':') → error accionable
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from inaki.scheduler.tools.scheduler_tool import SchedulerTool
+from inaki.scheduler.domain.task import (
+    AgentSendPayload,
+    ChannelSendPayload,
+    ScheduledTask,
+    ShellExecPayload,
+    TaskKind,
+    TaskStatus,
+    TriggerPayload,
+    TriggerType,
+)
+from inaki.scheduler.domain.task_log import TaskLog
+from inaki.scheduler.domain.manual_run_result import ManualRunResult
+from core.ports.outbound.tool_port import ToolResult
+from inaki.shared.channel_context import ChannelContext
+from inaki.shared.errors import (
+    BuiltinTaskProtectedError,
+    SchedulerError,
+    TaskNotFoundError,
+    TooManyActiveTasksError,
+)
+
+# ---------------------------------------------------------------------------
+# Helpers & fixtures
+# ---------------------------------------------------------------------------
+
+_AGENT_ID = "test-agent"
+_USER_TZ = "UTC"
+_DEFAULT_CHANNEL_CTX = ChannelContext(channel_type="telegram", user_id="123456")
+
+
+def _make_tool(
+    agent_id: str = _AGENT_ID,
+    user_timezone: str = _USER_TZ,
+    uc: MagicMock | None = None,
+    runner: MagicMock | None = None,
+    get_channel_context=None,
+) -> tuple[SchedulerTool, MagicMock]:
+    """Returns (tool, mock_uc). mock_uc has all methods as AsyncMock by default.
+
+    El ``manual_runner`` (op ``run``) se queda como atributo ``tool._runner``; los
+    tests que ejercitan ``run`` pasan su propio mock o leen ``tool._runner``.
+    """
+    if uc is None:
+        uc = MagicMock()
+        uc.create_task = AsyncMock()
+        uc.list_tasks = AsyncMock()
+        uc.get_task = AsyncMock()
+        uc.update_task = AsyncMock()
+        uc.delete_task = AsyncMock()
+        uc.list_logs = AsyncMock()
+        uc.get_log = AsyncMock()
+    if runner is None:
+        runner = MagicMock()
+        runner.run_task_now = AsyncMock()
+    # Por defecto usa el contexto de canal estándar de prueba
+    if get_channel_context is None:
+
+        def get_channel_context() -> ChannelContext:
+            return _DEFAULT_CHANNEL_CTX
+
+    tool = SchedulerTool(
+        schedule_task_uc=uc,
+        manual_runner=runner,
+        agent_id=agent_id,
+        user_timezone=user_timezone,
+        get_channel_context=get_channel_context,
+    )
+    return tool, uc
+
+
+def _make_task(
+    task_id: int = 42,
+    name: str = "Test task",
+    task_kind: TaskKind = TaskKind.ONESHOT,
+    trigger_type: TriggerType = TriggerType.CHANNEL_SEND,
+    created_by: str = _AGENT_ID,
+) -> ScheduledTask:
+    # El payload se deriva del trigger_type: la entidad exige que coincidan
+    # (son el mismo dato — ver ScheduledTask._trigger_type_matches_payload).
+    payload: TriggerPayload = {  # type: ignore[assignment]
+        TriggerType.CHANNEL_SEND: ChannelSendPayload(target="telegram:ch1", text="hello"),
+        TriggerType.AGENT_SEND: AgentSendPayload(agent_id=_AGENT_ID, task="do something"),
+        TriggerType.SHELL_EXEC: ShellExecPayload(command="echo hello"),
+    }[trigger_type]
+    return ScheduledTask(
+        id=task_id,
+        name=name,
+        task_kind=task_kind,
+        trigger_type=trigger_type,
+        trigger_payload=payload,
+        schedule="2026-04-12T14:00:00Z",
+        created_by=created_by,
+        created_at=datetime(2026, 4, 10, 12, 0, 0, tzinfo=timezone.utc),
+    )
+
+
+# ---------------------------------------------------------------------------
+# create — happy paths
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_one_shot_relative_schedule() -> None:
+    """create with '+2h' relative schedule → parses to ISO and calls use case."""
+    tool, uc = _make_tool()
+    created = _make_task(task_id=1, name="My Task")
+    uc.create_task.return_value = created
+
+    result = await tool.execute(
+        operation="create",
+        name="My Task",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "hello"},
+        schedule="+2h",
+    )
+
+    assert result.success is True
+    data = json.loads(result.output)
+    assert data["id"] == 1
+    assert data["name"] == "My Task"
+    # Verify use case was called once
+    uc.create_task.assert_awaited_once()
+    # Verify created_by was injected from agent_id, NOT from kwargs
+    call_arg: ScheduledTask = uc.create_task.call_args[0][0]
+    assert call_arg.created_by == _AGENT_ID
+
+
+@pytest.mark.asyncio
+async def test_create_one_shot_iso_schedule() -> None:
+    """create with ISO 8601 schedule → passes through to use case."""
+    tool, uc = _make_tool()
+    created = _make_task(task_id=2, name="ISO Task")
+    uc.create_task.return_value = created
+
+    result = await tool.execute(
+        operation="create",
+        name="ISO Task",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "ping"},
+        schedule="2099-06-01T10:00:00Z",
+    )
+
+    assert result.success is True
+    uc.create_task.assert_awaited_once()
+    call_arg: ScheduledTask = uc.create_task.call_args[0][0]
+    # Schedule normalizado a UTC: "Z" → "+00:00"
+    assert call_arg.schedule == "2099-06-01T10:00:00+00:00"
+    assert call_arg.created_by == _AGENT_ID
+
+
+@pytest.mark.asyncio
+async def test_create_recurring_cron_schedule() -> None:
+    """create recurring with cron expression → task_kind maps to 'recurrent'."""
+    tool, uc = _make_tool()
+    created = _make_task(task_id=3, name="Cron Task", task_kind=TaskKind.RECURRENT)
+    uc.create_task.return_value = created
+
+    result = await tool.execute(
+        operation="create",
+        name="Cron Task",
+        task_kind="recurring",
+        trigger_type="channel_send",
+        trigger_payload={"text": "daily"},
+        schedule="0 8 * * *",
+    )
+
+    assert result.success is True
+    call_arg: ScheduledTask = uc.create_task.call_args[0][0]
+    assert call_arg.task_kind == TaskKind.RECURRENT
+    assert call_arg.schedule == "0 8 * * *"
+
+
+@pytest.mark.asyncio
+async def test_create_trigger_type_agent_send() -> None:
+    """create with agent_send trigger_type → AgentSendPayload validated correctly."""
+    tool, uc = _make_tool()
+    task = _make_task(task_id=4, trigger_type=TriggerType.AGENT_SEND)
+    # Override payload with agent_send
+    task = task.model_copy(
+        update={"trigger_payload": AgentSendPayload(agent_id="other-agent", task="do something")}
+    )
+    uc.create_task.return_value = task
+
+    result = await tool.execute(
+        operation="create",
+        name="Agent Task",
+        task_kind="one_shot",
+        trigger_type="agent_send",
+        trigger_payload={"agent_id": "other-agent", "task": "do something"},
+        schedule="2099-06-01T10:00:00Z",
+    )
+
+    assert result.success is True
+    call_arg: ScheduledTask = uc.create_task.call_args[0][0]
+    assert isinstance(call_arg.trigger_payload, AgentSendPayload)
+    assert call_arg.trigger_payload.agent_id == "other-agent"
+
+
+@pytest.mark.asyncio
+async def test_create_trigger_type_shell_exec() -> None:
+    """create with shell_exec trigger_type → ShellExecPayload validated correctly."""
+    tool, uc = _make_tool()
+    task = _make_task(task_id=5, trigger_type=TriggerType.SHELL_EXEC)
+    task = task.model_copy(update={"trigger_payload": ShellExecPayload(command="echo hello")})
+    uc.create_task.return_value = task
+
+    result = await tool.execute(
+        operation="create",
+        name="Shell Task",
+        task_kind="one_shot",
+        trigger_type="shell_exec",
+        trigger_payload={"command": "echo hello"},
+        schedule="2099-06-01T10:00:00Z",
+    )
+
+    assert result.success is True
+    call_arg: ScheduledTask = uc.create_task.call_args[0][0]
+    assert isinstance(call_arg.trigger_payload, ShellExecPayload)
+    assert call_arg.trigger_payload.command == "echo hello"
+
+
+@pytest.mark.asyncio
+async def test_create_created_by_always_from_agent_id_not_kwargs() -> None:
+    """created_by must be injected from constructor agent_id, not from LLM kwargs."""
+    tool, uc = _make_tool(agent_id="injected-agent")
+    created = _make_task(task_id=6, created_by="injected-agent")
+    uc.create_task.return_value = created
+
+    # Pass a created_by in kwargs — must be ignored
+    result = await tool.execute(
+        operation="create",
+        name="Task",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "hi"},
+        schedule="2099-06-01T10:00:00Z",
+        created_by="malicious-agent",  # must be ignored
+    )
+
+    assert result.success is True
+    call_arg: ScheduledTask = uc.create_task.call_args[0][0]
+    assert call_arg.created_by == "injected-agent"
+    assert call_arg.created_by != "malicious-agent"
+
+
+# ---------------------------------------------------------------------------
+# list — response shape
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_returns_correct_shape() -> None:
+    """list → {"tasks": [...], "total": N} with correct field mapping."""
+    tool, uc = _make_tool()
+    tasks = [
+        _make_task(task_id=1, name="Task 1"),
+        _make_task(task_id=2, name="Task 2"),
+        _make_task(task_id=3, name="Task 3", task_kind=TaskKind.RECURRENT),
+    ]
+    uc.list_tasks.return_value = tasks
+
+    result = await tool.execute(operation="list")
+
+    assert result.success is True
+    data = json.loads(result.output)
+    assert "tasks" in data
+    assert "total" in data
+    assert data["total"] == 3
+    assert len(data["tasks"]) == 3
+
+    # Verify one_shot kind mapping
+    first = data["tasks"][0]
+    assert first["id"] == 1
+    assert first["name"] == "Task 1"
+    assert first["task_kind"] == "one_shot"
+
+    # Verify recurring kind mapping
+    third = data["tasks"][2]
+    assert third["task_kind"] == "recurring"
+
+
+@pytest.mark.asyncio
+async def test_list_empty_returns_zero_total() -> None:
+    """list with no tasks → {"tasks": [], "total": 0}."""
+    tool, uc = _make_tool()
+    uc.list_tasks.return_value = []
+
+    result = await tool.execute(operation="list")
+
+    assert result.success is True
+    data = json.loads(result.output)
+    assert data["tasks"] == []
+    assert data["total"] == 0
+
+
+# ---------------------------------------------------------------------------
+# get — happy path + TaskNotFoundError
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_happy_path() -> None:
+    """get by id → full detail including trigger_payload, schedule, created_by."""
+    tool, uc = _make_tool()
+    task = _make_task(task_id=10, name="Detail Task")
+    uc.get_task.return_value = task
+
+    result = await tool.execute(operation="get", task_id=10)
+
+    assert result.success is True
+    data = json.loads(result.output)
+    assert data["id"] == 10
+    assert data["name"] == "Detail Task"
+    assert "trigger_payload" in data
+    assert "schedule" in data
+    assert "created_by" in data
+    assert "created_at" in data
+    uc.get_task.assert_awaited_once_with(10)
+
+
+@pytest.mark.asyncio
+async def test_get_task_not_found() -> None:
+    """get with unknown task_id → ToolResult(success=False)."""
+    tool, uc = _make_tool()
+    uc.get_task.side_effect = TaskNotFoundError("Task 99 not found")
+
+    result = await tool.execute(operation="get", task_id=99)
+
+    assert result.success is False
+    assert "99" in result.output or "not found" in result.output.lower()
+
+
+@pytest.mark.asyncio
+async def test_get_missing_task_id() -> None:
+    """get without task_id → validation error."""
+    tool, uc = _make_tool()
+
+    result = await tool.execute(operation="get")
+
+    assert result.success is False
+    assert "task_id" in result.output
+
+
+# ---------------------------------------------------------------------------
+# update — happy path + BuiltinTaskProtectedError
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_happy_path() -> None:
+    """update name → ToolResult(success=True) with id and name."""
+    tool, uc = _make_tool()
+    updated = _make_task(task_id=20, name="Updated Name")
+    uc.update_task.return_value = updated
+
+    result = await tool.execute(operation="update", task_id=20, name="Updated Name")
+
+    assert result.success is True
+    data = json.loads(result.output)
+    assert data["id"] == 20
+    assert data["name"] == "Updated Name"
+    uc.update_task.assert_awaited_once_with(20, name="Updated Name")
+
+
+@pytest.mark.asyncio
+async def test_update_builtin_task_protected() -> None:
+    """update builtin task (id < 100) → BuiltinTaskProtectedError → ToolResult(success=False)."""
+    tool, uc = _make_tool()
+    uc.update_task.side_effect = BuiltinTaskProtectedError("Task 1 is builtin")
+
+    result = await tool.execute(operation="update", task_id=1, name="new name")
+
+    assert result.success is False
+    assert (
+        "builtin" in result.output.lower()
+        or "protected" in result.output.lower()
+        or "1" in result.output
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_no_mutable_fields() -> None:
+    """update with no recognized mutable fields → validation error."""
+    tool, uc = _make_tool()
+
+    result = await tool.execute(operation="update", task_id=5)
+
+    assert result.success is False
+    assert "mutable" in result.output.lower() or "field" in result.output.lower()
+
+
+@pytest.mark.asyncio
+async def test_update_relative_schedule_parsed() -> None:
+    """update with '+1h' schedule on a one_shot task → schedule resolved to ISO string."""
+    tool, uc = _make_tool()
+    existing = _make_task(task_id=30, name="Task", task_kind=TaskKind.ONESHOT)
+    uc.get_task.return_value = existing
+    uc.update_task.return_value = existing
+
+    result = await tool.execute(operation="update", task_id=30, schedule="+1h")
+
+    assert result.success is True
+    # The schedule argument passed to update_task must be an ISO string (parsed)
+    kwargs = uc.update_task.call_args[1]
+    assert "schedule" in kwargs
+    sched = kwargs["schedule"]
+    # Must be a valid ISO datetime string, not the raw "+1h"
+    assert sched != "+1h"
+    assert "T" in sched  # ISO 8601 has a T separator
+
+
+@pytest.mark.asyncio
+async def test_update_recurring_cron_with_range_passes_through() -> None:
+    """update recurring task with cron range expression → schedule passed crudo al use case."""
+    tool, uc = _make_tool()
+    existing = _make_task(task_id=31, name="Cron Task", task_kind=TaskKind.RECURRENT)
+    uc.get_task.return_value = existing
+    uc.update_task.return_value = existing
+
+    result = await tool.execute(operation="update", task_id=31, schedule="0 7 6-10 5 *")
+
+    assert result.success is True, result.output
+    kwargs = uc.update_task.call_args[1]
+    # Para RECURRENT el cron se pasa tal cual (croniter lo evalúa en _resolve_next_run).
+    assert kwargs["schedule"] == "0 7 6-10 5 *"
+
+
+@pytest.mark.asyncio
+async def test_update_recurring_cron_with_list_passes_through() -> None:
+    """update recurring task with cron list expression → schedule passed crudo."""
+    tool, uc = _make_tool()
+    existing = _make_task(task_id=32, name="Cron List", task_kind=TaskKind.RECURRENT)
+    uc.get_task.return_value = existing
+    uc.update_task.return_value = existing
+
+    result = await tool.execute(operation="update", task_id=32, schedule="0 7 7,8,9,10 5 *")
+
+    assert result.success is True, result.output
+    kwargs = uc.update_task.call_args[1]
+    assert kwargs["schedule"] == "0 7 7,8,9,10 5 *"
+
+
+@pytest.mark.asyncio
+async def test_update_recurring_with_relative_schedule_is_error() -> None:
+    """update recurring task with '+5h' relative → error (cron required)."""
+    tool, uc = _make_tool()
+    existing = _make_task(task_id=33, name="Cron Task", task_kind=TaskKind.RECURRENT)
+    uc.get_task.return_value = existing
+
+    result = await tool.execute(operation="update", task_id=33, schedule="+5h")
+
+    assert result.success is False
+    assert "cron" in result.output.lower() or "recurring" in result.output.lower()
+    uc.update_task.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# update — trigger_type / task_kind: mutables, pero como cambio ATÓMICO
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_trigger_type_con_payload_cambia_ambos() -> None:
+    """trigger_type + trigger_payload juntos → el payload se valida contra el tipo NUEVO."""
+    tool, uc = _make_tool()
+    existing = _make_task(task_id=60, trigger_type=TriggerType.CHANNEL_SEND)
+    uc.get_task.return_value = existing
+    uc.update_task.return_value = existing
+
+    result = await tool.execute(
+        operation="update",
+        task_id=60,
+        trigger_type="shell_exec",
+        trigger_payload={"command": "echo hola"},
+    )
+
+    assert result.success is True, result.error
+    kwargs = uc.update_task.await_args.kwargs
+    assert kwargs["trigger_type"] == TriggerType.SHELL_EXEC
+    assert isinstance(kwargs["trigger_payload"], ShellExecPayload)
+    assert kwargs["trigger_payload"].command == "echo hola"
+
+
+@pytest.mark.asyncio
+async def test_update_trigger_type_solo_es_error_accionable() -> None:
+    """trigger_type sin trigger_payload → error que NOMBRA el campo faltante."""
+    tool, uc = _make_tool()
+    uc.get_task.return_value = _make_task(task_id=61, trigger_type=TriggerType.CHANNEL_SEND)
+
+    result = await tool.execute(operation="update", task_id=61, trigger_type="agent_send")
+
+    assert result.success is False
+    assert "trigger_payload" in (result.error or "")
+    uc.update_task.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_update_trigger_type_igual_al_actual_es_no_op() -> None:
+    """Reenviar el trigger_type vigente no exige payload ni cuenta como cambio.
+
+    El LLM suele re-mandar todos los campos que leyó con `get`; eso no debe
+    romper un update de otro campo.
+    """
+    tool, uc = _make_tool()
+    uc.get_task.return_value = _make_task(task_id=62, trigger_type=TriggerType.CHANNEL_SEND)
+    uc.update_task.return_value = _make_task(task_id=62, name="Nuevo")
+
+    result = await tool.execute(
+        operation="update", task_id=62, trigger_type="channel_send", name="Nuevo"
+    )
+
+    assert result.success is True, result.error
+    uc.update_task.assert_awaited_once_with(62, name="Nuevo")
+
+
+@pytest.mark.asyncio
+async def test_update_trigger_type_con_payload_del_tipo_viejo_falla() -> None:
+    """El payload se valida contra el tipo NUEVO — un payload del viejo no pasa.
+
+    Antes esto validaba contra el trigger_type EXISTENTE: o daba un error que
+    mentía sobre la causa, o "actualizaba" dejando el trigger_type sin cambiar.
+    """
+    tool, uc = _make_tool()
+    uc.get_task.return_value = _make_task(task_id=63, trigger_type=TriggerType.CHANNEL_SEND)
+
+    result = await tool.execute(
+        operation="update",
+        task_id=63,
+        trigger_type="agent_send",
+        trigger_payload={"text": "hola"},  # shape de channel_send
+    )
+
+    assert result.success is False
+    assert "agent_send" in (result.error or "")
+    uc.update_task.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_update_a_channel_send_sin_target_usa_contexto_actual() -> None:
+    """Al CAMBIAR a channel_send no hay target previo que heredar → contexto del canal."""
+    tool, uc = _make_tool()
+    uc.get_task.return_value = _make_task(task_id=64, trigger_type=TriggerType.SHELL_EXEC)
+    uc.update_task.return_value = _make_task(task_id=64)
+
+    result = await tool.execute(
+        operation="update",
+        task_id=64,
+        trigger_type="channel_send",
+        trigger_payload={"text": "hola"},
+    )
+
+    assert result.success is True, result.error
+    payload = uc.update_task.await_args.kwargs["trigger_payload"]
+    assert isinstance(payload, ChannelSendPayload)
+    assert payload.target == _DEFAULT_CHANNEL_CTX.routing_key
+
+
+@pytest.mark.asyncio
+async def test_update_task_kind_con_schedule_cambia_ambos() -> None:
+    """task_kind + schedule juntos → el schedule se interpreta con el kind NUEVO."""
+    tool, uc = _make_tool()
+    uc.get_task.return_value = _make_task(task_id=65, task_kind=TaskKind.ONESHOT)
+    uc.update_task.return_value = _make_task(task_id=65, task_kind=TaskKind.RECURRENT)
+
+    result = await tool.execute(
+        operation="update", task_id=65, task_kind="recurring", schedule="0 8 * * *"
+    )
+
+    assert result.success is True, result.error
+    kwargs = uc.update_task.await_args.kwargs
+    assert kwargs["task_kind"] == TaskKind.RECURRENT
+    # Cron crudo: si se hubiera interpretado con el kind VIEJO (oneshot) el
+    # parseo a ISO habría fallado.
+    assert kwargs["schedule"] == "0 8 * * *"
+
+
+@pytest.mark.asyncio
+async def test_update_task_kind_solo_es_error_accionable() -> None:
+    """task_kind sin schedule → error que NOMBRA el campo faltante."""
+    tool, uc = _make_tool()
+    uc.get_task.return_value = _make_task(task_id=66, task_kind=TaskKind.ONESHOT)
+
+    result = await tool.execute(operation="update", task_id=66, task_kind="recurring")
+
+    assert result.success is False
+    assert "schedule" in (result.error or "")
+    uc.update_task.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_update_task_kind_invalido_es_error() -> None:
+    tool, uc = _make_tool()
+    uc.get_task.return_value = _make_task(task_id=67)
+
+    result = await tool.execute(
+        operation="update", task_id=67, task_kind="cada_tanto", schedule="0 8 * * *"
+    )
+
+    assert result.success is False
+    assert "task_kind" in (result.error or "")
+    uc.update_task.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# delete — happy path + BuiltinTaskProtectedError
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_happy_path() -> None:
+    """delete existing task → ToolResult(success=True) with deleted=True."""
+    tool, uc = _make_tool()
+    uc.delete_task.return_value = None
+
+    result = await tool.execute(operation="delete", task_id=50)
+
+    assert result.success is True
+    data = json.loads(result.output)
+    assert data["deleted"] is True
+    assert data["task_id"] == 50
+    uc.delete_task.assert_awaited_once_with(50)
+
+
+@pytest.mark.asyncio
+async def test_delete_builtin_task_protected() -> None:
+    """delete builtin task → BuiltinTaskProtectedError → ToolResult(success=False)."""
+    tool, uc = _make_tool()
+    uc.delete_task.side_effect = BuiltinTaskProtectedError("Task 1 is protected")
+
+    result = await tool.execute(operation="delete", task_id=1)
+
+    assert result.success is False
+
+
+@pytest.mark.asyncio
+async def test_delete_task_not_found() -> None:
+    """delete unknown task → TaskNotFoundError → ToolResult(success=False)."""
+    tool, uc = _make_tool()
+    uc.delete_task.side_effect = TaskNotFoundError("Task not found")
+
+    result = await tool.execute(operation="delete", task_id=999)
+
+    assert result.success is False
+
+
+@pytest.mark.asyncio
+async def test_delete_missing_task_id() -> None:
+    """delete without task_id → validation error."""
+    tool, uc = _make_tool()
+
+    result = await tool.execute(operation="delete")
+
+    assert result.success is False
+    assert "task_id" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Validation rules
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_recurring_with_relative_schedule_is_error() -> None:
+    """recurring + '+5h' relative schedule → error (cron required)."""
+    tool, uc = _make_tool()
+
+    result = await tool.execute(
+        operation="create",
+        name="Bad Recurring",
+        task_kind="recurring",
+        trigger_type="channel_send",
+        trigger_payload={"text": "hello"},
+        schedule="+5h",
+    )
+
+    assert result.success is False
+    assert "cron" in result.output.lower() or "recurring" in result.output.lower()
+    uc.create_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_create_zero_duration_schedule_is_error() -> None:
+    """'+0m' zero-duration schedule → ValueError from parse_schedule → error."""
+    tool, uc = _make_tool()
+
+    result = await tool.execute(
+        operation="create",
+        name="Zero Task",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "hi"},
+        schedule="+0m",
+    )
+
+    assert result.success is False
+    uc.create_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_create_unknown_operation_is_error() -> None:
+    """Unknown operation → ToolResult(success=False) with helpful message."""
+    tool, uc = _make_tool()
+
+    result = await tool.execute(operation="frobnicate")
+
+    assert result.success is False
+    assert "frobnicate" in result.output or "unknown" in result.output.lower()
+
+
+@pytest.mark.asyncio
+async def test_create_trigger_payload_como_json_string() -> None:
+    """LLM envía trigger_payload como JSON string → se parsea automáticamente."""
+    ctx = ChannelContext(channel_type="telegram", user_id="99")
+    tool, uc = _make_tool(get_channel_context=lambda: ctx)
+    created = _make_task(task_id=77)
+    uc.create_task.return_value = created
+
+    result = await tool.execute(
+        operation="create",
+        name="JSON String Payload",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload='{"text": "recordatorio"}',  # string en lugar de dict
+        schedule="2099-06-01T10:00:00Z",
+    )
+
+    assert result.success is True, result.output
+    call_arg: ScheduledTask = uc.create_task.call_args[0][0]
+    assert isinstance(call_arg.trigger_payload, ChannelSendPayload)
+    assert call_arg.trigger_payload.text == "recordatorio"
+
+
+@pytest.mark.asyncio
+async def test_create_invalid_trigger_payload_is_error() -> None:
+    """channel_send with missing required 'text' field → validation error."""
+    tool, uc = _make_tool()
+
+    result = await tool.execute(
+        operation="create",
+        name="Bad Payload",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={},  # missing 'text'
+        schedule="2099-06-01T10:00:00Z",
+    )
+
+    assert result.success is False
+    uc.create_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_create_missing_name_is_error() -> None:
+    """create without name → validation error."""
+    tool, uc = _make_tool()
+
+    result = await tool.execute(
+        operation="create",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "hi"},
+        schedule="2099-06-01T10:00:00Z",
+    )
+
+    assert result.success is False
+    assert "name" in result.output
+
+
+@pytest.mark.asyncio
+async def test_create_missing_schedule_is_error() -> None:
+    """create without schedule → validation error."""
+    tool, uc = _make_tool()
+
+    result = await tool.execute(
+        operation="create",
+        name="Task",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "hi"},
+    )
+
+    assert result.success is False
+    assert "schedule" in result.output
+
+
+@pytest.mark.asyncio
+async def test_create_invalid_task_kind_is_error() -> None:
+    """create with unknown task_kind → validation error."""
+    tool, uc = _make_tool()
+
+    result = await tool.execute(
+        operation="create",
+        name="Task",
+        task_kind="daily",
+        trigger_type="channel_send",
+        trigger_payload={"text": "hi"},
+        schedule="2099-06-01T10:00:00Z",
+    )
+
+    assert result.success is False
+    assert "task_kind" in result.output or "daily" in result.output
+
+
+@pytest.mark.asyncio
+async def test_create_invalid_trigger_type_is_error() -> None:
+    """create with unknown trigger_type → validation error."""
+    tool, uc = _make_tool()
+
+    result = await tool.execute(
+        operation="create",
+        name="Task",
+        task_kind="one_shot",
+        trigger_type="webhook",
+        trigger_payload={"url": "http://example.com"},
+        schedule="2099-06-01T10:00:00Z",
+    )
+
+    assert result.success is False
+    assert "trigger_type" in result.output or "webhook" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Error handling
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_too_many_active_tasks_error() -> None:
+    """TooManyActiveTasksError → ToolResult(success=False)."""
+    tool, uc = _make_tool()
+    uc.create_task.side_effect = TooManyActiveTasksError(agent_id=_AGENT_ID, limit=20)
+
+    result = await tool.execute(
+        operation="create",
+        name="Task",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "hi"},
+        schedule="2099-06-01T10:00:00Z",
+    )
+
+    assert result.success is False
+    assert _AGENT_ID in result.output or "21" in result.output
+
+
+@pytest.mark.asyncio
+async def test_create_unexpected_exception_returns_error() -> None:
+    """Unexpected RuntimeError from use case → ToolResult(success=False) with generic message."""
+    tool, uc = _make_tool()
+    uc.create_task.side_effect = RuntimeError("DB connection lost")
+
+    result = await tool.execute(
+        operation="create",
+        name="Task",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "hi"},
+        schedule="2099-06-01T10:00:00Z",
+    )
+
+    assert result.success is False
+    # Error message contains something about the exception
+    assert "DB connection lost" in result.output or "error" in result.output.lower()
+
+
+@pytest.mark.asyncio
+async def test_list_unexpected_exception_returns_error() -> None:
+    """Unexpected exception in list → ToolResult(success=False)."""
+    tool, uc = _make_tool()
+    uc.list_tasks.side_effect = RuntimeError("unexpected")
+
+    result = await tool.execute(operation="list")
+
+    assert result.success is False
+
+
+@pytest.mark.asyncio
+async def test_get_scheduler_error_returns_failure() -> None:
+    """Generic SchedulerError in get → ToolResult(success=False)."""
+    tool, uc = _make_tool()
+    uc.get_task.side_effect = SchedulerError("Scheduler unavailable")
+
+    result = await tool.execute(operation="get", task_id=5)
+
+    assert result.success is False
+
+
+@pytest.mark.asyncio
+async def test_update_task_not_found_returns_failure() -> None:
+    """TaskNotFoundError in update → ToolResult(success=False)."""
+    tool, uc = _make_tool()
+    uc.update_task.side_effect = TaskNotFoundError("Task 77 not found")
+
+    result = await tool.execute(operation="update", task_id=77, name="new")
+
+    assert result.success is False
+
+
+@pytest.mark.asyncio
+async def test_error_result_has_success_false_and_error_field() -> None:
+    """_error helper → ToolResult with success=False and error field set."""
+    tool, uc = _make_tool()
+    uc.get_task.side_effect = TaskNotFoundError("not found")
+
+    result = await tool.execute(operation="get", task_id=1)
+
+    assert isinstance(result, ToolResult)
+    assert result.success is False
+    assert result.error is not None
+    assert result.tool_name == "scheduler"
+
+
+# ---------------------------------------------------------------------------
+# LLM kind name mapping round-trip
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_task_kind_llm_mapping_oneshot() -> None:
+    """list maps domain 'oneshot' → LLM 'one_shot'."""
+    tool, uc = _make_tool()
+    task = _make_task(task_id=1, task_kind=TaskKind.ONESHOT)
+    uc.list_tasks.return_value = [task]
+
+    result = await tool.execute(operation="list")
+    data = json.loads(result.output)
+    assert data["tasks"][0]["task_kind"] == "one_shot"
+
+
+@pytest.mark.asyncio
+async def test_list_task_kind_llm_mapping_recurring() -> None:
+    """list maps domain 'recurrent' → LLM 'recurring'."""
+    tool, uc = _make_tool()
+    task = _make_task(task_id=2, task_kind=TaskKind.RECURRENT)
+    uc.list_tasks.return_value = [task]
+
+    result = await tool.execute(operation="list")
+    data = json.loads(result.output)
+    assert data["tasks"][0]["task_kind"] == "recurring"
+
+
+@pytest.mark.asyncio
+async def test_create_maps_one_shot_to_domain_oneshot() -> None:
+    """create with LLM 'one_shot' → domain TaskKind.ONESHOT."""
+    tool, uc = _make_tool()
+    created = _make_task(task_id=1, task_kind=TaskKind.ONESHOT)
+    uc.create_task.return_value = created
+
+    await tool.execute(
+        operation="create",
+        name="Task",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "t"},
+        schedule="2099-06-01T10:00:00Z",
+    )
+
+    call_arg = uc.create_task.call_args[0][0]
+    assert call_arg.task_kind == TaskKind.ONESHOT
+
+
+@pytest.mark.asyncio
+async def test_create_maps_recurring_to_domain_recurrent() -> None:
+    """create with LLM 'recurring' → domain TaskKind.RECURRENT."""
+    tool, uc = _make_tool()
+    created = _make_task(task_id=2, task_kind=TaskKind.RECURRENT)
+    uc.create_task.return_value = created
+
+    await tool.execute(
+        operation="create",
+        name="Task",
+        task_kind="recurring",
+        trigger_type="channel_send",
+        trigger_payload={"text": "t"},
+        schedule="0 9 * * *",
+    )
+
+    call_arg = uc.create_task.call_args[0][0]
+    assert call_arg.task_kind == TaskKind.RECURRENT
+
+
+# ---------------------------------------------------------------------------
+# T4: inyección de channel context en channel_send
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_channel_send_target_auto_inyectado_desde_contexto() -> None:
+    """channel_send con contexto → target se inyecta desde context.routing_key."""
+    ctx = ChannelContext(channel_type="telegram", user_id="999")
+    tool, uc = _make_tool(get_channel_context=lambda: ctx)
+    created = _make_task(task_id=10, name="Canal Task")
+    uc.create_task.return_value = created
+
+    result = await tool.execute(
+        operation="create",
+        name="Canal Task",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "mensaje programado"},
+        schedule="2099-06-01T10:00:00Z",
+    )
+
+    assert result.success is True
+    call_arg: ScheduledTask = uc.create_task.call_args[0][0]
+    assert isinstance(call_arg.trigger_payload, ChannelSendPayload)
+    assert call_arg.trigger_payload.target == "telegram:999"
+    assert call_arg.trigger_payload.text == "mensaje programado"
+
+
+@pytest.mark.asyncio
+async def test_create_channel_send_user_id_override_reconstruye_target() -> None:
+    """channel_send con user_id override → target usa channel_type del contexto + user_id del LLM."""
+    ctx = ChannelContext(channel_type="telegram", user_id="999")
+    tool, uc = _make_tool(get_channel_context=lambda: ctx)
+    created = _make_task(task_id=11, name="Override Task")
+    uc.create_task.return_value = created
+
+    result = await tool.execute(
+        operation="create",
+        name="Override Task",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "para otro usuario", "user_id": "777"},
+        schedule="2099-06-01T10:00:00Z",
+    )
+
+    assert result.success is True
+    call_arg: ScheduledTask = uc.create_task.call_args[0][0]
+    assert isinstance(call_arg.trigger_payload, ChannelSendPayload)
+    # target reconstruido con channel_type del contexto + user_id del LLM
+    assert call_arg.trigger_payload.target == "telegram:777"
+    assert call_arg.trigger_payload.user_id == "777"
+
+
+@pytest.mark.asyncio
+async def test_create_channel_send_sin_contexto_retorna_error() -> None:
+    """channel_send sin contexto de canal → error descriptivo."""
+    tool, uc = _make_tool(get_channel_context=lambda: None)
+
+    result = await tool.execute(
+        operation="create",
+        name="Sin Contexto",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "hola"},
+        schedule="2099-06-01T10:00:00Z",
+    )
+
+    assert result.success is False
+    assert "contexto" in result.output.lower() or "canal" in result.output.lower()
+    uc.create_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_create_agent_send_hereda_output_channel() -> None:
+    """agent_send sin output_channel → hereda el canal activo vía get_channel_context."""
+    ctx = ChannelContext(channel_type="telegram", user_id="42")
+    tool, uc = _make_tool(get_channel_context=lambda: ctx)
+    task = _make_task(task_id=12, trigger_type=TriggerType.AGENT_SEND)
+    task = task.model_copy(
+        update={"trigger_payload": AgentSendPayload(agent_id="otro-agent", task="hacer algo")}
+    )
+    uc.create_task.return_value = task
+
+    result = await tool.execute(
+        operation="create",
+        name="Agent Task",
+        task_kind="one_shot",
+        trigger_type="agent_send",
+        trigger_payload={"agent_id": "otro-agent", "task": "hacer algo"},
+        schedule="2099-06-01T10:00:00Z",
+    )
+
+    assert result.success is True
+    call_arg: ScheduledTask = uc.create_task.call_args[0][0]
+    assert isinstance(call_arg.trigger_payload, AgentSendPayload)
+    assert call_arg.trigger_payload.output_channel == ctx.routing_key
+
+
+async def test_update_agent_send_hereda_output_channel_como_create() -> None:
+    """Un payload nuevo sin output_channel en update hereda el canal activo, igual que create.
+
+    Antes update lo dejaba en ``None`` y el resultado del agente iba a los logs
+    en vez de a la conversación desde la que se editó la tarea."""
+    ctx = ChannelContext(channel_type="telegram", user_id="42")
+    tool, uc = _make_tool(get_channel_context=lambda: ctx)
+    existing = _make_task(task_id=12, trigger_type=TriggerType.AGENT_SEND).model_copy(
+        update={"trigger_payload": AgentSendPayload(agent_id="otro-agent", task="viejo")}
+    )
+    uc.get_task.return_value = existing
+    uc.update_task.return_value = existing
+
+    result = await tool.execute(
+        operation="update",
+        task_id=12,
+        trigger_payload={"agent_id": "otro-agent", "task": "nuevo"},
+    )
+
+    assert result.success is True
+    payload = uc.update_task.call_args.kwargs["trigger_payload"]
+    assert isinstance(payload, AgentSendPayload)
+    assert payload.task == "nuevo"
+    assert payload.output_channel == ctx.routing_key
+
+
+@pytest.mark.asyncio
+async def test_create_channel_send_target_explicito_se_respeta() -> None:
+    """LLM envía 'target' explícito 'canal:id' → se RESPETA (enviar a otro chat),
+    NO se pisa con el de la conversación. Caso real: programar un aviso a un grupo
+    de Telegram distinto del privado donde se habla con el agente."""
+    ctx = ChannelContext(channel_type="telegram", user_id="123")  # conversación = privado
+    tool, uc = _make_tool(get_channel_context=lambda: ctx)
+    created = _make_task(task_id=13, name="Aviso Grupo")
+    uc.create_task.return_value = created
+
+    result = await tool.execute(
+        operation="create",
+        name="Aviso Grupo",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "test", "target": "telegram:-1001582404077"},
+        schedule="2099-06-01T10:00:00Z",
+    )
+
+    assert result.success is True
+    call_arg: ScheduledTask = uc.create_task.call_args[0][0]
+    assert isinstance(call_arg.trigger_payload, ChannelSendPayload)
+    # el target del LLM gana sobre el de la conversación
+    assert call_arg.trigger_payload.target == "telegram:-1001582404077"
+
+
+@pytest.mark.asyncio
+async def test_create_channel_send_target_explicito_no_requiere_contexto() -> None:
+    """Con 'target' explícito, channel_send funciona aunque NO haya contexto de
+    canal (el destino es autosuficiente)."""
+    tool, uc = _make_tool(get_channel_context=lambda: None)
+    created = _make_task(task_id=14, name="Aviso Grupo")
+    uc.create_task.return_value = created
+
+    result = await tool.execute(
+        operation="create",
+        name="Aviso Grupo",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "test", "target": "telegram:-1001582404077"},
+        schedule="2099-06-01T10:00:00Z",
+    )
+
+    assert result.success is True
+    call_arg: ScheduledTask = uc.create_task.call_args[0][0]
+    assert isinstance(call_arg.trigger_payload, ChannelSendPayload)
+    assert call_arg.trigger_payload.target == "telegram:-1001582404077"
+
+
+@pytest.mark.asyncio
+async def test_create_channel_send_target_malformado_da_error() -> None:
+    """'target' sin formato 'canal:id' → error accionable (no se inventa un destino)."""
+    ctx = ChannelContext(channel_type="telegram", user_id="123")
+    tool, uc = _make_tool(get_channel_context=lambda: ctx)
+
+    result = await tool.execute(
+        operation="create",
+        name="Target Malo",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "test", "target": "-1001582404077"},  # falta 'telegram:'
+        schedule="2099-06-01T10:00:00Z",
+    )
+
+    assert result.success is False
+    assert "target" in result.output.lower()
+    uc.create_task.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# update — inyección de channel context para channel_send (verify fix)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_channel_send_inyecta_target_desde_contexto() -> None:
+    """update trigger_payload de channel_send → target inyectado desde contexto."""
+    tool, uc = _make_tool()
+    existing = _make_task(task_id=200, trigger_type=TriggerType.CHANNEL_SEND)
+    existing.trigger_payload = ChannelSendPayload(target="telegram:old_user", text="viejo")
+    uc.get_task.return_value = existing
+    updated = _make_task(task_id=200)
+    uc.update_task.return_value = updated
+
+    result = await tool.execute(
+        operation="update",
+        task_id=200,
+        trigger_payload={"text": "nuevo texto"},
+    )
+
+    assert result.success is True
+    kwargs = uc.update_task.call_args[1]
+    payload = kwargs["trigger_payload"]
+    # target debe conservar el existente (no el del LLM, que no lo mandó)
+    assert payload.target == "telegram:old_user"
+    assert payload.text == "nuevo texto"
+
+
+@pytest.mark.asyncio
+async def test_update_channel_send_user_id_override() -> None:
+    """update channel_send con user_id → target reconstruido con channel_type del contexto."""
+    tool, uc = _make_tool()
+    existing = _make_task(task_id=201, trigger_type=TriggerType.CHANNEL_SEND)
+    existing.trigger_payload = ChannelSendPayload(target="telegram:old_user", text="viejo")
+    uc.get_task.return_value = existing
+    updated = _make_task(task_id=201)
+    uc.update_task.return_value = updated
+
+    result = await tool.execute(
+        operation="update",
+        task_id=201,
+        trigger_payload={"text": "hola", "user_id": "999888"},
+    )
+
+    assert result.success is True
+    kwargs = uc.update_task.call_args[1]
+    payload = kwargs["trigger_payload"]
+    assert payload.target == "telegram:999888"
+
+
+@pytest.mark.asyncio
+async def test_update_channel_send_sin_contexto_conserva_existente() -> None:
+    """update channel_send de solo-texto sin contexto → conserva el target
+    existente (editar el texto de una tarea no requiere estar en conversación)."""
+    tool, uc = _make_tool(get_channel_context=lambda: None)
+    existing = _make_task(task_id=202, trigger_type=TriggerType.CHANNEL_SEND)
+    existing.trigger_payload = ChannelSendPayload(target="telegram:-100999", text="viejo")
+    uc.get_task.return_value = existing
+    uc.update_task.return_value = _make_task(task_id=202)
+
+    result = await tool.execute(
+        operation="update",
+        task_id=202,
+        trigger_payload={"text": "texto nuevo"},
+    )
+
+    assert result.success is True
+    payload = uc.update_task.call_args[1]["trigger_payload"]
+    assert payload.target == "telegram:-100999"
+    assert payload.text == "texto nuevo"
+
+
+@pytest.mark.asyncio
+async def test_update_channel_send_target_explicito_se_respeta() -> None:
+    """update channel_send con 'target' explícito → redirige a otro chat."""
+    tool, uc = _make_tool()
+    existing = _make_task(task_id=203, trigger_type=TriggerType.CHANNEL_SEND)
+    existing.trigger_payload = ChannelSendPayload(target="telegram:old", text="viejo")
+    uc.get_task.return_value = existing
+    uc.update_task.return_value = _make_task(task_id=203)
+
+    result = await tool.execute(
+        operation="update",
+        task_id=203,
+        trigger_payload={"text": "hola", "target": "telegram:-1001582404077"},
+    )
+
+    assert result.success is True
+    payload = uc.update_task.call_args[1]["trigger_payload"]
+    assert payload.target == "telegram:-1001582404077"
+
+
+@pytest.mark.asyncio
+async def test_update_channel_send_user_id_sin_contexto_error() -> None:
+    """update channel_send con user_id pero sin contexto → error (no se puede
+    resolver el channel_type). Con 'target' explícito no haría falta el contexto."""
+    tool, uc = _make_tool(get_channel_context=lambda: None)
+    existing = _make_task(task_id=204, trigger_type=TriggerType.CHANNEL_SEND)
+    existing.trigger_payload = ChannelSendPayload(target="telegram:old", text="viejo")
+    uc.get_task.return_value = existing
+
+    result = await tool.execute(
+        operation="update",
+        task_id=204,
+        trigger_payload={"text": "hola", "user_id": "777"},
+    )
+
+    assert result.success is False
+    assert "target" in result.output.lower() or "contexto" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# Echo autoconfirmable en create/update
+#
+# Regresión: el output devuelto al LLM tras `create`/`update` solo incluía
+# `{id, name}`. Sin echo de `schedule`, `next_run_at` ni `task_status`, algunos
+# LLMs interpretaban el resultado como ambiguo y reintentaban la operación,
+# produciendo tareas duplicadas. El echo completo es el único contrato estable
+# porque `_tool_loop` propaga SOLO `result.output` al LLM (el flag `success` del
+# envelope no se ve).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_echo_includes_all_confirm_fields() -> None:
+    """`create` debe devolver flag booleano + echo de schedule/next_run_at/task_status."""
+    tool, uc = _make_tool()
+    created = _make_task(task_id=100, name="Echo Task", task_kind=TaskKind.RECURRENT)
+    created = created.model_copy(
+        update={
+            "schedule": "0 8 * * *",
+            "next_run": datetime(2026, 6, 1, 8, 0, 0, tzinfo=timezone.utc),
+            "status": TaskStatus.PENDING,
+        }
+    )
+    uc.create_task.return_value = created
+
+    result = await tool.execute(
+        operation="create",
+        name="Echo Task",
+        task_kind="recurring",
+        trigger_type="channel_send",
+        trigger_payload={"text": "daily"},
+        schedule="0 8 * * *",
+    )
+
+    assert result.success is True
+    data = json.loads(result.output)
+    # Flag booleano explícito (paralelo a `deleted=True` de _delete)
+    assert data["created"] is True
+    # Echo autoritativo post-persistencia
+    assert data["id"] == 100
+    assert data["name"] == "Echo Task"
+    assert data["task_kind"] == "recurring"
+    assert data["trigger_type"] == "channel_send"
+    assert data["schedule"] == "0 8 * * *"
+    assert data["next_run_at"] == "2026-06-01T08:00:00+00:00"
+    assert data["task_status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_create_echo_next_run_at_null_when_repo_cant_resolve() -> None:
+    """Si el repo no pudo resolver next_run, el echo lo refleja como null — no lo omite."""
+    tool, uc = _make_tool()
+    created = _make_task(task_id=101, name="Sin Next Run")
+    created = created.model_copy(update={"next_run": None})
+    uc.create_task.return_value = created
+
+    result = await tool.execute(
+        operation="create",
+        name="Sin Next Run",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "x"},
+        schedule="2099-06-01T10:00:00Z",
+    )
+
+    assert result.success is True
+    data = json.loads(result.output)
+    assert data["created"] is True
+    assert data["next_run_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_update_echo_reflects_runtime_reset() -> None:
+    """
+    Tras un edit invalidante, el use case resetea status/retry/next_run.
+    El echo debe reflejar el estado POST-reset para que el LLM vea sin
+    ambigüedad que la task salió del modo zombie.
+    """
+    tool, uc = _make_tool()
+    # Simulamos la task ya con el reset aplicado por ScheduleTaskUseCase.update_task.
+    # El mock devuelve lo que queremos ver echo'ado, independiente del schedule
+    # que el caller le haya pasado al tool.
+    post_reset = _make_task(task_id=200, name="Post Reset")
+    post_reset = post_reset.model_copy(
+        update={
+            "schedule": "2099-06-01T09:00:00+00:00",
+            "status": TaskStatus.PENDING,  # reset desde FAILED
+            "next_run": datetime(2099, 6, 1, 9, 0, 0, tzinfo=timezone.utc),
+        }
+    )
+    uc.update_task.return_value = post_reset
+
+    result = await tool.execute(
+        operation="update",
+        task_id=200,
+        schedule="2099-06-01T09:00:00Z",
+    )
+
+    assert result.success is True
+    data = json.loads(result.output)
+    assert data["updated"] is True
+    assert data["id"] == 200
+    assert data["schedule"] == "2099-06-01T09:00:00+00:00"
+    assert data["task_status"] == "pending"
+    assert data["next_run_at"] == "2099-06-01T09:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_update_echo_preserves_disabled_intent() -> None:
+    """
+    Si la task estaba enabled=False, el use case mantiene esa intención aun tras
+    un edit invalidante (no la 'despierta' a PENDING). El echo debe exponer
+    `enabled=False` para que el LLM NO reintente un enable implícito.
+    """
+    tool, uc = _make_tool()
+    post_update = _make_task(task_id=201, name="Sigue Deshabilitada")
+    post_update = post_update.model_copy(update={"enabled": False})
+    uc.update_task.return_value = post_update
+
+    result = await tool.execute(
+        operation="update",
+        task_id=201,
+        schedule="2099-01-01T00:00:00Z",
+    )
+
+    assert result.success is True
+    data = json.loads(result.output)
+    assert data["updated"] is True
+    assert data["enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# logs — listar logs de ejecución de una tarea
+# ---------------------------------------------------------------------------
+
+
+def _make_log(
+    log_id: int = 1,
+    task_id: int = 100,
+    status: str = "success",
+    output: str | None = "ok",
+    error: str | None = None,
+    started_minute: int = 0,
+) -> TaskLog:
+    return TaskLog(
+        id=log_id,
+        task_id=task_id,
+        started_at=datetime(2026, 4, 20, 6, started_minute, 0, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 4, 20, 6, started_minute, 1, tzinfo=timezone.utc),
+        status=status,
+        output=output,
+        error=error,
+    )
+
+
+@pytest.mark.asyncio
+async def test_logs_happy_path_returns_entries() -> None:
+    """logs devuelve {task_id, total_returned, logs:[...]} con campos esperados."""
+    tool, uc = _make_tool()
+    uc.list_logs.return_value = [
+        _make_log(log_id=5, task_id=100, status="success", output="fine", started_minute=2),
+        _make_log(log_id=4, task_id=100, status="failed", error="boom", started_minute=1),
+    ]
+
+    result = await tool.execute(operation="logs", task_id=100, limit=2)
+
+    assert result.success is True
+    data = json.loads(result.output)
+    assert data["task_id"] == 100
+    assert data["total_returned"] == 2
+    assert len(data["logs"]) == 2
+    # log_id preservado en cada entry (contrato de paginación)
+    assert data["logs"][0]["log_id"] == 5
+    assert data["logs"][0]["task_id"] == 100
+    assert data["logs"][1]["log_id"] == 4
+    assert data["logs"][1]["task_id"] == 100
+    assert data["logs"][0]["status"] == "success"
+    assert data["logs"][1]["status"] == "failed"
+    # UC fue llamado con limit=2 (no capeado)
+    uc.list_logs.assert_awaited_once()
+    _, kwargs = uc.list_logs.call_args
+    # Aceptamos args o kwargs — el contrato es "llamó con task_id=100, limit=2"
+    call_args = uc.list_logs.call_args
+    # Normaliza a posicionales
+    all_args = list(call_args.args) + list(call_args.kwargs.values())
+    assert 100 in all_args
+    assert 2 in all_args
+
+
+@pytest.mark.asyncio
+async def test_logs_truncates_large_output_and_sets_flag() -> None:
+    """output > 1000 chars → truncado a 1000; output_truncated=True."""
+    tool, uc = _make_tool()
+    big = "x" * 5000
+    uc.list_logs.return_value = [_make_log(log_id=1, output=big)]
+
+    result = await tool.execute(operation="logs", task_id=100)
+
+    assert result.success is True
+    data = json.loads(result.output)
+    entry = data["logs"][0]
+    assert len(entry["attempt_output"]) == 1000
+    assert entry["output_truncated"] is True
+    assert entry["error_truncated"] is False  # error era None
+
+
+@pytest.mark.asyncio
+async def test_logs_no_truncation_when_under_limit() -> None:
+    """output corto → no se trunca y la flag queda False (triangulación vs. test anterior)."""
+    tool, uc = _make_tool()
+    short = "ok"
+    uc.list_logs.return_value = [_make_log(log_id=2, output=short, error="e" * 100)]
+
+    result = await tool.execute(operation="logs", task_id=100)
+
+    assert result.success is True
+    data = json.loads(result.output)
+    entry = data["logs"][0]
+    assert entry["attempt_output"] == "ok"
+    assert entry["output_truncated"] is False
+    assert entry["attempt_error"] == "e" * 100
+    assert entry["error_truncated"] is False
+
+
+@pytest.mark.asyncio
+async def test_logs_truncates_large_error_and_sets_flag() -> None:
+    """error > 1000 chars → truncado a 1000; error_truncated=True."""
+    tool, uc = _make_tool()
+    big_err = "e" * 3000
+    uc.list_logs.return_value = [_make_log(log_id=3, output=None, status="failed", error=big_err)]
+
+    result = await tool.execute(operation="logs", task_id=100)
+
+    assert result.success is True
+    data = json.loads(result.output)
+    entry = data["logs"][0]
+    assert len(entry["attempt_error"]) == 1000
+    assert entry["error_truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_logs_limit_capped_at_50() -> None:
+    """limit=1000 debe capearse a 50 antes de llamar al use case."""
+    tool, uc = _make_tool()
+    uc.list_logs.return_value = []
+
+    result = await tool.execute(operation="logs", task_id=100, limit=1000)
+
+    assert result.success is True
+    call_args = uc.list_logs.call_args
+    all_args = list(call_args.args) + list(call_args.kwargs.values())
+    assert 50 in all_args
+    assert 1000 not in all_args
+
+
+@pytest.mark.asyncio
+async def test_logs_status_filter_passed_through() -> None:
+    """status_filter llega al use case sin modificar."""
+    tool, uc = _make_tool()
+    uc.list_logs.return_value = []
+
+    result = await tool.execute(operation="logs", task_id=100, status_filter="failed")
+
+    assert result.success is True
+    call_args = uc.list_logs.call_args
+    all_args = list(call_args.args) + list(call_args.kwargs.values())
+    assert "failed" in all_args
+
+
+@pytest.mark.asyncio
+async def test_logs_without_task_id_lists_global() -> None:
+    """logs sin task_id → list_logs(None, ...) y task_id null en la raíz."""
+    tool, uc = _make_tool()
+    uc.list_logs.return_value = [
+        _make_log(log_id=9, task_id=200, started_minute=5),
+        _make_log(log_id=8, task_id=100, started_minute=4),
+    ]
+
+    result = await tool.execute(operation="logs", limit=2)
+
+    assert result.success is True
+    data = json.loads(result.output)
+    assert data["task_id"] is None
+    assert data["total_returned"] == 2
+    assert data["logs"][0]["task_id"] == 200
+    assert data["logs"][1]["task_id"] == 100
+    uc.list_logs.assert_awaited_once()
+    call_args = uc.list_logs.call_args
+    all_args = list(call_args.args) + list(call_args.kwargs.values())
+    assert None in all_args
+    assert 2 in all_args
+
+
+@pytest.mark.asyncio
+async def test_logs_invalid_task_id_returns_error() -> None:
+    """task_id no entero → error estructurado."""
+    tool, uc = _make_tool()
+
+    result = await tool.execute(operation="logs", task_id="abc")
+
+    assert result.success is False
+    assert "task_id" in result.output
+    uc.list_logs.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_logs_empty_result_returns_empty_list() -> None:
+    """Sin logs → {task_id, total_returned:0, logs:[]} sin error."""
+    tool, uc = _make_tool()
+    uc.list_logs.return_value = []
+
+    result = await tool.execute(operation="logs", task_id=100)
+
+    assert result.success is True
+    data = json.loads(result.output)
+    assert data["task_id"] == 100
+    assert data["total_returned"] == 0
+    assert data["logs"] == []
+
+
+# ---------------------------------------------------------------------------
+# log_get — obtener un log por id con output completo
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_log_get_existing_returns_full_untruncated() -> None:
+    """log_get devuelve {found:true, log: <full>} — output NO truncado."""
+    tool, uc = _make_tool()
+    big = "z" * 5000
+    uc.get_log.return_value = _make_log(log_id=42, task_id=100, output=big)
+
+    result = await tool.execute(operation="log_get", log_id=42)
+
+    assert result.success is True
+    data = json.loads(result.output)
+    assert data["found"] is True
+    # output completo sin truncación
+    assert data["log"]["output"] == big
+    assert len(data["log"]["output"]) == 5000
+    assert data["log"]["id"] == 42
+    uc.get_log.assert_awaited_once_with(42)
+
+
+@pytest.mark.asyncio
+async def test_log_get_missing_returns_not_found_structured() -> None:
+    """log_get con id inexistente → {found:false, log_id:N} sin excepción."""
+    tool, uc = _make_tool()
+    uc.get_log.return_value = None
+
+    result = await tool.execute(operation="log_get", log_id=9999)
+
+    assert result.success is True
+    data = json.loads(result.output)
+    assert data["found"] is False
+    assert data["log_id"] == 9999
+
+
+@pytest.mark.asyncio
+async def test_log_get_invalid_log_id_returns_error() -> None:
+    """log_get con log_id no entero → error estructurado."""
+    tool, uc = _make_tool()
+
+    result = await tool.execute(operation="log_get", log_id="not-an-int")
+
+    assert result.success is False
+    assert "log_id" in result.output
+    uc.get_log.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_log_get_missing_log_id_returns_error() -> None:
+    """log_get sin log_id → error estructurado."""
+    tool, uc = _make_tool()
+
+    result = await tool.execute(operation="log_get")
+
+    assert result.success is False
+    assert "log_id" in result.output
+    uc.get_log.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# enable / disable — la intención on/off, sin tocar status a mano
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_enable_invoca_use_case_y_devuelve_estado() -> None:
+    tool, uc = _make_tool()
+    uc.enable_task = AsyncMock()
+    enabled_task = _make_task(task_id=42).model_copy(update={"enabled": True})
+    uc.get_task.return_value = enabled_task
+
+    result = await tool.execute(operation="enable", task_id=42)
+
+    assert result.success is True
+    uc.enable_task.assert_awaited_once_with(42)
+    data = json.loads(result.output)
+    assert data["enabled"] is True
+    assert data["task_id"] == 42
+
+
+@pytest.mark.asyncio
+async def test_disable_invoca_use_case_y_devuelve_estado() -> None:
+    tool, uc = _make_tool()
+    uc.disable_task = AsyncMock()
+    disabled_task = _make_task(task_id=42).model_copy(update={"enabled": False})
+    uc.get_task.return_value = disabled_task
+
+    result = await tool.execute(operation="disable", task_id=42)
+
+    assert result.success is True
+    uc.disable_task.assert_awaited_once_with(42)
+    data = json.loads(result.output)
+    assert data["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_enable_sin_task_id_retorna_error() -> None:
+    tool, _ = _make_tool()
+    result = await tool.execute(operation="enable")
+    assert result.success is False
+    assert "task_id" in (result.error or "")
+
+
+# ---------------------------------------------------------------------------
+# run — disparo manual on-demand (NO destructivo)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_invoca_manual_runner_y_devuelve_resultado() -> None:
+    """run delega en IManualTaskRunner.run_task_now con el task_id y echo-ea el resultado."""
+    runner = MagicMock()
+    runner.run_task_now = AsyncMock(
+        return_value=ManualRunResult(task_id=107, success=True, output="ok", error=None)
+    )
+    tool, _ = _make_tool(runner=runner)
+
+    result = await tool.execute(operation="run", task_id=107)
+
+    runner.run_task_now.assert_awaited_once_with(107)
+    assert result.success is True
+    payload = json.loads(result.output)
+    assert payload == {
+        "ran": True,
+        "task_id": 107,
+        "trigger_success": True,
+        "output": "ok",
+        "error": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_run_acepta_task_id_como_string_numerico() -> None:
+    """El LLM puede mandar el id como '107' — se coacciona a int antes de delegar."""
+    runner = MagicMock()
+    runner.run_task_now = AsyncMock(
+        return_value=ManualRunResult(task_id=107, success=True, output=None, error=None)
+    )
+    tool, _ = _make_tool(runner=runner)
+
+    result = await tool.execute(operation="run", task_id="107")
+
+    runner.run_task_now.assert_awaited_once_with(107)
+    assert result.success is True
+
+
+@pytest.mark.asyncio
+async def test_run_trigger_fallido_es_dato_no_error_de_tool() -> None:
+    """Un trigger que ejecuta pero falla → ToolResult.success=True con trigger_success=False.
+
+    Mismo criterio que log_get con 'no encontrado': el fallo del trigger es DATO
+    para que el LLM decida, no un error de la tool (que dispararía el circuit breaker).
+    """
+    runner = MagicMock()
+    runner.run_task_now = AsyncMock(
+        return_value=ManualRunResult(
+            task_id=107, success=False, output=None, error="boom en el shell"
+        )
+    )
+    tool, _ = _make_tool(runner=runner)
+
+    result = await tool.execute(operation="run", task_id=107)
+
+    assert result.success is True
+    payload = json.loads(result.output)
+    assert payload["ran"] is True
+    assert payload["trigger_success"] is False
+    assert payload["error"] == "boom en el shell"
+
+
+@pytest.mark.asyncio
+async def test_run_task_inexistente_es_error_de_tool() -> None:
+    """TaskNotFoundError → ToolResult(success=False), igual que get/delete."""
+    runner = MagicMock()
+    runner.run_task_now = AsyncMock(side_effect=TaskNotFoundError("Task 999 not found"))
+    tool, _ = _make_tool(runner=runner)
+
+    result = await tool.execute(operation="run", task_id=999)
+
+    assert result.success is False
+    assert "999" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_run_sin_task_id_retorna_error() -> None:
+    runner = MagicMock()
+    runner.run_task_now = AsyncMock()
+    tool, _ = _make_tool(runner=runner)
+
+    result = await tool.execute(operation="run")
+
+    assert result.success is False
+    assert "task_id" in (result.error or "")
+    runner.run_task_now.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_task_id_invalido_retorna_error() -> None:
+    runner = MagicMock()
+    runner.run_task_now = AsyncMock()
+    tool, _ = _make_tool(runner=runner)
+
+    result = await tool.execute(operation="run", task_id="no-soy-int")
+
+    assert result.success is False
+    assert "Invalid 'task_id'" in (result.error or "")
+    runner.run_task_now.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_update_ya_no_acepta_status() -> None:
+    """El status runtime no es mutable desde el LLM — setear 'running' a mano
+    brickeaba la task (el loop solo levanta 'pending')."""
+    tool, uc = _make_tool()
+
+    result = await tool.execute(operation="update", task_id=42, status="running")
+
+    assert result.success is False
+    assert "No mutable fields" in (result.error or "")
+    uc.update_task.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Rechazo de schedules en el pasado (one_shot)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_one_shot_en_el_pasado_retorna_error() -> None:
+    """Un typo de fecha no debe disparar la task inmediatamente."""
+    tool, uc = _make_tool()
+
+    result = await tool.execute(
+        operation="create",
+        name="Typo",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        trigger_payload={"text": "hola"},
+        schedule="2020-01-01T10:00:00Z",
+    )
+
+    assert result.success is False
+    assert "in the past" in (result.error or "")
+    uc.create_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_update_schedule_en_el_pasado_retorna_error() -> None:
+    tool, uc = _make_tool()
+    existing = _make_task(task_id=200)
+    uc.get_task.return_value = existing
+
+    result = await tool.execute(
+        operation="update",
+        task_id=200,
+        schedule="2020-01-01T10:00:00Z",
+    )
+
+    assert result.success is False
+    assert "in the past" in (result.error or "")
+    uc.update_task.assert_not_awaited()

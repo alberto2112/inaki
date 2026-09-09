@@ -11,11 +11,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from core.ports.inbound.scheduler_port import IManualTaskRunner
+from inaki.scheduler.ports.use_case import IManualTaskRunner
 from core.ports.outbound.channel_port import IChannelOutbound
 from core.ports.outbound.scope_registry_port import IScopeRegistry
 from core.use_cases.run_agent import RunAgentUseCase
-from core.use_cases.schedule_task import ScheduleTaskUseCase
+from inaki.scheduler.use_cases.schedule_task import ScheduleTaskUseCase
 from inaki.channels.telegram.files.ports import IFileDownloader, IFileRecordRepo
 from inaki.memory.use_cases.consolidate_memory import ConsolidateMemoryUseCase
 from inaki.memory.use_cases.reconcile_memory import ReconcileMemoryUseCase

@@ -1,27 +1,25 @@
 """Tests de arquitectura — las reglas hexagonales del CLAUDE.md, ejecutables.
 
-Tres reglas:
+Dos reglas (la tercera, "``adapters/`` no importa ``infrastructure/``", murió con
+``adapters/`` en la fase 8 del refactor modular; la ley entre módulos la verifica
+``lint-imports`` desde ``pyproject.toml``):
 
-1. ``core/`` NUNCA importa de ``adapters/`` ni de ``infrastructure/``.
+1. ``core/`` NUNCA importa de ``infrastructure/``.
 2. ``core/`` solo usa terceros del allowlist (pydantic, croniter, numpy).
-3. ``adapters/`` NUNCA importa de ``infrastructure/`` — la dirección documentada
-   es ``adapters → core ← infrastructure``, nunca al revés.
 
 Cubre imports top-level, locales (dentro de funciones) y TYPE_CHECKING — la regla
 aplica a TODOS: un import "solo de tipos" también acopla al detalle de
 implementación.
 
-Las reglas 2 y 3 son tipo *ratchet*: las violaciones preexistentes a la auditoría
-del 2026-06-11 están declaradas en las constantes ``DEUDA_*`` y no fallan, pero
-(a) cualquier violación NUEVA falla al instante, y (b) saldar una entrada sin
+La regla 2 es tipo *ratchet*: las violaciones preexistentes a la auditoría del
+2026-06-11 están declaradas en la constante ``DEUDA_TERCEROS_CORE`` y no fallan,
+pero (a) cualquier violación NUEVA falla al instante, y (b) saldar una entrada sin
 borrarla de la lista también falla — la deuda solo puede achicarse, nunca crecer.
 
-Si la regla 1 o la 3 te fallan: el símbolo que necesitás o bien es lógica de
-dominio mal ubicada (movela a core/), o bien es un detalle que la capa no debería
-conocer. El patrón ya existe en el proyecto ("Settings VOs" del CLAUDE.md): el
-consumidor declara su VO de settings en SU capa y ``infrastructure/container.py``
-(o ``config.py``) lo construye — infrastructure puede importar adapters; al revés
-jamás.
+Si la regla 1 te falla: el símbolo que necesitás o bien es lógica de dominio mal
+ubicada (movela a core/), o bien es un detalle que la capa no debería conocer. El
+patrón ya existe en el proyecto ("Settings VOs" del CLAUDE.md): el consumidor
+declara su VO de settings en SU capa y el composition root lo construye.
 """
 
 from __future__ import annotations
@@ -32,13 +30,12 @@ from pathlib import Path
 
 RAIZ_REPO = Path(__file__).resolve().parents[2]
 CORE_DIR = RAIZ_REPO / "core"
-ADAPTERS_DIR = RAIZ_REPO / "adapters"
 
-CAPAS_PROHIBIDAS_CORE = ("adapters", "infrastructure")
+CAPAS_PROHIBIDAS_CORE = ("infrastructure",)
 
 # Paquetes first-party del repo — no son "terceros" para la regla 2 (los cruces
 # entre capas locales ya los cubren las reglas 1 y 3).
-PAQUETES_LOCALES = frozenset({"core", "adapters", "infrastructure", "inaki", "ext", "tests"})
+PAQUETES_LOCALES = frozenset({"core", "infrastructure", "inaki", "ext", "tests"})
 
 ALLOWLIST_TERCEROS_CORE = frozenset(
     {
@@ -58,15 +55,6 @@ ALLOWLIST_TERCEROS_CORE = frozenset(
 # Regla 2 — deuda saldada el 2026-06-11 (CryptoService eliminado; la api_key de
 # web_search vive en config/tool_config.yaml). Mantener vacío.
 DEUDA_TERCEROS_CORE: frozenset[tuple[str, str]] = frozenset()
-
-# Regla 3 — saldos de la auditoría: DTOs Resolved*Config + Settings VOs de
-# adapters outbound (2026-06-12); type-hints contra AgentContainer/AppContainer
-# en delegate_tool y admin REST vía Protocols estructurales (2026-06-13); y los
-# composition-roots (CLIs scheduler/knowledge + daemon runner) reubicados a
-# inaki/ — fuera de adapters/, donde un import de infrastructure es legítimo
-# (2026-06-13). El setup TUI, último consumidor del schema desde adapters/, se
-# retiró en 2026-09 (fase 2 del refactor modular).
-DEUDA_ADAPTERS_INFRA: frozenset[tuple[str, str]] = frozenset()
 
 
 def _imports_de(archivo: Path) -> list[str]:
@@ -104,7 +92,7 @@ def _assert_ratchet(
     assert not mensajes, "\n\n".join(mensajes)
 
 
-def test_core_no_importa_adapters_ni_infrastructure() -> None:
+def test_core_no_importa_infrastructure() -> None:
     assert CORE_DIR.is_dir(), f"No se encontró el directorio core/ en {CORE_DIR}"
 
     violaciones: list[str] = []
@@ -117,7 +105,7 @@ def test_core_no_importa_adapters_ni_infrastructure() -> None:
 
     assert not violaciones, (
         "Violación de la regla hexagonal — core/ no puede importar de "
-        "adapters/ ni infrastructure/:\n  " + "\n  ".join(violaciones)
+        "infrastructure/:\n  " + "\n  ".join(violaciones)
     )
 
 
@@ -141,17 +129,3 @@ def test_core_solo_usa_terceros_del_allowlist() -> None:
                 actuales.add((rel, raiz))
 
     _assert_ratchet(actuales, DEUDA_TERCEROS_CORE, "core solo terceros del allowlist")
-
-
-def test_adapters_no_importa_infrastructure() -> None:
-    """Regla 3: adapters/ no conoce infrastructure/ (dirección: nunca al revés)."""
-    assert ADAPTERS_DIR.is_dir(), f"No se encontró el directorio adapters/ en {ADAPTERS_DIR}"
-
-    actuales: set[tuple[str, str]] = set()
-    for archivo in sorted(ADAPTERS_DIR.rglob("*.py")):
-        rel = archivo.relative_to(RAIZ_REPO).as_posix()
-        for modulo in _imports_de(archivo):
-            if modulo.split(".")[0] == "infrastructure":
-                actuales.add((rel, modulo))
-
-    _assert_ratchet(actuales, DEUDA_ADAPTERS_INFRA, "adapters no importa infrastructure")

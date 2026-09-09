@@ -32,7 +32,7 @@ import pytest
 import typer
 from starlette.testclient import TestClient
 
-from adapters.outbound.scope_registry_adapter import InMemoryScopeRegistryAdapter
+from inaki.agents.scope_registry import InMemoryScopeRegistryAdapter
 from core.domain.value_objects.agent_info import AgentInfoDTO
 from inaki.cli import client as daemon_client_module
 from inaki.cli.client import DaemonClient

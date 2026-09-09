@@ -1,0 +1,145 @@
+"""ScheduleTaskUseCase — CRUD de tareas programadas."""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING, Any, Callable
+
+from inaki.scheduler.domain.task import USER_TASK_ID_START, ScheduledTask, TaskKind, TaskStatus
+from inaki.scheduler.domain.task_log import TaskLog
+from inaki.scheduler.domain.cron import validate_cron
+from inaki.scheduler.ports.use_case import ISchedulerUseCase
+from inaki.shared.errors import (
+    BuiltinTaskProtectedError,
+    TaskNotFoundError,
+    TooManyActiveTasksError,
+)
+
+if TYPE_CHECKING:
+    from inaki.scheduler.ports.repository import ISchedulerRepository
+
+logger = logging.getLogger(__name__)
+
+
+# Campos cuya edición invalida el estado runtime (cuándo/qué/cómo ejecuta).
+# Cambiar cualquiera de ellos implica resetear status/retry_count/next_run para
+# que el scheduler vuelva a considerar la tarea con la definición nueva.
+_INVALIDATING_FIELDS = frozenset(
+    {"schedule", "trigger_payload", "task_kind", "trigger_type", "executions_remaining"}
+)
+
+
+class ScheduleTaskUseCase(ISchedulerUseCase):
+    def __init__(
+        self,
+        repo: ISchedulerRepository,
+        on_mutation: Callable[[], None],
+        max_active_tasks: int = 20,
+    ) -> None:
+        self._repo = repo
+        self._on_mutation = on_mutation
+        self._max_active_tasks = max(1, int(max_active_tasks))
+
+    async def create_task(self, task: ScheduledTask) -> ScheduledTask:
+        if task.task_kind == TaskKind.RECURRENT:
+            validate_cron(task.schedule)  # raises InvalidScheduleError
+        if task.created_by != "":
+            count = await self._repo.count_active_by_agent(task.created_by)
+            if count >= self._max_active_tasks:
+                raise TooManyActiveTasksError(
+                    agent_id=task.created_by, limit=self._max_active_tasks
+                )
+        created = await self._repo.save_task(task)
+        self._on_mutation()
+        return created
+
+    async def delete_task(self, task_id: int) -> None:
+        await self.get_task(task_id)
+        if task_id < USER_TASK_ID_START:
+            raise BuiltinTaskProtectedError(f"Task {task_id} is a builtin and cannot be deleted.")
+        await self._repo.delete_task(task_id)
+        self._on_mutation()
+
+    async def enable_task(self, task_id: int) -> None:
+        """Marca la intención "quiero que corra".
+
+        Si la task estaba en estado runtime terminal no-completado (FAILED/MISSED),
+        también la reseteamos a PENDING y limpiamos retry_count/next_run para que
+        el scheduler la vuelva a tomar. Una task COMPLETED (oneshot ya ejecutada)
+        NO se auto-reinicia: sería re-ejecución implícita y el usuario debería
+        editarla explícitamente via update_task si quiere re-armarla.
+        """
+        task = await self.get_task(task_id)
+        if task.status in {TaskStatus.FAILED, TaskStatus.MISSED}:
+            updated = task.model_copy(
+                update={
+                    "enabled": True,
+                    "status": TaskStatus.PENDING,
+                    "retry_count": 0,
+                    "next_run": None,  # el repo lo recomputa en save_task
+                }
+            )
+            await self._repo.save_task(updated)
+        else:
+            await self._repo.update_enabled(task_id, True)
+        self._on_mutation()
+
+    async def disable_task(self, task_id: int) -> None:
+        """Marca la intención "no quiero que corra". No toca el status runtime."""
+        await self.get_task(task_id)
+        await self._repo.update_enabled(task_id, False)
+        self._on_mutation()
+
+    async def get_task(self, task_id: int) -> ScheduledTask:
+        task = await self._repo.get_task(task_id)
+        if task is None:
+            raise TaskNotFoundError(f"Task {task_id} not found")
+        return task
+
+    async def list_tasks(self) -> list[ScheduledTask]:
+        return await self._repo.list_tasks()
+
+    async def update_task(self, task_id: int, **kwargs: Any) -> ScheduledTask:
+        if task_id < USER_TASK_ID_START:
+            raise BuiltinTaskProtectedError(
+                f"Task {task_id} is a builtin and cannot be modified via update_task."
+            )
+        task = await self.get_task(task_id)
+
+        # Si la edición toca un campo invalidante, el estado runtime queda
+        # stale respecto de la definición nueva. Reseteamos:
+        #   - status  → pending (solo si la task está enabled; si el usuario
+        #                        la tiene deshabilitada, respetamos su
+        #                        intención y no "despertamos" la task)
+        #   - retry_count → 0 (borrón y cuenta nueva)
+        #   - next_run → None (el repo lo recomputa vía _resolve_next_run con
+        #                      el schedule nuevo)
+        # setdefault preserva overrides explícitos del caller.
+        if _INVALIDATING_FIELDS.intersection(kwargs):
+            if task.enabled:
+                kwargs.setdefault("status", TaskStatus.PENDING)
+            kwargs.setdefault("retry_count", 0)
+            kwargs.setdefault("next_run", None)
+
+        # model_validate en lugar de model_copy: model_copy(update=...) NO corre
+        # validadores Pydantic — un caller podría persistir basura silenciosamente.
+        updated = ScheduledTask.model_validate({**task.model_dump(), **kwargs})
+        if updated.task_kind == TaskKind.RECURRENT and (
+            "schedule" in kwargs or "task_kind" in kwargs
+        ):
+            validate_cron(updated.schedule)  # raises InvalidScheduleError
+        saved = await self._repo.save_task(updated)
+        self._on_mutation()
+        return saved
+
+    async def list_logs(
+        self,
+        task_id: int | None,
+        limit: int = 10,
+        offset: int = 0,
+        status_filter: str | None = None,
+    ) -> list[TaskLog]:
+        return await self._repo.list_logs(task_id, limit, offset, status_filter)
+
+    async def get_log(self, log_id: int) -> TaskLog | None:
+        return await self._repo.get_log(log_id)

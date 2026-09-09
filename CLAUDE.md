@@ -34,14 +34,14 @@ No Makefile or CI. All commands are direct calls.
 
 ## Architecture
 
-Cuatro capas. La dirección de dependencias es `adapters → core ← infrastructure`, con
-`inaki/` (composition root) por encima de todo. **Nunca al revés.**
+Tres capas. La dirección de dependencias es `módulos de inaki/ → core ← infrastructure`,
+con `inaki/cli` e `inaki/app` (composition root) por encima de todo. **Nunca al revés.**
 
 | Capa | Qué contiene | Regla dura |
 |---|---|---|
-| **`core/`** | Entidades, ports, use cases, servicios y errores de dominio | **NUNCA** importa `adapters/` ni `infrastructure/`. Terceros permitidos: solo `pydantic`, `croniter`, `numpy` |
-| **`adapters/`** | Implementaciones de ports. Inbound (REST admin, CLI chat) y outbound (LLM, tools, repos, embedding, skills, scheduler). Telegram ya NO vive acá: es el paquete vertical `inaki/channels/telegram/` | **NUNCA** importa `infrastructure/`. Si "necesita" el container o el schema → declara un Protocol/Settings VO y el composition root se lo inyecta |
-| **`infrastructure/`** | Wiring y cross-cutting. `container.py` | Único lugar donde se instancian adapters y se inyectan en use cases |
+| **`core/`** | El kernel: entidades, ports, el turno (`run_agent`, tool loop), servicios y errores de dominio | **NUNCA** importa `infrastructure/` ni un módulo de feature de `inaki/`. Terceros permitidos: solo `pydantic`, `croniter`, `numpy` |
+| **módulos de `inaki/`** | Un paquete por feature (`llm`, `embedding`, `tools`, `skills`, `memory`, `knowledge`, `scheduler`, `agents`, `perception`, `extensions`, `config`, `observability`) y un paquete por canal en `inaki/channels/`. Cada uno implementa los ports que el kernel declara | **NUNCA** importa `infrastructure/` ni otro módulo de feature salvo los que su contrato en `pyproject.toml` permite. Si "necesita" el container o el schema → declara un Protocol/Settings VO y el composition root se lo inyecta |
+| **`infrastructure/`** | Wiring y cross-cutting. `container.py` y `factories/` | Único lugar donde se instancian los adapters de los módulos y se inyectan en use cases |
 | **`inaki/`** | Composition root: `inaki/cli/` (un módulo por comando, `_common` con los helpers) e `inaki/app/` (`bootstrap`, `runner`, `reloader`) | Fuera de la regla hexagonal (ensamblar es su trabajo). Los entry points NUEVOS van a `inaki/cli/`; los canales, a `inaki/channels/` |
 
 `<home>/ext/` (`app.ext_dirs`) — extensiones de usuario, auto-descubiertas vía `manifest.py` por `inaki/extensions/`.
@@ -62,16 +62,18 @@ Cuatro capas. La dirección de dependencias es `adapters → core ← infrastruc
 > Y los módulos del núcleo `inaki/embedding/`, `inaki/memory/`, `inaki/knowledge/` e
 > `inaki/skills/` (adapters, use cases y tools; los ports que consume el turno siguen en `core/`),
 > `inaki/tools/` (registro con routing, builtins, store del Tool Config Protocol), `inaki/llm/`
-> (providers) e `inaki/extensions/` (descubrimiento de `manifest.py`). La ley de dependencias vive en `pyproject.toml` →
-> `[tool.importlinter]` y la verifica `lint-imports`. Mientras dure el refactor,
-> las capas `core/`, `adapters/` e `infrastructure/` siguen vigentes con sus
-> reglas; los módulos se mudan de a uno.
+> (providers), `inaki/extensions/` (descubrimiento de `manifest.py`), `inaki/scheduler/` (tier
+> harness-global entero: dominio, ports, servicio, repo, reconciler y la tool partida por operación)
+> e `inaki/agents/` (dispatcher por scope, scope registry, `delegate` y la cola background). La ley de
+> dependencias vive en `pyproject.toml` → `[tool.importlinter]` y la verifica `lint-imports`.
+> `adapters/` ya no existe; `core/` e `infrastructure/` siguen vigentes hasta que el kernel se
+> mude a `inaki/kernel/` y `container.py` se disuelva en un `wiring.py` por módulo.
 
-Las reglas las verifica `tests/unit/test_architecture.py` (incluye `TYPE_CHECKING` e
-imports locales). Dos de ellas son **ratchet** — el allowlist de terceros en `core/` y la
-prohibición de que `adapters/` importe `infrastructure/`: sus listas `DEUDA_*` quedaron
-vacías el 2026-06-13. **NUNCA agregar entradas a `DEUDA_*`**; resolvé el acoplamiento con
-Settings VOs, Protocols estructurales, o reubicando el composition root a `inaki/`.
+Las reglas de `core/` las verifica `tests/unit/test_architecture.py` (incluye `TYPE_CHECKING` e
+imports locales). Una es **ratchet** — el allowlist de terceros en `core/`: su lista
+`DEUDA_TERCEROS_CORE` quedó vacía el 2026-06-13. **NUNCA agregar entradas a `DEUDA_*`**; resolvé
+el acoplamiento con Settings VOs, Protocols estructurales, o reubicando el composition root a
+`inaki/`. La ley entre módulos la verifica `lint-imports`.
 
 ### Las tres reglas estructurales — leer antes de agregar código
 
@@ -106,8 +108,9 @@ Resumen operativo. El texto completo, con el porqué y los antipatrones, está e
 3. **Wiring / DI** — `container.py` es el único lugar donde se registra un tool, provider
    o repo. Los use cases **no reciben `AgentConfig`**: reciben Settings VOs
    (`core/domain/value_objects/agent_settings.py`), mapeados en los builders públicos de
-   `container.py`. Los adapters outbound usan sus propios DTOs (`Resolved*Config`) en el
-   `base.py` de su familia — **NUNCA** moverlos de vuelta a `inaki/config/`.
+   `container.py`. Los módulos de providers usan sus propios DTOs (`Resolved*Config`) en su
+   `base.py` (`inaki/llm`, `inaki/embedding`, transcripción en `inaki/perception`) — **NUNCA**
+   moverlos de vuelta a `inaki/config/`.
    Providers (LLM, embedding, transcripción) se auto-descubren por la constante
    `PROVIDER_NAME`; los tres registries son **independientes**.
 
@@ -204,7 +207,7 @@ Cada una salió de un fallo en producción. El caso completo está en
 **Datos y dominio**
 
 - **NUNCA** llamar `croniter` directo para calcular `next_run`: todo pasa por
-  `core/domain/utils/cron.py::next_cron_occurrence()`. Evaluar cron en dos lugares con tz
+  `inaki/scheduler/domain/cron.py::next_cron_occurrence()`. Evaluar cron en dos lugares con tz
   distintas causó el bug de doble ejecución por DST.
 - **NUNCA** agregar `index()` a `IKnowledgeSource`: rompería las fuentes read-only.
 - **NUNCA** inventar un formato de persistencia por tipo de media o por canal — la

@@ -46,6 +46,9 @@ import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from typing import Protocol
+
+from core.domain.value_objects.dispatch_result import DispatchResult
 from core.domain.value_objects.outbound_kind import OutboundKind
 
 logger = logging.getLogger(__name__)
@@ -187,3 +190,28 @@ class OutboundIntermediateSink(IIntermediateSink):
                 self._chat_id,
                 exc,
             )
+
+
+class IChannelSender(Protocol):
+    """Resuelve un ``target`` (ej: ``"telegram:123"``) y entrega por el outbound del agente.
+
+    Lo satisface ``ChannelRouter``; lo consumen el scheduler (``channel_send``,
+    ``agent_send``) y la cola de delegación en background (``bg-N``). ``agent_id``
+    es el DUEÑO del envío (decide bot e historial); ``record_history=False`` cuando
+    el caller ya es dueño del rastro (turno de ``agent_send``, resultado ``bg-N``).
+    """
+
+    async def send_message(
+        self,
+        target: str,
+        text: str,
+        *,
+        agent_id: str | None = None,
+        record_history: bool = True,
+    ) -> DispatchResult: ...
+
+    def build_intermediate_sink(
+        self, target: str, *, agent_id: str | None = None
+    ) -> IIntermediateSink: ...
+
+    def is_conversational(self, channel: str, agent_id: str | None) -> bool: ...

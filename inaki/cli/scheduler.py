@@ -31,11 +31,11 @@ from pydantic import ValidationError
 from rich.console import Console
 from rich.table import Table
 
-from core.domain.entities.task import ScheduledTask
+from inaki.scheduler.domain.task import ScheduledTask
 from inaki.shared.errors import BuiltinTaskProtectedError, TaskNotFoundError
 
 if TYPE_CHECKING:
-    from core.ports.inbound.scheduler_port import ISchedulerUseCase
+    from inaki.scheduler.ports.use_case import ISchedulerUseCase
     from inaki.config import GlobalConfig
 
 # ---------------------------------------------------------------------------
@@ -72,8 +72,8 @@ def _create_lightweight_uc(
     config_dir: Path,
 ) -> tuple["ISchedulerUseCase", "GlobalConfig"]:
     """Crea ScheduleTaskUseCase con bootstrap mínimo — sin AppContainer."""
-    from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRepo
-    from core.use_cases.schedule_task import ScheduleTaskUseCase
+    from inaki.scheduler.adapters.sqlite_repo import SQLiteSchedulerRepo
+    from inaki.scheduler.use_cases.schedule_task import ScheduleTaskUseCase
     from inaki.config import load_global_config
 
     global_config, _ = load_global_config(config_dir)

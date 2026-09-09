@@ -76,6 +76,7 @@ existe este documento— y la contradicción no queda flotando.
 | [`broadcast-topology-config`](#broadcast-topology-config) | Rol explícito `server` XOR `client`; config vieja falla al cargar |
 | [`broadcast-arranque-observable`](#broadcast-arranque-observable) | El fallo de `bind()` y la config de broadcast que no valida ahora salen como `ERROR` en el log |
 | [`formato-en-el-borde-del-transporte`](#formato-en-el-borde-del-transporte) | Todo lo que Telegram manda fuera del turno conversacional (scheduler, `bg-N`, intermedios, media) sale **formateado** y troceado, no en markdown crudo |
+| [`modulos-scheduler-y-agents`](#modulos-scheduler-y-agents) | Sin cambios de comportamiento: nacen `inaki/scheduler` (tier entero) e `inaki/agents`; `adapters/` desaparece; la tool `scheduler` queda partida por operación con los helpers de create/update compartidos |
 | [`modulos-embedding-memory-knowledge-skills`](#modulos-embedding-memory-knowledge-skills) | Sin cambios de comportamiento: nacen `inaki/embedding`, `inaki/memory`, `inaki/knowledge` e `inaki/skills`; el kernel depende de `IKnowledgeRetriever` (Protocol) en vez del orquestador concreto |
 | [`modulo-perception`](#modulo-perception) | Sin cambios de comportamiento: fotos, caras, escena, imaging y transcripción pasan a `inaki/perception/`; la transcripción de voz es un use case (`TranscribeAudioUseCase`) y el canal Telegram deja de conocer el provider |
 | [`composition-root-y-canales-rest-cli`](#composition-root-y-canales-rest-cli) | Sin cambios de comandos ni de API: `inaki/cli.py` (895 líneas) pasa a `inaki/cli/` (un módulo por comando), el bootstrap y el runner a `inaki/app/`, el admin REST a `inaki/channels/rest/` y el chat interactivo a `inaki/channels/cli/`; desaparece `adapters/inbound/` |
@@ -104,12 +105,75 @@ existe este documento— y la contradicción no queda flotando.
   *(superseded)*, `per-user-context-files` *(superseded)*
 - **Memoria**: `memory-management-tools`, `memory-scoped-by-channel-chat`,
   `agent-state-scoped-by-channel-chat`
-- **Scheduler**: `scheduler-trigger-type-mutable`, `channel-send-history-persist`
+- **Scheduler**: `modulos-scheduler-y-agents`, `scheduler-trigger-type-mutable`, `channel-send-history-persist`
 - **Tools y config**: `modulos-tools-llm-extensions`, `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `modulos-scheduler-y-agents`
+
+**Contexto (2026-09-09, fase 8 del refactor modular).** El scheduler repartido en
+cinco sitios por dirección técnica (`core/domain/services/scheduler_service.py`,
+`core/use_cases/schedule_task.py`, `adapters/outbound/scheduler/`,
+`infrastructure/scheduler_reconciler.py`, `adapters/outbound/tools/scheduler_tool.py`)
+con sus entidades y ports en `core/` aunque el turno no los consumiera; la
+delegación igual (`adapters/outbound/{tools/delegate_tool,delegation,
+scope_registry_adapter}.py`). Y la tool del scheduler: una clase de 1.122 líneas
+con diez operaciones y la lógica de `create` copiada en `update` (nota
+`scheduler-trigger-type-mutable`: la paridad dependía de acordarse).
+
+**Cambio.**
+
+- `inaki/scheduler/` se lleva el tier harness-global ENTERO: `domain/` (`task`,
+  `task_log`, `manual_run_result`, `cron`, `time_parser`), `ports/` (`use_case`,
+  `repository`, `dispatch`), `use_cases/schedule_task`, `service`, `reconciler`,
+  `adapters/` (`sqlite_repo`, `dispatch`, `builtin_tasks`) y `tools/`. Regla de
+  siempre: los ports y entidades que consume el kernel se quedan en `core/`; el
+  turno no importa nada del scheduler, así que se mudó todo. Los canales
+  (Telegram, REST) y el CLI lo importan del módulo.
+- `IChannelSender` (la superficie del `ChannelRouter` que reciben los que envían
+  fuera del turno) pasó a `core/ports/outbound/channel_port.py`: la consumen
+  `scheduler` y `agents`, así que la posee el kernel, dueño del contrato de canal.
+- `inaki/agents/`: `dispatcher` (`LLMDispatcherAdapter`, antes entre los dispatch
+  adapters del scheduler: despacha un turno a un agente por scope con locks; es una
+  capacidad de agentes), `scope_registry`, `delegation/{delegate_tool,
+  background_queue}`. El scheduler recibe el dispatcher por `SchedulerDispatchPorts`,
+  y `scheduler` y `agents` son independientes por contrato.
+- **La tool `scheduler` partida por operación.** `scheduler_tool.py` es la fachada
+  (`ITool`: nombre, descripción, schema) con una tabla de despacho
+  (`operations.OPERACIONES`); cada operación es un objeto chico en `operations/`
+  (`Crear`, `Actualizar`, `Listar`, `Obtener`, `Borrar`, `Habilitar`,
+  `Deshabilitar`, `Correr`, `ListarLogs`, `ObtenerLog`) con su validación. Lo que
+  `create` y `update` compartían por copia vive UNA vez en `_params.py`: schedule
+  contra el kind efectivo, destino de `channel_send`, alias `self` de
+  `agent_send`, payload contra el tipo efectivo. Los 90 tests de la tool pasaron
+  sin cambiar su contrato (misma clase, mismos kwargs, mismas salidas); se agregó
+  un test por regla compartida y otro que ata el `enum` del schema a la tabla.
+- Lo que NO se movió: `build_ephemeral_child`, `wire_delegation` y la sección de
+  descubrimiento del prompt. Son wiring y config-pesados (`resolver_inherit`,
+  `assemble_agent_config`, la factory de LLM): en `agents/` habrían obligado al
+  módulo a importar `inaki.config` e `infrastructure`. Serán `agents/wiring.py` en
+  la fase 9, como las factories.
+- `adapters/` desapareció (y `core/domain/utils/`). `tests/unit/test_architecture.py`
+  perdió la regla 3 ("adapters no importa infrastructure") y `DEUDA_ADAPTERS_INFRA`;
+  la ley entre módulos es de `lint-imports` (15 contratos).
+
+**Comportamiento observable.** Uno, y salió de unificar las dos copias: `create`
+heredaba el canal activo como `output_channel` de un `agent_send` sin él, y
+`update` NO — un payload editado desde el chat mandaba el resultado del agente
+a los logs en vez de a la conversación. Ahora las dos operaciones aplican la
+MISMA regla que ya tenía el `target` de `channel_send`: sin dato, se conserva el
+de la tarea si ya lo tenía; si no, la conversación actual. El resto no cambia:
+paths de import, y la tool responde igual.
+
+**Invariante que dejó.** **NUNCA** dos copias de una regla de validación entre
+operaciones de una misma tool: cada regla compartida vive una vez en un helper,
+y cada operación es un objeto que lo llama. Si dos operaciones "se parecen", lo
+que se parece se extrae; lo que difiere se pasa como parámetro explícito.
 
 ---
 

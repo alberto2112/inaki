@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from core.domain.value_objects.manual_run_result import ManualRunResult
+from inaki.scheduler.domain.manual_run_result import ManualRunResult
 from core.use_cases.run_agent import AgentInfoDTO, InspectResult
 from inaki.channels.rest.app import create_admin_app
 from inaki.shared.errors import TaskNotFoundError

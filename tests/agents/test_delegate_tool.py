@@ -26,8 +26,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from inaki.agents.delegation.delegate_tool import _RESULT_FORMAT_FOOTER, DelegateTool
-from core.domain.value_objects.delegation_result import DelegationResult
-from core.ports.outbound.tool_port import ToolResult
+from inaki.kernel.domain.value_objects.delegation_result import DelegationResult
+from inaki.kernel.ports.outbound.tool_port import ToolResult
 from inaki.shared.channel_context import ChannelContext
 from inaki.shared.errors import ToolLoopMaxIterationsError
 

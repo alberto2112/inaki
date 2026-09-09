@@ -20,7 +20,7 @@ from collections.abc import AsyncIterator
 import httpx
 
 from inaki.llm.base import BaseLLMProvider, ResolvedLLMConfig
-from core.domain.value_objects.llm_response import LLMResponse
+from inaki.kernel.domain.value_objects.llm_response import LLMResponse
 from inaki.shared.errors import LLMError
 from inaki.shared.message import Message, Role
 

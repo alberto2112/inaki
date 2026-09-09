@@ -59,7 +59,7 @@ def _get_source_config(global_cfg, source_id: str):
 
 def _build_document_source(fuente_cfg, global_cfg):
     """Instancia un DocumentKnowledgeSource a partir de la config de fuente."""
-    from infrastructure.factories.embedding_factory import EmbeddingProviderFactory
+    from inaki.embedding.wiring import EmbeddingProviderFactory
 
     if fuente_cfg.type != "document":
         typer.echo(

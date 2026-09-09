@@ -3,8 +3,8 @@ from collections.abc import AsyncIterator
 
 from pydantic import BaseModel
 
-from core.domain.value_objects.llm_response import LLMResponse
-from core.ports.outbound.llm_port import ILLMProvider
+from inaki.kernel.domain.value_objects.llm_response import LLMResponse
+from inaki.kernel.ports.outbound.llm_port import ILLMProvider
 from inaki.shared.message import Message, Role
 
 
@@ -127,6 +127,6 @@ class BaseLLMProvider(ILLMProvider):
         system_prompt: str,
     ) -> AsyncIterator[str]:
         """Stream de chunks de texto. Ver docstring en
-        ``core.ports.outbound.llm_port.ILLMProvider.stream`` para el detalle
+        ``inaki.kernel.ports.outbound.llm_port.ILLMProvider.stream`` para el detalle
         de por qué se declara como ``def`` y no ``async def``."""
         ...

@@ -491,7 +491,7 @@ def test_init_raises_without_api_key() -> None:
 
 
 def test_provider_name_and_factory_discovery() -> None:
-    from infrastructure.factories.llm_factory import LLMProviderFactory
+    from inaki.llm.wiring import LLMProviderFactory
 
     LLMProviderFactory._registry.clear()
     LLMProviderFactory._load()

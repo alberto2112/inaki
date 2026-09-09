@@ -5,7 +5,7 @@ Características:
   - Consulta todas las fuentes en paralelo via asyncio.gather.
   - Aísla fallos por fuente: si una fuente falla, las demás siguen.
   - Aplica un cap total (max_total_chunks) después de ordenar por score desc.
-  - No tiene dependencias fuera de core/ (sin imports de adapters ni infrastructure).
+  - No tiene dependencias fuera del kernel y ``shared``.
 """
 
 from __future__ import annotations
@@ -13,8 +13,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
-from core.ports.outbound.knowledge_port import IKnowledgeSource
+from inaki.kernel.domain.value_objects.knowledge_chunk import KnowledgeChunk
+from inaki.kernel.ports.outbound.knowledge_port import IKnowledgeSource
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class KnowledgeOrchestrator:
         self._fuentes = sources
         self._cap = max_total_chunks
         # Parámetros almacenados aquí para que RunAgentUseCase los lea sin necesitar
-        # GlobalConfig (mantiene core/ desacoplado de infrastructure/).
+        # GlobalConfig (mantiene el kernel desacoplado de la config).
         self._token_budget_threshold = token_budget_threshold
         self._pre_fetch_enabled = pre_fetch_enabled
         self._default_top_k_per_source = default_top_k_per_source

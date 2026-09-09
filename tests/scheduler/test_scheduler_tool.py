@@ -47,7 +47,7 @@ from inaki.scheduler.domain.task import (
 )
 from inaki.scheduler.domain.task_log import TaskLog
 from inaki.scheduler.domain.manual_run_result import ManualRunResult
-from core.ports.outbound.tool_port import ToolResult
+from inaki.kernel.ports.outbound.tool_port import ToolResult
 from inaki.shared.channel_context import ChannelContext
 from inaki.shared.errors import (
     BuiltinTaskProtectedError,

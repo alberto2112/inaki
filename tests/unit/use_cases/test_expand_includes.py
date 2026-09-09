@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 
-from core.use_cases._turn_pipeline import expand_includes
+from inaki.kernel.use_cases._turn_pipeline import expand_includes
 
 
 def test_sin_directiva_es_no_op():

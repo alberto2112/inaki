@@ -13,15 +13,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.domain.entities.memory import MemoryEntry
-from core.domain.value_objects.llm_response import LLMResponse
-from core.use_cases.run_agent import RunAgentUseCase
+from inaki.kernel.domain.entities.memory import MemoryEntry
+from inaki.kernel.domain.value_objects.llm_response import LLMResponse
+from inaki.kernel.use_cases.run_agent import RunAgentUseCase
 from inaki.knowledge.adapters.sqlite_memory_knowledge_source import (
     SqliteMemoryKnowledgeSource,
 )
 from inaki.knowledge.orchestrator import KnowledgeOrchestrator
 from inaki.memory.adapters.sqlite_memory_repo import SQLiteMemoryRepository
-from infrastructure.container import build_run_agent_settings
+from inaki.app.container import build_run_agent_settings
 
 
 def _vec_normalizado(n: int = 384, value: float = 1.0) -> list[float]:
@@ -192,7 +192,7 @@ class TestPreFetchBypassOnShortInput:
         mock_history,
         mock_tools,
     ) -> None:
-        from core.domain.value_objects.conversation_state import ConversationState
+        from inaki.kernel.domain.value_objects.conversation_state import ConversationState
         from inaki.config import (
             AgentConfig,
             ChatHistoryConfig,

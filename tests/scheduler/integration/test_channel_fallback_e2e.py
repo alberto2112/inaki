@@ -32,7 +32,7 @@ from inaki.scheduler.domain.task import (
     TaskStatus,
     TriggerType,
 )
-from core.domain.services.channel_router import ChannelFallbackSettings, ChannelRouter
+from inaki.kernel.domain.services.channel_router import ChannelFallbackSettings, ChannelRouter
 from inaki.scheduler.service import SchedulerService
 from inaki.scheduler.ports.dispatch import SchedulerDispatchPorts
 

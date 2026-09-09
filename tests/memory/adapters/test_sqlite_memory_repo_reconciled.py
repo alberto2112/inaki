@@ -16,7 +16,7 @@ import aiosqlite
 import pytest
 import sqlite_vec
 
-from core.domain.entities.memory import MemoryEntry
+from inaki.kernel.domain.entities.memory import MemoryEntry
 from inaki.memory.adapters.sqlite_memory_repo import SQLiteMemoryRepository
 
 

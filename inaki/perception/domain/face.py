@@ -1,7 +1,7 @@
 """Entidades de dominio para el reconocimiento facial.
 
 Este módulo define las entidades puras del dominio (sin dependencias externas).
-Solo stdlib + pydantic. Nunca importar desde adapters/ o infrastructure/.
+Solo stdlib + pydantic. Nunca importar del composition root ni de otro módulo.
 """
 
 from __future__ import annotations

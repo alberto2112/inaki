@@ -13,7 +13,7 @@ import asyncio
 import pytest
 
 from inaki.agents.scope_registry import InMemoryScopeRegistryAdapter
-from core.ports.outbound.scope_registry_port import Scope
+from inaki.kernel.ports.outbound.scope_registry_port import Scope
 
 
 @pytest.fixture

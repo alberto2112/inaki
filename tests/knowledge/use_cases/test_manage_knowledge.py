@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
-from core.ports.outbound.knowledge_port import (
+from inaki.kernel.domain.value_objects.knowledge_chunk import KnowledgeChunk
+from inaki.kernel.ports.outbound.knowledge_port import (
     IIndexableKnowledgeSource,
     IKnowledgeSource,
 )

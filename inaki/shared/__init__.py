@@ -1,7 +1,7 @@
 """Primitivas de dominio compartidas por TODOS los módulos de Inaki.
 
-Regla dura: este paquete no importa nada del proyecto (ni ``core``, ni
-``adapters``, ni ``infrastructure``, ni otro subpaquete de ``inaki``). Solo
+Regla dura: este paquete no importa nada del proyecto (ni ``inaki.kernel`` ni
+ningún otro subpaquete de ``inaki``). Solo
 stdlib y ``pydantic``. La verifica ``lint-imports`` (``pyproject.toml``).
 
 Qué vive acá y por qué:

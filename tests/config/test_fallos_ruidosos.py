@@ -189,7 +189,7 @@ def test_el_wiring_de_fotos_degrada_y_dice_que_capacidad_queda_muda(
     tumbar el daemon entero, pero el operador tiene que enterarse de QUÉ perdió."""
     from unittest.mock import MagicMock
 
-    from infrastructure.container import AgentContainer
+    from inaki.app.container import AgentContainer
 
     self_ = MagicMock()
     self_._photos_wired = False

@@ -19,9 +19,9 @@ from typing import AsyncIterator
 import aiosqlite
 import sqlite_vec
 
-from core.domain.entities.memory import MemoryEntry
-from core.ports.outbound.embedding_port import IEmbeddingProvider
-from core.ports.outbound.memory_port import IMemoryRepository
+from inaki.kernel.domain.entities.memory import MemoryEntry
+from inaki.kernel.ports.outbound.embedding_port import IEmbeddingProvider
+from inaki.kernel.ports.outbound.memory_port import IMemoryRepository
 
 logger = logging.getLogger(__name__)
 

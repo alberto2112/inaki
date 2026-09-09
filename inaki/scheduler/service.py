@@ -66,7 +66,7 @@ class SchedulerService(IManualTaskRunner):
         self._dispatch = dispatch
         # Parámetros sueltos en lugar de SchedulerConfig completo: el service
         # solo consume estos campos (el resto del bloque scheduler es
-        # wiring de infrastructure — db, enabled, channel_fallback).
+        # wiring del composition root — db, enabled, channel_fallback).
         self._max_retries = max(0, int(max_retries))
         self._output_truncation_size = int(output_truncation_size)
         self._cron_tz = resolve_timezone(user_timezone)

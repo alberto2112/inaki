@@ -17,8 +17,8 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 
-from core.ports.outbound.channel_port import BufferingIntermediateSink
-from core.use_cases.turn_dispatch import dispatch_inbound_turn
+from inaki.kernel.ports.outbound.channel_port import BufferingIntermediateSink
+from inaki.kernel.use_cases.turn_dispatch import dispatch_inbound_turn
 from inaki.channels.rest.routers.deps import check_admin_auth, resolver_agente
 from inaki.channels.rest.schemas import (
     ChatTurnRequest,

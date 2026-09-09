@@ -10,7 +10,7 @@ que cualquier vista de config necesita y que ``core/`` no puede conocer:
    schema, para redactarlas. Un campo es secreto por su marca en el schema, no
    por el fichero donde está escrito.
 
-Vive en ``infrastructure`` porque acá el schema es conocido de primera mano y
+Vive en ``inaki/config`` porque acá el schema es conocido de primera mano y
 porque tiene DOS consumidores, ambos composition roots: la CLI
 (``inaki config show``) y el container (la tool ``config`` que el LLM invoca).
 Tenerlo en uno de los dos obligaría al otro a importarlo al revés.

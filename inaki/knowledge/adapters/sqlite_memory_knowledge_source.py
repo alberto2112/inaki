@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import logging
 
-from core.domain.value_objects.knowledge_chunk import KnowledgeChunk
-from core.ports.outbound.knowledge_port import IKnowledgeSource
-from core.ports.outbound.memory_port import IMemoryRepository
+from inaki.kernel.domain.value_objects.knowledge_chunk import KnowledgeChunk
+from inaki.kernel.ports.outbound.knowledge_port import IKnowledgeSource
+from inaki.kernel.ports.outbound.memory_port import IMemoryRepository
 
 logger = logging.getLogger(__name__)
 

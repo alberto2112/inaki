@@ -17,10 +17,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.domain.value_objects.agent_settings import OneShotSettings
-from core.domain.value_objects.llm_response import LLMResponse
-from core.ports.outbound.tool_port import ToolResult
-from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
+from inaki.kernel.domain.value_objects.agent_settings import OneShotSettings
+from inaki.kernel.domain.value_objects.llm_response import LLMResponse
+from inaki.kernel.ports.outbound.tool_port import ToolResult
+from inaki.kernel.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from inaki.shared.errors import ToolLoopMaxIterationsError
 from inaki.shared.message import Message, Role
 
@@ -102,7 +102,7 @@ async def test_req_os1_messages_start_clean_with_only_task():
     uc = RunAgentOneShotUseCase(llm=llm, tools=tools, settings=cfg)
 
     with patch(
-        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+        "inaki.kernel.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
     ) as mock_loop:
         mock_loop.return_value = "respuesta"
 
@@ -138,7 +138,7 @@ async def test_req_os2_override_prompt_used_verbatim():
     uc = _make_use_case(settings=cfg)
 
     with patch(
-        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+        "inaki.kernel.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
     ) as mock_loop:
         mock_loop.return_value = "ok"
 
@@ -167,7 +167,7 @@ async def test_req_os2_none_prompt_uses_agent_default():
     uc = _make_use_case(settings=cfg)
 
     with patch(
-        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+        "inaki.kernel.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
     ) as mock_loop:
         mock_loop.return_value = "ok"
 
@@ -193,7 +193,7 @@ async def test_req_os2_override_does_not_contain_default_prompt():
     uc = _make_use_case(settings=cfg)
 
     with patch(
-        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+        "inaki.kernel.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
     ) as mock_loop:
         mock_loop.return_value = "ok"
 
@@ -231,7 +231,7 @@ async def test_req_os3_timeout_propagates():
     async def _slow_loop(**kwargs):
         await asyncio.sleep(10)  # duerme mucho más que el timeout
 
-    with patch("core.use_cases.run_agent_one_shot.run_tool_loop", side_effect=_slow_loop):
+    with patch("inaki.kernel.use_cases.run_agent_one_shot.run_tool_loop", side_effect=_slow_loop):
         with pytest.raises(asyncio.TimeoutError):
             await uc.execute(
                 task="tarea",
@@ -250,7 +250,7 @@ async def test_req_os3_max_iterations_error_propagates():
     uc = _make_use_case(settings=cfg)
 
     with patch(
-        "core.use_cases.run_agent_one_shot.run_tool_loop",
+        "inaki.kernel.use_cases.run_agent_one_shot.run_tool_loop",
         new_callable=AsyncMock,
         side_effect=ToolLoopMaxIterationsError(last_response="última respuesta"),
     ):
@@ -273,7 +273,7 @@ async def test_req_os3_max_iterations_passed_to_loop():
     uc = _make_use_case(settings=cfg)
 
     with patch(
-        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+        "inaki.kernel.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
     ) as mock_loop:
         mock_loop.return_value = "ok"
 
@@ -316,7 +316,7 @@ async def test_req_os4_full_schemas_no_rag():
     uc = _make_use_case(tools=tools)
 
     with patch(
-        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+        "inaki.kernel.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
     ) as mock_loop:
         mock_loop.return_value = "ok"
 
@@ -372,7 +372,7 @@ async def test_req_dg9_delegate_tool_excluded_from_child_schemas():
     uc = _make_use_case(tools=tools)
 
     with patch(
-        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+        "inaki.kernel.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
     ) as mock_loop:
         mock_loop.return_value = "ok"
 
@@ -409,7 +409,7 @@ async def test_req_dg9_non_delegate_tools_preserved():
     uc = _make_use_case(tools=tools)
 
     with patch(
-        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+        "inaki.kernel.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
     ) as mock_loop:
         mock_loop.return_value = "ok"
 
@@ -441,7 +441,7 @@ async def test_req_dg9_no_delegate_in_registry_passes_all():
     uc = _make_use_case(tools=tools)
 
     with patch(
-        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+        "inaki.kernel.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
     ) as mock_loop:
         mock_loop.return_value = "ok"
 
@@ -482,7 +482,7 @@ async def test_req_os5_allowlist_restricts_to_subset():
     uc = _make_use_case(tools=tools, settings=cfg)
 
     with patch(
-        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+        "inaki.kernel.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
     ) as mock_loop:
         mock_loop.return_value = "ok"
 
@@ -506,7 +506,7 @@ async def test_req_os5_none_allowlist_passes_all():
     uc = _make_use_case(tools=tools, settings=cfg)
 
     with patch(
-        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+        "inaki.kernel.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
     ) as mock_loop:
         mock_loop.return_value = "ok"
 
@@ -534,7 +534,7 @@ async def test_req_os5_nonexistent_name_ignored():
     uc = _make_use_case(tools=tools, settings=cfg)
 
     with patch(
-        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+        "inaki.kernel.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
     ) as mock_loop:
         mock_loop.return_value = "ok"
 
@@ -568,7 +568,7 @@ async def test_req_os5_delegate_excluded_even_if_in_allowlist():
     uc = _make_use_case(tools=tools, settings=cfg)
 
     with patch(
-        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+        "inaki.kernel.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
     ) as mock_loop:
         mock_loop.return_value = "ok"
 
@@ -595,7 +595,7 @@ async def test_req_os5_empty_allowlist_yields_no_tools():
     uc = _make_use_case(tools=tools, settings=cfg)
 
     with patch(
-        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+        "inaki.kernel.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
     ) as mock_loop:
         mock_loop.return_value = "ok"
 
@@ -630,7 +630,7 @@ async def test_execute_returns_string_response():
     uc = _make_use_case()
 
     with patch(
-        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+        "inaki.kernel.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
     ) as mock_loop:
         mock_loop.return_value = "Resultado esperado del agente"
 
@@ -656,7 +656,7 @@ async def test_circuit_breaker_threshold_from_agent_config():
     uc = _make_use_case(settings=cfg)
 
     with patch(
-        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+        "inaki.kernel.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
     ) as mock_loop:
         mock_loop.return_value = "ok"
 
@@ -677,7 +677,7 @@ async def test_agent_id_passed_to_loop():
     uc = _make_use_case(settings=cfg)
 
     with patch(
-        "core.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+        "inaki.kernel.use_cases.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
     ) as mock_loop:
         mock_loop.return_value = "ok"
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from core.ports.outbound.tool_port import ToolResult
+from inaki.kernel.ports.outbound.tool_port import ToolResult
 from inaki.scheduler.domain.task import ScheduledTask, TaskKind, TriggerType
 from inaki.scheduler.tools._context import error, ok
 from inaki.scheduler.tools._params import (

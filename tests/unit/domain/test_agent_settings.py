@@ -7,7 +7,7 @@ los use cases reciben settings VOs en lugar del ``AgentConfig`` completo.
 
 from __future__ import annotations
 
-from core.domain.value_objects.agent_settings import (
+from inaki.kernel.domain.value_objects.agent_settings import (
     KEEP_LAST_MESSAGES_FALLBACK,
     ConsolidationSettings,
     MemorySettings,

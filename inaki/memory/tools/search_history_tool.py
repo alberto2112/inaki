@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import logging
 
-from core.ports.outbound.history_port import IHistoryStore
-from core.ports.outbound.tool_port import ITool, ToolResult
+from inaki.kernel.ports.outbound.history_port import IHistoryStore
+from inaki.kernel.ports.outbound.tool_port import ITool, ToolResult
 from inaki.shared.message import Message
 
 logger = logging.getLogger(__name__)

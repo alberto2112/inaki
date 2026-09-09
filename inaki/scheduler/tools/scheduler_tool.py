@@ -31,7 +31,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from core.ports.outbound.tool_port import ITool, ToolResult
+from inaki.kernel.ports.outbound.tool_port import ITool, ToolResult
 from inaki.scheduler.domain.task import USER_TASK_ID_START
 from inaki.scheduler.tools._context import Contexto, error
 from inaki.scheduler.tools._params import ALLOWED_TRIGGER_TYPES

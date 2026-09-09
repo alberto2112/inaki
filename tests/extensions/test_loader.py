@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from core.ports.outbound.tool_port import ITool, ToolResult
+from inaki.kernel.ports.outbound.tool_port import ITool, ToolResult
 from inaki.extensions import Extension, descubrir_extensiones
 
 _RAIZ_DEL_PROYECTO = Path(__file__).resolve().parents[2]

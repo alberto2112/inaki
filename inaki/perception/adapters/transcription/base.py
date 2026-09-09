@@ -31,8 +31,8 @@ logger = logging.getLogger(__name__)
 class ResolvedTranscriptionConfig(BaseModel):
     """TranscriptionConfig + credenciales resueltas del registry.
 
-    Vive en adapters: es el contrato de entrada que los providers declaran en
-    SU capa. La factory de infrastructure lo compone desde la config YAML.
+    Vive en el módulo: es el contrato de entrada que los providers declaran en
+    SU módulo. Su ``wiring.py`` lo compone desde la config YAML.
     """
 
     provider: str

@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from core.domain.value_objects.delegation_result import DelegationResult
+from inaki.kernel.domain.value_objects.delegation_result import DelegationResult
 
 
 def test_required_fields_success() -> None:

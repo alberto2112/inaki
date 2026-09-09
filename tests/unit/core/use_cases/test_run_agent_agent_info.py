@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from core.use_cases.run_agent import RunAgentUseCase
-from infrastructure.container import build_run_agent_settings
+from inaki.kernel.use_cases.run_agent import RunAgentUseCase
+from inaki.app.container import build_run_agent_settings
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -22,7 +22,7 @@ This document covers the two agent extension mechanisms: **tools** (functions in
 ### Interface
 
 ```python
-# core/ports/outbound/tool_port.py
+# inaki/kernel/ports/outbound/tool_port.py
 
 class ITool(ABC):
     name: str              # snake_case, e.g.: "shell_exec"
@@ -51,9 +51,9 @@ class ToolResult(BaseModel):
 ### Minimal Example
 
 ```python
-# inaki/tools/builtin/echo.py
+# inaki/tools/builtin/echo.py  (una extensión importa exactamente igual)
 import asyncio
-from core.ports.outbound.tool_port import ITool, ToolResult
+from inaki.tools import ITool, ToolResult
 
 
 class EchoTool(ITool):
@@ -85,7 +85,7 @@ Always accept `**kwargs` in `execute` to silently ignore unknown parameters with
 Tools are registered manually in the container. After creating the class, add it in:
 
 ```python
-# infrastructure/container.py
+# inaki/app/container.py
 
 def _register_tools(self) -> None:
     from inaki.tools.builtin.echo import EchoTool
@@ -224,12 +224,12 @@ system_prompt += skills as text              tool_schemas → LLM (function call
 
 | Role | File |
 |------|------|
-| Tool port | `core/ports/outbound/tool_port.py` |
-| Skill port | `core/ports/outbound/skill_port.py` |
+| Tool port | `inaki/kernel/ports/outbound/tool_port.py` |
+| Skill port | `inaki/kernel/ports/outbound/skill_port.py` |
 | Registry implementation | `inaki/tools/registry.py` (`ToolRegistry`, `instanciar_tool`) |
 | Tool Config Protocol store | `inaki/tools/config_store.py` |
 | Concrete tool (reference) | `inaki/tools/builtin/web_search.py` |
 | Extension discovery | `inaki/extensions/loader.py` |
 | Skills implementation | `inaki/skills/yaml_skill_repo.py` |
-| Manual registration | `infrastructure/container.py` |
-| Usage in the pipeline | `core/use_cases/run_agent.py` |
+| Manual registration | `inaki/app/container.py` |
+| Usage in the pipeline | `inaki/kernel/use_cases/run_agent.py` |

@@ -22,9 +22,9 @@ from __future__ import annotations
 import json
 import logging
 
-from core.ports.outbound.embedding_port import IEmbeddingProvider
-from core.ports.outbound.memory_port import IMemoryRepository
-from core.ports.outbound.tool_port import ITool, ToolResult
+from inaki.kernel.ports.outbound.embedding_port import IEmbeddingProvider
+from inaki.kernel.ports.outbound.memory_port import IMemoryRepository
+from inaki.kernel.ports.outbound.tool_port import ITool, ToolResult
 
 logger = logging.getLogger(__name__)
 

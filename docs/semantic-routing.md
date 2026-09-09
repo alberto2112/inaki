@@ -179,7 +179,7 @@ cos_sim(a, b) = dot(a, b) / (||a|| * ||b||)
 
 ### Port (interface)
 
-`core/ports/outbound/embedding_cache_port.py` defines `IEmbeddingCache`:
+`inaki/kernel/ports/outbound/embedding_cache_port.py` defines `IEmbeddingCache`:
 
 ```
 get(content_hash, provider, dimension) → list[float] | None
@@ -306,7 +306,7 @@ If `is_short` is `False`, the original pipeline runs without changes.
 
 ## Skill Injection into the System Prompt
 
-`AgentContext.build_system_prompt()` in `core/domain/value_objects/agent_context.py`:
+`AgentContext.build_system_prompt()` in `inaki/kernel/domain/value_objects/agent_context.py`:
 
 ```
 system_prompt = base_prompt
@@ -339,16 +339,16 @@ Only skills retrieved by routing (or all if routing is inactive) appear in the p
 
 | Layer | File | Role |
 |-------|------|------|
-| **Core — Port** | `core/ports/outbound/embedding_cache_port.py` | `IEmbeddingCache` interface |
-| **Core — Port** | `core/ports/outbound/embedding_port.py` | `IEmbeddingProvider` interface |
-| **Core — Port** | `core/ports/outbound/skill_port.py` | `ISkillRepository` interface |
+| **Core — Port** | `inaki/kernel/ports/outbound/embedding_cache_port.py` | `IEmbeddingCache` interface |
+| **Core — Port** | `inaki/kernel/ports/outbound/embedding_port.py` | `IEmbeddingProvider` interface |
+| **Core — Port** | `inaki/kernel/ports/outbound/skill_port.py` | `ISkillRepository` interface |
 | **Embedding** | `inaki/embedding/similarity.py` | `cosine_similarity` function |
-| **Core — Value Object** | `core/domain/value_objects/agent_context.py` | System prompt construction |
-| **Core — Use Case** | `core/use_cases/run_agent.py` | Routing pipeline orchestration |
+| **Core — Value Object** | `inaki/kernel/domain/value_objects/agent_context.py` | System prompt construction |
+| **Core — Use Case** | `inaki/kernel/use_cases/run_agent.py` | Routing pipeline orchestration |
 | **Adapter** | `inaki/embedding/cache.py` | SQLite cache implementation |
 | **Adapter** | `inaki/skills/yaml_skill_repo.py` | Skill loading + routing |
 | **Adapter** | `inaki/tools/registry.py` | Tool registration + routing |
-| **Infrastructure** | `infrastructure/container.py` | Wiring: instantiates and connects everything |
+| **Infrastructure** | `inaki/app/container.py` | Wiring: instantiates and connects everything |
 | **Config** | `inaki/config/schema/` | `EmbeddingConfig`, `SkillsConfig`, `ToolsConfig`, `SemanticRoutingConfig` |
 
 The hexagonal rule is respected: the core doesn't know about SQLite or YAML. It only depends on the interfaces (`IEmbeddingCache`, `IEmbeddingProvider`, `ISkillRepository`).

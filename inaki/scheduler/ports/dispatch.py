@@ -13,8 +13,8 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from inaki.scheduler.domain.task import ShellExecPayload, WebhookPayload
-from core.ports.outbound.channel_port import IChannelSender
-from core.ports.outbound.llm_dispatcher_port import ILLMDispatcher
+from inaki.kernel.ports.outbound.channel_port import IChannelSender
+from inaki.kernel.ports.outbound.llm_dispatcher_port import ILLMDispatcher
 
 
 class IConsolidator(Protocol):

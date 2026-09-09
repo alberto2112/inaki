@@ -11,9 +11,10 @@ from pydantic import ConfigDict
 from inaki.config.schema._base import RuntimePath, _ConfigBaseModel
 from inaki.config.schema.llm import LLMConfig
 
-# Los DTOs ``Resolved*Config`` (feature + creds compuestas) viven en la capa
-# adapters — cada familia los declara en su ``base.py`` (providers, embedding,
-# transcription). Las factories de infrastructure los componen desde acá.
+# Los DTOs ``Resolved*Config`` (feature + creds compuestas) viven en su módulo —
+# cada familia los declara en su ``base.py`` (``inaki/llm``, ``inaki/embedding``,
+# transcripción en ``inaki/perception``). El ``wiring.py`` de cada módulo los
+# compone desde acá.
 
 
 class MemoryLLMConfig(_ConfigBaseModel):
@@ -217,7 +218,7 @@ class MemoriesConfig(_ConfigBaseModel):
     sub-agente reconciliador. Corre aunque la consolidación esté apagada."""
 
     # La resolución del digest path y de keep_last_messages (lógica de dominio
-    # que solo core consume) vive en core/domain/value_objects/agent_settings.py
+    # que solo core consume) vive en inaki/kernel/domain/value_objects/agent_settings.py
     # (``MemorySettings``). El container traduce este modelo a ese VO.
 
     def merged_llm_config(self, base: LLMConfig) -> LLMConfig:

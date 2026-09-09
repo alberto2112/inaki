@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.domain.value_objects.llm_response import LLMResponse
-from core.ports.outbound.tool_port import ToolResult
-from core.use_cases._tool_loop import run_tool_loop
+from inaki.kernel.domain.value_objects.llm_response import LLMResponse
+from inaki.kernel.ports.outbound.tool_port import ToolResult
+from inaki.kernel.use_cases._tool_loop import run_tool_loop
 from inaki.shared.errors import ToolLoopMaxIterationsError
 from inaki.shared.message import Message, Role
 
@@ -714,7 +714,7 @@ async def test_throttle_sleeps_between_calls_but_not_before_first():
     )
     tools = _make_tools()
 
-    with patch("core.use_cases._tool_loop.asyncio.sleep", new=AsyncMock()) as sleep_mock:
+    with patch("inaki.kernel.use_cases._tool_loop.asyncio.sleep", new=AsyncMock()) as sleep_mock:
         result = await run_tool_loop(
             llm=llm,
             tools=tools,
@@ -740,7 +740,7 @@ async def test_throttle_no_sleep_on_single_llm_call():
     llm = _make_llm("Respuesta directa")
     tools = _make_tools()
 
-    with patch("core.use_cases._tool_loop.asyncio.sleep", new=AsyncMock()) as sleep_mock:
+    with patch("inaki.kernel.use_cases._tool_loop.asyncio.sleep", new=AsyncMock()) as sleep_mock:
         await run_tool_loop(
             llm=llm,
             tools=tools,
@@ -765,7 +765,7 @@ async def test_throttle_disabled_by_default_no_sleep():
     )
     tools = _make_tools()
 
-    with patch("core.use_cases._tool_loop.asyncio.sleep", new=AsyncMock()) as sleep_mock:
+    with patch("inaki.kernel.use_cases._tool_loop.asyncio.sleep", new=AsyncMock()) as sleep_mock:
         await run_tool_loop(
             llm=llm,
             tools=tools,

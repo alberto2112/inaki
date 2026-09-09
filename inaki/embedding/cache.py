@@ -17,7 +17,7 @@ from typing import AsyncIterator
 
 import aiosqlite
 
-from core.ports.outbound.embedding_cache_port import IEmbeddingCache
+from inaki.kernel.ports.outbound.embedding_cache_port import IEmbeddingCache
 
 logger = logging.getLogger(__name__)
 

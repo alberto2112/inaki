@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
-from core.ports.outbound.tool_port import ToolResult
+from inaki.kernel.ports.outbound.tool_port import ToolResult
 from inaki.scheduler.domain.task import (
     AgentSendPayload,
     ChannelSendPayload,

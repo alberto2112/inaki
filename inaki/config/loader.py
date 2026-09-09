@@ -56,9 +56,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-# El merge y la herencia los define UN solo motor (``core/domain/config_merge``).
-# Estos alias preservan los nombres históricos que importan ``container.py``, la
-# fachada ``infrastructure/config.py`` y los tests.
+# El merge y la herencia los define UN solo motor (``inaki/config/merge``).
+# Estos alias preservan los nombres históricos que importan ``container.py`` y los tests.
 _deep_merge = deep_merge
 resolve_inherit = resolver_inherit
 

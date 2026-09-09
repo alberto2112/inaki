@@ -26,7 +26,7 @@ from inaki.observability import startup_event
 
 if TYPE_CHECKING:
     from inaki.config import AgentRegistry
-    from infrastructure.container import AppContainer
+    from inaki.app.container import AppContainer
 
 logger = logging.getLogger(__name__)
 

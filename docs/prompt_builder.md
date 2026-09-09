@@ -82,7 +82,7 @@ chat_history:
 
 ## System Prompt Construction (`AgentContext.build_system_prompt`)
 
-**File:** `core/domain/value_objects/agent_context.py`
+**File:** `inaki/kernel/domain/value_objects/agent_context.py`
 
 The prompt is built by concatenating sections. Only sections with content are included:
 
@@ -116,14 +116,14 @@ Respondés en español rioplatense. Usás las tools cuando hace falta.
 
 ### File Inclusion (`@include(<file>)`)
 
-**Function:** `expand_includes` in `core/use_cases/_turn_pipeline.py` (a pure free function, **not** part of the `AgentContext` value object — file I/O lives in the use-case layer, not in the domain).
+**Function:** `expand_includes` in `inaki/kernel/use_cases/_turn_pipeline.py` (a pure free function, **not** part of the `AgentContext` value object — file I/O lives in the use-case layer, not in the domain).
 
 Before the prompt is assembled, `RunAgentUseCase` expands `@include(<file>)` directives. The included file's content is spliced in verbatim, which lets the operator compose a prompt out of reusable fragments.
 
 **Where it runs — and where it does NOT.** Inclusion is applied **only** to two trusted, operator-authored texts:
 
 1. The agent's **base system prompt** (from its YAML).
-2. The **per-user context** file (`~/.inaki/users/{channel}/...`, see `core/use_cases/run_agent.py::_read_user_context`).
+2. The **per-user context** file (`~/.inaki/users/{channel}/...`, see `inaki/kernel/use_cases/run_agent.py::_read_user_context`).
 
 It is deliberately **never** applied to the memory digest, retrieved knowledge (RAG), skill blocks, or `extra_sections`. If it were, an `@include(~/.inaki/config/global.yaml)` planted inside a RAG document or a consolidated memory would exfiltrate that file — credentials included — straight into the prompt — a prompt-injection-to-arbitrary-file-read vector. Keeping inclusion on operator-authored text only closes that hole.
 

@@ -15,9 +15,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from core.domain.value_objects.outbound_kind import OutboundKind
-from core.ports.outbound.channel_port import IChannelOutbound
-from core.ports.outbound.history_port import IHistoryStore
+from inaki.kernel.domain.value_objects.outbound_kind import OutboundKind
+from inaki.kernel.ports.outbound.channel_port import IChannelOutbound
+from inaki.kernel.ports.outbound.history_port import IHistoryStore
 from inaki.channels.telegram.broadcast.egress import BroadcastEgress, es_chat_de_grupo
 from inaki.shared.message import Message, Role
 

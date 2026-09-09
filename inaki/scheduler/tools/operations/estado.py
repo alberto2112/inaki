@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from core.ports.outbound.tool_port import ToolResult
+from inaki.kernel.ports.outbound.tool_port import ToolResult
 from inaki.scheduler.tools._context import error, ok
 from inaki.scheduler.tools._params import parsear_entero
 from inaki.scheduler.tools.operations._base import Operacion

@@ -20,9 +20,9 @@ from __future__ import annotations
 
 import pytest
 
-from core.use_cases.run_agent import RunAgentUseCase
+from inaki.kernel.use_cases.run_agent import RunAgentUseCase
 from inaki.shared.channel_context import ChannelContext
-from infrastructure.container import build_run_agent_settings
+from inaki.app.container import build_run_agent_settings
 
 
 @pytest.fixture

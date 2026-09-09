@@ -42,7 +42,7 @@ dirección de dependencias es `composition root → módulos → kernel`. **Nunc
 | **`inaki/kernel/`** | El kernel: el turno (`run_agent`, tool loop), los ports que consume, entidades, VOs y servicios de dominio | **NUNCA** importa un módulo de feature ni el composition root. Terceros permitidos: solo `pydantic`, `croniter`, `numpy` |
 | **módulos de `inaki/`** | Un paquete por feature (`llm`, `embedding`, `tools`, `skills`, `memory`, `knowledge`, `scheduler`, `agents`, `perception`, `extensions`, `config`, `observability`) y un paquete por canal en `inaki/channels/`. Cada uno implementa los ports que el kernel declara | **NUNCA** importa el composition root ni otro módulo de feature salvo los que su contrato en `pyproject.toml` permite. Si "necesita" el container o el schema → declara un Protocol/Settings VO y el composition root se lo inyecta |
 | **`wiring.py` de cada módulo** | La factory que compone los adapters del módulo desde la config (`inaki/llm/wiring.py`, `inaki/embedding/wiring.py`, `inaki/perception/wiring.py`) | Es el ÚNICO fichero de un módulo con permiso para importar `inaki.config` (excepción declarada en su contrato) |
-| **composition root** | `inaki/app/` (`bootstrap`, `runner`, `reloader` y, hasta la fase 9b, `container.py`) e `inaki/cli/` (un módulo por comando, `_common` con los helpers) | Fuera de la regla hexagonal (ensamblar es su trabajo): conoce a todos. Los entry points NUEVOS van a `inaki/cli/`; los canales, a `inaki/channels/` |
+| **composition root** | `inaki/app/` (`assembly` con las cinco pasadas, `runtime` con `AgentRuntime`/`HarnessRuntime`, `bootstrap`, `runner`, `reloader`) e `inaki/cli/` (un módulo por comando, `_common` con los helpers) | Fuera de la regla hexagonal (ensamblar es su trabajo): conoce a todos. Los entry points NUEVOS van a `inaki/cli/`; los canales, a `inaki/channels/` |
 
 `<home>/ext/` (`app.ext_dirs`) — extensiones de usuario, auto-descubiertas vía `manifest.py` por `inaki/extensions/`.
 
@@ -67,8 +67,8 @@ dirección de dependencias es `composition root → módulos → kernel`. **Nunc
 > e `inaki/agents/` (dispatcher por scope, scope registry, `delegate` y la cola background). La ley de
 > dependencias vive en `pyproject.toml` → `[tool.importlinter]` y la verifica `lint-imports`.
 > `core/` es ahora `inaki/kernel/` y las factories son el `wiring.py` de su módulo; `adapters/` e
-> `infrastructure/` ya no existen. Falta (fase 9b) disolver `inaki/app/container.py` en un
-> `wiring.py` por módulo y componer runtimes tipados desde `inaki/app/`.
+> `infrastructure/` ya no existen; `container.py` se disolvió en el `wiring.py` de cada módulo y
+> en `inaki/app/assembly.py`, que entrega `AgentRuntime`/`HarnessRuntime` inmutables.
 
 La ley entre paquetes la verifica `lint-imports`. Lo único que import-linter no expresa, el
 allowlist de terceros del kernel, lo verifica `tests/kernel/test_terceros_del_kernel.py`
@@ -97,11 +97,11 @@ Resumen operativo. El texto completo, con el porqué y los antipatrones, está e
 2. **Tiers de recursos** (antes de agregar un recurso con estado) — Decidí el tier ANTES
    de escribir código, y nunca inventes un tercero:
    - **Harness-global** (`knowledge`, `scheduler`, `faces`/`photos`): singleton pesado,
-     config solo en `GlobalConfig`, construido una vez en `AppContainer`. **No hay
+     config solo en `GlobalConfig`, construido una vez en el ensamblador (vive en el `HarnessRuntime`). **No hay
      aislamiento per-agente — es por diseño.** ¿Hay que aislar? → otra instancia del
      arnés como proceso aparte, con `--home` / `INAKI_HOME` propio.
    - **Per-agente** (`memory`, `history`, `channels`, `llm`, `embedding`): config en
-     `AgentConfig`, construido en `AgentContainer`. Aislamiento por columna `agent_id`
+     `AgentConfig`, construido por agente (`AgentRuntime`). Aislamiento por columna `agent_id`
      (mismo fichero) o por `db_filename` distinto (aislamiento físico).
 
    **NUNCA** un `knowledge` o `scheduler` per-agente: rompe el tier y multiplica recursos.
@@ -155,7 +155,7 @@ Protocol en [`docs/convenciones.md`](docs/convenciones.md)).
 - **Idioma del código**: variables, docstrings, comentarios y mensajes de error **en
   español**. Las `description` de tools van en inglés (comprensión del LLM); los
   `routing_keywords`, multilingües es/en/fr (retrieval).
-- **Use cases**: clases con un `execute()` async, inyectadas por constructor en `container.py`.
+- **Use cases**: clases con un `execute()` async, construidas en el `wiring.py` de su módulo e inyectadas por constructor desde `inaki/app/assembly.py`.
 - **Tool results**: siempre objetos `ToolResult`, nunca strings crudos.
 - **Message roles**: enum `Role` (`Role.USER`, `Role.ASSISTANT`, …), nunca literales string.
 - **Embedding dimension = 384** (e5-small ONNX). Cambiar el modelo obliga a borrar y

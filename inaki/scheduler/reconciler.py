@@ -1,6 +1,6 @@
 """SchedulerReconciler — reconcilia las tareas builtin contra la config actual.
 
-Extraído de ``AppContainer``: encapsula el *cómo* de la reconciliación (seed
+Encapsula el *cómo* de la reconciliación (seed
 de la fila si no existe, update de schedule, reset de estados FAILED arrastrados,
 recompute de ``next_run`` siempre en la timezone del usuario vía el helper
 central de cron). El *qué* — qué tareas builtin reconciliar, con qué schedule y

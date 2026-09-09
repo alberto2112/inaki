@@ -17,13 +17,13 @@ from inaki.channels.rest.routers.chat import router as chat_router
 from inaki.channels.rest.routers.tools import router as tools_router
 
 if TYPE_CHECKING:
-    from inaki.channels.rest.ports import AdminAppContainer
+    from inaki.channels.rest.ports import AdminHarness
 
 logger = logging.getLogger(__name__)
 
 
 def create_admin_app(
-    app_container: "AdminAppContainer",
+    app_container: "AdminHarness",
     admin_auth_key: str | None,
 ) -> FastAPI:
     """Crea la instancia FastAPI del admin server."""

@@ -348,7 +348,7 @@ Only skills retrieved by routing (or all if routing is inactive) appear in the p
 | **Adapter** | `inaki/embedding/cache.py` | SQLite cache implementation |
 | **Adapter** | `inaki/skills/yaml_skill_repo.py` | Skill loading + routing |
 | **Adapter** | `inaki/tools/registry.py` | Tool registration + routing |
-| **Infrastructure** | `inaki/app/container.py` | Wiring: instantiates and connects everything |
+| **Composition root** | `inaki/app/assembly.py` | Calls each module's `wiring.py` and connects everything |
 | **Config** | `inaki/config/schema/` | `EmbeddingConfig`, `SkillsConfig`, `ToolsConfig`, `SemanticRoutingConfig` |
 
 The hexagonal rule is respected: the core doesn't know about SQLite or YAML. It only depends on the interfaces (`IEmbeddingCache`, `IEmbeddingProvider`, `ISkillRepository`).

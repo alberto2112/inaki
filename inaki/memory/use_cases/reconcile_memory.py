@@ -150,7 +150,7 @@ class ReconcileMemoryUseCase:
         self._agent_id = agent_id
         self._memory_cfg = memory_config
 
-        # Reconciliador sub-agente — wired post-construcción por AppContainer
+        # Reconciliador sub-agente — wired post-construcción por el ensamblador
         # cuando memory.reconcile_llm.agent_id apunta a un sub-agente válido.
         # Si es None, usa el prompt hardcodeado + self._llm directamente.
         self._reconciler_one_shot: RunAgentOneShotUseCase | None = None

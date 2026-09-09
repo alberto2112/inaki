@@ -70,14 +70,14 @@ async def test_modo_debug_deja_la_traza_del_turno(
 
     from inaki.config import AgentRegistry, ensure_user_config, load_global_config
     from inaki.observability import set_debug_override
-    from inaki.app.container import AppContainer
+    from inaki.app.assembly import ensamblar
 
     set_debug_override(True)
     try:
         config_dir, agents_dir = config_files
         ensure_user_config(config_dir, agents_dir)
         global_config, global_raw = load_global_config(config_dir)
-        container = AppContainer(
+        container = ensamblar(
             global_config, AgentRegistry(agents_dir, global_raw), config_dir=config_dir
         )
         ctx = ChannelContext(channel_type="cli", user_id=USER_ID, chat_id=USER_ID)

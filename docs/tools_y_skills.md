@@ -234,5 +234,5 @@ system_prompt += skills as text              tool_schemas → LLM (function call
 | Concrete tool (reference) | `inaki/tools/builtin/web_search.py` |
 | Extension discovery | `inaki/extensions/loader.py` |
 | Skills implementation | `inaki/skills/yaml_skill_repo.py` |
-| Manual registration | `inaki/app/container.py` |
+| Assembly (registers what each wiring builds) | `inaki/app/assembly.py` |
 | Usage in the pipeline | `inaki/kernel/use_cases/run_agent.py` |

@@ -23,7 +23,7 @@ def build_consolidate_memory_task(schedule: str) -> ScheduledTask:
     Construye la definición de la tarea builtin `consolidate_memory`.
 
     El cron viene de `global_config.memories.consolidation.schedule`. Se instancia
-    en cada arranque y pasa por el reconciliador de `AppContainer` que decide si
+    en cada arranque y pasa por `reconciliar_builtins` (wiring del scheduler) que decide si
     hay que sembrar, actualizar o resetear la fila existente.
     """
     return ScheduledTask(
@@ -66,7 +66,7 @@ def build_face_dedup_task(schedule: str, agent_id: str) -> ScheduledTask:
     """Construye la definición de la tarea builtin `face_dedup_nightly`.
 
     El cron y el agent_id vienen de `global_config.photos.dedup`. El reconciliador
-    en AppContainer decide si hay que sembrar, actualizar o resetear la fila.
+    en `reconciliar_builtins` decide si hay que sembrar, actualizar o resetear la fila.
     """
     return ScheduledTask(
         id=FACE_DEDUP_TASK_ID,

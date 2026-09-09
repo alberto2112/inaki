@@ -1,8 +1,8 @@
 """Contratos de entrada del TelegramBot — Ports y Settings VOs.
 
-El bot NO recibe ``AgentContainer`` ni ``AgentConfig`` (composition root): declara
+El bot NO recibe ``AgentRuntime`` ni ``AgentConfig`` (composition root): declara
 acá exactamente lo que consume, todo tipado contra el kernel. El mapeo desde el
-mundo config/container vive en los builders de ``inaki/app/container.py``
+mundo config/runtime vive en los builders de ``inaki/channels/telegram/wiring.py``
 (``build_telegram_bot_settings`` / ``build_telegram_bot_ports``) — único punto
 donde ambos mundos se tocan, igual que los Settings VOs de los use cases.
 """

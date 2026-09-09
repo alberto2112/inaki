@@ -1,7 +1,7 @@
 """Bootstrap del composition root: config → logging → registry → container → daemon.
 
 Es el ÚNICO lugar donde se encadenan la carga de config (con su borde de errores),
-el logging del proceso y la construcción del ``AppContainer``. ``inaki daemon`` lo
+el logging del proceso y el ensamblado del ``HarnessRuntime``. ``inaki daemon`` lo
 invoca; cada reload lo vuelve a invocar desde cero.
 """
 
@@ -55,12 +55,12 @@ def run_daemon_mode(config_dir: Path, agents_dir: Path, global_config, registry)
     import logging
 
     from inaki.app.runner import run_daemon
-    from inaki.app.container import AppContainer
+    from inaki.app.assembly import ensamblar
 
     logger = logging.getLogger(__name__)
     logger.info("Iniciando Inaki en modo daemon")
 
-    initial_container = AppContainer(global_config, registry, config_dir=config_dir)
+    initial = ensamblar(global_config, registry, config_dir=config_dir)
 
     # Crea ~/.inaki/users/{channel}/ por cada canal configurado en cualquier agente.
     # Lazy + idempotente: cero costo si ya existen. Habilita la convención de
@@ -72,6 +72,6 @@ def run_daemon_mode(config_dir: Path, agents_dir: Path, global_config, registry)
     def bootstrap_fn():
         gc, reg = bootstrap(config_dir, agents_dir)
         ensure_user_channel_dirs(get_inaki_home(), reg.list_all())
-        return AppContainer(gc, reg, config_dir=config_dir), reg
+        return ensamblar(gc, reg, config_dir=config_dir), reg
 
-    asyncio.run(run_daemon(bootstrap_fn, initial=(initial_container, registry)))
+    asyncio.run(run_daemon(bootstrap_fn, initial=(initial, registry)))

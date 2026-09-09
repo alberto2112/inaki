@@ -1,7 +1,7 @@
 """Fixtures de los tests de camino dorado (red de seguridad del refactor modular).
 
 Principio: piezas REALES en todo lo que el refactor va a mover (loader de config,
-``AppContainer``, use cases, SQLite de historial/memoria/scheduler, scope registry),
+``ensamblar``, use cases, SQLite de historial/memoria/scheduler, scope registry),
 y fakes SOLO en los bordes externos que no dependen de nosotros: el LLM, el
 embedder (modelo ONNX) y la API de Telegram.
 
@@ -142,20 +142,14 @@ def fake_llm() -> FakeLLM:
 def bordes_externos(monkeypatch: pytest.MonkeyPatch, fake_llm: FakeLLM) -> FakeLLM:
     """Sustituye las factories de LLM y embedding por los fakes.
 
-    Se parchea en el namespace de ``container`` porque es el único sitio que las
-    invoca; cuando el wiring se disuelva por módulo (fase 9) este fixture cambia
-    de target, no de idea.
+    Se parchea la clase en el ``wiring.py`` de su módulo: es el único sitio que
+    sabe crear un provider, y el ensamblador la invoca desde ahí.
     """
-    from inaki.app import container as container_module
+    from inaki.embedding.wiring import EmbeddingProviderFactory
+    from inaki.llm.wiring import LLMProviderFactory
 
-    monkeypatch.setattr(
-        container_module.LLMProviderFactory, "create", lambda *args, **kwargs: fake_llm
-    )
-    monkeypatch.setattr(
-        container_module.EmbeddingProviderFactory,
-        "create",
-        lambda *args, **kwargs: FakeEmbedder(),
-    )
+    monkeypatch.setattr(LLMProviderFactory, "create", lambda *args, **kwargs: fake_llm)
+    monkeypatch.setattr(EmbeddingProviderFactory, "create", lambda *args, **kwargs: FakeEmbedder())
     return fake_llm
 
 
@@ -163,10 +157,10 @@ def bordes_externos(monkeypatch: pytest.MonkeyPatch, fake_llm: FakeLLM) -> FakeL
 def app_container(config_files: tuple[Path, Path], bordes_externos: FakeLLM):
     """El composition root REAL: mismo camino que ``inaki daemon``."""
     from inaki.config import AgentRegistry, ensure_user_config, load_global_config
-    from inaki.app.container import AppContainer
+    from inaki.app.assembly import ensamblar
 
     config_dir, agents_dir = config_files
     ensure_user_config(config_dir, agents_dir)
     global_config, global_raw = load_global_config(config_dir)
     registry = AgentRegistry(agents_dir, global_raw)
-    return AppContainer(global_config, registry, config_dir=config_dir)
+    return ensamblar(global_config, registry, config_dir=config_dir)

@@ -37,7 +37,7 @@ def _make_mock_client(health_ok: bool = True) -> MagicMock:
 
 
 def test_chat_command_no_instancia_app_container() -> None:
-    """El path `chat` NO debe instanciar AppContainer."""
+    """El path `chat` NO debe ensamblar el proceso (habla con el daemon por HTTP)."""
     from inaki.cli import app
 
     runner = CliRunner()
@@ -49,11 +49,10 @@ def test_chat_command_no_instancia_app_container() -> None:
         return_value=(mock_client, MagicMock(app=MagicMock(default_agent="dev"))),
     ):
         with patch("inaki.channels.cli.runner.run_cli"):
-            with patch("inaki.app.container.AppContainer") as mock_app_container:
+            with patch("inaki.app.assembly.ensamblar") as mock_ensamblar:
                 runner.invoke(app, ["chat", "--agent", "dev"])
-                (
-                    mock_app_container.assert_not_called(),
-                    "AppContainer fue instanciado en el path chat — violación del diseño",
+                assert not mock_ensamblar.called, (
+                    "el proceso se ensambló en el path chat — violación del diseño"
                 )
 
 

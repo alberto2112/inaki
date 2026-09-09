@@ -24,12 +24,8 @@ from inaki.scheduler.adapters.builtin_tasks import (
     build_reconcile_memory_task,
 )
 from inaki.scheduler.adapters.dispatch import ReconcileDispatchAdapter
-from inaki.tools.registry import ToolRegistry
 from inaki.scheduler.domain.task import TriggerType
-from inaki.kernel.domain.value_objects.agent_settings import MemorySettings, OneShotSettings
-from inaki.kernel.ports.outbound.turn_tracer_port import NullTurnTracer
-from inaki.kernel.use_cases.run_agent import RunAgentUseCase
-from inaki.kernel.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
+from inaki.kernel.domain.value_objects.agent_settings import MemorySettings
 from inaki.config import (
     AgentConfig,
     AgentDelegationConfig,
@@ -44,8 +40,13 @@ from inaki.config import (
     ReconciliationConfig,
 )
 from inaki.memory.use_cases.reconcile_memory import ReconcileMemoryUseCase
-from inaki.app.container import AgentContainer
-from inaki.memory.wiring import build_memory_settings
+from inaki.memory.wiring import (
+    MemoryJobs,
+    SubAgenteDeMemoria,
+    build_memory_jobs,
+    build_memory_settings,
+    wire_sub_agentes_de_memoria,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers — idéntico patrón que test_container_wire_scheduler.py
@@ -129,36 +130,6 @@ def _make_global_config() -> GlobalConfig:
     )
 
 
-def _build_minimal_container(
-    agent_config: AgentConfig,
-    global_config: GlobalConfig,
-) -> AgentContainer:
-    """Construye un AgentContainer sin IO real — mismo patrón que test_container.py."""
-    container = AgentContainer.__new__(AgentContainer)
-    container.agent_config = agent_config
-    container._global_config = global_config
-    container._delegation_wired = False
-    container._tracer = NullTurnTracer()
-    container._scheduler_wired = False
-    container._photos_wired = False
-    container._telegram_tools_wired = False
-    container._llm = AsyncMock()
-    container._embedder = FakeEmbedder()
-    container._tools = ToolRegistry(embedder=container._embedder)
-    container.run_agent = MagicMock(spec=RunAgentUseCase)
-    container.run_agent._extra_system_sections = []
-    container.run_agent_one_shot = RunAgentOneShotUseCase(
-        llm=container._llm,
-        tools=container._tools,
-        settings=OneShotSettings(
-            agent_id=agent_config.id,
-            system_prompt=agent_config.system_prompt,
-            circuit_breaker_threshold=agent_config.tools.circuit_breaker_threshold,
-        ),
-    )
-    return container
-
-
 # ---------------------------------------------------------------------------
 # 1. build_memory_settings propaga los campos de reconciliación
 # ---------------------------------------------------------------------------
@@ -199,78 +170,14 @@ def test_build_memory_settings_defaults_reconcile() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_agent_container_construye_reconcile_use_case_cuando_habilitado() -> None:
-    """Con reconciliation.enabled=True debe existir reconcile_memory."""
-    mem_cfg = _make_memory_config(enabled=True, reconcile_enabled=True)
-    agent_cfg = _make_agent_config(memory_cfg=mem_cfg)
-    global_cfg = _make_global_config()
-    container = _build_minimal_container(agent_cfg, global_cfg)
-
-    # Simular la construcción del use case (el container minimal no llama __init__)
-    # Replicamos la lógica del __init__ de AgentContainer para el use case:
-    fake_memory = MagicMock()
-    uc = ReconcileMemoryUseCase(
-        llm=container._llm,
-        memory=fake_memory,
-        embedder=container._embedder,
-        agent_id=agent_cfg.id,
-        memory_config=build_memory_settings(mem_cfg),
-    )
-    container.reconcile_memory = uc
-
-    assert container.reconcile_memory is not None
-    assert isinstance(container.reconcile_memory, ReconcileMemoryUseCase)
-
-
 # ---------------------------------------------------------------------------
 # 3. AgentContainer NO construye ReconcileMemoryUseCase cuando reconciliation.enabled=False
 # ---------------------------------------------------------------------------
 
 
-def test_agent_container_no_construye_reconcile_cuando_disabled() -> None:
-    """Con reconciliation.enabled=False, reconcile_memory debe ser None."""
-    mem_cfg = _make_memory_config(enabled=True, reconcile_enabled=False)
-    agent_cfg = _make_agent_config(memory_cfg=mem_cfg)
-    global_cfg = _make_global_config()
-    container = _build_minimal_container(agent_cfg, global_cfg)
-
-    # Replica la condición del __init__ de AgentContainer (gating por reconciliation)
-    reconcile_memory = None
-    if agent_cfg.memories.reconciliation.enabled:
-        reconcile_memory = MagicMock(spec=ReconcileMemoryUseCase)
-    container.reconcile_memory = reconcile_memory
-
-    assert container.reconcile_memory is None
-
-
 # ---------------------------------------------------------------------------
 # 4. La reconciliación es INDEPENDIENTE de la consolidación
 # ---------------------------------------------------------------------------
-
-
-def test_agent_container_construye_reconcile_aunque_consolidacion_disabled() -> None:
-    """Con consolidation.enabled=False pero reconciliation.enabled=True, reconcile_memory
-    SE construye igual.
-
-    Cambio semántico: la reconciliación dejó de depender de la consolidación. Antes
-    el gating exigía ``memory.enabled AND reconcile_enabled``; ahora alcanza con
-    ``reconciliation.enabled=True`` — se puede reconciliar recuerdos preexistentes
-    aunque la consolidación esté apagada.
-    """
-    mem_cfg = _make_memory_config(enabled=False, reconcile_enabled=True)
-    agent_cfg = _make_agent_config(memory_cfg=mem_cfg)
-    global_cfg = _make_global_config()
-    container = _build_minimal_container(agent_cfg, global_cfg)
-
-    # Replica la condición del __init__ (gating por reconciliation, NO por consolidation)
-    reconcile_memory = None
-    if agent_cfg.memories.reconciliation.enabled:
-        reconcile_memory = MagicMock(spec=ReconcileMemoryUseCase)
-    container.reconcile_memory = reconcile_memory
-
-    assert container.reconcile_memory is not None
-    # Sanity: la consolidación efectivamente quedó apagada en este escenario.
-    assert agent_cfg.memories.consolidation.enabled is False
 
 
 # ---------------------------------------------------------------------------
@@ -352,55 +259,85 @@ async def test_reconcile_dispatch_adapter_lanza_por_agent_id_inexistente() -> No
 # ---------------------------------------------------------------------------
 
 
-def test_wire_memory_reconcilers_llama_set_reconciler() -> None:
-    """_wire_memory_sub_agents debe llamar set_reconciler cuando reconciliation.agent_id
-    apunta a un sub-agente válido."""
-    # Construimos la mínima infraestructura para invocar _wire_memory_sub_agents
-    # sin levantar el AppContainer completo.
-    from inaki.app.container import AppContainer
+# ---------------------------------------------------------------------------
+# build_memory_jobs — cada job se construye solo si SU flag está habilitado
+# ---------------------------------------------------------------------------
 
-    # Agente principal con reconcile habilitado y reconciliation.agent_id
-    mem_cfg = _make_memory_config(
-        enabled=True,
-        reconcile_enabled=True,
-        reconcile_agent_id="memory_reconciler",
+
+def _jobs(mem_cfg: MemoriesConfig) -> MemoryJobs:
+    return build_memory_jobs(
+        _make_agent_config(memory_cfg=mem_cfg),
+        base_llm=AsyncMock(),
+        memory=MagicMock(),
+        embedder=FakeEmbedder(),
+        history=AsyncMock(),
     )
-    agent_cfg = _make_agent_config(agent_id="agente_principal", memory_cfg=mem_cfg)
-    global_cfg = _make_global_config()
 
-    # Container del agente principal
-    main_container = _build_minimal_container(agent_cfg, global_cfg)
+
+def test_reconcile_se_construye_cuando_esta_habilitado() -> None:
+    jobs = _jobs(_make_memory_config(enabled=True, reconcile_enabled=True))
+    assert isinstance(jobs.reconcile, ReconcileMemoryUseCase)
+    assert jobs.consolidate is not None
+
+
+def test_reconcile_no_se_construye_cuando_esta_deshabilitado() -> None:
+    jobs = _jobs(_make_memory_config(enabled=True, reconcile_enabled=False))
+    assert jobs.reconcile is None and jobs.consolidate is not None
+
+
+def test_reconcile_se_construye_aunque_la_consolidacion_este_apagada() -> None:
+    """La reconciliación dejó de depender de la consolidación: alcanza con
+    ``reconciliation.enabled=True`` para reconciliar recuerdos preexistentes."""
+    jobs = _jobs(_make_memory_config(enabled=False, reconcile_enabled=True))
+    assert jobs.reconcile is not None and jobs.consolidate is None
+
+
+# ---------------------------------------------------------------------------
+# wire_sub_agentes_de_memoria — el reconciliador sub-agente llega por set_reconciler
+# ---------------------------------------------------------------------------
+
+
+def test_wire_sub_agentes_llama_set_reconciler_con_el_sub_agente_valido() -> None:
+    mem_cfg = _make_memory_config(
+        enabled=True, reconcile_enabled=True, reconcile_agent_id="memory_reconciler"
+    )
     mock_uc = MagicMock(spec=ReconcileMemoryUseCase)
     mock_uc.set_reconciler = MagicMock()
-    main_container.reconcile_memory = mock_uc
-    main_container.consolidate_memory = None
+    sub = SubAgenteDeMemoria(one_shot=MagicMock(), system_prompt="Test prompt")
 
-    # Container del sub-agente reconciliador
-    sub_agent_cfg = _make_agent_config(agent_id="memory_reconciler")
-    sub_container = _build_minimal_container(sub_agent_cfg, global_cfg)
-
-    # Construir AppContainer mínimo con atributos suficientes
-    app = AppContainer.__new__(AppContainer)
-    app.global_config = global_cfg
-    app.agents = {
-        "agente_principal": main_container,
-        "memory_reconciler": sub_container,
-    }
-
-    # Mock del registry
-    mock_registry = MagicMock()
-    mock_registry.is_sub_agent = lambda aid: aid == "memory_reconciler"
-    app.registry = mock_registry
-
-    # Ejecutar el wiring
-    app._wire_memory_sub_agents()
-
-    # set_reconciler debe haberse llamado con el run_agent_one_shot del sub-agente.
-    # El sub-agente de test declara system_prompt="Test prompt" → se pasa como
-    # override (sobreescribe el _RECONCILER_PROMPT default).
-    mock_uc.set_reconciler.assert_called_once_with(
-        sub_container.run_agent_one_shot,
-        system_prompt_override="Test prompt",
-        max_iterations=global_cfg.delegation.max_iterations_per_sub,
-        timeout_seconds=global_cfg.delegation.timeout_seconds,
+    wire_sub_agentes_de_memoria(
+        "agente_principal",
+        MemoryJobs(consolidate=None, reconcile=mock_uc),
+        mem_cfg,
+        agentes={"memory_reconciler": sub},
+        es_sub_agente=lambda aid: aid == "memory_reconciler",
+        max_iterations=10,
+        timeout_seconds=60,
     )
+
+    # El sub declara system_prompt="Test prompt" → se pasa como override.
+    mock_uc.set_reconciler.assert_called_once_with(
+        sub.one_shot, system_prompt_override="Test prompt", max_iterations=10, timeout_seconds=60
+    )
+
+
+def test_wire_sub_agentes_loguea_error_si_el_id_no_es_un_sub_agente(caplog) -> None:
+    mem_cfg = _make_memory_config(
+        enabled=True, reconcile_enabled=True, reconcile_agent_id="regular"
+    )
+    mock_uc = MagicMock(spec=ReconcileMemoryUseCase)
+    mock_uc.set_reconciler = MagicMock()
+
+    with caplog.at_level("ERROR"):
+        wire_sub_agentes_de_memoria(
+            "agente_principal",
+            MemoryJobs(consolidate=None, reconcile=mock_uc),
+            mem_cfg,
+            agentes={"regular": SubAgenteDeMemoria(one_shot=MagicMock(), system_prompt="")},
+            es_sub_agente=lambda aid: False,
+            max_iterations=10,
+            timeout_seconds=60,
+        )
+
+    mock_uc.set_reconciler.assert_not_called()
+    assert "debe apuntar a un sub-agente" in caplog.text

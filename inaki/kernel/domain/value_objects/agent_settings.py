@@ -2,7 +2,7 @@
 
 Cada use case del kernel declara acá EXACTAMENTE los parámetros que consume,
 en lugar de recibir el ``AgentConfig`` completo de ``inaki/config``. La
-dirección de dependencia queda legal: el composition root (``inaki/app/container.py``)
+dirección de dependencia queda legal: el composition root (``inaki/app/settings.py``)
 es el ÚNICO lugar que mapea config (YAML mergeado) → estos VOs.
 
 Beneficio colateral: los tests unitarios construyen el VO con solo los campos
@@ -30,7 +30,7 @@ Los renombrados del mapeo son deliberados, no accidentes. Los dos patrones:
    aborta el arranque, así que renombrar un campo del schema exige migración).
 
 La tabla completa del mapeo vive donde se ejecuta: los builders
-``build_*_settings`` de ``inaki/app/container.py``.
+``build_*_settings`` de ``inaki/app/settings.py`` y de los ``wiring.py``.
 """
 
 from __future__ import annotations

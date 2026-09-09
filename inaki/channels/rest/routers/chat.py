@@ -50,7 +50,7 @@ async def chat_turn(body: ChatTurnRequest, request: Request) -> ChatTurnResponse
 
     Flujo (Design §A3):
       1. Validar auth (via Depends)
-      2. Resolver AgentContainer o 404
+      2. Resolver AgentRuntime o 404
       3. Construir ChannelContext("cli", session_id)
       4. execute(ctx=...) — el contexto viaja con la llamada, sin estado compartido
       5. Retornar ChatTurnResponse
@@ -212,7 +212,7 @@ async def get_history(agent_id: str, request: Request) -> HistoryResponse:
 
     Flujo (Design §A4):
       1. Validar auth (via Depends)
-      2. Resolver AgentContainer o 404
+      2. Resolver AgentRuntime o 404
       3. Llamar run_agent.get_history()
       4. Mapear a list[HistoryMessage]
       5. Retornar HistoryResponse
@@ -255,7 +255,7 @@ async def clear_history(agent_id: str, request: Request) -> Response:
 
     Flujo (Design §A5):
       1. Validar auth (via Depends)
-      2. Resolver AgentContainer o 404
+      2. Resolver AgentRuntime o 404
       3. Llamar run_agent.clear_history()
       4. Retornar 204 No Content
     """

@@ -8,11 +8,11 @@ from typing import TYPE_CHECKING
 from fastapi import HTTPException, Request
 
 if TYPE_CHECKING:
-    from inaki.channels.rest.ports import AdminAgentContainer
+    from inaki.channels.rest.ports import AdminAgentRuntime
 
 
-def resolver_agente(request: Request, agent_id: str) -> "AdminAgentContainer":
-    """Resuelve el AgentContainer para el agent_id dado o levanta 404."""
+def resolver_agente(request: Request, agent_id: str) -> "AdminAgentRuntime":
+    """Resuelve el ``AgentRuntime`` para el agent_id dado o levanta 404."""
     app_container = request.app.state.app_container
     if agent_id not in app_container.agents:
         raise HTTPException(

@@ -1,4 +1,4 @@
-"""Tests de wiring de transcription en AgentContainer (task 3.1).
+"""Tests de la decisión canal → voz del ensamblador (``resolver_transcripcion``).
 
 Cubre la validación cruzada entre:
   channels.telegram.voice_enabled  ↔  cfg.transcription
@@ -11,7 +11,7 @@ Reglas:
 - `telegram` presente y `voice_enabled=True` sin `cfg.transcription` → error claro.
 
 No se testea `__init__` completo (requiere IO real) — se testea el helper
-`_resolve_transcription` aislado, como ya hace el resto de `test_container.py`.
+`resolver_transcripcion` aislado (la decisión canal → voz vive en el composition root).
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from inaki.config import (
 )
 from inaki.perception.ports.transcription import ITranscriptionProvider
 from inaki.shared.errors import InakiError
-from inaki.app.container import AgentContainer
+from inaki.app.assembly import resolver_transcripcion
 
 
 def _default_providers() -> dict[str, ProviderConfig]:
@@ -63,7 +63,7 @@ def _mk_cfg(
 
 def test_sin_telegram_no_crea_provider() -> None:
     cfg = _mk_cfg(channels={}, transcription=None)
-    result = AgentContainer._resolve_transcription(cfg)
+    result = resolver_transcripcion(cfg)
     assert result is None
 
 
@@ -73,7 +73,7 @@ def test_sin_telegram_no_crea_aunque_haya_transcription() -> None:
         channels={},
         transcription=TranscriptionConfig(provider="groq", model="m"),
     )
-    result = AgentContainer._resolve_transcription(cfg)
+    result = resolver_transcripcion(cfg)
     assert result is None
 
 
@@ -82,7 +82,7 @@ def test_telegram_con_voice_enabled_false_no_crea_provider() -> None:
         channels={"telegram": {"token": "t", "voice_enabled": False}},
         transcription=TranscriptionConfig(provider="groq", model="m"),
     )
-    result = AgentContainer._resolve_transcription(cfg)
+    result = resolver_transcripcion(cfg)
     assert result is None
 
 
@@ -91,7 +91,7 @@ def test_telegram_voice_enabled_default_true_con_transcription_crea_provider() -
         channels={"telegram": {"token": "t"}},  # voice_enabled ausente → default True
         transcription=TranscriptionConfig(provider="groq", model="m"),
     )
-    result = AgentContainer._resolve_transcription(cfg)
+    result = resolver_transcripcion(cfg)
     assert result is not None
     assert isinstance(result, ITranscriptionProvider)
 
@@ -101,7 +101,7 @@ def test_telegram_voice_enabled_true_explicit_con_transcription_crea_provider() 
         channels={"telegram": {"token": "t", "voice_enabled": True}},
         transcription=TranscriptionConfig(provider="groq", model="m"),
     )
-    result = AgentContainer._resolve_transcription(cfg)
+    result = resolver_transcripcion(cfg)
     assert isinstance(result, ITranscriptionProvider)
 
 
@@ -112,7 +112,7 @@ def test_telegram_voice_enabled_true_sin_transcription_lanza_error() -> None:
         transcription=None,
     )
     with pytest.raises(InakiError) as exc_info:
-        AgentContainer._resolve_transcription(cfg)
+        resolver_transcripcion(cfg)
     msg = str(exc_info.value).lower()
     assert "transcription" in msg
     assert "test-agent" in msg  # debe incluir el agent_id
@@ -124,4 +124,4 @@ def test_telegram_voice_enabled_true_explicit_sin_transcription_lanza_error() ->
         transcription=None,
     )
     with pytest.raises(InakiError):
-        AgentContainer._resolve_transcription(cfg)
+        resolver_transcripcion(cfg)

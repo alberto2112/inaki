@@ -49,7 +49,7 @@ async def list_tools(agent_id: str, request: Request) -> ToolListResponse:
     campos relevantes al operador.
     """
     agente = resolver_agente(request, agent_id)
-    schemas_openai = agente._tools.get_schemas()
+    schemas_openai = agente.tools.get_schemas()
 
     entries: list[ToolListEntry] = []
     for wrapper in schemas_openai:
@@ -89,7 +89,7 @@ async def invoke_tool(body: ToolInvokeRequest, request: Request) -> ToolInvokeRe
     agente = resolver_agente(request, body.agent_id)
 
     try:
-        resultado = await agente._tools.execute(body.tool_name, **body.args)
+        resultado = await agente.tools.execute(body.tool_name, **body.args)
     except Exception as exc:
         logger.exception(
             "invoke_tool error inesperado agent=%s tool=%s", body.agent_id, body.tool_name

@@ -71,7 +71,7 @@ _EDITABLE_FIELDS: set[str] = {
 def _create_lightweight_uc(
     config_dir: Path,
 ) -> tuple["ISchedulerUseCase", "GlobalConfig"]:
-    """Crea ScheduleTaskUseCase con bootstrap mínimo — sin AppContainer."""
+    """Crea ScheduleTaskUseCase con bootstrap mínimo — sin ensamblar el proceso."""
     from inaki.scheduler.adapters.sqlite_repo import SQLiteSchedulerRepo
     from inaki.scheduler.use_cases.schedule_task import ScheduleTaskUseCase
     from inaki.config import load_global_config

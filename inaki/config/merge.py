@@ -9,7 +9,7 @@ no idénticas, y ninguno sabía de los otros:
 | ``_deep_merge`` | ``core/use_cases/config/get_effective_config.py`` | copia literal del anterior |
 | ``deep_merge_con_eliminaciones`` | ``core/use_cases/config/_merge.py`` | carril de edición; SÍ borra vía sentinel |
 | ``resolve_inherit`` | ``infrastructure/config_loader.py`` | herencia opt-in por bloque |
-| ``build_ephemeral_child`` | ``infrastructure/container.py`` | 5ª capa en runtime, invisible a toda UI |
+| ``build_ephemeral_child`` | ``infrastructure/container.py`` (hoy ``inaki/agents/wiring.py``) | 5ª capa en runtime, invisible a toda UI |
 
 Que "ausente" y "borrado" se expresaran distinto según el carril fue lo que
 obligó al setup TUI a inventar un tri-estado propio para poder decir "borrá esta

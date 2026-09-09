@@ -80,5 +80,5 @@ Ver también `docs/face-recognition.md`.
 ## Datos y embeddings
 
 - **Embedding dimension is 384** (e5-small ONNX). Changing models requires dropping and recreating the memory DB — no auto-migration.
-- **All use cases** are classes with an async `execute()` method, injected via constructor in `container.py`.
+- **All use cases** are classes with an async `execute()` method, built by their module's `wiring.py` and injected via constructor from `inaki/app/assembly.py`.
 - **Message roles** use `Role` enum (`Role.USER`, `Role.ASSISTANT`, etc.), not string literals.

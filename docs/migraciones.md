@@ -45,6 +45,7 @@ existe este documento— y la contradicción no queda flotando.
 | [`channel-contextid`](#channel-contextid) | `mv` de los ficheros de contexto a `{context_id}.md` + cambiar la variable del prompt |
 | [`per-user-context-files`](#per-user-context-files) | *(superseded)* `mv` de `USER.md` a `users/{channel}/…` |
 | [`config-falla-ruidoso`](#config-falla-ruidoso) | **Puede impedir el arranque**: corregir el typo/valor que el error nombra (antes se ignoraba en silencio) |
+| [`runtimes-tipados`](#runtimes-tipados) | Sin cambios de comportamiento: `container.py` desaparece; `inaki/app/assembly.py` entrega `AgentRuntime`/`HarnessRuntime` inmutables |
 | [`wiring-por-modulo`](#wiring-por-modulo) | Sin cambios de comportamiento: cada módulo se ensambla en su `wiring.py`; `container.py` queda como orquestador fino |
 | [`kernel-y-fachada-de-tools`](#kernel-y-fachada-de-tools) | **Extensiones**: reemplazar `from core.ports.outbound.*` por `from inaki.tools import ...` (dos `sd`); una extensión sin migrar se saltea con `WARNING` |
 | [`modulos-tools-llm-extensions`](#modulos-tools-llm-extensions) | `app.ext_dirs` relativo pasa a anclarse al **home**, no al cwd: si las extensiones viven en el árbol del código, poner el path absoluto |
@@ -108,11 +109,65 @@ existe este documento— y la contradicción no queda flotando.
 - **Memoria**: `memory-management-tools`, `memory-scoped-by-channel-chat`,
   `agent-state-scoped-by-channel-chat`
 - **Scheduler**: `modulos-scheduler-y-agents`, `scheduler-trigger-type-mutable`, `channel-send-history-persist`
-- **Tools y config**: `wiring-por-modulo`, `kernel-y-fachada-de-tools`, `modulos-tools-llm-extensions`, `write-file-explicit-mode`, `tool-config-protocol`,
+- **Tools y config**: `runtimes-tipados`, `wiring-por-modulo`, `kernel-y-fachada-de-tools`, `modulos-tools-llm-extensions`, `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `runtimes-tipados`
+
+**Contexto (2026-09-09, fase 9c del refactor modular).** Tras la 9b el container
+era solo ORDEN: cinco pasadas implícitas en 15 métodos ``_build_*``/``_wire_*``
+sobre un ``dict[str, AgentContainer]``, con flags ``_x_wired`` para no repetir,
+y una bolsa de 14 atributos públicos que REST, el runner y el bot leían por
+nombre, varios ``None`` "hasta que se wireen". Los tests construían containers
+con ``__new__`` y leían sus privados.
+
+**Cambio.**
+
+- ``inaki/app/runtime.py``: ``AgentRuntime`` y ``HarnessRuntime``, dataclasses
+  congeladas que se construyen UNA vez, al final, cuando todo existe. Un campo
+  ``X | None`` significa "capacidad no configurada para este agente"
+  (sub-agente, sin token, fotos apagadas), nunca "falta una pasada". Los nombres
+  son los que ya consumían el bot (``FuentesDelBot``), REST y el dispatcher, así
+  que los consumidores cambiaron lo mínimo (``_tools`` → ``tools``,
+  ``scheduler_service`` → ``scheduler.service``, ``consolidate_all_agents`` →
+  ``consolidate_all``).
+- ``inaki/app/assembly.py``: ``ensamblar(global_config, registry, config_dir)``
+  con las cinco pasadas como funciones nombradas y documentadas en el orden en
+  que corren, cada una recibiendo lo de la anterior como PARÁMETROS: (0) estado
+  compartido, (1) ``_construir_agente`` → ``_Borrador`` (privado y mutable, nunca
+  sale del módulo), (2) harness, (3) ``_wire_*`` de cruce, (4) canales, (5)
+  ``_congelar``. Las mutaciones legítimas (registrar una tool,
+  ``set_background_queue``, ``set_extractor``) actúan sobre los objetos en la
+  pasada 3; el runtime no las ve. Enlace tardío explícito (``_Registros``): el
+  router, el dispatcher y las tools de Telegram reciben dicts vacíos que la
+  pasada 5 rellena.
+- ``container.py`` borrado. ``runner``, ``bootstrap``, REST (``AdminAgentRuntime`` /
+  ``AdminHarness``) y el conftest dorado pasaron a los runtimes; el fixture
+  dorado parchea las factories en el ``wiring.py`` de su módulo, donde viven.
+- Tests: los 12 ficheros que construían containers con ``__new__`` se
+  reescribieron contra lo que siempre quisieron probar: ``tests/app/
+  test_assembly*.py`` (``ensamblar`` con LLM y embedding falsos: dos pasadas,
+  builtins, inmutabilidad, enlace tardío, ciclo de vida; cada ``_wire_*`` sobre
+  un borrador), ``tests/agents/test_wiring.py`` (hijo efímero y descubrimiento,
+  puros), ``tests/agents/test_delegation_integration.py`` (los 15 escenarios
+  e2e sobre borradores), y el resto contra el wiring que corresponde.
+
+**Comportamiento observable.** Ninguno en el daemon: mismo orden de arranque,
+mismos logs. Un hallazgo que NO se corrigió en esta nota: ``POST /admin/
+scheduler/reload`` hace ``await scheduler_service.invalidate()`` sobre un método
+síncrono (el test lo enmascara con ``AsyncMock``).
+
+**Invariante que dejó.** **NUNCA** un runtime que se "rellena": lo que un
+consumidor recibe del composition root está completo e inmutable, y un ``None``
+en él es una decisión de config, no un estado intermedio. Si una pasada
+necesita algo que todavía no existe, se declara un enlace tardío explícito
+(un registro que se entrega vacío y se rellena al final), no un atributo
+opcional que alguien tiene que acordarse de setear.
 
 ---
 

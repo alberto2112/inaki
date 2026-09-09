@@ -5,7 +5,7 @@ sistema pueda resolver el adapter correcto dado un nombre de canal, sin
 necesidad de imports directos ni factory global.
 
 Sin estado global: cada instancia es independiente. En producción, una única
-instancia vive en ``AppContainer`` o ``AgentContainer`` y se comparte entre
+instancia vive en el ``AgentRuntime`` y se comparte entre
 todos los componentes que necesiten enviar mensajes.
 """
 
@@ -23,7 +23,7 @@ class ChannelOutboundRegistry:
     """Registry de adapters de canal saliente.
 
     Permite registrar y recuperar adapters por nombre de canal. No tiene
-    estado global: instanciar para cada ``AppContainer``.
+    estado global: instanciar en cada ensamblado.
     """
 
     def __init__(self) -> None:

@@ -105,7 +105,7 @@ class ChannelContext(BaseModel, frozen=True):
 #
 # Consumidores: las tools que necesitan saber "desde qué conversación me
 # llamaron" (scheduler channel_send, face tools, send/download de Telegram,
-# delegate) leen esto vía ``AgentContainer.get_channel_context()`` durante el
+# delegate) leen esto vía ``contexto_del_turno.get_channel_context()`` durante el
 # tool loop, que SIEMPRE ocurre dentro de un ``execute()`` en curso.
 
 _current_channel_context: ContextVar[ChannelContext | None] = ContextVar(

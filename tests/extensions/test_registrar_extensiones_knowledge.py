@@ -1,5 +1,5 @@
 """
-Tests para AgentContainer._register_extensions() — soporte de KNOWLEDGE_SOURCES.
+Tests para registrar_extensiones() — soporte de KNOWLEDGE_SOURCES.
 
 Cobertura:
 - Manifest con KNOWLEDGE_SOURCES → fuente registrada en el orquestrador.
@@ -22,7 +22,7 @@ from inaki.tools.registry import ToolRegistry
 from inaki.kernel.domain.value_objects.knowledge_chunk import KnowledgeChunk
 from inaki.kernel.ports.outbound.knowledge_port import IKnowledgeSource
 from inaki.skills.yaml_skill_repo import YamlSkillRepository
-from inaki.app.container import AgentContainer
+from inaki.app.extensions import registrar_extensiones
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -117,14 +117,14 @@ class FakeMemoryKnowledgeSource(IKnowledgeSource):
 # ---------------------------------------------------------------------------
 
 
-def _make_container(tmp_path: Path) -> AgentContainer:
+def _make_container(tmp_path: Path) -> types.SimpleNamespace:
     """
-    Crea un AgentContainer con _tools, _skills, _knowledge_orchestrator y
+    Crea el mínimo que lee ``registrar_extensiones``: _tools, _skills, _knowledge_orchestrator y
     _pending_knowledge_sources inicializados sin ejecutar __init__ completo.
     """
     from inaki.knowledge.orchestrator import KnowledgeOrchestrator
 
-    container = AgentContainer.__new__(AgentContainer)
+    container = types.SimpleNamespace()
     container._tools = ToolRegistry(embedder=FakeEmbedder())
     container._skills = YamlSkillRepository(FakeEmbedder())
     container._tool_config_store = MagicMock()
@@ -134,11 +134,11 @@ def _make_container(tmp_path: Path) -> AgentContainer:
     # Simular un agent_config mínimo — SimpleNamespace cubre el acceso por
     # atributo que necesita el path bajo test (sin pagar AgentConfig completo).
     fake_cfg = types.SimpleNamespace(id="test-agent")
-    container.agent_config = fake_cfg  # type: ignore[assignment]
+    container.agent_config = fake_cfg
 
     # Simular global_config mínimo
     fake_global_cfg = types.SimpleNamespace(knowledge=None)
-    container._global_config = fake_global_cfg  # type: ignore[assignment]
+    container._global_config = fake_global_cfg
 
     # Fuentes de nivel 1+2 pre-cargadas (normalmente se cargan en _register_tools)
     memory_source = FakeMemoryKnowledgeSource()
@@ -155,6 +155,20 @@ def _make_container(tmp_path: Path) -> AgentContainer:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _registrar(container: types.SimpleNamespace, ext_dirs: list[str]) -> None:
+    """Lo que el ensamblador pasa al registro de extensiones, sacado del fixture."""
+    registrar_extensiones(
+        ext_dirs,
+        tools=container._tools,
+        skills=container._skills,
+        knowledge_sources=container._pending_knowledge_sources,
+        config_store=container._tool_config_store,
+        agent_cfg=container.agent_config,
+        global_cfg=container._global_config,
+        embedder=container._embedder,
+    )
 
 
 def _write_manifest(ext_dir: Path, name: str, content: str) -> Path:
@@ -203,7 +217,7 @@ def test_ext_knowledge_source_registrada(tmp_path: Path) -> None:
     )
 
     container = _make_container(tmp_path)
-    container._register_extensions([str(ext_dir)])
+    _registrar(container, [str(ext_dir)])
 
     assert "ext-source" in container._knowledge_orchestrator.source_ids
 
@@ -249,7 +263,7 @@ def test_orden_descubrimiento_memoria_config_ext(tmp_path: Path) -> None:
         token_budget_threshold=4000,
     )
 
-    container._register_extensions([str(ext_dir)])
+    _registrar(container, [str(ext_dir)])
 
     ids = container._knowledge_orchestrator.source_ids
     assert ids.index("memory") < ids.index("config-level-2"), "memoria debe preceder a config"
@@ -289,7 +303,7 @@ def test_factory_que_falla_loguea_warning_y_continua(tmp_path: Path, caplog) -> 
 
     container = _make_container(tmp_path)
     with caplog.at_level(logging.WARNING):
-        container._register_extensions([str(ext_dir)])
+        _registrar(container, [str(ext_dir)])
 
     # La factory que falló emite WARNING
     assert "factory de knowledge source falló" in caplog.text
@@ -316,7 +330,7 @@ def test_knowledge_sources_vacia_noop(tmp_path: Path) -> None:
     container = _make_container(tmp_path)
     ids_antes = list(container._knowledge_orchestrator.source_ids)
 
-    container._register_extensions([str(ext_dir)])
+    _registrar(container, [str(ext_dir)])
 
     assert container._knowledge_orchestrator.source_ids == ids_antes
 
@@ -335,6 +349,6 @@ def test_manifest_sin_knowledge_sources_es_compatible(tmp_path: Path) -> None:
     container = _make_container(tmp_path)
     ids_antes = list(container._knowledge_orchestrator.source_ids)
 
-    container._register_extensions([str(ext_dir)])
+    _registrar(container, [str(ext_dir)])
 
     assert container._knowledge_orchestrator.source_ids == ids_antes

@@ -1,9 +1,9 @@
 """
 Integration tests for agent-delegation: tasks 7.1, 7.2, 7.3.
 
-These tests wire real AgentContainer instances (constructed without file IO via
-__new__ + attribute injection) and run full end-to-end delegation scenarios with
-mocked LLM ports and real tool registries.
+These tests build agents the way the assembler does (``_Borrador``, without file
+IO: fakes for LLM and embedder, real tool registries and use cases) and run full
+end-to-end delegation scenarios through ``_wire_delegation``.
 
 Coverage:
 - Task 7.1 — End-to-end happy path (REQ-DG-4)
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Callable
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -40,7 +40,9 @@ from inaki.config import (
     MemoriesConfig,
     ProviderConfig,
 )
-from inaki.app.container import AgentContainer
+from inaki.app.assembly import _Borrador, _wire_delegation
+from inaki.memory.wiring import MemoryJobs
+from tests.app.conftest import RegistryFalso
 from inaki.app.settings import build_run_agent_settings
 
 # ===========================================================================
@@ -159,31 +161,18 @@ def _build_container(
     global_config: GlobalConfig,
     llm: AsyncMock,
     extra_tools: list[MagicMock] | None = None,
-) -> AgentContainer:
-    """
-    Build an AgentContainer without any real IO (no filesystem, no factories).
-    Uses __new__ + attribute injection, matching the pattern in test_container.py.
-    """
-    container = AgentContainer.__new__(AgentContainer)
-    container.agent_config = agent_config
-    container._global_config = global_config
-    container._delegation_wired = False
-    container._tracer = NullTurnTracer()
-    container._llm = llm
-    container._embedder = FakeEmbedder()
-    container._tools = ToolRegistry(embedder=container._embedder)
-
-    # Register at least one dummy tool so get_schemas() is non-empty
-    container._tools.register(_make_dummy_tool("dummy_tool"))
-    if extra_tools:
-        for t in extra_tools:
-            container._tools.register(t)
-
-    # run_agent is needed by wire_delegation (set_extra_system_sections)
-    container.run_agent = RunAgentUseCase(
+) -> _Borrador:
+    """Un agente EN CONSTRUCCIÓN como lo arma la pasada 1 del ensamblador, sin IO:
+    fakes para LLM/embedder, registro de tools y use cases reales."""
+    embedder = FakeEmbedder()
+    tools = ToolRegistry(embedder=embedder)
+    tools.register(_make_dummy_tool("dummy_tool"))
+    for t in extra_tools or []:
+        tools.register(t)
+    run_agent = RunAgentUseCase(
         llm=llm,
         memory=AsyncMock(search=AsyncMock(return_value=[])),
-        embedder=container._embedder,
+        embedder=embedder,
         skills=AsyncMock(list_all=AsyncMock(return_value=[]), retrieve=AsyncMock(return_value=[])),
         history=AsyncMock(
             load=AsyncMock(return_value=[]),
@@ -193,31 +182,66 @@ def _build_container(
             last_row_id=AsyncMock(return_value=1),
             load_user_messages_since=AsyncMock(return_value=(1, [])),
         ),
-        tools=container._tools,
+        tools=tools,
         settings=build_run_agent_settings(agent_config),
     )
-
-    # Every container gets run_agent_one_shot unconditionally (mirrors __init__ behaviour).
-    container.run_agent_one_shot = RunAgentOneShotUseCase(
+    one_shot = RunAgentOneShotUseCase(
         llm=llm,
-        tools=container._tools,
+        tools=tools,
         settings=OneShotSettings(
             agent_id=agent_config.id,
             system_prompt=agent_config.system_prompt,
             circuit_breaker_threshold=agent_config.tools.circuit_breaker_threshold,
         ),
     )
+    return _Borrador(
+        cfg=agent_config,
+        llm=llm,
+        embedder=embedder,
+        memory=AsyncMock(),
+        history=AsyncMock(),
+        skills=AsyncMock(),
+        tools=tools,
+        knowledge=MagicMock(),
+        transcribe_audio=None,
+        run_agent=run_agent,
+        run_agent_one_shot=one_shot,
+        jobs=MemoryJobs(None, None),
+        scope_registry=MagicMock(),
+        tracer=NullTurnTracer(),
+    )
 
-    return container
+
+_HARNESS = SimpleNamespace(background_queue=None)
 
 
-def _minimal_sub_delta(child: AgentContainer) -> dict:
+def _wire(
+    parent: _Borrador,
+    global_config: GlobalConfig,
+    *,
+    subs: tuple[_Borrador, ...] = (),
+    sub_ids: list[str] | None = None,
+    raw: dict[str, dict] | None = None,
+) -> None:
+    """La pasada 3 del ensamblador para ``parent``: ``sub_ids`` (o los ids de ``subs``)
+    son los sub-agentes del registry; ``raw`` sus deltas (sin delta → hijo irresoluble)."""
+    ids = sub_ids if sub_ids is not None else [b.cfg.id for b in subs]
+    registry = RegistryFalso(
+        [parent.cfg],
+        [_make_agent_config(i, False) for i in ids],
+        raw=raw if raw is not None else {},
+    )
+    borradores = {parent.cfg.id: parent, **{b.cfg.id: b for b in subs}}
+    _wire_delegation(parent, global_config, registry, borradores, _HARNESS)  # type: ignore[arg-type]
+
+
+def _minimal_sub_delta(child: _Borrador) -> dict:
     """Delta crudo mínimo de un sub-agente (lo que daría ``registry.get_sub_agent_raw``).
 
     Solo identidad + prompt → SIN bloque ``llm`` → el hijo efímero HEREDA el llm del
     caller (default C). Para testear override, pasá un ``sub_delta`` con ``llm``.
     """
-    cfg = child.agent_config
+    cfg = child.cfg
     return {
         "id": cfg.id,
         "name": cfg.name,
@@ -227,42 +251,18 @@ def _minimal_sub_delta(child: AgentContainer) -> dict:
 
 
 def _wire_both(
-    parent: AgentContainer,
-    child: AgentContainer,
+    parent: _Borrador,
+    child: _Borrador,
+    global_config: GlobalConfig,
     *,
     sub_delta: dict | None = None,
-) -> Callable[[str], AgentContainer | None]:
-    """Harness de dos containers para el flujo delegate bajo C.
-
-    El padre recibe al hijo como sub-agente disponible (discovery + allow-list) y un
-    ``get_sub_agent_raw`` que devuelve el delta del hijo. La delegación construye una
-    instancia EFÍMERA contra el caller (``build_ephemeral_child``) — el container del
-    hijo solo se usa para la discovery section; su ``_llm`` NO se usa (el efímero hereda
-    el del padre). Pasá ``sub_delta`` para forzar override (ej. ``{"llm": {...}}``).
-
-    Returns the get_agent_container closure for use in assertions.
-    """
-    containers = {
-        parent.agent_config.id: parent,
-        child.agent_config.id: child,
-    }
-
-    def _get_agent_container(agent_id: str) -> AgentContainer | None:
-        return containers.get(agent_id)
-
+) -> None:
+    """El padre recibe al hijo como sub-agente disponible (discovery + allow-list) con su
+    delta crudo. La delegación construye una instancia EFÍMERA contra el caller; el
+    borrador del hijo solo sirve para el fallback de la discovery section y su ``llm``
+    NO se usa (el efímero hereda el del padre). Pasá ``sub_delta`` para forzar override."""
     delta = sub_delta if sub_delta is not None else _minimal_sub_delta(child)
-
-    def _get_sub_agent_raw(agent_id: str) -> dict | None:
-        return delta if agent_id == child.agent_config.id else None
-
-    parent.wire_delegation(
-        _get_agent_container,
-        sub_agent_ids=[child.agent_config.id],
-        get_sub_agent_raw=_get_sub_agent_raw,
-    )
-    child.wire_delegation(_get_agent_container)  # no-op: child no delega
-
-    return _get_agent_container
+    _wire(parent, global_config, subs=(child,), raw={child.cfg.id: delta})
 
 
 def _tool_call_response(agent_id: str, task: str) -> LLMResponse:
@@ -425,7 +425,7 @@ async def test_happy_path_end_to_end(tmp_path):
     # un sentinela que lanza si se invoca prueba ese invariante.
     child_container = _build_container(child_cfg, global_cfg, _make_scripted_llm([]))
 
-    _wire_both(parent_container, child_container)
+    _wire_both(parent_container, child_container, global_cfg)
 
     # --- Execute the full chain ---
     result = await parent_container.run_agent.execute("What is 2 + 2?")
@@ -476,7 +476,7 @@ async def test_happy_path_end_to_end(tmp_path):
 
 
 async def _run_delegation_and_extract_result(
-    parent_container: AgentContainer,
+    parent_container: _Borrador,
     task: str = "do something",
 ) -> DelegationResult:
     """
@@ -487,7 +487,7 @@ async def _run_delegation_and_extract_result(
     depende de si el hijo se alcanzó (target_not_allowed/unknown_agent no lo alcanzan).
     """
     await parent_container.run_agent.execute(task)
-    parent_llm = parent_container._llm
+    parent_llm = parent_container.llm
     last_call_messages = parent_llm.complete.call_args_list[-1].args[0]  # type: ignore[attr-defined]
     tool_result_msg = last_call_messages[-1]
     return DelegationResult.model_validate_json(tool_result_msg.content)
@@ -518,7 +518,7 @@ async def test_failure_target_not_allowed():
 
     parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
     child_container = _build_container(child_cfg, global_cfg, child_llm)
-    _wire_both(parent_container, child_container)
+    _wire_both(parent_container, child_container, global_cfg)
 
     dr = await _run_delegation_and_extract_result(parent_container)
 
@@ -553,13 +553,8 @@ async def test_failure_unknown_agent():
     # Only build the parent container. "ghost" is NOT in the container registry.
     parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
 
-    # Wire manually: closure only has "parent", not "ghost". Ghost es el sub-agente.
-    containers = {"parent": parent_container}
-
-    def _get_container(agent_id: str) -> AgentContainer | None:
-        return containers.get(agent_id)
-
-    parent_container.wire_delegation(_get_container, sub_agent_ids=["ghost"])
+    # "ghost" es un sub-agente del registry SIN delta crudo → build_child devuelve None.
+    _wire(parent_container, global_cfg, sub_ids=["ghost"])
 
     dr = await _run_delegation_and_extract_result(parent_container)
 
@@ -587,7 +582,7 @@ async def test_failure_result_parse_error_no_json_block():
 
     parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
     child_container = _build_container(child_cfg, global_cfg, _make_scripted_llm([]))
-    _wire_both(parent_container, child_container)
+    _wire_both(parent_container, child_container, global_cfg)
 
     dr = await _run_delegation_and_extract_result(parent_container)
 
@@ -616,7 +611,7 @@ async def test_failure_result_parse_error_invalid_json_in_block():
 
     parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
     child_container = _build_container(child_cfg, global_cfg, _make_scripted_llm([]))
-    _wire_both(parent_container, child_container)
+    _wire_both(parent_container, child_container, global_cfg)
 
     dr = await _run_delegation_and_extract_result(parent_container)
 
@@ -650,10 +645,10 @@ async def test_failure_timeout():
 
     parent_container = _build_container(parent_cfg, short_timeout_global, parent_llm)
     child_container = _build_container(child_cfg, short_timeout_global, _make_scripted_llm([]))
-    _wire_both(parent_container, child_container)
+    _wire_both(parent_container, child_container, short_timeout_global)
 
     # timeout chico para distinguir del sleep de 10s
-    delegate_tool: DelegateTool = parent_container._tools._tools["delegate"]
+    delegate_tool: DelegateTool = parent_container.tools._tools["delegate"]
     delegate_tool._timeout_seconds = 1
 
     dr = await _run_delegation_and_extract_result(parent_container)
@@ -702,10 +697,10 @@ async def test_failure_max_iterations_exceeded():
         parent_cfg, global_cfg, parent_llm, extra_tools=[dummy_tool]
     )
     child_container = _build_container(child_cfg, global_cfg, _make_scripted_llm([]))
-    _wire_both(parent_container, child_container)
+    _wire_both(parent_container, child_container, global_cfg)
 
     # Force max_iterations_per_sub=2 on the delegate tool
-    delegate_tool: DelegateTool = parent_container._tools._tools["delegate"]
+    delegate_tool: DelegateTool = parent_container.tools._tools["delegate"]
     delegate_tool._max_iterations_per_sub = 2
 
     dr = await _run_delegation_and_extract_result(parent_container)
@@ -738,7 +733,7 @@ async def test_failure_child_exception():
 
     parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
     child_container = _build_container(child_cfg, global_cfg, _make_scripted_llm([]))
-    _wire_both(parent_container, child_container)
+    _wire_both(parent_container, child_container, global_cfg)
 
     dr = await _run_delegation_and_extract_result(parent_container)
 
@@ -780,14 +775,13 @@ async def test_failure_modes_canonical_reason_strings(scenario: str, expected_re
         )
         parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
         child_container = _build_container(child_cfg, global_cfg, _make_scripted_llm([]))
-        _wire_both(parent_container, child_container)
+        _wire_both(parent_container, child_container, global_cfg)
 
     elif scenario == "unknown_agent":
         # "child" en allowed_targets pero SIN get_sub_agent_raw → build_child → None.
         parent_llm = _scripted_parent_llm(target="child", task="task", child=None, final="Done.")
         parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
-        containers_dict = {"parent": parent_container}
-        parent_container.wire_delegation(containers_dict.get, sub_agent_ids=["child"])
+        _wire(parent_container, global_cfg, sub_ids=["child"])
 
     elif scenario in ("result_parse_error_no_block", "result_parse_error_invalid_json"):
         child_response = (
@@ -800,7 +794,7 @@ async def test_failure_modes_canonical_reason_strings(scenario: str, expected_re
         )
         parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
         child_container = _build_container(child_cfg, global_cfg, _make_scripted_llm([]))
-        _wire_both(parent_container, child_container)
+        _wire_both(parent_container, child_container, global_cfg)
 
     elif scenario == "child_exception":
         parent_llm = _scripted_parent_llm(
@@ -808,7 +802,7 @@ async def test_failure_modes_canonical_reason_strings(scenario: str, expected_re
         )
         parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
         child_container = _build_container(child_cfg, global_cfg, _make_scripted_llm([]))
-        _wire_both(parent_container, child_container)
+        _wire_both(parent_container, child_container, global_cfg)
 
     else:
         pytest.fail(f"Unknown scenario: {scenario}")
@@ -818,7 +812,7 @@ async def test_failure_modes_canonical_reason_strings(scenario: str, expected_re
     assert isinstance(result_text, str)
 
     # Extraer el DelegationResult de la ÚLTIMA llamada del parent (lleva el tool result).
-    parent_llm_used = parent_container._llm
+    parent_llm_used = parent_container.llm
     last_call_messages = parent_llm_used.complete.call_args_list[-1].args[0]  # type: ignore[attr-defined]
     tool_result_msg = last_call_messages[-1]
     dr = DelegationResult.model_validate_json(tool_result_msg.content)
@@ -881,15 +875,15 @@ async def test_req_dg9_child_schemas_exclude_delegate_even_when_child_has_delega
 
     parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
     child_container = _build_container(child_cfg, global_cfg, _make_scripted_llm([]))
-    _wire_both(parent_container, child_container)
+    _wire_both(parent_container, child_container, global_cfg)
 
     # Assertion 5: el container del hijo NO tiene 'delegate' (wire_delegation no-op para subs).
-    assert "delegate" not in child_container._tools._tools, (
+    assert "delegate" not in child_container.tools._tools, (
         "REQ-DG-9: child must NOT have 'delegate' tool in its registry "
         "(sub-agents never get the delegate tool wired)"
     )
     # Precondición: el parent sí tiene 'delegate'
-    assert "delegate" in parent_container._tools._tools, (
+    assert "delegate" in parent_container.tools._tools, (
         "Precondition: parent must have 'delegate' tool in its registry"
     )
 
@@ -945,7 +939,7 @@ async def test_req_dg9_overlap_from_71_reconfirmed_in_73():
 
     parent_container = _build_container(parent_cfg, global_cfg, parent_llm)
     child_container = _build_container(child_cfg, global_cfg, _make_scripted_llm([]))
-    _wire_both(parent_container, child_container)
+    _wire_both(parent_container, child_container, global_cfg)
 
     await parent_container.run_agent.execute("Do a simple task")
 
@@ -974,7 +968,7 @@ async def test_child_with_delegation_disabled_can_be_delegation_target(tmp_path)
     only set in wire_delegation when delegation.enabled=True. A disabled child would
     AttributeError at runtime.
 
-    After the fix: run_agent_one_shot is constructed in AgentContainer.__init__
+    After the fix: run_agent_one_shot is constructed in _Borrador.__init__
     unconditionally, so a disabled child can be a delegation target.
 
     Setup:
@@ -1016,7 +1010,7 @@ async def test_child_with_delegation_disabled_can_be_delegation_target(tmp_path)
     # Bajo C el flag delegation del worker es IRRELEVANTE para ser target: el hijo efímero
     # se construye desde el delta (get_sub_agent_raw), no desde el run_agent_one_shot
     # pre-built del worker. _wire_both provee el get_sub_agent_raw del worker.
-    _wire_both(parent_container, worker_container)
+    _wire_both(parent_container, worker_container, global_cfg)
 
     # Assertion 3: el worker igual tiene run_agent_one_shot (se construye en __init__)
     assert hasattr(worker_container, "run_agent_one_shot"), (
@@ -1027,7 +1021,7 @@ async def test_child_with_delegation_disabled_can_be_delegation_target(tmp_path)
     )
 
     # Assertion 4: el worker NO tiene 'delegate' en su registry (REQ-DG-1 preserved)
-    assert "delegate" not in worker_container._tools._tools, (
+    assert "delegate" not in worker_container.tools._tools, (
         "worker must NOT have the 'delegate' tool when delegation.enabled=False (REQ-DG-1)"
     )
 
@@ -1069,7 +1063,7 @@ async def test_same_sub_def_inherits_each_callers_llm():
     s_for_p = _build_container(
         s_cfg, global_cfg, _make_scripted_llm([])
     )  # llm del sub: jamás usado
-    _wire_both(p, s_for_p, sub_delta=sub_delta)
+    _wire_both(p, s_for_p, global_cfg, sub_delta=sub_delta)
     await p.run_agent.execute("ask P")
 
     # Q delega la MISMA def S
@@ -1079,7 +1073,7 @@ async def test_same_sub_def_inherits_each_callers_llm():
     q_cfg = _make_agent_config(agent_id="Q", delegation_enabled=True, allowed_targets=["s"])
     q = _build_container(q_cfg, global_cfg, q_llm)
     s_for_q = _build_container(s_cfg, global_cfg, _make_scripted_llm([]))
-    _wire_both(q, s_for_q, sub_delta=sub_delta)
+    _wire_both(q, s_for_q, global_cfg, sub_delta=sub_delta)
     await q.run_agent.execute("ask Q")
 
     # Cada caller sirvió el turno del hijo con SU propio llm (herencia per-caller).
@@ -1111,10 +1105,10 @@ async def test_sub_llm_override_builds_new_llm_via_factory():
     p_cfg = _make_agent_config(agent_id="P", delegation_enabled=True, allowed_targets=["s"])
     p = _build_container(p_cfg, global_cfg, parent_llm)
     s_container = _build_container(s_cfg, global_cfg, _make_scripted_llm([]))
-    _wire_both(p, s_container, sub_delta=sub_delta)
+    _wire_both(p, s_container, global_cfg, sub_delta=sub_delta)
 
     with patch(
-        "inaki.app.container.LLMProviderFactory.create", return_value=override_llm
+        "inaki.agents.wiring.LLMProviderFactory.create", return_value=override_llm
     ) as mock_create:
         await p.run_agent.execute("ask P")
 
@@ -1150,7 +1144,7 @@ async def test_sub_allow_list_restricts_child_schemas():
     extra_b = _make_dummy_tool("extra_b")
     p = _build_container(p_cfg, global_cfg, parent_llm, extra_tools=[extra_a, extra_b])
     s_container = _build_container(s_cfg, global_cfg, _make_scripted_llm([]))
-    _wire_both(p, s_container, sub_delta=sub_delta)
+    _wire_both(p, s_container, global_cfg, sub_delta=sub_delta)
 
     await p.run_agent.execute("ask P")
 

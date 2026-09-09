@@ -1,6 +1,6 @@
 """CLI adapter para Inaki — REPL sync sobre IDaemonClient.
 
-El chat interactivo delega al daemon vía HTTP. No instancia AppContainer.
+El chat interactivo delega al daemon vía HTTP. No ensambla el proceso.
 Solo usa IDaemonClient (port) para todas las operaciones de conversación.
 """
 
@@ -179,7 +179,7 @@ def list_agents_from_registry(registry) -> None:
 
 
 def run(global_config, registry, client: IDaemonClient, agent_id: str) -> None:
-    """Entry point síncrono para el CLI — nueva firma sin AppContainer."""
+    """Entry point síncrono para el CLI — nueva firma sin ensamblar el proceso."""
     if agent_id == "list":
         list_agents_from_registry(registry)
         return

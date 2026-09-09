@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 # Interfaces estructurales que `delegate` necesita de los containers — declaradas
 # acá (el consumidor define lo que requiere) para no acoplar el tool a
-# `inaki.app.container.AgentContainer`. El `AgentContainer` real las
+# `inaki.app.assembly`. El composition root las
 # satisface por duck-typing; la dirección hexagonal queda intacta
 # (un módulo NO importa el composition root).
 class DelegationCaller(Protocol):
@@ -96,7 +96,7 @@ class DelegateTool(ITool):
     name = "delegate"
     # NOTE: keep this description as plain text — no markdown, no newlines.
     # Structured guidance on when to delegate lives in the agent-discovery
-    # section injected by AgentContainer.wire_delegation.
+    # section injected by the assembler (_wire_delegation).
     description = (
         "Delegate a task to a specialized agent when the task requires expertise or tools you don't have, "
         "or involves multiple steps better handled end-to-end by another agent. "
@@ -156,7 +156,7 @@ class DelegateTool(ITool):
             build_child: Callable que recibe el agent_id de un sub-agente y construye una
                          instancia EFÍMERA one-shot resuelta contra el caller (hereda su
                          config vía `inherit`), o None si el id no es un sub-agente conocido.
-                         Lo arma `AgentContainer.wire_delegation` con `self.build_ephemeral_child`
+                         Lo arma el ensamblador con `inaki.agents.wiring.build_ephemeral_child`
                          + el delta crudo del registry — una instancia nueva por delegación.
             max_iterations_per_sub: Límite de iteraciones para el loop del agente hijo.
                                     Proviene de global_config.delegation.max_iterations_per_sub.
@@ -217,7 +217,7 @@ class DelegateTool(ITool):
           REQ-DG-10, REQ-DG-11, REQ-BGD-*.
 
         El path async requiere ``self._queue`` no-None. Si la cola no está
-        wired (ej. tests parciales pre-AppContainer), retorna ``failed`` con
+        wired (ej. tests parciales sin harness), retorna ``failed`` con
         ``reason="background_delegation_unavailable"`` — fail-fast en lugar de
         crashear.
         """

@@ -35,19 +35,20 @@ inaki/
   llm/          ← LLM providers (OpenAI-compatible family, Anthropic, Ollama, Responses)
   tools/        ← ToolRegistry with semantic routing, builtin tools, tool-config store
   extensions/   ← Discovery of user extensions (`<home>/ext/*/manifest.py`)
+  scheduler/    ← Scheduled tasks: domain, ports, service, SQLite repo, the `scheduler` tool (one object per operation)
+  agents/       ← Delegation (`delegate` tool, background queue), per-scope dispatcher, scope registry
   embedding/ memory/ knowledge/ skills/ perception/ ← Feature modules
 core/
   domain/       ← Entities, value objects, services — zero external imports
   ports/        ← Interfaces, including the channel contract (IChannel, IChannelOutbound)
   use_cases/    ← RunAgentUseCase · ConsolidateMemoryUseCase · ScheduleTaskUseCase
-adapters/outbound/ ← scheduler · delegation (moving into inaki/ next)
 infrastructure/
   container.py  ← Single wiring point (DI composition root)
 ```
 
 The layout is mid-refactor towards a modular monolith under `inaki/` (dependency rules are enforced by `lint-imports`, see `pyproject.toml`).
 
-**Dependency direction is inviolable:** `adapters/ → core/`. The `core/` layer never imports from `adapters/` or any infrastructure library. `infrastructure/container.py` is the only place where concrete adapters are instantiated.
+**Dependency direction is inviolable:** `inaki/<module> → core/`. The `core/` kernel never imports a feature module or any infrastructure library; modules only know the kernel, `inaki/shared` and what their `import-linter` contract allows. `infrastructure/container.py` is the only place where concrete adapters are instantiated.
 
 ---
 

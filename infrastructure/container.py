@@ -24,29 +24,29 @@ if TYPE_CHECKING:
     from inaki.shared.channel_context import ChannelContext
 
 from inaki.tools.config_store import YamlToolConfigStore
-from adapters.outbound.delegation.background_queue_adapter import (
+from inaki.agents.delegation.background_queue import (
     BackgroundDelegationQueueAdapter,
 )
-from adapters.outbound.scheduler.builtin_tasks import (
+from inaki.scheduler.adapters.builtin_tasks import (
     _RECONCILE_MEMORY_BASE_ID,
     build_consolidate_memory_task,
     build_face_dedup_task,
     build_reconcile_memory_task,
 )
-from adapters.outbound.scheduler.dispatch_adapters import (
+from inaki.scheduler.adapters.dispatch import (
     ConsolidationDispatchAdapter,
     HttpCallerAdapter,
-    LLMDispatcherAdapter,
     ReconcileDispatchAdapter,
     ShellExecAdapter,
 )
-from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRepo
-from adapters.outbound.scope_registry_adapter import InMemoryScopeRegistryAdapter
+from inaki.scheduler.adapters.sqlite_repo import SQLiteSchedulerRepo
+from inaki.agents.dispatcher import LLMDispatcherAdapter
+from inaki.agents.scope_registry import InMemoryScopeRegistryAdapter
 from inaki.extensions import descubrir_extensiones
 from inaki.tools.registry import ToolRegistry, instanciar_tool
 from core.domain.services.channel_outbound_registry import ChannelOutboundRegistry
 from core.domain.services.channel_router import ChannelFallbackSettings, ChannelRouter
-from core.domain.services.scheduler_service import SchedulerService
+from inaki.scheduler.service import SchedulerService
 from core.domain.value_objects.agent_settings import (
     ConsolidationSettings,
     MemorySettings,
@@ -54,16 +54,16 @@ from core.domain.value_objects.agent_settings import (
     ReconciliationSettings,
     RunAgentSettings,
 )
-from core.ports.inbound.scheduler_port import IManualTaskRunner
+from inaki.scheduler.ports.use_case import IManualTaskRunner
 from core.ports.outbound.channel_port import IChannel
 from core.ports.outbound.memory_port import IMemoryRepository
-from core.ports.outbound.scheduler_dispatch_port import SchedulerDispatchPorts
+from inaki.scheduler.ports.dispatch import SchedulerDispatchPorts
 from core.ports.outbound.scope_registry_port import IScopeRegistry
 from core.ports.outbound.tool_config_port import IToolConfigStore
 from core.ports.outbound.turn_tracer_port import ITurnTracer, NullTurnTracer
 from core.use_cases.run_agent import RunAgentUseCase
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
-from core.use_cases.schedule_task import ScheduleTaskUseCase
+from inaki.scheduler.use_cases.schedule_task import ScheduleTaskUseCase
 from inaki.app.reloader import DaemonReloader
 from inaki.channels.telegram.broadcast.buffer import BroadcastBuffer
 from inaki.channels.telegram.broadcast.egress import BroadcastEgress
@@ -114,7 +114,7 @@ from inaki.skills.yaml_skill_repo import YamlSkillRepository
 from infrastructure.factories.embedding_factory import EmbeddingProviderFactory
 from infrastructure.factories.llm_factory import LLMProviderFactory
 from infrastructure.factories.transcription_factory import TranscriptionProviderFactory
-from infrastructure.scheduler_reconciler import SchedulerReconciler
+from inaki.scheduler.reconciler import SchedulerReconciler
 
 logger = logging.getLogger(__name__)
 
@@ -907,7 +907,7 @@ class AgentContainer:
             )
             return
 
-        from adapters.outbound.tools.delegate_tool import DelegateTool
+        from inaki.agents.delegation.delegate_tool import DelegateTool
 
         # Builder de la instancia efímera del hijo contra ESTE caller (self): cada
         # delegación construye un hijo que hereda la config del caller vía `inherit`
@@ -1043,7 +1043,7 @@ class AgentContainer:
         if self._scheduler_wired:
             return
 
-        from adapters.outbound.tools.scheduler_tool import SchedulerTool
+        from inaki.scheduler.tools.scheduler_tool import SchedulerTool
 
         self._tools.register(
             SchedulerTool(

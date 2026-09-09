@@ -1,0 +1,163 @@
+"""Tests de integración: resolución de canal en channel_send.
+
+Verifica el flujo completo:
+  1. SchedulerTool.execute(operation="create", trigger_type="channel_send", ...)
+  2. El target se inyecta automáticamente desde el ChannelContext (default)
+  3. Cuando el LLM envía user_id explícito, el target se reconstruye con ese user_id
+  4. Cuando el LLM envía un target explícito "canal:id", se RESPETA (otro chat)
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from inaki.scheduler.adapters.sqlite_repo import SQLiteSchedulerRepo
+from inaki.scheduler.tools.scheduler_tool import SchedulerTool
+from inaki.scheduler.domain.task import ChannelSendPayload
+from inaki.scheduler.use_cases.schedule_task import ScheduleTaskUseCase
+from inaki.shared.channel_context import ChannelContext
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+async def repo(tmp_path: Path) -> SQLiteSchedulerRepo:
+    r = SQLiteSchedulerRepo(str(tmp_path / "sched.db"))
+    await r.ensure_schema()
+    return r
+
+
+@pytest.fixture()
+def uc(repo: SQLiteSchedulerRepo) -> ScheduleTaskUseCase:
+    return ScheduleTaskUseCase(repo=repo, on_mutation=lambda: None)
+
+
+def _make_tool(
+    uc: ScheduleTaskUseCase,
+    context: ChannelContext | None,
+) -> SchedulerTool:
+    runner = MagicMock()
+    runner.run_task_now = AsyncMock()
+    return SchedulerTool(
+        schedule_task_uc=uc,
+        manual_runner=runner,
+        agent_id="test-agent",
+        user_timezone="America/Argentina/Buenos_Aires",
+        get_channel_context=lambda: context,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+async def test_channel_send_inyecta_target_desde_contexto(
+    uc: ScheduleTaskUseCase,
+    repo: SQLiteSchedulerRepo,
+) -> None:
+    """Sin user_id del LLM → target viene del routing_key del contexto."""
+    contexto = ChannelContext(channel_type="telegram", user_id="987654")
+    tool = _make_tool(uc, contexto)
+
+    resultado = await tool.execute(
+        operation="create",
+        name="recordatorio",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        schedule="+1h",
+        trigger_payload={"text": "Hola mundo"},
+    )
+
+    assert resultado.success, f"La tool falló: {resultado.error}"
+    datos = json.loads(resultado.output)
+    task_id = datos["id"]
+
+    tarea = await repo.get_task(task_id)
+    assert tarea is not None
+    assert isinstance(tarea.trigger_payload, ChannelSendPayload)
+    assert tarea.trigger_payload.target == "telegram:987654"
+    assert tarea.trigger_payload.text == "Hola mundo"
+
+
+async def test_channel_send_user_id_explicito_reemplaza_contexto(
+    uc: ScheduleTaskUseCase,
+    repo: SQLiteSchedulerRepo,
+) -> None:
+    """Con user_id del LLM → target usa ese user_id pero mantiene el channel_type del contexto."""
+    contexto = ChannelContext(channel_type="telegram", user_id="987654")
+    tool = _make_tool(uc, contexto)
+
+    resultado = await tool.execute(
+        operation="create",
+        name="recordatorio-otro-usuario",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        schedule="+1h",
+        trigger_payload={"text": "Mensaje para otro", "user_id": "111222"},
+    )
+
+    assert resultado.success, f"La tool falló: {resultado.error}"
+    datos = json.loads(resultado.output)
+    task_id = datos["id"]
+
+    tarea = await repo.get_task(task_id)
+    assert tarea is not None
+    assert isinstance(tarea.trigger_payload, ChannelSendPayload)
+    assert tarea.trigger_payload.target == "telegram:111222"
+    assert tarea.trigger_payload.user_id == "111222"
+    assert tarea.trigger_payload.text == "Mensaje para otro"
+
+
+async def test_channel_send_sin_contexto_retorna_error(
+    uc: ScheduleTaskUseCase,
+) -> None:
+    """Sin contexto de canal disponible → la tool retorna error descriptivo."""
+    tool = _make_tool(uc, context=None)
+
+    resultado = await tool.execute(
+        operation="create",
+        name="tarea-sin-contexto",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        schedule="+1h",
+        trigger_payload={"text": "Este debería fallar"},
+    )
+
+    assert not resultado.success
+    assert "No hay contexto de canal" in (resultado.error or "")
+
+
+async def test_channel_send_target_explicito_se_respeta(
+    uc: ScheduleTaskUseCase,
+    repo: SQLiteSchedulerRepo,
+) -> None:
+    """Si el LLM envía un 'target' explícito 'canal:id', se RESPETA — permite
+    programar un envío a un chat distinto del de la conversación (ej. un grupo)."""
+    contexto = ChannelContext(channel_type="telegram", user_id="987654")  # conversación
+    tool = _make_tool(uc, contexto)
+
+    resultado = await tool.execute(
+        operation="create",
+        name="aviso-grupo",
+        task_kind="one_shot",
+        trigger_type="channel_send",
+        schedule="+1h",
+        trigger_payload={"text": "Prueba", "target": "telegram:-1001582404077"},
+    )
+
+    assert resultado.success, f"La tool falló: {resultado.error}"
+    datos = json.loads(resultado.output)
+    task_id = datos["id"]
+
+    tarea = await repo.get_task(task_id)
+    assert tarea is not None
+    assert isinstance(tarea.trigger_payload, ChannelSendPayload)
+    # El target explícito del LLM gana sobre el de la conversación
+    assert tarea.trigger_payload.target == "telegram:-1001582404077"

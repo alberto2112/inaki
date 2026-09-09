@@ -14,14 +14,14 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-from adapters.outbound.tools.scheduler_tool import SchedulerTool
+from inaki.scheduler.tools.scheduler_tool import SchedulerTool
 from inaki.tools.registry import ToolRegistry
-from core.domain.services.scheduler_service import SchedulerService
+from inaki.scheduler.service import SchedulerService
 from core.domain.value_objects.agent_settings import OneShotSettings
 from core.ports.outbound.turn_tracer_port import NullTurnTracer
 from core.use_cases.run_agent import RunAgentUseCase
 from core.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
-from core.use_cases.schedule_task import ScheduleTaskUseCase
+from inaki.scheduler.use_cases.schedule_task import ScheduleTaskUseCase
 from inaki.config import (
     AgentConfig,
     AgentDelegationConfig,
@@ -295,7 +295,7 @@ def test_wire_scheduler_idempotent_different_args() -> None:
     tool = container._tools._tools["scheduler"]
     # El registry tipa los valores como ITool; narrowamos a SchedulerTool para
     # acceder a los atributos privados que validamos.
-    from adapters.outbound.tools.scheduler_tool import SchedulerTool
+    from inaki.scheduler.tools.scheduler_tool import SchedulerTool
 
     assert isinstance(tool, SchedulerTool)
     # The FIRST call's use case and timezone are preserved

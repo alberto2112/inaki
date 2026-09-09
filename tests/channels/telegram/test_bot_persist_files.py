@@ -444,7 +444,7 @@ async def test_texto_durante_album_no_arranca_turno_ciego(monkeypatch):
     'no me llegó nada' porque corre antes de que exista el bloque @album.
     """
     import inaki.channels.telegram.media as media_mod
-    from adapters.outbound.scope_registry_adapter import InMemoryScopeRegistryAdapter
+    from inaki.agents.scope_registry import InMemoryScopeRegistryAdapter
 
     # Debounce largo: el álbum NO flushea durante el test — queremos observar el
     # estado con el slot AÚN tomado cuando llega el texto.

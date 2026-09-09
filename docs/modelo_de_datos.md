@@ -1,7 +1,7 @@
 # Data Model — Inaki v2
 
 All domain entities live in `core/domain/` and are **Pydantic BaseModel**.
-The core never imports from `adapters/` or infrastructure libraries.
+The core never imports from `infrastructure/`, a feature module of `inaki/`, or infrastructure libraries.
 
 ---
 

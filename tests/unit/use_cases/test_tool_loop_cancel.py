@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock
 
-from adapters.outbound.scope_registry_adapter import InMemoryScopeRegistryAdapter
+from inaki.agents.scope_registry import InMemoryScopeRegistryAdapter
 from core.domain.value_objects.llm_response import LLMResponse
 from core.ports.outbound.scope_registry_port import Scope
 from core.ports.outbound.tool_port import ToolResult

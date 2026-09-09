@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from telegram import BotCommand, Message, Update
 from telegram.ext import ContextTypes
 
-from core.domain.entities.task import ScheduledTask
+from inaki.scheduler.domain.task import ScheduledTask
 from inaki.channels.telegram.message_mapper import split_message
 from inaki.shared.errors import TaskNotFoundError
 

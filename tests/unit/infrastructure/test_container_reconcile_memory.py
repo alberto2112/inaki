@@ -19,13 +19,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from adapters.outbound.scheduler.builtin_tasks import (
+from inaki.scheduler.adapters.builtin_tasks import (
     _RECONCILE_MEMORY_BASE_ID,
     build_reconcile_memory_task,
 )
-from adapters.outbound.scheduler.dispatch_adapters import ReconcileDispatchAdapter
+from inaki.scheduler.adapters.dispatch import ReconcileDispatchAdapter
 from inaki.tools.registry import ToolRegistry
-from core.domain.entities.task import TriggerType
+from inaki.scheduler.domain.task import TriggerType
 from core.domain.value_objects.agent_settings import MemorySettings, OneShotSettings
 from core.ports.outbound.turn_tracer_port import NullTurnTracer
 from core.use_cases.run_agent import RunAgentUseCase

@@ -52,7 +52,7 @@ Ver también `docs/knowledge.md`.
 
 Ver también `docs/scheduler-spec.md`.
 
-- **Scheduler cron evaluation** — TODA computación de "próxima ocurrencia" de un cron pasa por `core/domain/utils/cron.py::next_cron_occurrence()` (evalúa en `user.timezone`, devuelve UTC). NUNCA llamar `croniter` directo para next_run: evaluar cron en dos lugares con tz distintas causó el bug histórico de doble ejecución separada por el offset DST (repo en local, service en UTC).
+- **Scheduler cron evaluation** — TODA computación de "próxima ocurrencia" de un cron pasa por `inaki/scheduler/domain/cron.py::next_cron_occurrence()` (evalúa en `user.timezone`, devuelve UTC). NUNCA llamar `croniter` directo para next_run: evaluar cron en dos lugares con tz distintas causó el bug histórico de doble ejecución separada por el offset DST (repo en local, service en UTC).
 
 ## Canales
 

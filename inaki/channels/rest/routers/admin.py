@@ -72,8 +72,8 @@ async def agent_info(agent_id: str, request: Request) -> AgentInfoResponse:
     dependencies=[Depends(check_admin_auth)],
 )
 async def scheduler_reload(request: Request) -> SchedulerReloadResponse:
-    scheduler_service = request.app.state.app_container.scheduler_service
-    await scheduler_service.invalidate()
+    # invalidate() es síncrono: solo levanta el Event que despierta al loop.
+    request.app.state.app_container.scheduler.service.invalidate()
     return SchedulerReloadResponse()
 
 
@@ -89,7 +89,7 @@ async def scheduler_run(body: SchedulerRunRequest, request: Request) -> Schedule
     scheduling (status/next_run/executions_remaining). 404 si la tarea no existe;
     ``success=False`` en el body si el trigger ejecutó pero falló.
     """
-    scheduler_service = request.app.state.app_container.scheduler_service
+    scheduler_service = request.app.state.app_container.scheduler.service
     try:
         result = await scheduler_service.run_task_now(body.task_id)
     except TaskNotFoundError:
@@ -165,5 +165,5 @@ async def consolidate_endpoint(
         return ConsolidateResponse(resultado=resultado)
 
     app_container = request.app.state.app_container
-    resultado = await app_container.consolidate_all_agents.execute()
+    resultado = await app_container.consolidate_all.execute()
     return ConsolidateResponse(resultado=resultado)

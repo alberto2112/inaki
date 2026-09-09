@@ -119,7 +119,7 @@ def build_telegram_bot_settings(cfg: AgentConfig) -> TelegramBotSettings:
 class FuentesDelBot(Protocol):
     """Lo que el bot consume de un agente ya wireado (scheduler, fotos, tools).
 
-    Estructural: hoy lo satisface ``AgentContainer``; mañana el ``AgentRuntime``.
+    Estructural: lo satisface el ``AgentRuntime`` (y el borrador del ensamblador).
     """
 
     run_agent: RunAgentUseCase

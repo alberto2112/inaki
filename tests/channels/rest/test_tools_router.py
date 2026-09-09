@@ -116,7 +116,7 @@ def mock_agent_container(
     emitter=None → broadcasted=False sin error.
     """
     container = MagicMock()
-    container._tools = mock_tools_registry
+    container.tools = mock_tools_registry
     container.channel_outbound_registry = mock_outbound_registry
     # Evitar que MagicMock devuelva MagicMock en las navegaciones de config
     container.agent_config.channels = {}

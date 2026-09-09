@@ -15,7 +15,7 @@ Plus 1 tool para el dedup nocturno:
 - find_duplicate_persons: detecta pares de personas con embeddings similares
 
 Wiring: estas tools NO son extensiones (necesitan deps inyectadas — tienen
-constructor con argumentos). Se registran en `_register_tools()` del AgentContainer.
+constructor con argumentos). Las arma `inaki/perception/wiring.py::build_photos_for_agent`.
 """
 
 from __future__ import annotations

@@ -26,7 +26,7 @@ class AppConfig(_ConfigBaseModel):
 
     Bloque SOLO global (``global.yaml`` → ``app:``). No admite override
     per-agente: lo consumen el composition root (``inaki/app/bootstrap.py``) y el
-    ``AppContainer`` antes de que exista ningún agente.
+    el ensamblador antes de que exista ningún agente.
     """
 
     model_config = ConfigDict(validate_default=True)  # RuntimePath en los defaults

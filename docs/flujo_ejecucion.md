@@ -82,53 +82,19 @@ inaki (cli.py → app)
 │       │   └── registry[id] = AgentConfig
 │       └── log "N agent(s) loaded"
 │
-├── AppContainer(global_config, registry)
-│   ├── InMemoryScopeRegistryAdapter() — SINGLE shared instance across all agents
-│   │
-│   ├── First pass — For each AgentConfig in registry:
-│   │   └── AgentContainer(agent_cfg, global_config, scope_registry)
-│   │       ├── EmbeddingProviderFactory.create(cfg) → IEmbeddingProvider
-│   │       ├── SqliteEmbeddingCache(cache_filename)
-│   │       ├── SQLiteMemoryRepository(db_filename, embedder)
-│   │       ├── LLMProviderFactory.create(cfg) → ILLMProvider
-│   │       ├── (if memories.llm differs:) separate LLMProviderFactory for consolidation
-│   │       ├── YamlSkillRepository(embedder, cache)
-│   │       ├── SQLiteHistoryStore(history_cfg)
-│   │       ├── ToolRegistry() + register(builtin tools)
-│   │       ├── _register_extensions(ext_dirs) → tools, skills, knowledge_sources
-│   │       ├── KnowledgeOrchestrator(sources) if knowledge enabled
-│   │       ├── (if photos enabled:) vision + face_registry + scene_describer
-│   │       ├── (if transcription configured:) TranscriptionProviderFactory.create(cfg)
-│   │       ├── RunAgentUseCase(llm, memory, ..., settings=build_run_agent_settings(cfg))
-│   │       ├── RunAgentOneShotUseCase(llm, tools, settings=OneShotSettings(...))
-│   │       └── ConsolidateMemoryUseCase(llm, memory, embedder, history, agent_id,
-│   │                                    settings=build_memory_settings(cfg.memories))
-│   │
-│   ├── Second pass — wire_delegation:
-│   │   └── Registers `delegate` tool with a `build_child` closure (get_sub_agent_raw +
-│   │       build_ephemeral_child → ephemeral one-shot resolved against the CALLER).
-│   │       Containers must exist before cross-references.
-│   │
-│   ├── Build enabled_agents = {id: container.consolidate_memory
-│   │                           for each container where agent_config.memories.consolidation.enabled}
-│   ├── ConsolidateAllAgentsUseCase(enabled_agents, delay_seconds)
-│   │
-│   ├── _build_channel_router() — ChannelRouter(native_sinks, fallback_cfg)
-│   │       built BEFORE the queue; shared by the queue AND the scheduler
-│   ├── LLMDispatcherAdapter(agents) — SINGLE shared instance (lock-per-scope)
-│   ├── BackgroundDelegationQueueAdapter(dispatcher, semaphore=3,
-│   │       result_sender=ChannelRouter)  # el router decide qué canal es conversacional
-│   │       → delivers the parent's [bg-N] response back to the origin channel
-│   │
-│   └── Scheduler wiring:
-│       ├── SQLiteSchedulerRepo(scheduler_cfg.db_filename)
-│       ├── ScheduleTaskUseCase(repo, on_mutation)
-│       ├── SchedulerDispatchPorts(
-│       │       channel_sender=ChannelRouter (same instance),
-│       │       llm_dispatcher=LLMDispatcherAdapter (same instance),
-│       │       consolidator=ConsolidationDispatchAdapter(consolidate_all_agents),
-│       │       http_caller=HttpCallerAdapter())
-│       └── SchedulerService(repo, dispatch_ports, scheduler_cfg)
+├── ensamblar(global_config, registry) → HarnessRuntime      [inaki/app/assembly.py]
+│   ├── 0. shared state: tool config store, scope registry (ONE for all agents), tracer, reloader
+│   ├── 1. per agent → _Borrador: llm, embedding + cache, memory, history, skills, tools
+│   │       (each module's wiring.py builds its own), knowledge, extensions, voice,
+│   │       RunAgentUseCase, RunAgentOneShotUseCase, memory jobs
+│   ├── 2. harness: ChannelRouter, LLMDispatcherAdapter (ONE, lock-per-scope),
+│   │       BackgroundDelegationQueue, ConsolidateAllAgents, SchedulerBundle,
+│   │       photos singletons, telegram file repo
+│   ├── 3. cross-wire, with every agent built: delegate (ephemeral child resolved
+│   │       against the CALLER), scheduler tool, photos, telegram tools + broadcast,
+│   │       memory sub-agents
+│   ├── 4. channels: TelegramBot + TelegramChannel per agent with a token
+│   └── 5. freeze: AgentRuntime per agent, HarnessRuntime
 │
 └── cli_runner.run(global_config, registry, agent_id)
     └── asyncio.run(run_cli(app, agent_id))
@@ -141,13 +107,12 @@ inaki daemon
 │
 ├── _bootstrap(config_dir, agents_dir)      [same as CLI]
 │
-├── AppContainer(global_config, registry)   [same as CLI]
+├── ensamblar(global_config, registry) → HarnessRuntime   [same as CLI]
 │
-└── asyncio.run(run_daemon(app_container, registry))
+└── asyncio.run(run_daemon(harness, registry))
     │
-    ├── app_container.startup()
-    │   ├── _reconcile_consolidate_memory_task()   [see section below]
-    │   ├── _reconcile_reconcile_memory_tasks()    [see Memory Reconciliation Flow]
+    ├── harness.startup()
+    │   ├── reconciliar_builtins(...)   [see section below; scheduler/wiring.py]
     │   └── scheduler_service.start()
     │       ├── repo.ensure_schema()
     │       ├── _handle_missed_on_startup()
@@ -177,7 +142,7 @@ inaki daemon
 inaki consolidate
 │
 ├── _bootstrap(config_dir, agents_dir)
-├── AppContainer(global_config, registry)   ← does NOT start scheduler or channels
+├── ensamblar(global_config, registry)     ← does NOT start scheduler or channels
 │
 └── _run_consolidate(global_config, registry, agent)
     │
@@ -219,65 +184,47 @@ Same mechanism for `EmbeddingProviderFactory` pointing to `inaki/embedding/`.
 
 ---
 
-## AgentContainer Lifecycle
+## Assembly (`inaki/app/assembly.py`)
+
+`ensamblar(global_config, registry, config_dir)` is the composition root: it decides
+the ORDER and hands each module what it needs from another. It does not know how
+anything is built — that lives in each module's `wiring.py` (`memory`, `knowledge`,
+`tools`, `config`, `perception`, `scheduler`, `agents`, `channels/telegram`) — it knows
+when and with what. Five explicit passes:
 
 ```
-AgentContainer.__init__(agent_config, global_config, scope_registry)
-│
-├── EmbeddingProviderFactory.create(cfg) → IEmbeddingProvider
-│   └── E5OnnxProvider(embedding_cfg)
-│       └── _ensure_loaded() — loads model.onnx and tokenizer.json on first use (lazy)
-│
-├── SqliteEmbeddingCache(cache_filename) → IEmbeddingCache
-│
-├── SQLiteMemoryRepository(db_filename, embedder)
-│   └── _ensure_schema() — CREATE TABLE IF NOT EXISTS on first use (lazy)
-│
-├── LLMProviderFactory.create(cfg) → ILLMProvider
-│   └── Provider based on cfg.llm.provider (openrouter, groq, ollama, openai, deepseek)
-│
-├── (if memories.llm differs from llm:) separate LLMProviderFactory for consolidation
-│
-├── YamlSkillRepository(embedder, cache)
-│   └── _ensure_loaded() — loads and embeds YAMLs registered via add_file() on first use (lazy)
-│
-├── SQLiteHistoryStore(history_cfg)
-│   └── _ensure_schema() — automatic column migration if legacy schema
-│
-├── ToolRegistry() + register(builtin tools: web_search, read_file, write_file,
-│                              patch_file, edit_file, scheduler, memory_tools,
-│                              knowledge_search, face_tools)
-│
-├── _register_extensions(ext_dirs) → additional tools, skills, knowledge_sources
-│
-├── KnowledgeOrchestrator(sources) if knowledge enabled
-│
-├── (if photos enabled:)
-│   ├── InsightFaceAdapter (lazy-load on first photo, ~400MB RAM)
-│   ├── SqliteFaceRegistry(faces.db)
-│   └── SceneDescriber (anthropic/openai/groq)
-│
-├── (if transcription configured:)
-│   └── TranscriptionProviderFactory.create(cfg) → ITranscriptionProvider
-│
-├── RunAgentUseCase(llm, memory, embedder, skills, history, tools,
-│                   settings=build_run_agent_settings(cfg), knowledge, ...)
-├── RunAgentOneShotUseCase(llm, tools, settings=OneShotSettings(...)) — scheduler (no history)
-└── ConsolidateMemoryUseCase(llm/memory_llm, memory, embedder, history, agent_id,
-                             settings=build_memory_settings(cfg.memories))
+0. shared state     tool config store, scope registry, tracer, reloader,
+                    late-binding registries (agents, bots, outbounds)
+1. per agent        _construir_agente(cfg) → _Borrador (private, mutable draft)
+                    embedding + cache, llm, memory repo, history, skills, ToolRegistry,
+                    builtin tools (knowledge, memory, files/web, config),
+                    extensions (tools + skills + knowledge sources),
+                    voice (resolver_transcripcion: the CHANNEL decides), RunAgentUseCase,
+                    RunAgentOneShotUseCase, memory jobs (consolidate / reconcile)
+2. harness          ChannelRouter, LLMDispatcherAdapter, BackgroundDelegationQueue,
+                    ConsolidateAllAgents, SchedulerBundle, photos singletons,
+                    telegram file repo
+3. cross-wire       _wire_delegation, _wire_scheduler, _wire_broadcast, _wire_photos,
+                    _wire_telegram_tools, _wire_memory_sub_agents — register tools on the
+                    draft's objects; the runtime never sees the mutation
+4. channels         TelegramBot + TelegramChannel per agent with a token
+5. freeze           AgentRuntime per agent, HarnessRuntime — immutable dataclasses
 ```
+
+Late binding: the router, the dispatcher and the Telegram tools must resolve an
+agent or a bot AT RUNTIME, before the runtimes exist. They receive an empty dict
+that pass 5 fills (`_Registros`): same object, content arrives at the end.
 
 **Note:** use cases never receive `AgentConfig` — each one declares its parameters
 as a frozen settings VO (`inaki/kernel/domain/value_objects/agent_settings.py`); the
-config→VO mapping lives only in the `build_*_settings` builders of `container.py`.
+config→VO mapping lives in `inaki/app/settings.py` and in each module's `wiring.py`.
 
-**Note:** the `delegate` tool is NOT registered in `__init__` — it is wired in the second pass
-of `AppContainer` via `wire_delegation()`, because it needs ALL containers to already exist.
-On each delegation it builds an **ephemeral one-shot child resolved against the caller**
-(`build_ephemeral_child`: inherits the caller's `llm` by default via the `inherit` primitive,
-operates with the caller's tools/resources, and narrows the visible subset with the sub's own
-`tools.allowed`). The sub's pre-built `run_agent_one_shot` is no longer used in the `delegate`
-path; the async path resolves the same way via `one_shot_resolver(caller_id, target_id)`.
+**Note:** the `delegate` tool is registered in pass 3, once ALL agents exist. On each
+delegation it builds an **ephemeral one-shot child resolved against the caller**
+(`inaki.agents.wiring.build_ephemeral_child`: inherits the caller's `llm` by default
+via the `inherit` primitive, operates with the caller's tools/resources, and narrows the
+visible subset with the sub's own `tools.allowed`). The async path resolves the same
+way via `one_shot_resolver(caller_id, target_id)`.
 See [`arquitectura.md`](arquitectura.md) → delegación con herencia.
 
 ---
@@ -378,9 +325,9 @@ Both paths end up invoking the same per-agent use case.
 ### Builtin Task Reconciliation at Startup
 
 ```
-AppContainer.startup()
+HarnessRuntime.startup()
 │
-└── _reconcile_consolidate_memory_task()
+└── reconciliar_builtins(...)          [scheduler/wiring.py] — consolidate_memory (id 1)
     │
     ├── target_schedule ← global_config.memories.consolidation.schedule
     ├── existing ← scheduler_repo.get_task(CONSOLIDATE_MEMORY_TASK_ID)  # id=1
@@ -515,9 +462,9 @@ Memory reconciliation is independent of consolidation and runs as a nightly sche
 Mirrors the `consolidate_memory` pattern:
 
 ```
-AppContainer.startup()
+HarnessRuntime.startup()
 │
-└── _reconcile_reconcile_memory_tasks()
+└── reconciliar_builtins(...)          [scheduler/wiring.py] — reconcile_memory (ids 10+)
     │
     ├── For each agent with memories.reconciliation.enabled = true:
     │   ├── target_schedule ← agent_config.memories.reconciliation.schedule

@@ -34,7 +34,7 @@ The scheduler is a background task execution engine that runs continuously withi
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    Daemon / AppContainer                │
+│                   Daemon / HarnessRuntime               │
 │                                                         │
 │  ┌──────────────┐    ┌─────────────────────────────┐    │
 │  │  CLI (Typer) │    │      SchedulerService       │    │
@@ -54,7 +54,7 @@ The scheduler is a background task execution engine that runs continuously withi
 │                                                         │
 │  SchedulerDispatchPorts:                                │
 │    ChannelRouter → IChannelOutbound del agente dueño    │
-│    LLMDispatcherAdapter  →  AgentContainer.run_agent    │
+│    LLMDispatcherAdapter  →  AgentRuntime.run_agent      │
 │    ConsolidationAdapter  →  ConsolidateAllAgentsUC      │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -725,7 +725,7 @@ schedule:     configurable via memories.consolidation.schedule (default: "0 3 * 
 executions_remaining: null (infinite)
 ```
 
-**Reconciliation on startup** (`AppContainer._reconcile_consolidate_memory_task`):
+**Reconciliation on startup** (`HarnessRuntime.startup` → `scheduler.wiring.reconciliar_builtins`):
 
 1. Reads `memories.consolidation.schedule` from config
 2. Queries the task in the DB
@@ -749,7 +749,7 @@ schedule:     configurable via memories.reconciliation.schedule (default: "0 4 *
 executions_remaining: null (infinite)
 ```
 
-**Reconciliation on startup** (`AppContainer._reconcile_reconcile_memory_tasks`):
+**Reconciliation on startup** (same `reconciliar_builtins`; the harness passes the `(agent_id, schedule)` pairs):
 
 Same pattern as `consolidate_memory` (ID 1):
 
@@ -860,7 +860,8 @@ CREATE TABLE IF NOT EXISTS task_logs (
 | Value objects | [inaki/kernel/domain/value_objects/dispatch_result.py](../inaki/kernel/domain/value_objects/dispatch_result.py) | `DispatchResult(original_target, resolved_target)` |
 | Builtin tasks | [inaki/scheduler/adapters/builtin_tasks.py](../inaki/scheduler/adapters/builtin_tasks.py) | `build_consolidate_memory_task()`, `CONSOLIDATE_MEMORY_TASK_ID` |
 | Config | [inaki/config/schema/scheduler.py](../inaki/config/schema/scheduler.py) | `SchedulerConfig`, `GlobalConfig` |
-| DI Container | [inaki/app/container.py](../inaki/app/container.py) | `AppContainer` |
+| Wiring | [inaki/scheduler/wiring.py](../inaki/scheduler/wiring.py) | `build_scheduler`, `build_dispatch_ports`, `build_scheduler_tool`, `reconciliar_builtins` |
+| Assembly | [inaki/app/assembly.py](../inaki/app/assembly.py) | `ensamblar` (pass 2 builds the bundle; `HarnessRuntime.startup` seeds builtins and starts the loop) |
 | Errors | [inaki/shared/errors.py](../inaki/shared/errors.py) | `SchedulerError`, `BuiltinTaskProtectedError`, `InvalidTriggerTypeError`, `TaskNotFoundError` |
 
 ### Dependency flow
@@ -875,34 +876,28 @@ CLI ──► ScheduleTaskUseCase ──► ISchedulerRepository
                 ▼
         SchedulerDispatchPorts
          ├── ChannelRouter          → IChannelOutbound (Telegram, file, null)
-         ├── LLMDispatcherAdapter   → AgentContainer.run_agent
+         ├── LLMDispatcherAdapter   → AgentRuntime.run_agent
          └── ConsolidationAdapter  → ConsolidateAllAgentsUseCase
 ```
 
-### Wiring in AppContainer
+### Wiring (`inaki/scheduler/wiring.py`)
 
 ```python
-# inaki/app/container.py
-scheduler_repo = SQLiteSchedulerRepo(config.scheduler.db_filename)
-
-schedule_task_uc = ScheduleTaskUseCase(
-    repo=scheduler_repo,
-    on_mutation=lambda: scheduler_service.invalidate(),
+# The scheduler does not know the agents: it receives the dispatcher, the
+# consolidator and the reconcilers through SchedulerDispatchPorts.
+dispatch = build_dispatch_ports(
+    channel_sender=router,            # ChannelRouter (kernel), shared with the bg queue
+    llm_dispatcher=dispatcher,        # LLMDispatcherAdapter, ONE instance (locks per scope)
+    consolidate_all=consolidate_all,  # ConsolidateAllAgentsUseCase
+    reconcilers={agent_id: reconcile_uc, ...},
 )
+bundle = build_scheduler(global_cfg, dispatch=dispatch)
+# bundle.repo / bundle.use_case (on_mutation=service.invalidate) / bundle.service / bundle.reconciler
 
-dispatch_ports = SchedulerDispatchPorts(
-    channel_sender=self._channel_router,  # ChannelRouter del kernel
-    llm_dispatcher=LLMDispatcherAdapter(self.agents),
-    consolidator=ConsolidationDispatchAdapter(self.consolidate_all_agents),
-)
+# Per regular agent (pass 3 of the assembler):
+tools.register(build_scheduler_tool(use_case=bundle.use_case, runner=bundle.service, ...))
 
-scheduler_service = SchedulerService(
-    repo=scheduler_repo,
-    dispatch=dispatch_ports,
-    config=config.scheduler,
-)
-
-# Lifecycle
-await startup():  reconcile_builtin() + scheduler_service.start()
-await shutdown(): scheduler_service.stop()
+# Lifecycle (HarnessRuntime):
+await startup():  reconciliar_builtins(bundle, ...) + bundle.service.start()
+await shutdown(): bundle.service.stop()
 ```

@@ -15,10 +15,10 @@ from inaki.channels.rest.app import create_admin_app
 def app_container() -> MagicMock:
     """AppContainer mock con componentes reales suficientes para integration."""
     container = MagicMock()
-    container.scheduler_service = MagicMock()
-    container.scheduler_service.invalidate = AsyncMock()
-    container.consolidate_all_agents = MagicMock()
-    container.consolidate_all_agents.execute = AsyncMock(return_value="3 agentes consolidados")
+    container.scheduler.service = MagicMock()
+    container.scheduler.service.invalidate = MagicMock()  # síncrono, como el real
+    container.consolidate_all = MagicMock()
+    container.consolidate_all.execute = AsyncMock(return_value="3 agentes consolidados")
 
     agent = MagicMock()
     agent.run_agent = MagicMock()
@@ -75,7 +75,7 @@ async def test_scheduler_reload_full_cycle(admin_app_with_auth, app_container) -
         )
     assert resp.status_code == 200
     assert resp.json()["reloaded"] is True
-    app_container.scheduler_service.invalidate.assert_awaited_once()
+    app_container.scheduler.service.invalidate.assert_called_once_with()
 
 
 async def test_scheduler_reload_wrong_key(admin_app_with_auth) -> None:
@@ -140,4 +140,4 @@ async def test_consolidate_full_cycle(admin_app_with_auth, app_container) -> Non
         )
     assert resp.status_code == 200
     assert "consolidados" in resp.json()["resultado"]
-    app_container.consolidate_all_agents.execute.assert_awaited_once()
+    app_container.consolidate_all.execute.assert_awaited_once()

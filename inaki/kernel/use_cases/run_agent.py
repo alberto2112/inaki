@@ -122,7 +122,7 @@ class RunAgentUseCase:
         self._thinking_indicator = thinking_indicator
         # IKnowledgeRetriever — None si no hay fuentes configuradas
         self._knowledge_orchestrator = knowledge_orchestrator
-        # IBackgroundDelegationQueue — None hasta que se wiree en AppContainer.
+        # IBackgroundDelegationQueue — None hasta que el ensamblador lo wiree.
         # Cuando está set, execute() inyecta una sección con el snapshot de
         # delegaciones in-flight en cada turno (REQ-BGD-7).
         self._background_queue = background_queue
@@ -148,7 +148,7 @@ class RunAgentUseCase:
     def set_background_queue(self, queue: IBackgroundDelegationQueue | None) -> None:
         """Inyecta la cola de background-delegation tras la construcción del use case.
 
-        Se llama desde ``wire_delegation`` cuando el ``AppContainer`` ya tiene
+        Se llama desde el ensamblador (``_wire_delegation``) cuando el harness ya tiene
         construido el ``BackgroundDelegationQueueAdapter``. Encapsulación limpia
         del two-phase init: el use case se construye sin queue, y la recibe
         cuando todos los containers existen.
@@ -176,7 +176,7 @@ class RunAgentUseCase:
         """
         Set additional system-prompt sections (e.g. agent-discovery).
 
-        Called by AgentContainer.wire_delegation after constructing the
+        Called by the assembler (_wire_delegation) after constructing the
         discovery section. Safe to call multiple times — replaces the list.
         """
         self._extra_system_sections = list(sections)
@@ -360,7 +360,7 @@ class RunAgentUseCase:
             ctx: ``ChannelContext`` del turno (identidad del sender + canal de
                 origen). Viaja con la llamada — NO hay estado compartido entre
                 turnos: durante el turno se publica en un ``contextvars.ContextVar``
-                que las tools leen vía ``AgentContainer.get_channel_context()``.
+                que las tools leen vía ``contexto_del_turno.get_channel_context()``.
                 ``None`` para paths sin conversación (scheduler triggers, tests).
             channel: scope de historial del turno (ej: ``"telegram"``, ``"cli"``).
                 ``None`` (default) deriva de ``ctx.channel_type`` (o ``""`` sin

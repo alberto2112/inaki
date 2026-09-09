@@ -44,7 +44,7 @@ class AgentConfig(_ConfigBaseModel):
     Lo que el operador escribe en ``agents/{id}.yaml`` es un DELTA: cada bloque
     que declara pisa campo a campo al homónimo de ``global.yaml``, y lo que no
     menciona se hereda. Este modelo es lo que queda después de ese merge, y es lo
-    único que ve el ``AgentContainer`` al construir el agente.
+    único que ve el ensamblador al construir el agente.
 
     Solo ``id``, ``name`` y ``description`` son obligatorios y exclusivos del
     agente: no tienen contraparte global de la que heredar.
@@ -55,7 +55,7 @@ class AgentConfig(_ConfigBaseModel):
     propósito: declararlos en el YAML de un agente es un error de clave, no un
     override silencioso.
 
-    Los use cases NO reciben este objeto: ``container.py`` lo traduce a Settings
+    Los use cases NO reciben este objeto: el composition root lo traduce a Settings
     VOs (``inaki/kernel/domain/value_objects/agent_settings.py``) para que el dominio no
     dependa del schema de infraestructura.
     """

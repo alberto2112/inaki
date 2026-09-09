@@ -26,14 +26,14 @@ from inaki.observability import startup_event
 
 if TYPE_CHECKING:
     from inaki.config import AgentRegistry
-    from inaki.app.container import AppContainer
+    from inaki.app.runtime import HarnessRuntime
 
 logger = logging.getLogger(__name__)
 
 
-# Tipo del factory que produce un (AppContainer, AgentRegistry) en cada iteración
+# Tipo del factory que produce un (HarnessRuntime, AgentRegistry) en cada iteración
 # del loop de reload. Se invoca al primer arranque y otra vez por cada reload.
-BootstrapFn = Callable[[], tuple["AppContainer", "AgentRegistry"]]
+BootstrapFn = Callable[[], tuple["HarnessRuntime", "AgentRegistry"]]
 
 
 async def _run_admin_server(app_container, admin_cfg, servers: list) -> None:
@@ -157,7 +157,7 @@ async def _shutdown_iteration(
 
 async def run_daemon(
     bootstrap_fn: BootstrapFn,
-    initial: tuple["AppContainer", "AgentRegistry"] | None = None,
+    initial: tuple["HarnessRuntime", "AgentRegistry"] | None = None,
 ) -> None:
     """
     Arranca todos los canales de todos los agentes en paralelo. Loop de reload-aware:
@@ -165,9 +165,9 @@ async def run_daemon(
     vuelve a levantar el ciclo. Termina solo ante SIGTERM/SIGINT o si no hay canales.
 
     Args:
-        bootstrap_fn: factory que produce ``(AppContainer, AgentRegistry)``. Se invoca en
+        bootstrap_fn: factory que produce ``(HarnessRuntime, AgentRegistry)``. Se invoca en
             cada reload (NO en la primera iter si ``initial`` está presente).
-        initial: tupla pre-construida ``(AppContainer, AgentRegistry)`` para usar en la
+        initial: tupla pre-construida ``(HarnessRuntime, AgentRegistry)`` para usar en la
             primera iter. Permite que el caller valide config antes de entrar al runner
             sin pagar el costo del bootstrap dos veces.
     """

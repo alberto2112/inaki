@@ -16,7 +16,7 @@ class SchedulerConfig(_ConfigBaseModel):
     """Motor de tareas programadas: cron, one-shots, reintentos y routing de la salida.
 
     Recurso HARNESS-GLOBAL: se declara SOLO en ``global.yaml`` y el
-    ``AppContainer`` construye una única instancia compartida por todos los
+    El ensamblador construye una única instancia compartida por todos los
     agentes — no hay ni puede haber un scheduler per-agente. Para aislar
     agendas hay que levantar otra instancia del arnés con su propio
     ``--home`` / ``INAKI_HOME``.

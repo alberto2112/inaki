@@ -18,7 +18,7 @@ Inaki is a multi-agent AI assistant following **strict hexagonal architecture**:
 - **`inaki/kernel/`** — El kernel. El turno (`run_agent`, tool loop), the ports it consumes, entities, value objects and domain services. **NEVER imports a feature module or the composition root**. Allowed imports: stdlib, `core/`, and the third-party allowlist `pydantic` + `croniter` + `numpy` (numpy: 512-float face embeddings on Pi 5 — pure Python would be unviable).
 - **módulos de `inaki/`** — Un paquete por feature (`llm`, `embedding`, `tools`, `skills`, `memory`, `knowledge`, `scheduler`, `agents`, `perception`, `extensions`, `config`, `observability`) y un paquete por canal bajo `inaki/channels/`. Implementan los ports que el kernel declara. **NUNCA importan el composition root** ni otro módulo salvo lo que su contrato de `import-linter` permite — si un módulo "necesita" el container o el schema, declara un Protocol/Settings VO de lo que usa y el composition root se lo inyecta.
 - **`wiring.py` de cada módulo** — La factory que compone los adapters del módulo desde la config (`inaki/llm/wiring.py`, `inaki/embedding/wiring.py`, `inaki/perception/wiring.py`): el ÚNICO fichero de un módulo con permiso para importar `inaki.config`, declarado como excepción en su contrato.
-- **`inaki/app/container.py`** — Composition root transitorio (hasta la fase 9c): llama al `wiring.py` de cada módulo en orden y reparte lo que un módulo necesita de otro. No instancia adapters: eso lo hace cada módulo, y este fichero solo decide cuándo y con qué se inyectan into use cases.
+- **`inaki/app/assembly.py`** — El composition root: `ensamblar()` llama al `wiring.py` de cada módulo en cinco pasadas explícitas y entrega runtimes tipados e inmutables (`inaki/app/runtime.py`: `AgentRuntime`, `HarnessRuntime`). No instancia adapters: eso lo hace cada módulo; este fichero decide cuándo y con qué se inyectan into use cases.
 - **`inaki/`** — **Composition root** (entry points). `inaki/cli/` tiene un módulo por comando (`chat`, `daemon`, `admin`, `tool`, `send`, `scheduler`, `knowledge`) con los helpers en `_common`; `inaki/app/` tiene el bootstrap, el runner del daemon y el reloader. Está FUERA de la regla hexagonal: un composition root importando a todos es legítimo — es su trabajo ensamblar. Los entry points NUEVOS van a `inaki/cli/`; los canales (Telegram, REST admin, CLI interactivo) son paquetes bajo `inaki/channels/`.
 - **`ext/`** — User extensions auto-discovered via `manifest.py`.
 
@@ -69,14 +69,14 @@ nuevo — un Slack que nazca mañana hereda las TOOLS, no `/scheduler`.
 
 **LEER antes de agregar un recurso con estado.**
 
-Un arnés = **1 daemon = N agentes** (`AgentContainer`). Los recursos con estado se
+Un arnés = **1 daemon = N agentes** (`AgentRuntime`). Los recursos con estado se
 parten en DOS tiers — y NUNCA en un tercer patrón ad-hoc. Mezclar tiers fue el origen
 del caos histórico (algunos recursos aislables per-agente, otros forzados globales, sin
 regla escrita).
 
 - **Harness-global (singleton, compartido por TODOS los agentes del proceso):**
   `knowledge`, `scheduler`, `faces`/`photos`. Config SOLO en `GlobalConfig` (NUNCA en
-  `AgentConfig`); se construyen UNA vez en `AppContainer`, no por agente. Son los
+  `AgentConfig`); se construyen UNA vez en la pasada 2 del ensamblador (viven en el `HarnessRuntime`), no por agente. Son los
   singletons pesados (modelo InsightFace en RAM, índice RAG, loop de cron): duplicarlos
   in-process reventaría recursos en la Pi. **No hay aislamiento per-agente para estos —
   es por diseño, no una limitación a resolver.** ¿El usuario final necesita aislar uno?
@@ -95,7 +95,7 @@ regla escrita).
 
 - **Per-agente (compartir vs aislar es CONFIGURABLE):** `memory`, `history`, `channels`,
   `llm`, `embedding`. Config en `AgentConfig`; se construyen por agente en
-  `AgentContainer`. Para memory/history el aislamiento ya está resuelto por dos ejes
+  pasada 1 del ensamblador (`AgentRuntime`). Para memory/history el aislamiento ya está resuelto por dos ejes
   complementarios (granularidades distintas, NO redundantes): **mismo `db_filename` →
   aislados por columna `agent_id`** (toda query filtra por `agent_id`;
   `sqlite_history_store.py` arranca el WHERE con `agent_id = ?`; memoria usa índice de
@@ -104,15 +104,15 @@ regla escrita).
   abstracción formal de "pools" encima: para 2 recursos es over-engineering.
 
 **Regla al agregar un recurso con estado nuevo:** decidí su tier ANTES de escribir
-código. Singleton pesado compartido → `GlobalConfig` + `AppContainer`. Per-conversación
-o per-agente → `AgentConfig` + `AgentContainer`, aislable por `agent_id`/fichero. NUNCA
+código. Singleton pesado compartido → `GlobalConfig` + `HarnessRuntime`. Per-conversación
+o per-agente → `AgentConfig` + `AgentRuntime`, aislable por `agent_id`/fichero. NUNCA
 un `knowledge` o `scheduler` per-agente: rompe el tier y multiplica recursos.
 
 ## Reglas de wiring (DI)
 
-- **`inaki/app/container.py`** — `AgentContainer` (per-agent DI) and `AppContainer` (root, all agents). Registering a new tool, provider, or repo happens here and ONLY here.
+- **`inaki/app/assembly.py` + `inaki/app/runtime.py`** — `ensamblar()` (five passes, see `flujo_ejecucion.md`) produces an `AgentRuntime` per agent and one `HarnessRuntime`. A new tool, provider or repo is built by its module's `wiring.py`; the assembler only decides where in the order it goes.
 - **Settings VOs** — Los use cases NO reciben `AgentConfig`: cada uno declara sus parámetros en un VO de `inaki/kernel/domain/value_objects/agent_settings.py` (`RunAgentSettings`, `OneShotSettings`, `MemorySettings`, `PhotosSettings`). El mapeo config→VO vive en los builders públicos de `container.py` (`build_run_agent_settings`, etc.) — único punto donde ambos mundos se tocan. Para exponer un campo nuevo de config a un use case: agregarlo al VO + al builder.
 - **DTOs de adapters outbound** — Mismo patrón hacia el otro lado: los `Resolved*Config` (`ResolvedLLMConfig`, `ResolvedEmbeddingConfig`, `ResolvedTranscriptionConfig`) viven en el `base.py` de su módulo (`inaki/llm`, `inaki/embedding`, transcripción en `inaki/perception`), y los Settings VOs `HistoryStoreSettings` / `ChannelFallbackSettings` junto a su adapter. El `wiring.py` de cada módulo y el container los componen desde el schema YAML (`LLMProviderFactory.resolve`, mapeos en `container.py`). NUNCA moverlos de vuelta a `inaki/config/` — `adapters/` no importa `infrastructure/`.
 - **Provider discovery** — LLM, embedding and transcription providers are auto-discovered by scanning modules for a `PROVIDER_NAME` module-level constant. No manual registration needed. Los tres registries son **independientes** (escanean paquetes distintos: `inaki/llm/`, `inaki/embedding/`, `inaki/perception/adapters/transcription/`): que un vendor exista como LLM NO lo hace disponible para transcripción. Transcripción hoy: `groq` y `openai`, ambos OpenAI-compatible (`/audio/transcriptions`), comparten `BaseTranscriptionProvider` — cada concreto solo declara `_DEFAULT_BASE_URL` + `_PROVIDER_LABEL`.
-- **Two-phase agent init** — `AppContainer` first builds all `AgentContainer` instances, then wires delegation (the `delegate` tool) in a second pass so all containers exist before cross-references.
+- **Two-phase agent init** — pass 1 builds every agent draft; pass 3 wires delegation (the `delegate` tool), the scheduler tool, photos and Telegram tools once ALL agents exist. The runtimes are frozen last (pass 5): an `X | None` field means the capability is not configured for that agent, never that a pass is missing.
 - **Delegación — subagente efímero con herencia contra el caller** — El pool de DEFINICIONES de sub-agentes es compartido, pero cada delegación NO usa el `run_agent_one_shot` pre-built del sub: construye una **instancia efímera one-shot resuelta contra el CALLER** vía `inaki.agents.wiring.build_ephemeral_child(definition_raw, caller_cfg=...)`. Resolución: `resolve_inherit(_deep_merge(SUBAGENT_DEFAULTS, definition_raw), parent_raw)` con `parent_raw` = config EFECTIVA del caller. El primitivo `inherit` (directiva de merge por bloque, resuelta en dicts crudos ANTES de pydantic y strippeada — NUNCA un campo de modelo) hace que el hijo herede del padre: `llm` por default (vía `SUBAGENT_DEFAULTS`), el resto opt-in. **Tools/recursos = SIEMPRE del caller** (`caller._tools`: workspace/memory/knowledge del padre); el sub recorta el subset visible con `tools.allowed` (filtro REQ-OS-5 en `RunAgentOneShotUseCase`, junto a la exclusión de `delegate` REQ-DG-9). El LLM se REUSA (misma instancia del caller) si la config llm efectiva coincide; si el sub la overridea → `LLMProviderFactory` con los `providers` heredados del caller. SIN embedder (el one-shot expone el toolkit completo sin RAG, REQ-OS-4). Misma def + caller P/Q distintos → instancias independientes heredando cada una de su padre. Ambos paths resuelven el efímero contra el caller: sync (`wire_delegation` arma el closure `build_child` con `get_sub_agent_raw` + `build_ephemeral_child`) y async (`BackgroundDelegationQueueAdapter`, `one_shot_resolver(caller_id, target_id)`). Scope: SOLO `delegate` — el carril de memoria (extractor/reconciliador) hereda por su cuenta vía `merged_llm_config`.

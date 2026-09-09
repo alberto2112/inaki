@@ -11,7 +11,7 @@ from inaki.cli import _common
 
 
 def run_chat(client, agent_id: str) -> None:
-    """Chat interactivo via daemon HTTP — sin AppContainer."""
+    """Chat interactivo via daemon HTTP — sin ensamblar el proceso."""
     from inaki.channels.cli.runner import run_cli
 
     run_cli(client, agent_id)

@@ -275,7 +275,7 @@ class ToolResult(BaseModel):
 ## Relationships Between Models
 
 ```
-AgentConfig ──────────────────► AgentContainer
+AgentConfig ──────────────────► AgentRuntime (built by inaki/app/assembly.py)
     │                               │
     ├── LLMConfig ──────────────► ILLMProvider
     ├── EmbeddingConfig ─────────► IEmbeddingProvider
@@ -284,7 +284,7 @@ AgentConfig ──────────────────► AgentConta
     └── channels: dict           Tools: IToolExecutor
                                  Skills: ISkillRepository
 
-AgentContainer
+AgentRuntime
     ├── run_agent: RunAgentUseCase
     │       └── produce AgentContext (ephemeral, per-turn)
     │               └── build_system_prompt(base) → str

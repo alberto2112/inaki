@@ -32,10 +32,10 @@ def _dummy_inspect_result() -> InspectResult:
 @pytest.fixture
 def mock_app_container() -> MagicMock:
     container = MagicMock()
-    container.scheduler_service = MagicMock()
-    container.scheduler_service.invalidate = AsyncMock()
-    container.consolidate_all_agents = MagicMock()
-    container.consolidate_all_agents.execute = AsyncMock(return_value="Consolidación completa")
+    container.scheduler.service = MagicMock()
+    container.scheduler.service.invalidate = MagicMock()  # síncrono, como el real
+    container.consolidate_all = MagicMock()
+    container.consolidate_all.execute = AsyncMock(return_value="Consolidación completa")
     # agents dict con un agente mock
     agent_container = MagicMock()
     agent_container.run_agent = MagicMock()
@@ -87,7 +87,7 @@ async def test_scheduler_reload_200_with_valid_key(admin_app, mock_app_container
     async with AsyncClient(transport=ASGITransport(app=admin_app), base_url="http://test") as ac:
         resp = await ac.post("/scheduler/reload", headers={"X-Admin-Key": "test-secret"})
     assert resp.status_code == 200
-    mock_app_container.scheduler_service.invalidate.assert_awaited_once()
+    mock_app_container.scheduler.service.invalidate.assert_called_once_with()
 
 
 async def test_scheduler_reload_401_without_key(admin_app) -> None:
@@ -108,7 +108,7 @@ async def test_scheduler_reload_401_with_wrong_key(admin_app) -> None:
 
 
 async def test_scheduler_run_200_success(admin_app, mock_app_container) -> None:
-    mock_app_container.scheduler_service.run_task_now = AsyncMock(
+    mock_app_container.scheduler.service.run_task_now = AsyncMock(
         return_value=ManualRunResult(task_id=100, success=True, output="ok", error=None)
     )
     async with AsyncClient(transport=ASGITransport(app=admin_app), base_url="http://test") as ac:
@@ -118,14 +118,14 @@ async def test_scheduler_run_200_success(admin_app, mock_app_container) -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert data == {"task_id": 100, "success": True, "output": "ok", "error": None}
-    mock_app_container.scheduler_service.run_task_now.assert_awaited_once_with(100)
+    mock_app_container.scheduler.service.run_task_now.assert_awaited_once_with(100)
 
 
 async def test_scheduler_run_200_trigger_failed_success_false(
     admin_app, mock_app_container
 ) -> None:
     """El trigger ejecutó pero falló → 200 con success=False (NO es 404)."""
-    mock_app_container.scheduler_service.run_task_now = AsyncMock(
+    mock_app_container.scheduler.service.run_task_now = AsyncMock(
         return_value=ManualRunResult(task_id=100, success=False, output=None, error="boom")
     )
     async with AsyncClient(transport=ASGITransport(app=admin_app), base_url="http://test") as ac:
@@ -139,7 +139,7 @@ async def test_scheduler_run_200_trigger_failed_success_false(
 
 
 async def test_scheduler_run_404_task_not_found(admin_app, mock_app_container) -> None:
-    mock_app_container.scheduler_service.run_task_now = AsyncMock(
+    mock_app_container.scheduler.service.run_task_now = AsyncMock(
         side_effect=TaskNotFoundError("Task 999 not found")
     )
     async with AsyncClient(transport=ASGITransport(app=admin_app), base_url="http://test") as ac:
@@ -195,7 +195,7 @@ async def test_consolidate_200_with_valid_key(admin_app, mock_app_container) -> 
     async with AsyncClient(transport=ASGITransport(app=admin_app), base_url="http://test") as ac:
         resp = await ac.post("/consolidate", headers={"X-Admin-Key": "test-secret"})
     assert resp.status_code == 200
-    mock_app_container.consolidate_all_agents.execute.assert_awaited_once()
+    mock_app_container.consolidate_all.execute.assert_awaited_once()
 
 
 async def test_consolidate_401_without_key(admin_app) -> None:
@@ -209,7 +209,7 @@ async def test_consolidate_body_sin_agent_id_consolida_todos(admin_app, mock_app
     async with AsyncClient(transport=ASGITransport(app=admin_app), base_url="http://test") as ac:
         resp = await ac.post("/consolidate", json={}, headers={"X-Admin-Key": "test-secret"})
     assert resp.status_code == 200
-    mock_app_container.consolidate_all_agents.execute.assert_awaited_once()
+    mock_app_container.consolidate_all.execute.assert_awaited_once()
 
 
 async def test_consolidate_con_agent_id_consolida_solo_ese(admin_app, mock_app_container) -> None:
@@ -225,7 +225,7 @@ async def test_consolidate_con_agent_id_consolida_solo_ese(admin_app, mock_app_c
     assert resp.json()["resultado"] == "Consolidado 'general'"
     agent_container = mock_app_container.agents["general"]
     agent_container.consolidate_memory.execute.assert_awaited_once()
-    mock_app_container.consolidate_all_agents.execute.assert_not_called()
+    mock_app_container.consolidate_all.execute.assert_not_called()
 
 
 async def test_consolidate_agent_id_desconocido_404(admin_app) -> None:

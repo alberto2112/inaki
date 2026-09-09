@@ -133,7 +133,7 @@ class ConsolidateMemoryUseCase:
         # del ``ConsolidateAllAgentsUseCase``: respetar rate limits del LLM remoto.
         self._delay_seconds = max(0, int(delay_seconds))
 
-        # Extractor sub-agente — wired post-construcción por AppContainer Phase 6
+        # Extractor sub-agente — wired post-construcción por el ensamblador (pasada 3)
         # cuando memory.llm.agent_id apunta a un sub-agente válido. Si está
         # seteado, execute() delega la extracción al sub-agente vía one-shot.
         # Si es None, usa el prompt hardcodeado + self._llm como antes.

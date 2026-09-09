@@ -187,14 +187,15 @@ def test_el_wiring_de_fotos_degrada_y_dice_que_capacidad_queda_muda(
 ) -> None:
     """El stack de visión es una dependencia externa pesada: que falte no puede
     tumbar el daemon entero, pero el operador tiene que enterarse de QUÉ perdió."""
+    from types import SimpleNamespace
     from unittest.mock import MagicMock, patch
 
-    from inaki.app.container import AgentContainer
+    from inaki.app.assembly import _wire_photos
 
-    self_ = MagicMock()
-    self_._photos_wired = False
-    self_.agent_config.id = "inaki"
-
+    borrador = SimpleNamespace(
+        cfg=SimpleNamespace(id="inaki"), tools=MagicMock(), process_photo=None
+    )
+    harness = SimpleNamespace(photos=MagicMock())
     global_config = MagicMock()
     global_config.photos.enabled = True
 
@@ -203,14 +204,15 @@ def test_el_wiring_de_fotos_degrada_y_dice_que_capacidad_queda_muda(
     # que se degrada.
     with (
         patch(
-            "inaki.app.container.build_photos_for_agent",
+            "inaki.app.assembly.build_photos_for_agent",
             side_effect=RuntimeError("falta el modelo ONNX"),
         ),
         caplog.at_level("ERROR"),
     ):
-        AgentContainer.wire_photos(self_, MagicMock(), global_config)
+        _wire_photos(borrador, global_config, harness)  # type: ignore[arg-type]
 
-    assert self_._photos_wired is True, "la degradación no debe reintentar en loop"
+    assert borrador.process_photo is None, "sin use case: las fotos de ese agente no se analizan"
+    borrador.tools.register.assert_not_called()
     assert "DESHABILITADO" in caplog.text, (
         f"el operador tiene que leer QUÉ capacidad perdió; dijo: {caplog.text!r}"
     )

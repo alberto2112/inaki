@@ -100,7 +100,7 @@ Recurso HARNESS-GLOBAL: se declara SOLO acá — no existe ``knowledge`` en ``Ag
 
 Arranque del proceso: identidad, logging, agente por defecto y extensiones.
 
-Bloque SOLO global (``global.yaml`` → ``app:``). No admite override per-agente: lo consumen el composition root (``inaki/app/bootstrap.py``) y el ``AppContainer`` antes de que exista ningún agente.
+Bloque SOLO global (``global.yaml`` → ``app:``). No admite override per-agente: lo consumen el composition root (``inaki/app/bootstrap.py``) y el el ensamblador antes de que exista ningún agente.
 
 | Field | Type | Default | Secret |
 |---|---|---|---|
@@ -521,7 +521,7 @@ Pensado para los "dale", "sí", "y eso?": si el input tiene MENOS palabras que e
 
 Motor de tareas programadas: cron, one-shots, reintentos y routing de la salida.
 
-Recurso HARNESS-GLOBAL: se declara SOLO en ``global.yaml`` y el ``AppContainer`` construye una única instancia compartida por todos los agentes — no hay ni puede haber un scheduler per-agente. Para aislar agendas hay que levantar otra instancia del arnés con su propio ``--home`` / ``INAKI_HOME``.
+Recurso HARNESS-GLOBAL: se declara SOLO en ``global.yaml`` y el El ensamblador construye una única instancia compartida por todos los agentes — no hay ni puede haber un scheduler per-agente. Para aislar agendas hay que levantar otra instancia del arnés con su propio ``--home`` / ``INAKI_HOME``.
 
 Solo corre bajo ``inaki daemon``: en la CLI interactiva no hay proceso vivo que dispare nada. Los límites de acá (``max_retries``, ``max_tasks_per_agent``, ``output_truncation_size``) son las barandas contra un agente que programa de más o contra una tarea que falla en loop.
 
@@ -882,13 +882,13 @@ Obligatorio para servidores de inferencia propios OpenAI-compat (vLLM, llama.cpp
 
 Config completa y RESUELTA de un agente — el resultado del merge, no un fichero.
 
-Lo que el operador escribe en ``agents/{id}.yaml`` es un DELTA: cada bloque que declara pisa campo a campo al homónimo de ``global.yaml``, y lo que no menciona se hereda. Este modelo es lo que queda después de ese merge, y es lo único que ve el ``AgentContainer`` al construir el agente.
+Lo que el operador escribe en ``agents/{id}.yaml`` es un DELTA: cada bloque que declara pisa campo a campo al homónimo de ``global.yaml``, y lo que no menciona se hereda. Este modelo es lo que queda después de ese merge, y es lo único que ve el ensamblador al construir el agente.
 
 Solo ``id``, ``name`` y ``description`` son obligatorios y exclusivos del agente: no tienen contraparte global de la que heredar.
 
 Acá viven únicamente los recursos del tier PER-AGENTE (``llm``, ``embedding``, ``memories``, ``chat_history``, ``channels``). Los harness-global (``scheduler``, ``knowledge``, ``photos``) no tienen campo en este modelo a propósito: declararlos en el YAML de un agente es un error de clave, no un override silencioso.
 
-Los use cases NO reciben este objeto: ``container.py`` lo traduce a Settings VOs (``inaki/kernel/domain/value_objects/agent_settings.py``) para que el dominio no dependa del schema de infraestructura.
+Los use cases NO reciben este objeto: el composition root lo traduce a Settings VOs (``inaki/kernel/domain/value_objects/agent_settings.py``) para que el dominio no dependa del schema de infraestructura.
 
 | Field | Type | Default | Secret |
 |---|---|---|---|

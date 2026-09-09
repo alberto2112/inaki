@@ -43,7 +43,7 @@ inaki/
 
 A modular monolith under a single namespace: kernel + feature modules + channels + composition root (`inaki/app`, `inaki/cli`). Dependency rules are enforced by `lint-imports` (see `[tool.importlinter]` in `pyproject.toml`).
 
-**Dependency direction is inviolable:** `composition root → modules → kernel`. The kernel never imports a feature module; modules only know the kernel, `inaki/shared` and what their contract allows (a module's `wiring.py` is the only file allowed to read the config). `inaki/app/container.py` is the only place where concrete adapters are instantiated.
+**Dependency direction is inviolable:** `composition root → modules → kernel`. The kernel never imports a feature module; modules only know the kernel, `inaki/shared` and what their contract allows (a module's `wiring.py` is the only file allowed to read the config). `inaki/app/assembly.py` calls each module's `wiring.py` in five explicit passes and hands back immutable, typed runtimes.
 
 ---
 

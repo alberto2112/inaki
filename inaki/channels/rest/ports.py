@@ -1,11 +1,11 @@
-"""Interfaces estructurales que el admin REST necesita de los containers.
+"""Interfaces estructurales que el admin REST necesita de los runtimes.
 
 Declaradas acá (el consumidor define lo que requiere) para que el admin server
-no importe ``inaki.app.container``. El ``AgentContainer`` / ``AppContainer``
+no importe ``inaki.app.runtime``. El ``AgentRuntime`` / ``HarnessRuntime``
 reales las satisfacen por duck-typing — la dirección hexagonal queda intacta
 (un canal NO importa el composition root).
 
-``agent_config`` y ``_tools`` se exponen como ``@property`` read-only a propósito:
+``agent_config`` y ``tools`` se exponen como ``@property`` read-only a propósito:
 el atributo concreto es un subtipo (``AgentConfig`` / ``ToolRegistry``) y un
 miembro de Protocol mutable sería invariante, rechazando el subtipo. Read-only
 los hace covariantes.
@@ -13,6 +13,7 @@ los hace covariantes.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
@@ -34,8 +35,8 @@ class _HasChannels(Protocol):
     channels: dict[str, Any]
 
 
-class AdminAgentContainer(Protocol):
-    """Lo que los routers del admin acceden de un container de agente resuelto."""
+class AdminAgentRuntime(Protocol):
+    """Lo que los routers del admin acceden de un ``AgentRuntime`` resuelto."""
 
     run_agent: RunAgentUseCase
     consolidate_memory: ConsolidateMemoryUseCase | None
@@ -46,10 +47,10 @@ class AdminAgentContainer(Protocol):
     def agent_config(self) -> _HasChannels: ...
 
     @property
-    def _tools(self) -> IToolExecutor: ...
+    def tools(self) -> IToolExecutor: ...
 
 
-class AdminAppContainer(Protocol):
+class AdminHarness(Protocol):
     """Lo que ``create_admin_app`` recibe — el resto se accede vía ``app.state`` (Any)."""
 
-    agents: dict[str, AdminAgentContainer]
+    agents: Mapping[str, AdminAgentRuntime]

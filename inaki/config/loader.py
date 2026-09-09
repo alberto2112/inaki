@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 
 
 # El merge y la herencia los define UN solo motor (``inaki/config/merge``).
-# Estos alias preservan los nombres históricos que importan ``container.py`` y los tests.
+# Estos alias preservan los nombres históricos que importan los tests.
 _deep_merge = deep_merge
 resolve_inherit = resolver_inherit
 
@@ -710,7 +710,7 @@ def assemble_agent_config(merged: dict) -> AgentConfig:
     """Ensambla un ``AgentConfig`` desde un dict YA mergeado y resuelto.
 
     Asume que ``merged`` pasó por los merges de capas (``load_agent_config``) o por
-    el builder efímero del flujo delegate (``AgentContainer.build_ephemeral_child``)
+    el builder efímero del flujo delegate (``inaki.agents.wiring.build_ephemeral_child``)
     y por la resolución de ``inherit``. Es el ÚNICO punto donde el mapeo
     dict → ``AgentConfig`` vive: lo comparten ambos callers.
 

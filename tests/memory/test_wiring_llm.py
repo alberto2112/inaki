@@ -1,4 +1,4 @@
-"""Tests del wiring del LLM de memoria en `AgentContainer`.
+"""Tests del wiring del LLM de memoria (`inaki.memory.wiring`).
 
 Cubre `inaki.memory.wiring.resolver_llm_de_memorias`, que decide si
 los jobs de memoria reutilizan el LLM del agente o instancian uno dedicado según

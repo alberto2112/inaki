@@ -1,4 +1,4 @@
-"""Tests para AgentContainer._register_extensions()."""
+"""Tests para registrar_extensiones()."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 from inaki.tools.registry import ToolRegistry
 from inaki.kernel.ports.outbound.tool_port import ITool, ToolResult
 from inaki.skills.yaml_skill_repo import YamlSkillRepository
-from inaki.app.container import AgentContainer
+from inaki.app.extensions import registrar_extensiones
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -54,23 +54,37 @@ class FailingTool(ITool):
 # ---------------------------------------------------------------------------
 
 
-def _make_container(tmp_path: Path) -> AgentContainer:
-    """Crea un AgentContainer con _tools y _skills falsos sin __init__ completo."""
-    container = AgentContainer.__new__(AgentContainer)
+def _make_container(tmp_path: Path) -> types.SimpleNamespace:
+    """Crea el mínimo que lee ``registrar_extensiones``, con _tools y _skills falsos, sin __init__ completo."""
+    container = types.SimpleNamespace()
     container._tools = ToolRegistry(embedder=FakeEmbedder())
     container._skills = YamlSkillRepository(FakeEmbedder())
     container._tool_config_store = MagicMock()
     # Lo que el registro de extensiones lee del container además de los registros.
     container._embedder = FakeEmbedder()
     container._pending_knowledge_sources = []
-    container.agent_config = types.SimpleNamespace(id="test-agent")  # type: ignore[assignment]
-    container._global_config = types.SimpleNamespace(knowledge=None)  # type: ignore[assignment]
+    container.agent_config = types.SimpleNamespace(id="test-agent")
+    container._global_config = types.SimpleNamespace(knowledge=None)
     return container
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _registrar(container: types.SimpleNamespace, ext_dirs: list[str]) -> None:
+    """Lo que el ensamblador pasa al registro de extensiones, sacado del fixture."""
+    registrar_extensiones(
+        ext_dirs,
+        tools=container._tools,
+        skills=container._skills,
+        knowledge_sources=container._pending_knowledge_sources,
+        config_store=container._tool_config_store,
+        agent_cfg=container.agent_config,
+        global_cfg=container._global_config,
+        embedder=container._embedder,
+    )
 
 
 def _write_manifest(ext_dir: Path, name: str, content: str) -> Path:
@@ -118,7 +132,7 @@ def clean_inaki_ext_modules():
 def test_missing_dir_no_error(tmp_path: Path) -> None:
     """Directorio inexistente → no error, no tools registradas."""
     container = _make_container(tmp_path)
-    container._register_extensions([str(tmp_path / "nonexistent")])
+    _registrar(container, [str(tmp_path / "nonexistent")])
     assert len(container._tools._tools) == 0
 
 
@@ -140,7 +154,7 @@ def test_happy_path_tool_and_skill(tmp_path: Path, monkeypatch) -> None:
     )
 
     container = _make_container(tmp_path)
-    container._register_extensions([str(ext_dir)])
+    _registrar(container, [str(ext_dir)])
 
     assert "fake_tool" in container._tools
     assert skill_file.resolve() in [p.resolve() for p in container._skills._extra_files]
@@ -157,7 +171,7 @@ def test_manifest_syntax_error_skipped(tmp_path: Path) -> None:
     _write_manifest(ext_dir, "good", "TOOLS = []\nSKILLS = []\n")
 
     container = _make_container(tmp_path)
-    container._register_extensions([str(ext_dir)])
+    _registrar(container, [str(ext_dir)])
     # 'broken' se skipea pero no explota
     assert len(container._tools._tools) == 0
 
@@ -172,7 +186,7 @@ def test_manifest_import_error_skipped(tmp_path: Path) -> None:
     )
 
     container = _make_container(tmp_path)
-    container._register_extensions([str(ext_dir)])
+    _registrar(container, [str(ext_dir)])
     assert len(container._tools._tools) == 0
 
 
@@ -184,7 +198,7 @@ def test_empty_manifest_no_crash(tmp_path: Path) -> None:
     _write_manifest(ext_dir, "empty", "")
 
     container = _make_container(tmp_path)
-    container._register_extensions([str(ext_dir)])
+    _registrar(container, [str(ext_dir)])
     assert len(container._tools._tools) == 0
 
 
@@ -204,7 +218,7 @@ def test_tool_instantiation_error_skipped(tmp_path: Path) -> None:
     )
 
     container = _make_container(tmp_path)
-    container._register_extensions([str(ext_dir)])
+    _registrar(container, [str(ext_dir)])
     assert "failing_tool" not in container._tools
 
     del sys.modules["_test_failing_tool_mod"]
@@ -231,7 +245,7 @@ def test_missing_skill_file_warning(tmp_path: Path, caplog) -> None:
 
     container = _make_container(tmp_path)
     with caplog.at_level(logging.WARNING):
-        container._register_extensions([str(ext_dir)])
+        _registrar(container, [str(ext_dir)])
 
     assert "nonexistent.yaml" in caplog.text
     assert len(container._skills._extra_files) == 0
@@ -262,7 +276,7 @@ def test_name_collision_warning(tmp_path: Path, caplog) -> None:
     container._tools.register(original)
 
     with caplog.at_level(logging.WARNING):
-        container._register_extensions([str(ext_dir)])
+        _registrar(container, [str(ext_dir)])
 
     assert "colisión" in caplog.text
     assert container._tools._tools["fake_tool"] is original  # original intacto
@@ -309,7 +323,7 @@ def test_multiple_dirs_order(tmp_path: Path) -> None:
     )
 
     container = _make_container(tmp_path)
-    container._register_extensions([str(dir1), str(dir2)])
+    _registrar(container, [str(dir1), str(dir2)])
 
     assert "tool_a" in container._tools
     assert "tool_b" in container._tools

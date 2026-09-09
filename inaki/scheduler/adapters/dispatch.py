@@ -33,7 +33,7 @@ class ReconcileDispatchAdapter:
     """Thin wrapper que expone ``reconcile(agent_id)`` al ``SchedulerService``.
 
     Resuelve la instancia de ``ReconcileMemoryUseCase`` del agente en runtime
-    desde el dict de use cases registrados por ``AppContainer``. Si el agente
+    desde el dict de use cases que arma el ensamblador. Si el agente
     no existe o no tiene reconciliación habilitada, lanza ``ValueError`` (el
     scheduler lo captura como fallo del trigger y aplica backoff + log).
     """

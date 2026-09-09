@@ -48,7 +48,7 @@ def build_daemon_client(
     remote_url: Optional[str] = None,
     remote_key: Optional[str] = None,
 ):
-    """Construye DaemonClient con bootstrap mínimo — solo parsea YAML, sin AppContainer.
+    """Construye DaemonClient con bootstrap mínimo — solo parsea YAML, sin ensamblar el proceso.
 
     Si `remote_url` está definido, apunta al daemon remoto en vez del local.
     El auth key se resuelve: `remote_key` > `admin.auth_key` del config local.

@@ -90,7 +90,7 @@ class ReconcileMemoryPayload(BaseModel):
     Dispara la reconciliación de memoria de un agente concreto.
 
     ``agent_id`` identifica el agente cuya ``ReconcileMemoryUseCase`` se ejecuta.
-    El ``AppContainer`` resuelve la instancia en runtime desde su registry de agentes.
+    El dispatcher resuelve la instancia en runtime desde los agentes del harness.
     """
 
     type: Literal["reconcile_memory"] = "reconcile_memory"

@@ -1,7 +1,7 @@
 """
-Tests de observabilidad del wiring de broadcast en ``AppContainer``.
+Tests de observabilidad del wiring de broadcast (``channels.telegram.wiring.build_broadcast``).
 
-Historia del caso (``broadcast-arranque-observable``): ``_wire_broadcast_for_agent``
+Historia del caso (``broadcast-arranque-observable``): ``build_broadcast``
 parseaba ``channels.telegram`` con Pydantic dentro de un ``try/except``. Si el
 bloque no validaba —el caso típico es un ``broadcast:`` en el formato viejo
 (``port:`` suelto o ``remote:``), o sin ``auth``— el método hacía ``return`` y se
@@ -24,11 +24,11 @@ DBs sin aportar nada al caso.
 
 from __future__ import annotations
 
-import types
 
 import pytest
 from pydantic import ValidationError
 
+from inaki.channels.telegram.wiring import build_broadcast
 from inaki.config import (
     AgentConfig,
     ChatHistoryConfig,
@@ -36,7 +36,6 @@ from inaki.config import (
     LLMConfig,
     MemoriesConfig,
 )
-from inaki.app.container import AppContainer
 
 
 def _agent_config(telegram: dict) -> AgentConfig:
@@ -52,32 +51,20 @@ def _agent_config(telegram: dict) -> AgentConfig:
     )
 
 
-def _self_minimo() -> types.SimpleNamespace:
-    """``self`` con lo mínimo que toca ``_wire_broadcast_for_agent``."""
-    return types.SimpleNamespace(
-        agents={
-            "inaki": types.SimpleNamespace(
-                broadcast_adapter=None, group_rate_limiter=None, broadcast_egress=None
-            ),
-        },
-    )
-
-
 def test_topologia_valida_wirea_el_adapter_server():
-    self_ = _self_minimo()
-    AppContainer._wire_broadcast_for_agent(
-        self_,
+    recursos = build_broadcast(
         _agent_config(
             {"token": "t", "broadcast": {"auth": "s" * 16, "server": {"port": 6499}}},
         ),
     )
 
-    adapter = self_.agents["inaki"].broadcast_adapter
+    assert recursos is not None
+    adapter = recursos.broadcast
     assert adapter is not None
     assert adapter._role == "server"
     assert adapter._host == "0.0.0.0"  # el server escucha en toda la LAN
     assert adapter._port == 6499
-    assert self_.agents["inaki"].broadcast_egress is not None
+    assert recursos.egress is not None
 
 
 @pytest.mark.parametrize(
@@ -135,9 +122,7 @@ def test_grupos_autonomous_validos_si_wirean_el_rate_limiter():
     Cierra la pinza del test anterior — la garantía es "o wirea, o no arranca";
     nunca "arranca a medias".
     """
-    self_ = _self_minimo()
-    AppContainer._wire_broadcast_for_agent(
-        self_,
+    recursos = build_broadcast(
         _agent_config(
             {
                 "token": "t",
@@ -147,6 +132,7 @@ def test_grupos_autonomous_validos_si_wirean_el_rate_limiter():
         ),
     )
 
-    limiter = self_.agents["inaki"].group_rate_limiter
+    assert recursos is not None
+    limiter = recursos.rate_limiter
     assert limiter is not None, "un agente autonomous necesita rate limiter de grupos"
     assert limiter._window == 45.0

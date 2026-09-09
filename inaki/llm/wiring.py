@@ -133,7 +133,7 @@ class LLMProviderFactory:
     def create_from_resolved(cls, resolved: ResolvedLLMConfig) -> ILLMProvider:
         """
         Instancia un ``ILLMProvider`` a partir de un ``ResolvedLLMConfig`` ya
-        compuesto (p. ej. por ``AgentContainer._resolve_memory_llm``).
+        compuesto (p. ej. por ``inaki.memory.wiring.resolver_llm_de_memorias``).
 
         Valida ``REQUIRES_CREDENTIALS`` contra el adapter para fail-fast cuando
         el provider referenciado por un override no existe en el registry.

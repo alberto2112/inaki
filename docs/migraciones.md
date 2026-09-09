@@ -158,9 +158,13 @@ con ``__new__`` y leían sus privados.
   e2e sobre borradores), y el resto contra el wiring que corresponde.
 
 **Comportamiento observable.** Ninguno en el daemon: mismo orden de arranque,
-mismos logs. Un hallazgo que NO se corrigió en esta nota: ``POST /admin/
-scheduler/reload`` hace ``await scheduler_service.invalidate()`` sobre un método
-síncrono (el test lo enmascara con ``AsyncMock``).
+mismos logs.
+
+*Cerrado después (mismo PR, commit ``fix(rest)``):* ``POST /admin/scheduler/reload``
+hacía ``await scheduler_service.invalidate()`` sobre un método SÍNCRONO: un
+``TypeError`` y un 500 cada vez que el CLI (``inaki scheduler edit|enable|rm``)
+notificaba al daemon tras una mutación; el test lo enmascaraba con ``AsyncMock``.
+El handler llama ``invalidate()`` sin ``await`` y el test mockea con ``MagicMock``.
 
 **Invariante que dejó.** **NUNCA** un runtime que se "rellena": lo que un
 consumidor recibe del composition root está completo e inmutable, y un ``None``

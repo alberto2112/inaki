@@ -72,8 +72,8 @@ async def agent_info(agent_id: str, request: Request) -> AgentInfoResponse:
     dependencies=[Depends(check_admin_auth)],
 )
 async def scheduler_reload(request: Request) -> SchedulerReloadResponse:
-    scheduler_service = request.app.state.app_container.scheduler.service
-    await scheduler_service.invalidate()
+    # invalidate() es síncrono: solo levanta el Event que despierta al loop.
+    request.app.state.app_container.scheduler.service.invalidate()
     return SchedulerReloadResponse()
 
 

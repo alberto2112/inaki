@@ -33,7 +33,7 @@ def _dummy_inspect_result() -> InspectResult:
 def mock_app_container() -> MagicMock:
     container = MagicMock()
     container.scheduler.service = MagicMock()
-    container.scheduler.service.invalidate = AsyncMock()
+    container.scheduler.service.invalidate = MagicMock()  # síncrono, como el real
     container.consolidate_all = MagicMock()
     container.consolidate_all.execute = AsyncMock(return_value="Consolidación completa")
     # agents dict con un agente mock
@@ -87,7 +87,7 @@ async def test_scheduler_reload_200_with_valid_key(admin_app, mock_app_container
     async with AsyncClient(transport=ASGITransport(app=admin_app), base_url="http://test") as ac:
         resp = await ac.post("/scheduler/reload", headers={"X-Admin-Key": "test-secret"})
     assert resp.status_code == 200
-    mock_app_container.scheduler.service.invalidate.assert_awaited_once()
+    mock_app_container.scheduler.service.invalidate.assert_called_once_with()
 
 
 async def test_scheduler_reload_401_without_key(admin_app) -> None:

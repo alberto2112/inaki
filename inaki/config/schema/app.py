@@ -9,7 +9,9 @@ from __future__ import annotations
 import logging
 from typing import Literal
 
-from inaki.config.schema._base import ExpandedPathList, _ConfigBaseModel
+from pydantic import ConfigDict
+
+from inaki.config.schema._base import RuntimePath, _ConfigBaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,8 @@ class AppConfig(_ConfigBaseModel):
     per-agente: lo consumen el composition root (``inaki/app/bootstrap.py``) y el
     ``AppContainer`` antes de que exista ningún agente.
     """
+
+    model_config = ConfigDict(validate_default=True)  # RuntimePath en los defaults
 
     name: str = "Inaki"
     """Nombre de la instancia del asistente.
@@ -62,13 +66,15 @@ class AppConfig(_ConfigBaseModel):
     tocar el YAML y gana sobre este campo. Apagado por default: las trazas
     contienen el contenido de las conversaciones."""
 
-    ext_dirs: ExpandedPathList = ["ext", "~/.inaki/ext"]
+    ext_dirs: list[RuntimePath] = ["ext"]
     """Directorios donde se auto-descubren las extensiones de usuario, en orden.
 
-    Cada directorio se escanea buscando ``*/manifest.py``, que registra tools,
-    skills y fuentes de knowledge propias. Los paths relativos se resuelven
-    contra el cwd del proceso; ``~`` se expande al cargar la config. Un
-    directorio inexistente se saltea sin error."""
+    Cada directorio se escanea buscando ``*/manifest.py``, que declara tools,
+    skills y fuentes de knowledge propias. Un path relativo se ancla al home de
+    instancia (``<home>/ext`` por defecto; se reancla con ``--home`` /
+    ``INAKI_HOME``); un path absoluto se usa tal cual y ``~`` se expande. Un
+    directorio declarado que no existe se saltea con un ``WARNING`` en el log:
+    nombra un recurso que el operador espera cargado."""
 
     default_agent: str = "general"
     """Agente que usan los comandos de CLI cuando no se pasa ``--agent``.

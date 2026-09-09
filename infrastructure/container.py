@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from functools import partial
 from pathlib import Path
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Callable, Literal
 
 if TYPE_CHECKING:
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
     from inaki.perception.use_cases.process_photo import ProcessPhotoUseCase
     from inaki.shared.channel_context import ChannelContext
 
-from adapters.outbound.config_repository.yaml_tool_config_store import YamlToolConfigStore
+from inaki.tools.config_store import YamlToolConfigStore
 from adapters.outbound.delegation.background_queue_adapter import (
     BackgroundDelegationQueueAdapter,
 )
@@ -41,7 +42,8 @@ from adapters.outbound.scheduler.dispatch_adapters import (
 )
 from adapters.outbound.scheduler.sqlite_scheduler_repo import SQLiteSchedulerRepo
 from adapters.outbound.scope_registry_adapter import InMemoryScopeRegistryAdapter
-from adapters.outbound.tools.tool_registry import ToolRegistry
+from inaki.extensions import descubrir_extensiones
+from inaki.tools.registry import ToolRegistry, instanciar_tool
 from core.domain.services.channel_outbound_registry import ChannelOutboundRegistry
 from core.domain.services.channel_router import ChannelFallbackSettings, ChannelRouter
 from core.domain.services.scheduler_service import SchedulerService
@@ -679,11 +681,11 @@ class AgentContainer:
         """Registra tools built-in del núcleo. Las extensiones se cargan aparte."""
         from pathlib import Path
 
-        from adapters.outbound.tools.edit_file_tool import EditFileTool
-        from adapters.outbound.tools.patch_file_tool import PatchFileTool
-        from adapters.outbound.tools.read_file_tool import ReadFileTool
-        from adapters.outbound.tools.web_search_tool import WebSearchTool
-        from adapters.outbound.tools.write_file_tool import WriteFileTool
+        from inaki.tools.builtin.edit_file import EditFileTool
+        from inaki.tools.builtin.patch_file import PatchFileTool
+        from inaki.tools.builtin.read_file import ReadFileTool
+        from inaki.tools.builtin.web_search import WebSearchTool
+        from inaki.tools.builtin.write_file import WriteFileTool
         from inaki.knowledge.tools.knowledge_search_tool import KnowledgeSearchTool
         from inaki.memory.tools.memory_tools import (
             DeleteMemoryTool,
@@ -1406,149 +1408,55 @@ class AgentContainer:
         )
         return "\n" + header + "\n" + "\n".join(lines)
 
-    def _register_extensions(self, ext_dirs: list[str]) -> None:
+    def _register_extensions(self, ext_dirs: Sequence[str]) -> None:
+        """Registra lo que declaran las extensiones: tools, skills y fuentes de knowledge.
+
+        El descubrimiento (recorrer ``ext_dirs``, importar cada ``manifest.py``)
+        vive en ``inaki.extensions``; acá solo se instancia y se registra, porque
+        acá están los registros. Orden de fuentes de knowledge garantizado:
+        (1) memoria, (2) config, (3) extensiones — la lista es la MISMA que ya
+        tiene el orquestador, así que las ve sin reconstruirse.
         """
-        Auto-discovery de extensiones de usuario.
-
-        Itera sobre cada directorio en ext_dirs en orden, escanea */manifest.py,
-        y registra TOOLS + SKILLS declarados. Usa spec_from_file_location para
-        cargar por path absoluta sin dependencia de sys.path para el manifest.
-        Añade el parent de cada ext_dir a sys.path para que los imports internos
-        del engine de cada extensión resuelvan.
-        """
-        import importlib.util
-        import sys
-        from pathlib import Path
-
-        for ext_dir_str in ext_dirs:
-            ext_dir = Path(ext_dir_str).expanduser().resolve()
-
-            if not ext_dir.exists() or not ext_dir.is_dir():
-                logger.debug("Directorio de extensiones no encontrado: %s", ext_dir)
-                continue
-
-            # Añadir parent al sys.path para que los imports del engine resuelvan
-            parent_str = str(ext_dir.parent)
-            if parent_str not in sys.path:
-                sys.path.insert(0, parent_str)
-                logger.debug("sys.path += %s (extensiones en %s)", parent_str, ext_dir.name)
-
-            # Si el paquete 'ext' ya fue importado (por un dir anterior), extender su __path__
-            # para que incluya este directorio también. Evita que el primer 'ext' encontrado
-            # monopolice el nombre del paquete y bloquee imports de extensiones en otros dirs.
-            pkg_name = ext_dir.name
-            if pkg_name in sys.modules:
-                pkg = sys.modules[pkg_name]
-                ext_dir_abs = str(ext_dir)
-                if hasattr(pkg, "__path__") and ext_dir_abs not in list(pkg.__path__):
-                    pkg.__path__.append(ext_dir_abs)
-                    logger.debug("Extendido %s.__path__ += %s", pkg_name, ext_dir_abs)
-
-            for manifest_path in sorted(ext_dir.glob("*/manifest.py")):
-                ext_name = manifest_path.parent.name
-                # ID único para evitar colisión entre extensiones de mismo nombre en dirs distintos
-                module_id = f"_inaki_ext_{ext_dir.name}_{ext_name}_manifest"
-
+        for ext in descubrir_extensiones(ext_dirs):
+            for tool_cls in ext.tools:
                 try:
-                    spec = importlib.util.spec_from_file_location(module_id, manifest_path)
-                    if spec is None or spec.loader is None:
-                        # spec_from_file_location devuelve None si la ruta no es
-                        # importable (extensión rara, permisos, etc.). loader es
-                        # None si el spec se arma sin loader (no debería pasar acá).
-                        raise ImportError(f"No se pudo armar ModuleSpec para {manifest_path}")
-                    module = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(module)
+                    tool = instanciar_tool(tool_cls, config_store=self._tool_config_store)
                 except Exception as exc:
                     logger.warning(
-                        "Extensión '%s': falló al cargar manifest (%s) — skipping",
-                        ext_name,
+                        "Extensión '%s': falló al instanciar %r (%s) — skipping tool",
+                        ext.nombre,
+                        tool_cls,
                         exc,
                     )
                     continue
-
-                # Registrar tools. Tool Config Protocol: si la clase declara
-                # config_namespace, recibe el store como kwarg `config_store`
-                # (el contrato zero-arg se mantiene para el resto).
-                for tool_cls in getattr(module, "TOOLS", []) or []:
-                    try:
-                        if getattr(tool_cls, "config_namespace", ""):
-                            tool_instance = tool_cls(config_store=self._tool_config_store)
-                        else:
-                            tool_instance = tool_cls()
-                        # Verificar colisión de nombres antes de registrar
-                        if tool_instance.name in self._tools._tools:
-                            logger.warning(
-                                "Extensión '%s': tool '%s' ya registrada — skipping (colisión)",
-                                ext_name,
-                                tool_instance.name,
-                            )
-                            continue
-                        self._tools.register(tool_instance)
-                        logger.info(
-                            "Extensión '%s': tool '%s' registrada",
-                            ext_name,
-                            tool_instance.name,
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            "Extensión '%s': falló al instanciar %r (%s) — skipping tool",
-                            ext_name,
-                            tool_cls,
-                            exc,
-                        )
-
-                # Registrar skills
-                for skill_rel in getattr(module, "SKILLS", []) or []:
-                    skill_path = (manifest_path.parent / skill_rel).resolve()
-                    if not skill_path.exists():
-                        logger.warning(
-                            "Extensión '%s': skill file no encontrado: %s",
-                            ext_name,
-                            skill_path,
-                        )
-                        continue
-                    self._skills.add_file(skill_path)
-                    logger.info(
-                        "Extensión '%s': skill '%s' añadida",
-                        ext_name,
-                        skill_path.name,
+                if tool.name in self._tools:
+                    logger.warning(
+                        "Extensión '%s': tool '%s' ya registrada — skipping (colisión)",
+                        ext.nombre,
+                        tool.name,
                     )
-
-                # Registrar knowledge sources — compatibilidad hacia atrás:
-                # manifests sin KNOWLEDGE_SOURCES simplemente no declaran el atributo.
-                for factory in getattr(module, "KNOWLEDGE_SOURCES", []) or []:
-                    try:
-                        fuente = factory(
-                            self.agent_config,
-                            self._global_config,
-                            self._embedder,
-                        )
-                        self._pending_knowledge_sources.append(fuente)
-                        logger.info(
-                            "Extensión '%s': knowledge source '%s' registrada",
-                            ext_name,
-                            fuente.source_id,
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            "Extensión '%s': factory de knowledge source falló (%s) — skipping",
-                            ext_name,
-                            exc,
-                        )
-
-        # El KnowledgeOrchestrator ya fue construido con una referencia a la misma lista
-        # _pending_knowledge_sources. Al añadir fuentes de nivel 3 (extensiones) arriba,
-        # el orquestrador las ve automáticamente porque comparte el mismo objeto lista.
-        # Orden garantizado: (1) memoria, (2) config, (3) extensiones.
-        fuentes_total = getattr(self, "_pending_knowledge_sources", None)
-        if fuentes_total is not None:
-            agent_id = getattr(self, "agent_config", None)
-            agent_id = agent_id.id if agent_id is not None else "<desconocido>"
-            logger.debug(
-                "AgentContainer '%s': KnowledgeOrchestrator actualizado con %d fuente(s) total",
-                agent_id,
-                len(fuentes_total),
-            )
+                    continue
+                self._tools.register(tool)
+                logger.info("Extensión '%s': tool '%s' registrada", ext.nombre, tool.name)
+            for skill_path in ext.skills:
+                self._skills.add_file(skill_path)
+                logger.info("Extensión '%s': skill '%s' añadida", ext.nombre, skill_path.name)
+            for factory in ext.knowledge_sources:
+                try:
+                    fuente = factory(self.agent_config, self._global_config, self._embedder)
+                except Exception as exc:
+                    logger.warning(
+                        "Extensión '%s': factory de knowledge source falló (%s) — skipping",
+                        ext.nombre,
+                        exc,
+                    )
+                    continue
+                self._pending_knowledge_sources.append(fuente)
+                logger.info(
+                    "Extensión '%s': knowledge source '%s' registrada",
+                    ext.nombre,
+                    fuente.source_id,
+                )
 
 
 class AppContainer:

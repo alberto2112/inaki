@@ -8,7 +8,7 @@ This document covers the two agent extension mechanisms: **tools** (functions in
 
 | Aspect | Tools | Skills |
 |--------|-------|--------|
-| Location | `adapters/outbound/tools/` (Python) | `skills/` (YAML) |
+| Location | `inaki/tools/builtin/` (núcleo) o `ext/<x>/` (extensiones); las de un módulo, con su módulo (`inaki/memory/tools/`, `inaki/knowledge/tools/`, `inaki/channels/telegram/tools/`) | `ext/<x>/*.yaml` |
 | Base interface | `ITool` + `IToolExecutor` | `ISkillRepository` |
 | Registration | Manual in `AgentContainer._register_tools()` | Automatic via glob `*.yaml` |
 | Invocable by the LLM | Yes (function calling) | No (text only in the prompt) |
@@ -44,14 +44,14 @@ class ToolResult(BaseModel):
 
 | Element | Convention | Example |
 |---------|-----------|---------|
-| File | `<name>_tool.py` | `shell_tool.py` |
+| File | `<name>.py` en `inaki/tools/builtin/` (o `tool.py` en la extensión) | `web_search.py` |
 | Class | `<Name>Tool` | `ShellTool` |
 | `ITool.name` | snake_case | `"shell_exec"` |
 
 ### Minimal Example
 
 ```python
-# adapters/outbound/tools/echo_tool.py
+# inaki/tools/builtin/echo.py
 import asyncio
 from core.ports.outbound.tool_port import ITool, ToolResult
 
@@ -88,7 +88,7 @@ Tools are registered manually in the container. After creating the class, add it
 # infrastructure/container.py
 
 def _register_tools(self) -> None:
-    from adapters.outbound.tools.echo_tool import EchoTool
+    from inaki.tools.builtin.echo import EchoTool
     self._tools.register(EchoTool())
 ```
 
@@ -164,7 +164,7 @@ All fields are required. `instructions` supports Markdown.
 
 ### Discovery
 
-`YamlSkillRepository` loads via `add_file()` from the user extension `manifest.py` files (`ext/` local or `~/.inaki/ext/` in production). The core does not define built-in skills: all domain knowledge lives in extensions.
+`YamlSkillRepository` loads via `add_file()` from the user extension `manifest.py` files (`app.ext_dirs`, `<home>/ext` by default; `inaki.extensions` discovers them and the composition root registers what they declare). The core does not define built-in skills: all domain knowledge lives in extensions.
 
 ### Skill Semantic Routing
 
@@ -226,9 +226,10 @@ system_prompt += skills as text              tool_schemas → LLM (function call
 |------|------|
 | Tool port | `core/ports/outbound/tool_port.py` |
 | Skill port | `core/ports/outbound/skill_port.py` |
-| Registry implementation | `adapters/outbound/tools/tool_registry.py` |
-| Concrete tool (reference) | `adapters/outbound/tools/shell_tool.py` |
-| Concrete tool (reference) | `adapters/outbound/tools/web_search_tool.py` |
+| Registry implementation | `inaki/tools/registry.py` (`ToolRegistry`, `instanciar_tool`) |
+| Tool Config Protocol store | `inaki/tools/config_store.py` |
+| Concrete tool (reference) | `inaki/tools/builtin/web_search.py` |
+| Extension discovery | `inaki/extensions/loader.py` |
 | Skills implementation | `adapters/outbound/skills/yaml_skill_repo.py` |
 | Manual registration | `infrastructure/container.py` |
 | Usage in the pipeline | `core/use_cases/run_agent.py` |

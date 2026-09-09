@@ -24,7 +24,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from adapters.outbound.tools.path_resolution import (
+from inaki.tools.path_resolution import (
     ContainmentMode,
     WorkspaceEscapeError,
     resolve_path,

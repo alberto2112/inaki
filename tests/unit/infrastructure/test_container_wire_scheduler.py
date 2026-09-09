@@ -15,7 +15,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 from adapters.outbound.tools.scheduler_tool import SchedulerTool
-from adapters.outbound.tools.tool_registry import ToolRegistry
+from inaki.tools.registry import ToolRegistry
 from core.domain.services.scheduler_service import SchedulerService
 from core.domain.value_objects.agent_settings import OneShotSettings
 from core.ports.outbound.turn_tracer_port import NullTurnTracer

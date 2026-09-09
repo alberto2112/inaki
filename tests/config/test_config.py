@@ -14,6 +14,7 @@ from inaki.config import (
     ProviderConfig,
     SchedulerConfig,
 )
+from inaki.config.home import set_inaki_home
 from inaki.config.loader import _render_default_global_yaml
 from infrastructure.factories.llm_factory import LLMProviderFactory
 
@@ -137,16 +138,29 @@ def test_sqlite_memory_special_in_scheduler() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AppConfig.ext_dirs — expansión por elemento (sin anchoring runtime)
+# AppConfig.ext_dirs — RuntimePath por elemento: relativo ⇒ bajo el home
 # ---------------------------------------------------------------------------
 
 
-def test_app_ext_dirs_expand_tilde_per_element() -> None:
-    cfg = AppConfig(ext_dirs=["ext", "~/.inaki/ext", "/abs/path"])
-    assert cfg.ext_dirs[0] == "ext"
-    assert cfg.ext_dirs[1] == f"{HOME}/.inaki/ext"
-    assert cfg.ext_dirs[2] == "/abs/path"
-    assert all("~" not in p for p in cfg.ext_dirs)
+def test_app_ext_dirs_se_anclan_al_home_de_instancia(tmp_path: Path) -> None:
+    """``ext`` relativo deja de significar "cwd del proceso": es ``<home>/ext``.
+
+    Un path absoluto se usa tal cual y ``~`` se expande, como el resto de los
+    ``RuntimePath`` del schema."""
+    set_inaki_home(tmp_path)
+    try:
+        cfg = AppConfig(ext_dirs=["ext", "~/.inaki/ext", "/abs/path"])
+    finally:
+        set_inaki_home(None)
+    assert cfg.ext_dirs == [str(tmp_path / "ext"), f"{HOME}/.inaki/ext", "/abs/path"]
+
+
+def test_app_ext_dirs_default_es_ext_bajo_el_home(tmp_path: Path) -> None:
+    set_inaki_home(tmp_path)
+    try:
+        assert AppConfig().ext_dirs == [str(tmp_path / "ext")]
+    finally:
+        set_inaki_home(None)
 
 
 # ---------------------------------------------------------------------------

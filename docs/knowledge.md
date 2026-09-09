@@ -118,10 +118,10 @@ This is the same schema Inaki writes for its own managed indexes at
 
 ## Case 3 — Custom Source via Extension
 
-If neither of the two previous types works (for example, you want to query an external API, a PostgreSQL DB, or an Elasticsearch index), you can implement your own source in `ext/`:
+If neither of the two previous types works (for example, you want to query an external API, a PostgreSQL DB, or an Elasticsearch index), you can implement your own source in an extension (`<home>/ext/`):
 
 ```python
-# ext/mi_extension/manifest.py
+# ~/.inaki/ext/mi_extension/manifest.py
 
 def _build_mi_fuente(agent_config, global_config, embedder):
     from mi_extension.fuente import MiFuente

@@ -16,7 +16,7 @@ from typing import Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from adapters.outbound.tools.delegate_tool import DelegateTool
-from adapters.outbound.tools.tool_registry import ToolRegistry
+from inaki.tools.registry import ToolRegistry
 from core.domain.value_objects.agent_settings import OneShotSettings
 from core.ports.outbound.turn_tracer_port import NullTurnTracer
 from core.use_cases.run_agent import RunAgentUseCase

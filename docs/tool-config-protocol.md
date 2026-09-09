@@ -1,6 +1,6 @@
 # Tool Config Protocol — `config/tool_config.yaml`
 
-Credenciales y ajustes de las tools (builtin y de `ext/`) viven en su **propio
+Credenciales y ajustes de las tools (builtin y de extensiones) viven en su **propio
 fichero**, `config/tool_config.yaml`, bajo una raíz `tool_config:` con un
 namespace por tool.
 

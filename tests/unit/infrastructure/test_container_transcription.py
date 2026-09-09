@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import pytest
 
-from core.ports.outbound.transcription_port import ITranscriptionProvider
 from inaki.config import (
     AgentConfig,
     ChatHistoryConfig,
@@ -28,6 +27,7 @@ from inaki.config import (
     ProviderConfig,
     TranscriptionConfig,
 )
+from inaki.perception.ports.transcription import ITranscriptionProvider
 from inaki.shared.errors import InakiError
 from infrastructure.container import AgentContainer
 

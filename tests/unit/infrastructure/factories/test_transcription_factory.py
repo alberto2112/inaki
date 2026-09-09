@@ -1,7 +1,7 @@
 """Tests de TranscriptionProviderFactory (task 1.6).
 
 Contrato idéntico a LLMProviderFactory y EmbeddingProviderFactory:
-- Auto-discovery: escanea adapters.outbound.transcription por PROVIDER_NAME.
+- Auto-discovery: escanea inaki.perception.adapters.transcription por PROVIDER_NAME.
 - create(cfg) retorna la instancia correspondiente al provider configurado.
 - Error claro cuando el provider no está registrado.
 - El test usa monkeypatch sobre el registry para evitar depender del estado real.
@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import pytest
 
-from adapters.outbound.transcription.base import (
+from inaki.config import ProviderConfig, TranscriptionConfig
+from inaki.perception.adapters.transcription.base import (
     BaseTranscriptionProvider,
     ResolvedTranscriptionConfig,
 )
-from inaki.config import ProviderConfig, TranscriptionConfig
 from inaki.shared.errors import ConfigError, UnknownTranscriptionProviderError
 from infrastructure.factories.transcription_factory import TranscriptionProviderFactory
 

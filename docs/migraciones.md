@@ -75,6 +75,7 @@ existe este documento— y la contradicción no queda flotando.
 | [`broadcast-topology-config`](#broadcast-topology-config) | Rol explícito `server` XOR `client`; config vieja falla al cargar |
 | [`broadcast-arranque-observable`](#broadcast-arranque-observable) | El fallo de `bind()` y la config de broadcast que no valida ahora salen como `ERROR` en el log |
 | [`formato-en-el-borde-del-transporte`](#formato-en-el-borde-del-transporte) | Todo lo que Telegram manda fuera del turno conversacional (scheduler, `bg-N`, intermedios, media) sale **formateado** y troceado, no en markdown crudo |
+| [`modulo-perception`](#modulo-perception) | Sin cambios de comportamiento: fotos, caras, escena, imaging y transcripción pasan a `inaki/perception/`; la transcripción de voz es un use case (`TranscribeAudioUseCase`) y el canal Telegram deja de conocer el provider |
 | [`composition-root-y-canales-rest-cli`](#composition-root-y-canales-rest-cli) | Sin cambios de comandos ni de API: `inaki/cli.py` (895 líneas) pasa a `inaki/cli/` (un módulo por comando), el bootstrap y el runner a `inaki/app/`, el admin REST a `inaki/channels/rest/` y el chat interactivo a `inaki/channels/cli/`; desaparece `adapters/inbound/` |
 | [`canal-telegram-vertical`](#canal-telegram-vertical) | `POST /admin/send` pierde `broadcast`/`broadcasted` e `inaki send` pierde `--no-broadcast`: la emisión al LAN la decide el borde del canal, así que `channel_send`, tools y resultados `bg-N` hacia un grupo AHORA se replican por broadcast; el módulo config deja de conocer canales (registro) |
 | [`egress-unico`](#egress-unico) | Un `channel_send` sale por el bot del agente DUEÑO (antes, por el primer bot registrado) y lo persiste el outbound; sin dueño no persiste. Desaparecen `IOutboundSink`, `TelegramSink`, `SinkFactory`, `ChannelHistoryRecorderAdapter` y los sinks intermedios de Telegram/router |
@@ -107,6 +108,55 @@ existe este documento— y la contradicción no queda flotando.
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `modulo-perception`
+
+**Contexto (2026-09-09, fase 6 del refactor modular).** Fotos, caras, escena,
+anotación de imágenes y transcripción de voz estaban repartidas entre
+`core/use_cases/process_photo.py`, `core/domain/entities/face.py`, cinco ports en
+`core/ports/outbound/`, cinco paquetes de `adapters/outbound/`
+(`faces`, `vision`, `scene`, `imaging`, `transcription`), `face_tools.py` entre las
+tools genéricas y el repo de metadatos faciales dentro de `history/`. Y la
+transcripción de voz NO tenía use case: el handler de voz de Telegram
+(`media.py`) aplicaba el límite de tamaño, elegía el idioma, llamaba al provider
+y decidía qué era una transcripción vacía. Un canal nuevo con audio habría
+tenido que copiar todo eso — y el operador pidió que la percepción sirva para
+cualquier canal.
+
+**Cambio.**
+
+- Nace `inaki/perception/`: `domain/face`, `ports/` (`face_registry`, `vision`,
+  `scene`, `transcription`, `face_metadata`), `settings` (`PhotosSettings`, antes en
+  `agent_settings.py`, y `TranscriptionSettings`), `use_cases/process_photo` y el
+  nuevo `use_cases/transcribe_audio`, `adapters/` (InsightFace, registro SQLite de
+  caras, describers de escena, anotador Pillow, transcripción OpenAI-compatible,
+  metadatos faciales) y `tools/face_tools`.
+- `TranscribeAudioUseCase(provider, TranscriptionSettings)`: `check_size()` para
+  rechazar por el tamaño que declara la plataforma sin descargar, `execute()` que
+  aplica límite, idioma y provider, y `EmptyTranscriptionError` para el caso
+  vacío. `TelegramBotPorts.transcribe_audio` reemplaza a `transcription` (el
+  provider) y desaparece `TranscriptionLimits` de los settings del bot: el canal
+  decide qué decirle al usuario ante cada error, nada más.
+- La factory de transcripción sigue en `infrastructure/factories/` (es wiring) y
+  escanea el paquete nuevo.
+- Contrato `lint-imports`: `inaki.perception` solo conoce `core` y `shared` (recibe
+  su config como Settings VO desde el composition root); `core`, `adapters`,
+  `shared`, `observability` y `config` no lo importan.
+- **Decisión sobre las secciones de config de los módulos del núcleo**: `photos`
+  y `transcription` se quedan en `inaki/config/schema/` (igual que `memories`,
+  `scheduler`...). El registro dinámico es para lo opcional y plural (canales,
+  extensiones); un módulo del núcleo importando `inaki.config` para definir su
+  sección crearía un ciclo config ↔ módulo. La sección la POSEE semánticamente
+  el módulo; la ALOJA config.
+
+**Comportamiento observable.** Ninguno: mismos mensajes al usuario, mismos
+límites, mismos flujos. Cambian paths de import.
+
+**Invariante que dejó.** **NUNCA** una capacidad de percepción implementada
+dentro de un canal: el canal entrega bytes y traduce errores a mensajes; qué se
+hace con una foto o un audio es de `perception`.
 
 ---
 

@@ -178,17 +178,3 @@ class OneShotSettings(BaseModel, frozen=True):
     ``delegate``). Si trae nombres, el OneShot expone SOLO esas (intersección con el registry
     recibido). La pobla el builder efímero del flujo delegate desde ``tools.allowed`` del
     sub-agente; un nombre que no exista en el registry se ignora."""
-
-
-class PhotosSettings(BaseModel, frozen=True):
-    """Parámetros que ``ProcessPhotoUseCase`` consume.
-
-    Aplana ``photos.faces.*`` de la config: el use case solo necesita los dos
-    umbrales, no el sub-modelo completo (provider/model son del adapter de visión).
-    """
-
-    enabled: bool = True
-    debug: bool = False
-    enrollment_chats: str = "private"
-    match_threshold: float = 0.55
-    ambiguous_threshold: float = 0.40

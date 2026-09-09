@@ -84,7 +84,32 @@ def mock_container(mock_transcription) -> MagicMock:
     return container
 
 
+def _wire_transcribe(agent_cfg, mock_container) -> None:
+    """El canal ya no recibe el provider: recibe ``TranscribeAudioUseCase`` (perception).
+
+    Se arma REAL sobre el provider mockeado (``mock_container.transcription``) y con
+    los límites del ``agent_cfg``, así las aserciones sobre ``transcribe`` siguen
+    valiendo y el size-check es el de producción.
+    """
+    from inaki.perception.settings import TranscriptionSettings
+    from inaki.perception.use_cases.transcribe_audio import TranscribeAudioUseCase
+
+    provider = getattr(mock_container, "transcription", None)
+    mock_container.transcribe_audio = (
+        TranscribeAudioUseCase(
+            provider,
+            TranscriptionSettings(
+                language=agent_cfg.transcription.language,
+                max_audio_mb=agent_cfg.transcription.max_audio_mb,
+            ),
+        )
+        if provider is not None
+        else None
+    )
+
+
 def _build_bot(agent_cfg, mock_container):
+    _wire_transcribe(agent_cfg, mock_container)
     with patch("inaki.channels.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
         mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.connect_timeout.return_value.read_timeout.return_value.write_timeout.return_value.pool_timeout.return_value.build.return_value = mock_app
@@ -376,6 +401,7 @@ def test_bot_registra_handlers_voice_audio_video_note(agent_cfg, mock_container)
         mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.connect_timeout.return_value.read_timeout.return_value.write_timeout.return_value.pool_timeout.return_value.build.return_value = mock_app
         from inaki.channels.telegram.bot import TelegramBot
 
+        _wire_transcribe(agent_cfg, mock_container)
         bot = TelegramBot(settings=agent_cfg, ports=mock_container)
 
     # Se registran 3 MessageHandlers de audio (además del de texto y los commands).
@@ -426,6 +452,7 @@ def test_handlers_de_voz_se_registran_antes_que_handler_de_texto(agent_cfg, mock
         mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.connect_timeout.return_value.read_timeout.return_value.write_timeout.return_value.pool_timeout.return_value.build.return_value = mock_app
         from inaki.channels.telegram.bot import TelegramBot
 
+        _wire_transcribe(agent_cfg, mock_container)
         bot = TelegramBot(settings=agent_cfg, ports=mock_container)
 
     registered = [c.args[0] for c in mock_app.add_handler.call_args_list]

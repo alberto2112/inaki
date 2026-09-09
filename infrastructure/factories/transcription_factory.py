@@ -1,7 +1,7 @@
 """
 TranscriptionProviderFactory — descubrimiento dinámico de providers de transcripción.
 
-Convención obligatoria para adaptadores en adapters/outbound/transcription/:
+Convención obligatoria para adaptadores en inaki/perception/adapters/transcription/:
 - Definir PROVIDER_NAME: str a nivel de módulo
 - Definir exactamente una clase que herede de BaseTranscriptionProvider
 """
@@ -13,12 +13,12 @@ import logging
 import pkgutil
 from pathlib import Path
 
-from adapters.outbound.transcription.base import (
+from inaki.config import ProviderConfig, TranscriptionConfig
+from inaki.perception.adapters.transcription.base import (
     BaseTranscriptionProvider,
     ResolvedTranscriptionConfig,
 )
-from core.ports.outbound.transcription_port import ITranscriptionProvider
-from inaki.config import ProviderConfig, TranscriptionConfig
+from inaki.perception.ports.transcription import ITranscriptionProvider
 from inaki.shared.errors import ConfigError, UnknownTranscriptionProviderError
 
 logger = logging.getLogger(__name__)
@@ -32,14 +32,16 @@ class TranscriptionProviderFactory:
         if cls._registry:
             return
 
-        import adapters.outbound.transcription as transcription_pkg
-        from adapters.outbound.transcription.base import BaseTranscriptionProvider
+        import inaki.perception.adapters.transcription as transcription_pkg
+        from inaki.perception.adapters.transcription.base import BaseTranscriptionProvider
 
         pkg_path = Path(transcription_pkg.__file__).parent
         for _, module_name, _ in pkgutil.iter_modules([str(pkg_path)]):
             if module_name == "base":
                 continue
-            module = importlib.import_module(f"adapters.outbound.transcription.{module_name}")
+            module = importlib.import_module(
+                f"inaki.perception.adapters.transcription.{module_name}"
+            )
             provider_name = getattr(module, "PROVIDER_NAME", None)
             if provider_name is None:
                 continue

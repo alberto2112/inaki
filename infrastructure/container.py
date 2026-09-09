@@ -18,8 +18,8 @@ if TYPE_CHECKING:
     from core.domain.services.knowledge_orchestrator import KnowledgeOrchestrator
     from core.ports.outbound.background_delegation_port import IBackgroundDelegationQueue
     from core.ports.outbound.knowledge_port import IKnowledgeSource
-    from core.use_cases.process_photo import ProcessPhotoUseCase
     from inaki.channels.telegram.files.ports import IFileDownloader, IFileRecordRepo
+    from inaki.perception.use_cases.process_photo import ProcessPhotoUseCase
     from inaki.shared.channel_context import ChannelContext
 
 from adapters.outbound.config_repository.yaml_tool_config_store import YamlToolConfigStore
@@ -56,7 +56,6 @@ from core.domain.value_objects.agent_settings import (
     ConsolidationSettings,
     MemorySettings,
     OneShotSettings,
-    PhotosSettings,
     ReconciliationSettings,
     RunAgentSettings,
 )
@@ -66,7 +65,6 @@ from core.ports.outbound.memory_port import IMemoryRepository
 from core.ports.outbound.scheduler_dispatch_port import SchedulerDispatchPorts
 from core.ports.outbound.scope_registry_port import IScopeRegistry
 from core.ports.outbound.tool_config_port import IToolConfigStore
-from core.ports.outbound.transcription_port import ITranscriptionProvider
 from core.ports.outbound.turn_tracer_port import ITurnTracer, NullTurnTracer
 from core.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
 from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
@@ -86,7 +84,6 @@ from inaki.channels.telegram.ports import (
     TelegramChannelSettings,
     TelegramEmitFlags,
     TelegramGroupSettings,
-    TranscriptionLimits,
 )
 from inaki.config import (
     SUBAGENT_DEFAULTS,
@@ -107,6 +104,9 @@ from inaki.config.tools.config_tool import ConfigTool
 from inaki.config.use_cases.runtime_config import RuntimeConfigUseCase
 from inaki.config.use_cases.show_effective import ShowEffectiveConfigUseCase
 from inaki.observability import JsonlTurnTracer, is_debug_enabled, startup_event
+from inaki.perception.ports.transcription import ITranscriptionProvider
+from inaki.perception.settings import PhotosSettings, TranscriptionSettings
+from inaki.perception.use_cases.transcribe_audio import TranscribeAudioUseCase
 from inaki.shared.channel_context import current_channel_context
 from inaki.shared.errors import AgentNotFoundError, ConfigError, InakiError
 from infrastructure.factories.embedding_factory import EmbeddingProviderFactory
@@ -240,18 +240,11 @@ def build_telegram_channel_settings(
 
 def build_telegram_bot_settings(cfg: AgentConfig) -> TelegramBotSettings:
     """Mapea AgentConfig → slice de config que consume el TelegramBot."""
-    transcription = None
-    if cfg.transcription is not None:
-        transcription = TranscriptionLimits(
-            language=cfg.transcription.language,
-            max_audio_mb=cfg.transcription.max_audio_mb,
-        )
     return TelegramBotSettings(
         id=cfg.id,
         name=cfg.name,
         description=cfg.description,
         workspace_path=cfg.workspace.path,
-        transcription=transcription,
         telegram=build_telegram_channel_settings(telegram_config(cfg)),
     )
 
@@ -268,7 +261,7 @@ def build_telegram_bot_ports(container: AgentContainer) -> TelegramBotPorts:
         schedule_task=container.schedule_task,
         manual_task_runner=container.manual_task_runner,
         process_photo=container.process_photo,
-        transcription=container.transcription,
+        transcribe_audio=container.transcribe_audio,
         telegram_file_repo=container.telegram_file_repo,
         telegram_file_downloader=container.telegram_file_downloader,
         channel_outbound=(
@@ -394,6 +387,19 @@ class AgentContainer:
         # Transcripción (voz Telegram) — se resuelve bajo reglas cruzadas con
         # channels.telegram.voice_enabled; si el agente no usa voz, queda None.
         self._transcription = self._resolve_transcription(cfg)
+        # La transcripción es una capacidad de percepción: el canal recibe el use
+        # case (límites + idioma + provider), no el provider pelado.
+        self.transcribe_audio: TranscribeAudioUseCase | None = (
+            TranscribeAudioUseCase(
+                self._transcription,
+                TranscriptionSettings(
+                    language=cfg.transcription.language,
+                    max_audio_mb=cfg.transcription.max_audio_mb,
+                ),
+            )
+            if self._transcription is not None and cfg.transcription is not None
+            else None
+        )
 
         # Anotación explícita: build_telegram_bot_ports (definido antes de la
         # clase) lee este atributo y mypy no puede inferir el tipo forward.
@@ -1179,11 +1185,11 @@ class AgentContainer:
             return
 
         try:
-            from adapters.outbound.history.sqlite_message_face_metadata_repo import (
+            from inaki.perception.adapters.face_metadata.sqlite_message_face_metadata_repo import (
                 SqliteMessageFaceMetadataRepo,
             )
-            from adapters.outbound.imaging.pillow_annotator import PillowPhotoAnnotator
-            from core.use_cases.process_photo import ProcessPhotoUseCase
+            from inaki.perception.adapters.imaging.pillow_annotator import PillowPhotoAnnotator
+            from inaki.perception.use_cases.process_photo import ProcessPhotoUseCase
 
             # Metadata repo: side-table en el mismo history.db del agente.
             history_db = self.agent_config.chat_history.db_filename
@@ -1245,19 +1251,19 @@ class AgentContainer:
             api_key = (match.api_key if match else None) or ""
 
         if provider == "anthropic":
-            from adapters.outbound.scene.anthropic_describer import (
+            from inaki.perception.adapters.scene.anthropic_describer import (
                 AnthropicSceneDescriberAdapter,
             )
 
             return AnthropicSceneDescriberAdapter(api_key, model, prompt)
         elif provider == "openai":
-            from adapters.outbound.scene.openai_describer import (
+            from inaki.perception.adapters.scene.openai_describer import (
                 OpenAISceneDescriberAdapter,
             )
 
             return OpenAISceneDescriberAdapter(api_key, model, prompt)
         elif provider == "groq":
-            from adapters.outbound.scene.groq_describer import GroqSceneDescriberAdapter
+            from inaki.perception.adapters.scene.groq_describer import GroqSceneDescriberAdapter
 
             return GroqSceneDescriberAdapter(api_key, model, prompt)
         else:
@@ -1267,7 +1273,7 @@ class AgentContainer:
 
     def _register_face_tools(self, face_registry, metadata_repo, photos_cfg) -> None:
         """Registra las 8 face tools en el registry del agente."""
-        from adapters.outbound.tools.face_tools import (
+        from inaki.perception.tools.face_tools import (
             AddPhotoToPersonTool,
             FindDuplicatePersonsTool,
             ForgetPersonTool,
@@ -1834,10 +1840,10 @@ class AppContainer:
             try:
                 from pathlib import Path
 
-                from adapters.outbound.faces.sqlite_face_registry import (
+                from inaki.perception.adapters.faces.sqlite_face_registry import (
                     SqliteFaceRegistryAdapter,
                 )
-                from adapters.outbound.vision.insightface_adapter import (
+                from inaki.perception.adapters.vision.insightface_adapter import (
                     InsightFaceVisionAdapter,
                 )
 

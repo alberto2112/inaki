@@ -129,13 +129,6 @@ class RunAgentUseCase:
         # Extra sections injected by wire_delegation (task 6.1).
         # Empty by default — non-breaking when delegation is disabled.
         self._extra_system_sections: list[str] = []
-        # Timezone del usuario para resolver {{TIMEZONE}}/{{DATETIME}}/etc. en el system prompt.
-        # None → fallback a TZ local del sistema. Se puede inyectar via wire_user_timezone().
-        self._user_timezone: str | None = None
-
-    def wire_user_timezone(self, tz: str | None) -> None:
-        """Inyecta la timezone del usuario para la interpolación de variables en el system prompt."""
-        self._user_timezone = tz
 
     def set_background_queue(self, queue: IBackgroundDelegationQueue | None) -> None:
         """Inyecta la cola de background-delegation tras la construcción del use case.
@@ -444,7 +437,7 @@ class RunAgentUseCase:
             user_context=user_context,
             memory_digest=digest_text,
             skills=routing.retrieved_skills,
-            timezone=self._user_timezone,
+            timezone=self._settings.user_timezone,
             workspace_root=self._settings.workspace_root or None,
             channel=channel or None,
             chat_id=chat_id or None,
@@ -784,7 +777,7 @@ class RunAgentUseCase:
             user_context=user_context,
             memory_digest=digest_text,
             skills=retrieved_skills,
-            timezone=self._user_timezone,
+            timezone=self._settings.user_timezone,
             workspace_root=self._settings.workspace_root or None,
             channel=channel or None,
             chat_id=chat_id or None,

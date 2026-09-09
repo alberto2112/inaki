@@ -334,7 +334,7 @@ def _construir_agente(
         skills=skills,
         history=history,
         tools=tools,
-        settings=build_run_agent_settings(cfg),
+        settings=build_run_agent_settings(cfg, user_timezone=global_cfg.user.timezone),
         knowledge_orchestrator=knowledge.orchestrator,
         scope_registry=scope_registry,
         tracer=tracer,

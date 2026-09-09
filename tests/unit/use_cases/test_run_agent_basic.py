@@ -18,7 +18,7 @@ from inaki.config import (
     ToolsConfig,
 )
 from inaki.shared.message import Message, Role
-from inaki.app.container import build_run_agent_settings
+from inaki.app.settings import build_run_agent_settings
 
 
 @pytest.fixture

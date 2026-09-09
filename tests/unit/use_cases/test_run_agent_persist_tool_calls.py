@@ -13,7 +13,7 @@ from inaki.kernel.domain.value_objects.llm_response import LLMResponse
 from inaki.kernel.ports.outbound.tool_port import ToolResult
 from inaki.kernel.use_cases.run_agent import RunAgentUseCase
 from inaki.shared.message import Message, Role
-from inaki.app.container import build_run_agent_settings
+from inaki.app.settings import build_run_agent_settings
 
 
 def _tool_then_final_llm(mock_llm, narration="ok, escribo el archivo", final="Listo, quedó en /x"):

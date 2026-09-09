@@ -45,6 +45,7 @@ existe este documento— y la contradicción no queda flotando.
 | [`channel-contextid`](#channel-contextid) | `mv` de los ficheros de contexto a `{context_id}.md` + cambiar la variable del prompt |
 | [`per-user-context-files`](#per-user-context-files) | *(superseded)* `mv` de `USER.md` a `users/{channel}/…` |
 | [`config-falla-ruidoso`](#config-falla-ruidoso) | **Puede impedir el arranque**: corregir el typo/valor que el error nombra (antes se ignoraba en silencio) |
+| [`wiring-por-modulo`](#wiring-por-modulo) | Sin cambios de comportamiento: cada módulo se ensambla en su `wiring.py`; `container.py` queda como orquestador fino |
 | [`kernel-y-fachada-de-tools`](#kernel-y-fachada-de-tools) | **Extensiones**: reemplazar `from core.ports.outbound.*` por `from inaki.tools import ...` (dos `sd`); una extensión sin migrar se saltea con `WARNING` |
 | [`modulos-tools-llm-extensions`](#modulos-tools-llm-extensions) | `app.ext_dirs` relativo pasa a anclarse al **home**, no al cwd: si las extensiones viven en el árbol del código, poner el path absoluto |
 
@@ -107,11 +108,58 @@ existe este documento— y la contradicción no queda flotando.
 - **Memoria**: `memory-management-tools`, `memory-scoped-by-channel-chat`,
   `agent-state-scoped-by-channel-chat`
 - **Scheduler**: `modulos-scheduler-y-agents`, `scheduler-trigger-type-mutable`, `channel-send-history-persist`
-- **Tools y config**: `kernel-y-fachada-de-tools`, `modulos-tools-llm-extensions`, `write-file-explicit-mode`, `tool-config-protocol`,
+- **Tools y config**: `wiring-por-modulo`, `kernel-y-fachada-de-tools`, `modulos-tools-llm-extensions`, `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `wiring-por-modulo`
+
+**Contexto (2026-09-09, fase 9b del refactor modular).** `inaki/app/container.py`
+tenía 2.203 líneas y 48 métodos: sabía cómo se arma un repo de memoria, cuándo
+un LLM de memorias se comparte con el del agente, qué tools registra un agente
+con token de Telegram, cómo se decide el rol del broadcast, qué adaptador de
+escena corresponde a cada provider y con qué IDs se siembran las tareas builtin.
+Agregar un módulo era tocar el dios; los tests del wiring construían el
+container con ``__new__`` y leían sus privados.
+
+**Cambio.** Cada módulo sabe ensamblarse a sí mismo en su `wiring.py`:
+
+- `memory/wiring.py` (settings, repo, historial, `resolver_llm_de_memorias`,
+  jobs de consolidación/reconciliación, tools, consolidate-all, sub-agentes),
+  `knowledge/wiring.py` (fuentes en orden sobre UNA lista viva, orquestador,
+  `manage_knowledge`, tools), `tools/wiring.py` (store del Tool Config Protocol,
+  workspace, builtins), `config/wiring.py` (la tool `config`),
+  `perception/wiring.py` (+ fotos: singletons del harness, `process_photo` y face
+  tools por agente, describer de escena; voz), `scheduler/wiring.py` (dispatch
+  ports, `SchedulerBundle`, tool, reconciliación de builtins recibiendo QUÉ
+  reconciliar), `agents/wiring.py` (cola background, `build_ephemeral_child`,
+  `delegate`, sección de descubrimiento), `channels/telegram/wiring.py` (los
+  builders de settings y ports, broadcast + rate limiter, outbound, tools,
+  repo de ficheros, `build_channel`). En el composition root: `app/settings.py`
+  (config → VOs del kernel) y `app/extensions.py` (una extensión aporta a tres
+  módulos, así que registrarla es del root).
+- Cada `wiring.py` es el ÚNICO fichero de su módulo con permiso para importar
+  `inaki.config` (y, dos de ellos, el `wiring.py` de `llm`): declarado como
+  `ignore_imports` en su contrato. Es la única excepción a "nunca se resuelve
+  una violación con ignore_imports", y está escrita como tal.
+- `container.py` quedó en 1.139 líneas como orquestador fino con la MISMA
+  superficie pública: canales, REST y runner no se tocaron. Se disuelve en la 9c.
+- Tests: los del container que probaban lógica de un módulo apuntan ahora a su
+  wiring (`tests/memory/test_wiring_llm.py`, `tests/channels/telegram/
+  test_wiring_settings.py`), y nacen `tests/scheduler/test_wiring.py` y
+  `tests/knowledge/test_wiring.py`.
+
+**Comportamiento observable.** Ninguno: mismo orden de arranque, mismos logs.
+
+**Invariante que dejó.** **NUNCA** instanciar un adapter, tool o repo de un
+módulo fuera del `wiring.py` de ese módulo. Si el composition root "necesita"
+construir algo de un módulo, el módulo expone un `build_*` y el root lo llama:
+la flecha va del root al módulo, y el conocimiento de cómo se arma se queda
+donde vive lo que se arma.
 
 ---
 

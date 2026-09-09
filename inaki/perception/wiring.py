@@ -1,4 +1,7 @@
-"""
+"""Wiring del módulo perception: transcripción (factory por ``PROVIDER_NAME``), fotos y caras.
+
+Único fichero del módulo con permiso para importar ``inaki.config``.
+
 TranscriptionProviderFactory — descubrimiento dinámico de providers de transcripción.
 
 Convención obligatoria para adaptadores en inaki/perception/adapters/transcription/:
@@ -13,13 +16,43 @@ import logging
 import pkgutil
 from pathlib import Path
 
-from inaki.config import ProviderConfig, TranscriptionConfig
+from collections.abc import Callable
+from dataclasses import dataclass
+
+from inaki.config import AgentConfig, PhotosConfig, ProviderConfig, TranscriptionConfig
+from inaki.kernel.ports.outbound.tool_port import ITool
+from inaki.perception.adapters.face_metadata.sqlite_message_face_metadata_repo import (
+    SqliteMessageFaceMetadataRepo,
+)
+from inaki.perception.adapters.faces.sqlite_face_registry import SqliteFaceRegistryAdapter
+from inaki.perception.adapters.imaging.pillow_annotator import PillowPhotoAnnotator
+from inaki.perception.adapters.scene.anthropic_describer import AnthropicSceneDescriberAdapter
+from inaki.perception.adapters.scene.groq_describer import GroqSceneDescriberAdapter
+from inaki.perception.adapters.scene.openai_describer import OpenAISceneDescriberAdapter
 from inaki.perception.adapters.transcription.base import (
     BaseTranscriptionProvider,
     ResolvedTranscriptionConfig,
 )
+from inaki.perception.adapters.vision.insightface_adapter import InsightFaceVisionAdapter
+from inaki.perception.ports.face_registry import IFaceRegistryPort
+from inaki.perception.ports.scene import ISceneDescriberPort
 from inaki.perception.ports.transcription import ITranscriptionProvider
-from inaki.shared.errors import ConfigError, UnknownTranscriptionProviderError
+from inaki.perception.ports.vision import IVisionPort
+from inaki.perception.settings import PhotosSettings, TranscriptionSettings
+from inaki.perception.tools.face_tools import (
+    AddPhotoToPersonTool,
+    FindDuplicatePersonsTool,
+    ForgetPersonTool,
+    ListKnownPersonsTool,
+    MergePersonsTool,
+    RegisterFaceTool,
+    SkipFaceTool,
+    UpdatePersonMetadataTool,
+)
+from inaki.perception.use_cases.process_photo import ProcessPhotoUseCase
+from inaki.perception.use_cases.transcribe_audio import TranscribeAudioUseCase
+from inaki.shared.channel_context import ChannelContext
+from inaki.shared.errors import ConfigError, InakiError, UnknownTranscriptionProviderError
 
 logger = logging.getLogger(__name__)
 
@@ -114,3 +147,116 @@ class TranscriptionProviderFactory:
             base_url=provider_cfg.base_url,
         )
         return adapter_type(resolved)
+
+
+# ---------------------------------------------------------------------------
+# Fotos y voz: lo que el composition root pide a este módulo
+# ---------------------------------------------------------------------------
+
+
+def build_photos_settings(photos_cfg: PhotosConfig) -> PhotosSettings:
+    return PhotosSettings(
+        enabled=photos_cfg.enabled,
+        debug=photos_cfg.debug,
+        enrollment_chats=photos_cfg.enrollment_chats,
+        match_threshold=photos_cfg.faces.match_threshold,
+        ambiguous_threshold=photos_cfg.faces.ambiguous_threshold,
+    )
+
+
+def build_transcribe_audio(
+    provider: ITranscriptionProvider, transcription_cfg: TranscriptionConfig
+) -> TranscribeAudioUseCase:
+    """El use case de voz: provider ya resuelto + límites + idioma. Si el agente
+    TIENE que tener voz lo decide el canal (composition root), no este módulo."""
+    return TranscribeAudioUseCase(
+        provider,
+        TranscriptionSettings(
+            language=transcription_cfg.language,
+            max_audio_mb=transcription_cfg.max_audio_mb,
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class PhotosSingletons:
+    """Tier harness-global de fotos: UN modelo de visión y UN registro de caras."""
+
+    vision: IVisionPort
+    face_registry: IFaceRegistryPort
+
+
+def build_photos_singletons(photos_cfg: PhotosConfig, *, faces_db_path: str) -> PhotosSingletons:
+    return PhotosSingletons(
+        vision=InsightFaceVisionAdapter(photos_cfg.faces.model),
+        face_registry=SqliteFaceRegistryAdapter(faces_db_path, embedding_dim=512),
+    )
+
+
+@dataclass(frozen=True)
+class PhotosBundle:
+    """Lo per-agente de fotos: el use case que consume el canal y las face tools."""
+
+    process_photo: ProcessPhotoUseCase
+    tools: list[ITool]
+
+
+def build_photos_for_agent(
+    agent_cfg: AgentConfig,
+    photos_cfg: PhotosConfig,
+    singletons: PhotosSingletons,
+    *,
+    get_channel_context: Callable[[], ChannelContext | None],
+) -> PhotosBundle:
+    """Adapters per-agente (describer de escena, anotador, repo de metadata) + use case + tools.
+
+    Lanza si algo no se puede construir: el composition root decide si degradar
+    (hoy: fotos deshabilitadas para ese agente, el resto arranca).
+    """
+    metadata_repo = SqliteMessageFaceMetadataRepo(agent_cfg.chat_history.db_filename)
+    process_photo = ProcessPhotoUseCase(
+        vision=singletons.vision,
+        face_registry=singletons.face_registry,
+        scene_describer=_build_scene_describer(photos_cfg, agent_cfg.providers),
+        annotator=PillowPhotoAnnotator(),
+        metadata_repo=metadata_repo,
+        config=build_photos_settings(photos_cfg),
+    )
+    registry = singletons.face_registry
+    tools: list[ITool] = [
+        RegisterFaceTool(registry, metadata_repo, agent_cfg.id, get_channel_context),
+        AddPhotoToPersonTool(registry, metadata_repo, agent_cfg.id, get_channel_context),
+        UpdatePersonMetadataTool(registry),
+        ListKnownPersonsTool(registry),
+        ForgetPersonTool(registry),
+        SkipFaceTool(registry, metadata_repo, agent_cfg.id, get_channel_context),
+        MergePersonsTool(registry),
+        FindDuplicatePersonsTool(registry, photos_cfg.dedup.similarity_threshold),
+    ]
+    return PhotosBundle(process_photo=process_photo, tools=tools)
+
+
+def _build_scene_describer(
+    photos_cfg: PhotosConfig, providers: dict[str, ProviderConfig]
+) -> ISceneDescriberPort:
+    """El adaptador de descripción de escena según ``photos.scene.provider``.
+
+    Sin ``scene.api_key`` propia, toma la del registry ``providers`` (por key o
+    por ``type``) — el mismo vendor que el LLM no obliga a repetir la credencial.
+    """
+    scene = photos_cfg.scene
+    api_key = scene.api_key
+    if not api_key:
+        match = providers.get(scene.provider) or next(
+            (p for p in providers.values() if p.type == scene.provider), None
+        )
+        api_key = (match.api_key if match else None) or ""
+    if scene.provider == "anthropic":
+        return AnthropicSceneDescriberAdapter(api_key, scene.model, scene.prompt_template)
+    if scene.provider == "openai":
+        return OpenAISceneDescriberAdapter(api_key, scene.model, scene.prompt_template)
+    if scene.provider == "groq":
+        return GroqSceneDescriberAdapter(api_key, scene.model, scene.prompt_template)
+    raise InakiError(
+        f"Scene provider desconocido: '{scene.provider}'. Válidos: anthropic, openai, groq"
+    )

@@ -10,7 +10,7 @@ el bot tenía con los ``.get()``.
 from __future__ import annotations
 
 from inaki.channels.telegram.config import TelegramChannelConfig
-from inaki.app.container import build_telegram_channel_settings
+from inaki.channels.telegram.wiring import build_telegram_channel_settings
 
 
 def _cfg(**kwargs) -> TelegramChannelConfig:

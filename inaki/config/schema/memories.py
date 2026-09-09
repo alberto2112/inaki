@@ -33,7 +33,7 @@ class MemoryLLMConfig(_ConfigBaseModel):
 
     Las credenciales NO viven acá — si el override cambia ``provider``, las creds
     se resuelven automáticamente desde el registry ``providers`` del nivel
-    superior. Ver ``AgentContainer._resolve_memories_llm`` (container.py).
+    superior. Ver ``inaki.memory.wiring.resolver_llm_de_memorias``.
 
     NOTA: ``agent_id`` ya NO vive acá. La delegación a sub-agente es POR JOB y
     se declara en ``consolidation.agent_id`` / ``reconciliation.agent_id`` —
@@ -244,7 +244,7 @@ class MemoriesConfig(_ConfigBaseModel):
 
         Las credenciales se resuelven aparte contra el registry ``providers``
         — la composición del ``ResolvedLLMConfig`` (DTO de adapters) vive en
-        ``AgentContainer._resolve_memories_llm``.
+        ``inaki.memory.wiring.resolver_llm_de_memorias``.
         """
         if self.llm is None:
             return base

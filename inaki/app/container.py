@@ -1,10 +1,13 @@
 """
-Container de inyección de dependencias.
+Composition root (transitorio): orquesta los ``wiring.py`` de cada módulo.
 
-AgentContainer — instancia todos los adaptadores para un agente concreto.
-AppContainer — container raíz, carga todos los agentes al arrancar.
+AgentContainer — arma un agente llamando al wiring de cada módulo en orden.
+AppContainer — container raíz: el tier harness-global y las pasadas cruzadas.
 
-Este es el ÚNICO lugar donde se instancian adaptadores concretos.
+Ningún adapter se instancia acá: cada módulo sabe ensamblarse a sí mismo en
+su ``wiring.py`` (config → adapters, use cases, tools) y este fichero solo
+decide el ORDEN y reparte lo que un módulo necesita de otro. La fase 9c lo
+disuelve en ``inaki/app/assembly.py`` con runtimes tipados.
 """
 
 from __future__ import annotations
@@ -13,51 +16,65 @@ import logging
 from functools import partial
 from pathlib import Path
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Callable, Literal
+from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
     from inaki.kernel.ports.outbound.background_delegation_port import IBackgroundDelegationQueue
-    from inaki.kernel.ports.outbound.knowledge_port import IKnowledgeSource
     from inaki.channels.telegram.files.ports import IFileDownloader, IFileRecordRepo
-    from inaki.knowledge.orchestrator import KnowledgeOrchestrator
     from inaki.perception.use_cases.process_photo import ProcessPhotoUseCase
     from inaki.shared.channel_context import ChannelContext
 
-from inaki.tools.config_store import YamlToolConfigStore
-from inaki.agents.delegation.background_queue import (
-    BackgroundDelegationQueueAdapter,
-)
-from inaki.scheduler.adapters.builtin_tasks import (
-    _RECONCILE_MEMORY_BASE_ID,
-    build_consolidate_memory_task,
-    build_face_dedup_task,
-    build_reconcile_memory_task,
-)
-from inaki.scheduler.adapters.dispatch import (
-    ConsolidationDispatchAdapter,
-    HttpCallerAdapter,
-    ReconcileDispatchAdapter,
-    ShellExecAdapter,
-)
-from inaki.scheduler.adapters.sqlite_repo import SQLiteSchedulerRepo
 from inaki.agents.dispatcher import LLMDispatcherAdapter
 from inaki.agents.scope_registry import InMemoryScopeRegistryAdapter
-from inaki.extensions import descubrir_extensiones
-from inaki.tools.registry import ToolRegistry, instanciar_tool
+from inaki.agents.wiring import (
+    build_background_queue,
+    build_delegate_tool,
+    build_discovery_section,
+    build_ephemeral_child,
+)
+from inaki.app.extensions import registrar_extensiones
+from inaki.app.settings import build_one_shot_settings, build_run_agent_settings
+from inaki.channels.telegram.files.ports import IFileRecordRepo
+from inaki.channels.telegram.wiring import (
+    TelegramAgentResources,
+    build_broadcast,
+    build_channel,
+    build_telegram_bot_ports,
+    build_telegram_file_repo,
+    build_telegram_outbound,
+    build_telegram_tools,
+)
+from inaki.perception.wiring import (
+    build_photos_singletons,
+    PhotosSingletons,
+    build_photos_for_agent,
+    build_transcribe_audio,
+)
+from inaki.scheduler.wiring import (
+    build_dispatch_ports,
+    build_scheduler,
+    build_scheduler_tool,
+    reconciliar_builtins,
+)
+from inaki.config.wiring import build_config_tool
+from inaki.knowledge.wiring import build_knowledge, build_knowledge_tools
+from inaki.memory.wiring import (
+    MemoryJobs,
+    SubAgenteDeMemoria,
+    build_consolidate_all,
+    build_history_store,
+    build_memory_jobs,
+    build_memory_repo,
+    build_memory_tools,
+    wire_sub_agentes_de_memoria,
+)
+from inaki.tools.registry import ToolRegistry
+from inaki.tools.wiring import build_builtin_tools, build_tool_config_store, resolver_workspace
 from inaki.kernel.domain.services.channel_outbound_registry import ChannelOutboundRegistry
 from inaki.kernel.domain.services.channel_router import ChannelFallbackSettings, ChannelRouter
-from inaki.scheduler.service import SchedulerService
-from inaki.kernel.domain.value_objects.agent_settings import (
-    ConsolidationSettings,
-    MemorySettings,
-    OneShotSettings,
-    ReconciliationSettings,
-    RunAgentSettings,
-)
 from inaki.scheduler.ports.use_case import IManualTaskRunner
 from inaki.kernel.ports.outbound.channel_port import IChannel
 from inaki.kernel.ports.outbound.memory_port import IMemoryRepository
-from inaki.scheduler.ports.dispatch import SchedulerDispatchPorts
 from inaki.kernel.ports.outbound.scope_registry_port import IScopeRegistry
 from inaki.kernel.ports.outbound.tool_config_port import IToolConfigStore
 from inaki.kernel.ports.outbound.turn_tracer_port import ITurnTracer, NullTurnTracer
@@ -65,48 +82,25 @@ from inaki.kernel.use_cases.run_agent import RunAgentUseCase
 from inaki.kernel.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
 from inaki.scheduler.use_cases.schedule_task import ScheduleTaskUseCase
 from inaki.app.reloader import DaemonReloader
-from inaki.channels.telegram.broadcast.buffer import BroadcastBuffer
 from inaki.channels.telegram.broadcast.egress import BroadcastEgress
 from inaki.channels.telegram.broadcast.rate_limiter import FixedWindowRateLimiter
 from inaki.channels.telegram.broadcast.tcp import TcpBroadcastAdapter
-from inaki.channels.telegram.config import TelegramChannelConfig, telegram_config
-from inaki.channels.telegram.ports import (
-    TelegramBotPorts,
-    TelegramBotSettings,
-    TelegramChannelSettings,
-    TelegramEmitFlags,
-    TelegramGroupSettings,
-)
+from inaki.channels.telegram.config import telegram_config
 from inaki.config import (
-    SUBAGENT_DEFAULTS,
     AgentConfig,
     AgentRegistry,
     GlobalConfig,
-    KnowledgeSourceConfig,
-    MemoriesConfig,
-    PhotosConfig,
-    assemble_agent_config,
     migrate_tool_config_to_own_file,
 )
-from inaki.config.adapters.yaml_repository import YamlRepository
 from inaki.config.home import get_inaki_home
-from inaki.config.introspection import defaults_del_schema, paths_secretos
-from inaki.config.merge import deep_merge, resolver_inherit
-from inaki.config.tools.config_tool import ConfigTool
-from inaki.config.use_cases.runtime_config import RuntimeConfigUseCase
-from inaki.config.use_cases.show_effective import ShowEffectiveConfigUseCase
 from inaki.embedding.cache import SqliteEmbeddingCache
 from inaki.memory.adapters.sqlite_history_store import (
-    HistoryStoreSettings,
     SQLiteHistoryStore,
 )
-from inaki.memory.adapters.sqlite_memory_repo import SQLiteMemoryRepository
-from inaki.memory.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
 from inaki.memory.use_cases.consolidate_memory import ConsolidateMemoryUseCase
 from inaki.memory.use_cases.reconcile_memory import ReconcileMemoryUseCase
 from inaki.observability import JsonlTurnTracer, is_debug_enabled, startup_event
 from inaki.perception.ports.transcription import ITranscriptionProvider
-from inaki.perception.settings import PhotosSettings, TranscriptionSettings
 from inaki.perception.use_cases.transcribe_audio import TranscribeAudioUseCase
 from inaki.shared.channel_context import current_channel_context
 from inaki.shared.errors import AgentNotFoundError, ConfigError, InakiError
@@ -114,7 +108,6 @@ from inaki.skills.yaml_skill_repo import YamlSkillRepository
 from inaki.embedding.wiring import EmbeddingProviderFactory
 from inaki.llm.wiring import LLMProviderFactory
 from inaki.perception.wiring import TranscriptionProviderFactory
-from inaki.scheduler.reconciler import SchedulerReconciler
 
 logger = logging.getLogger(__name__)
 
@@ -128,150 +121,23 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def build_memory_settings(memories_cfg: MemoriesConfig) -> MemorySettings:
-    cons = memories_cfg.consolidation
-    rec = memories_cfg.reconciliation
-    return MemorySettings(
-        # digest_filename ya viene resuelto a ruta absoluta por RuntimePath.
-        digest_template=memories_cfg.digest_filename,
-        digest_size=memories_cfg.digest_size,
-        consolidation=ConsolidationSettings(
-            min_relevance_score=cons.min_relevance_score,
-            keep_last_messages=cons.keep_last_messages,
-            channels_infused=(tuple(cons.channels_infused) if cons.channels_infused else None),
-        ),
-        reconciliation=ReconciliationSettings(
-            similarity_threshold=rec.similarity_threshold,
-            top_k=rec.top_k,
-        ),
-    )
+class _DescripcionDesdeContainer:
+    """Adapta un ``AgentContainer`` a lo que la sección de descubrimiento lee de él."""
 
+    def __init__(self, container: AgentContainer) -> None:
+        self._c = container
 
-def build_run_agent_settings(cfg: AgentConfig) -> RunAgentSettings:
-    tg_cfg = telegram_config(cfg)
-    timestamp_channels = (
-        frozenset({"telegram"}) if tg_cfg is not None and tg_cfg.add_llm_timestamp else frozenset()
-    )
-    return RunAgentSettings(
-        agent_id=cfg.id,
-        name=cfg.name,
-        description=cfg.description,
-        system_prompt=cfg.system_prompt,
-        workspace_root=str(Path(cfg.workspace.path).expanduser().resolve()),
-        users_dir=str(get_inaki_home() / "users"),
-        include_base_dir=str(get_inaki_home()),
-        merge_chats=cfg.chat_history.merge_chats,
-        min_words_threshold=cfg.semantic_routing.min_words_threshold,
-        skills_min_skills=cfg.skills.semantic_routing_min_skills,
-        skills_top_k=cfg.skills.semantic_routing_top_k,
-        skills_min_score=cfg.skills.semantic_routing_min_score,
-        skills_sticky_ttl=cfg.skills.sticky_ttl,
-        tools_min_tools=cfg.tools.semantic_routing_min_tools,
-        tools_top_k=cfg.tools.semantic_routing_top_k,
-        tools_min_score=cfg.tools.semantic_routing_min_score,
-        tools_sticky_ttl=cfg.tools.sticky_ttl,
-        tools_pinned=frozenset(cfg.tools.pinned),
-        tool_call_max_iterations=cfg.tools.tool_call_max_iterations,
-        circuit_breaker_threshold=cfg.tools.circuit_breaker_threshold,
-        request_delay_seconds=cfg.llm.request_delay_seconds,
-        timestamp_channels=timestamp_channels,
-        persist_tool_calls=cfg.chat_history.persist_tool_calls,
-        persist_tool_result_max_chars=cfg.chat_history.persist_tool_result_max_chars,
-        memory=build_memory_settings(cfg.memories),
-    )
+    @property
+    def name(self) -> str:
+        return self._c.agent_config.name
 
+    @property
+    def description(self) -> str:
+        return self._c.agent_config.description
 
-def build_photos_settings(photos_cfg: PhotosConfig) -> PhotosSettings:
-    return PhotosSettings(
-        enabled=photos_cfg.enabled,
-        debug=photos_cfg.debug,
-        enrollment_chats=photos_cfg.enrollment_chats,
-        match_threshold=photos_cfg.faces.match_threshold,
-        ambiguous_threshold=photos_cfg.faces.ambiguous_threshold,
-    )
-
-
-def build_telegram_channel_settings(
-    tg_cfg: TelegramChannelConfig | None,
-) -> TelegramChannelSettings:
-    """Mapea el bloque ``channels.telegram`` ya validado → VO del adapter.
-
-    Único punto donde se traduce config → slice del bot. Resuelve acá dos
-    herencias que antes se rehacían dentro del bot: el ``reactions`` de grupos
-    (override si existe, si no el del canal) y los flags de ``broadcast.emit``.
-    """
-    if tg_cfg is None:
-        return TelegramChannelSettings()
-
-    grupos = tg_cfg.groups
-    group_settings = (
-        TelegramGroupSettings(
-            behavior=grupos.behavior,
-            bot_username=grupos.bot_username,
-            rate_limiter=grupos.rate_limiter,
-            rate_limiter_window=grupos.rate_limiter_window,
-            min_delay=grupos.min_delay_response,
-            max_delay=grupos.max_delay_response,
-            reactions=(tg_cfg.reactions if grupos.reactions is None else bool(grupos.reactions)),
-        )
-        if grupos is not None
-        else TelegramGroupSettings(reactions=tg_cfg.reactions)
-    )
-
-    emit_cfg = tg_cfg.broadcast.emit if tg_cfg.broadcast is not None else None
-    emit_flags = (
-        TelegramEmitFlags(
-            assistant_response=emit_cfg.assistant_response,
-            user_input_voice=emit_cfg.user_input_voice,
-            user_input_photo=emit_cfg.user_input_photo,
-        )
-        if emit_cfg is not None
-        else TelegramEmitFlags()
-    )
-
-    return TelegramChannelSettings(
-        token=tg_cfg.token,
-        allowed_user_ids=tuple(str(uid) for uid in tg_cfg.allowed_user_ids),
-        allowed_chat_ids=tuple(str(cid) for cid in tg_cfg.allowed_chat_ids),
-        reactions=tg_cfg.reactions,
-        voice_enabled=tg_cfg.voice_enabled,
-        groups=group_settings,
-        emit=emit_flags,
-    )
-
-
-def build_telegram_bot_settings(cfg: AgentConfig) -> TelegramBotSettings:
-    """Mapea AgentConfig → slice de config que consume el TelegramBot."""
-    return TelegramBotSettings(
-        id=cfg.id,
-        name=cfg.name,
-        description=cfg.description,
-        workspace_path=cfg.workspace.path,
-        telegram=build_telegram_channel_settings(telegram_config(cfg)),
-    )
-
-
-def build_telegram_bot_ports(container: AgentContainer) -> TelegramBotPorts:
-    """Snapshot de las dependencias del bot. Llamar DESPUÉS de las fases de
-    wiring del AppContainer (scheduler, photos, telegram tools) — los campos
-    opcionales capturan el valor wired, no la referencia al container."""
-    return TelegramBotPorts(
-        run_agent=container.run_agent,
-        scope_registry=container.scope_registry,
-        consolidate_memory=container.consolidate_memory,
-        reconcile_memory=container.reconcile_memory,
-        schedule_task=container.schedule_task,
-        manual_task_runner=container.manual_task_runner,
-        process_photo=container.process_photo,
-        transcribe_audio=container.transcribe_audio,
-        telegram_file_repo=container.telegram_file_repo,
-        telegram_file_downloader=container.telegram_file_downloader,
-        channel_outbound=(
-            container.channel_outbound_registry.get("telegram")
-            if "telegram" in container.channel_outbound_registry.list_channels()
-            else None
-        ),
-    )
+    @property
+    def tool_names(self) -> list[str]:
+        return list(self._c._tools._tools.keys())
 
 
 class AgentContainer:
@@ -300,9 +166,8 @@ class AgentContainer:
         # Tool Config Protocol — store compartido entre TODOS los agentes (lo
         # construye AppContainer con el config_dir real). El fallback local es
         # solo para tests directos / arranques sueltos.
-        self._tool_config_store: IToolConfigStore = tool_config_store or YamlToolConfigStore(
-            store_path=get_inaki_home() / "config" / "tool_config.yaml",
-            key_path=get_inaki_home() / "secret.key",
+        self._tool_config_store: IToolConfigStore = tool_config_store or build_tool_config_store(
+            get_inaki_home() / "config"
         )
 
         # Stash global_config so wire_delegation can access delegation limits (task 5.1)
@@ -363,21 +228,14 @@ class AgentContainer:
         # Anotamos como el port (IMemoryRepository) en vez del adapter concreto
         # para que tests puedan inyectar fakes via Protocol estructural sin
         # error de assignment.
-        self._memory: IMemoryRepository = SQLiteMemoryRepository(
-            cfg.memories.db_filename, self._embedder
-        )
+        self._memory: IMemoryRepository = build_memory_repo(cfg, self._embedder)
         self._llm = LLMProviderFactory.create(cfg.llm, cfg.providers)
         self._skills = YamlSkillRepository(
             embedder=self._embedder,
             cache=self._embedding_cache,
             dimension=cfg.embedding.dimension,
         )
-        self._history = SQLiteHistoryStore(
-            HistoryStoreSettings(
-                db_filename=cfg.chat_history.db_filename,
-                max_messages=cfg.chat_history.max_messages,
-            )
-        )
+        self._history = build_history_store(cfg)
         self._tools = ToolRegistry(
             embedder=self._embedder,
             cache=self._embedding_cache,
@@ -392,19 +250,10 @@ class AgentContainer:
         # La transcripción es una capacidad de percepción: el canal recibe el use
         # case (límites + idioma + provider), no el provider pelado.
         self.transcribe_audio: TranscribeAudioUseCase | None = (
-            TranscribeAudioUseCase(
-                self._transcription,
-                TranscriptionSettings(
-                    language=cfg.transcription.language,
-                    max_audio_mb=cfg.transcription.max_audio_mb,
-                ),
-            )
+            build_transcribe_audio(self._transcription, cfg.transcription)
             if self._transcription is not None and cfg.transcription is not None
             else None
         )
-
-        # Anotación explícita: build_telegram_bot_ports (definido antes de la
-        # clase) lee este atributo y mypy no puede inferir el tipo forward.
         self.run_agent: RunAgentUseCase = RunAgentUseCase(
             llm=self._llm,
             memory=self._memory,
@@ -429,12 +278,7 @@ class AgentContainer:
         self.run_agent_one_shot: RunAgentOneShotUseCase = RunAgentOneShotUseCase(
             llm=self._llm,
             tools=self._tools,
-            settings=OneShotSettings(
-                agent_id=cfg.id,
-                system_prompt=cfg.system_prompt,
-                circuit_breaker_threshold=cfg.tools.circuit_breaker_threshold,
-                request_delay_seconds=cfg.llm.request_delay_seconds,
-            ),
+            settings=build_one_shot_settings(cfg),
             thinking_indicator=global_config.channels.thinking_indicator,
             tracer=self._tracer,
         )
@@ -443,373 +287,40 @@ class AgentContainer:
         # UNA sola vez desde `memories.llm`; en modo directo ambos jobs usan la
         # misma instancia (sin duplicar clientes HTTP). La delegación a sub-agente
         # (por job, con prompts distintos) se wirea post-construcción en
-        # _wire_memory_extractors / _wire_memory_reconcilers.
+        # AppContainer._wire_memory_sub_agents.
         # Cada job es INDEPENDIENTE: se instancia solo si SU flag enabled es true.
         # AppContainer filtra por `*_memory is not None` al armar los dicts enabled.
-        self.consolidate_memory: ConsolidateMemoryUseCase | None = None
-        self.reconcile_memory: ReconcileMemoryUseCase | None = None
-        cons_enabled = cfg.memories.consolidation.enabled
-        rec_enabled = cfg.memories.reconciliation.enabled
-        if cons_enabled or rec_enabled:
-            llm_memories = self._resolve_memories_llm(cfg, self._llm)
-            memory_settings = build_memory_settings(cfg.memories)
-            if cons_enabled:
-                self.consolidate_memory = ConsolidateMemoryUseCase(
-                    llm=llm_memories,
-                    memory=self._memory,
-                    embedder=self._embedder,
-                    history=self._history,
-                    agent_id=cfg.id,
-                    memory_config=memory_settings,
-                    # Mismo delay que se aplica entre agentes en
-                    # ``ConsolidateAllAgentsUseCase``, ahora también respetado
-                    # entre scopes (channel, chat_id) dentro de ESTE agente.
-                    delay_seconds=cfg.memories.consolidation.delay_seconds,
-                )
-            if rec_enabled:
-                self.reconcile_memory = ReconcileMemoryUseCase(
-                    llm=llm_memories,
-                    memory=self._memory,
-                    embedder=self._embedder,
-                    agent_id=cfg.id,
-                    memory_config=memory_settings,
-                )
-
-    @staticmethod
-    def _resolve_memories_llm(cfg: AgentConfig, base_llm):
-        """
-        Devuelve el ``ILLMProvider`` COMPARTIDO que se inyecta en
-        ``ConsolidateMemoryUseCase`` y ``ReconcileMemoryUseCase``.
-
-        El LLM base de memoria es compartido por ambos jobs (``memories.llm``):
-
-        - Si ``cfg.memories.llm`` no existe o produce una config efectiva idéntica
-          al ``cfg.llm``, REUSA la instancia ``base_llm`` (evita duplicar
-          clientes HTTP).
-        - Si la config efectiva difiere, instancia un provider nuevo vía
-          ``LLMProviderFactory.create_from_resolved``, que toma el
-          ``ResolvedLLMConfig`` (feature + creds del registry) ya compuesto.
-
-        La customización POR JOB no pasa por acá: se hace vía el sub-agente de
-        cada sección (``consolidation.agent_id`` / ``reconciliation.agent_id``),
-        que aporta su propia config LLM por el merge de 4 capas y se wirea en
-        ``_wire_memory_extractors`` / ``_wire_memory_reconcilers``.
-
-        Puede lanzar ``ConfigError`` si el provider del override requiere creds
-        y no existe entrada en el registry.
-        """
-        merged = cfg.memories.merged_llm_config(cfg.llm)
-        if merged == cfg.llm:
-            return base_llm
-
-        resolved = LLMProviderFactory.resolve(merged, cfg.providers)
-        logger.info(
-            "Agente '%s': LLM de memoria dedicado (compartido por ambos jobs) — "
-            "provider=%s, model=%s, reasoning_effort=%s, max_tokens=%d",
-            cfg.id,
-            resolved.provider,
-            resolved.model,
-            resolved.reasoning_effort,
-            resolved.max_tokens,
-        )
-        return LLMProviderFactory.create_from_resolved(resolved)
-
-    def _collect_knowledge_sources(
-        self,
-    ) -> "tuple[list[IKnowledgeSource], dict]":
-        """
-        Recolecta las fuentes de conocimiento de nivel 1 y 2 (memoria + config).
-
-        Retorna (fuentes, params) donde params es un dict con los parámetros
-        del orquestrador: max_total_chunks, token_budget_threshold,
-        pre_fetch_enabled, default_top_k_per_source, default_min_score.
-        Las fuentes de nivel 3 (extensiones) se añaden en _register_extensions().
-        Orden garantizado: (1) memoria, (2) fuentes configuradas.
-        """
-        from inaki.knowledge.adapters.sqlite_memory_knowledge_source import (
-            SqliteMemoryKnowledgeSource,
-        )
-
-        knowledge_cfg = getattr(self._global_config, "knowledge", None)
-
-        # Leer flags desde la config o usar defaults
-        include_memory = True
-        params = {
-            "max_total_chunks": 10,
-            "token_budget_threshold": 4000,
-            "pre_fetch_enabled": True,
-            "default_top_k_per_source": 3,
-            "default_min_score": 0.5,
-        }
-
-        if knowledge_cfg is not None:
-            include_memory = getattr(knowledge_cfg, "include_memory", True)
-            params["max_total_chunks"] = getattr(knowledge_cfg, "max_total_chunks", 10)
-            params["token_budget_threshold"] = getattr(
-                knowledge_cfg, "token_budget_warn_threshold", 4000
-            )
-            params["pre_fetch_enabled"] = getattr(knowledge_cfg, "enabled", True)
-            params["default_top_k_per_source"] = getattr(knowledge_cfg, "top_k_per_source", 3)
-            params["default_min_score"] = getattr(knowledge_cfg, "min_score", 0.5)
-
-        fuentes: list[IKnowledgeSource] = []
-
-        # Nivel 1 — memoria (auto-registrada por defecto)
-        if include_memory:
-            fuentes.append(SqliteMemoryKnowledgeSource(memory=self._memory))
-            logger.debug(
-                "AgentContainer '%s': SqliteMemoryKnowledgeSource registrada",
-                self.agent_config.id,
-            )
-
-        # Nivel 2 — fuentes configuradas en GlobalConfig.knowledge.sources
-        if knowledge_cfg is not None:
-            sources_cfg = getattr(knowledge_cfg, "sources", []) or []
-            for fuente_cfg in sources_cfg:
-                if not getattr(fuente_cfg, "enabled", True):
-                    continue
-
-                tipo = getattr(fuente_cfg, "type", "")
-                if tipo == "document":
-                    fuentes.append(self._build_document_source(fuente_cfg))
-                elif tipo == "sqlite":
-                    sqlite_source = self._build_sqlite_source(fuente_cfg)
-                    if sqlite_source is not None:
-                        fuentes.append(sqlite_source)
-                else:
-                    logger.warning(
-                        "AgentContainer '%s': tipo de fuente '%s' no reconocido para '%s' — skipping",
-                        self.agent_config.id,
-                        tipo,
-                        getattr(fuente_cfg, "id", "<sin-id>"),
-                    )
-
-        return fuentes, params
-
-    def _build_knowledge_orchestrator(
-        self,
-        fuentes: "list[IKnowledgeSource]",
-        params: dict,
-    ) -> "KnowledgeOrchestrator":
-        """
-        Construye el KnowledgeOrchestrator con la lista de fuentes ya resuelta.
-
-        Recibe las fuentes ordenadas (memoria → config → ext) y los parámetros
-        del orquestrador (ver _collect_knowledge_sources). Separado de
-        _collect_knowledge_sources() para que _register_extensions() pueda añadir
-        fuentes de nivel 3 antes de que se construya el orquestrador definitivo.
-        """
-        from inaki.knowledge.orchestrator import KnowledgeOrchestrator
-
-        return KnowledgeOrchestrator(
-            sources=fuentes,
-            max_total_chunks=params["max_total_chunks"],
-            token_budget_threshold=params["token_budget_threshold"],
-            pre_fetch_enabled=params["pre_fetch_enabled"],
-            default_top_k_per_source=params["default_top_k_per_source"],
-            default_min_score=params["default_min_score"],
-        )
-
-    def _build_document_source(self, fuente_cfg: "KnowledgeSourceConfig") -> "IKnowledgeSource":
-        """Instancia un DocumentKnowledgeSource a partir de la config de fuente."""
-        from inaki.knowledge.adapters.document_knowledge_source import (
-            DocumentKnowledgeSource,
-        )
-
-        # `path` es Optional en la config (válido para type='sqlite' que no lo
-        # usa), pero para type='document' es obligatorio. El caller filtra por
-        # type, asi que llegar acá con path=None es un error de config.
-        if fuente_cfg.path is None:
-            raise ValueError(
-                f"Fuente de conocimiento '{fuente_cfg.id}' (type='document') "
-                "requiere 'path' configurado."
-            )
-
-        return DocumentKnowledgeSource(
-            source_id=fuente_cfg.id,
-            description=fuente_cfg.description,
-            path=fuente_cfg.path,
+        jobs = build_memory_jobs(
+            cfg,
+            base_llm=self._llm,
+            memory=self._memory,
             embedder=self._embedder,
-            db_dir=self._global_config.knowledge.db_dirname,
-            glob=getattr(fuente_cfg, "glob", "**/*.md"),
-            chunk_size=getattr(fuente_cfg, "chunk_size", 500),
-            chunk_overlap=getattr(fuente_cfg, "chunk_overlap", 80),
-            dimension=self.agent_config.embedding.dimension,
+            history=self._history,
         )
-
-    def _build_sqlite_source(self, fuente_cfg: object) -> "IKnowledgeSource | None":
-        """
-        Instancia un SqliteKnowledgeSource a partir de la config de fuente.
-
-        Captura KnowledgeConfigError al construir (validación diferida al primer search),
-        pero registra el error ahora si el path no está configurado.
-        Si hay un error de config irrecuperable, loguea y retorna None para que el
-        container omita esta fuente sin abortar el arranque del agente.
-        """
-        from inaki.knowledge.adapters.sqlite_knowledge_source import (
-            SqliteKnowledgeSource,
-        )
-        from inaki.shared.errors import KnowledgeConfigError
-
-        fuente_id = getattr(fuente_cfg, "id", "<sin-id>")
-        db_path = getattr(fuente_cfg, "path", None)
-
-        if not db_path:
-            logger.error(
-                "AgentContainer '%s': fuente sqlite '%s' no tiene 'path' configurado — skipping",
-                self.agent_config.id,
-                fuente_id,
-            )
-            return None
-
-        try:
-            return SqliteKnowledgeSource(
-                source_id=fuente_id,
-                description=getattr(fuente_cfg, "description", ""),
-                db_path=db_path,
-            )
-        except KnowledgeConfigError as exc:
-            logger.error(
-                "AgentContainer '%s': error de configuración en fuente sqlite '%s': %s — skipping",
-                self.agent_config.id,
-                fuente_id,
-                exc,
-            )
-            return None
+        self.consolidate_memory: ConsolidateMemoryUseCase | None = jobs.consolidate
+        self.reconcile_memory: ReconcileMemoryUseCase | None = jobs.reconcile
 
     def _register_tools(self) -> None:
-        """Registra tools built-in del núcleo. Las extensiones se cargan aparte."""
-        from pathlib import Path
-
-        from inaki.tools.builtin.edit_file import EditFileTool
-        from inaki.tools.builtin.patch_file import PatchFileTool
-        from inaki.tools.builtin.read_file import ReadFileTool
-        from inaki.tools.builtin.web_search import WebSearchTool
-        from inaki.tools.builtin.write_file import WriteFileTool
-        from inaki.knowledge.tools.knowledge_search_tool import KnowledgeSearchTool
-        from inaki.memory.tools.memory_tools import (
-            DeleteMemoryTool,
-            SearchMemoryTool,
-            UpdateMemoryTool,
+        """Registra las tools built-in del agente: cada módulo arma las suyas."""
+        cfg = self.agent_config
+        workspace = resolver_workspace(cfg)
+        knowledge = build_knowledge(
+            self._global_config, cfg, memory=self._memory, embedder=self._embedder
         )
-        from inaki.memory.tools.search_history_tool import SearchHistoryTool
-
-        ws_cfg = self.agent_config.workspace
-        workspace_path = Path(ws_cfg.path).expanduser().resolve()
-        try:
-            workspace_path.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            logger.error(
-                "No se pudo crear el workspace '%s' para el agente '%s': %s",
-                workspace_path,
-                self.agent_config.id,
-                exc,
-            )
-            raise
-        logger.info(
-            "Agente '%s': workspace='%s' containment='%s'",
-            self.agent_config.id,
-            workspace_path,
-            ws_cfg.containment,
-        )
-
-        # Recolectar fuentes de nivel 1 (memoria) y nivel 2 (config).
-        # Las de nivel 3 (extensiones) se añaden en _register_extensions() sobre la misma lista.
-        # El orquestrador almacena la referencia a esa lista, por lo que las fuentes de extensiones
-        # quedan incorporadas automáticamente sin reconstruir el objeto orquestrador.
-        (
-            self._pending_knowledge_sources,
-            self._knowledge_params,
-        ) = self._collect_knowledge_sources()
-        self._knowledge_orchestrator = self._build_knowledge_orchestrator(
-            self._pending_knowledge_sources,
-            self._knowledge_params,
-        )
-        self._tools.register(
-            KnowledgeSearchTool(
-                orchestrator=self._knowledge_orchestrator,
-                embedder=self._embedder,
-            )
-        )
-        # Gestión del knowledge (ingest/reindex/list/stats/delete) expuesta al LLM.
-        # Comparte la MISMA lista viva de fuentes que el orchestrator: las fuentes
-        # indexables añadidas por extensiones en _register_extensions() quedan
-        # incluidas sin reconstruir el use case.
-        from inaki.knowledge.tools.knowledge_admin_tool import KnowledgeAdminTool
-        from inaki.knowledge.use_cases.manage_knowledge import ManageKnowledgeUseCase
-
-        self._manage_knowledge = ManageKnowledgeUseCase(sources=self._pending_knowledge_sources)
-        self._tools.register(KnowledgeAdminTool(manage_knowledge=self._manage_knowledge))
-        # Tools de gestión directa de memoria — el LLM puede buscar por
-        # similitud y borrar/editar entries por id. Sin filtro de scope: el
-        # agente puede tocar cualquier recuerdo del mismo agent_id.
-        self._tools.register(SearchMemoryTool(memory=self._memory, embedder=self._embedder))
-        self._tools.register(DeleteMemoryTool(memory=self._memory))
-        self._tools.register(UpdateMemoryTool(memory=self._memory, embedder=self._embedder))
-        # Búsqueda en el historial CRUDO de conversación (mensajes tal cual),
-        # scopeada al agent_id de este container. Reemplaza la vieja extensión
-        # ext/search_history que abría el SQLite por path sin filtro de agente.
-        self._tools.register(
-            SearchHistoryTool(history=self._history, agent_id=self.agent_config.id)
-        )
-        self._tools.register(WebSearchTool(config_store=self._tool_config_store))
-        self._tools.register(ReadFileTool(workspace=workspace_path, containment=ws_cfg.containment))
-        self._tools.register(
-            WriteFileTool(workspace=workspace_path, containment=ws_cfg.containment)
-        )
-        self._tools.register(
-            PatchFileTool(workspace=workspace_path, containment=ws_cfg.containment)
-        )
-        self._tools.register(EditFileTool(workspace=workspace_path, containment=ws_cfg.containment))
-        # Lectura de la propia config. El snapshot se arma ACÁ, en el arranque,
-        # porque acá es donde vive la config ya validada que el proceso usa: la
-        # tool no vuelve a tocar disco en ningún turno. Un reload reconstruye el
-        # container entero, así que el snapshot no puede quedar viejo.
-        self._tools.register(ConfigTool(runtime_config=self._build_runtime_config()))
-
-    def _build_runtime_config(self) -> RuntimeConfigUseCase:
-        """Arma el snapshot de config que la tool ``config`` sirve al LLM.
-
-        El VALOR sale de los objetos ya validados (``global_config`` como base,
-        ``agent_config`` encima — el mismo orden de capas del loader), no del
-        merge de los YAML: es lo único que responde con qué está corriendo el
-        proceso. El ORIGEN de cada valor sí sale de la vista de disco, leída en
-        este mismo instante, cuando disco y memoria todavía coinciden.
-        """
-        en_memoria = deep_merge(self._global_config.model_dump(), self.agent_config.model_dump())
-        return RuntimeConfigUseCase(
-            config_en_memoria=en_memoria,
-            origenes=self._origenes_de_config(),
-            paths_secretos=paths_secretos(),
-        )
-
-    def _origenes_de_config(self) -> dict[str, str]:
-        """Mapa ``path -> capa`` leyendo los YAML. ``{}`` si no se pueden leer.
-
-        Degradar acá es legítimo y no toca ningún valor: lo que se pierde es la
-        anotación de procedencia, y el snapshot la reporta como ``desconocido``
-        en vez de inventar ``default``. Se degrada por una dependencia EXTERNA
-        (el filesystem), nunca por la config en sí — un fichero ilegible no
-        puede impedir que el agente sepa con qué está corriendo.
-        """
-        home = get_inaki_home()
-        try:
-            vista = ShowEffectiveConfigUseCase(
-                repo=YamlRepository(config_dir=home / "config", agents_dir=home / "agents"),
-                defaults=defaults_del_schema(),
-                paths_secretos=paths_secretos(),
-            ).execute(self.agent_config.id)
-        except Exception:
-            logger.warning(
-                "Agente '%s': no se pudieron leer las capas de config desde %s. "
-                "La tool `config` sigue sirviendo los valores en memoria, pero sin "
-                "decir de qué capa sale cada uno.",
-                self.agent_config.id,
-                home,
-                exc_info=True,
-            )
-            return {}
-        return {campo.path: campo.origen for campo in vista.campos}
+        # La lista de fuentes es la MISMA que ve el orquestador: las de nivel (3),
+        # las extensiones, se añaden después sobre ella sin reconstruir nada.
+        self._pending_knowledge_sources = knowledge.sources
+        self._knowledge_orchestrator = knowledge.orchestrator
+        self._manage_knowledge = knowledge.manage
+        for tool in (
+            *build_knowledge_tools(knowledge, self._embedder),
+            *build_memory_tools(
+                memory=self._memory, embedder=self._embedder, history=self._history, agent_id=cfg.id
+            ),
+            *build_builtin_tools(cfg, workspace=workspace, config_store=self._tool_config_store),
+            build_config_tool(self._global_config, cfg),
+        ):
+            self._tools.register(tool)
 
     @staticmethod
     def _resolve_transcription(cfg: AgentConfig) -> ITranscriptionProvider | None:
@@ -907,32 +418,24 @@ class AgentContainer:
             )
             return
 
-        from inaki.agents.delegation.delegate_tool import DelegateTool
-
-        # Builder de la instancia efímera del hijo contra ESTE caller (self): cada
-        # delegación construye un hijo que hereda la config del caller vía `inherit`
-        # (build_ephemeral_child), en vez de reusar el one-shot pre-built del sub (que
-        # corría contra global). `get_sub_agent_raw` provee el delta crudo del sub; None
-        # → no es un sub-agente conocido. Sin `get_sub_agent_raw` (tests parciales) el
-        # builder devuelve None — el tool se registra igual, solo no resuelve hijos.
+        # Builder de la instancia efímera del hijo contra ESTE caller: cada
+        # delegación construye un hijo que hereda la config del caller vía `inherit`.
+        # `get_sub_agent_raw` provee el delta crudo del sub; None → no es un
+        # sub-agente conocido (el tool se registra igual, solo no resuelve hijos).
         def _build_child(target_id: str) -> RunAgentOneShotUseCase | None:
             raw = get_sub_agent_raw(target_id) if get_sub_agent_raw is not None else None
             if raw is None:
                 return None
             return self.build_ephemeral_child(raw)
 
-        # Build and register the delegate tool.
-        # REQ-DG-10 / REQ-BGD-*: background_queue puede ser None hasta que
-        # `AppContainer._wire_all_delegation` lo inyecte. Mientras tanto el path sync sigue
-        # funcionando; el path async (`wait=False`) reporta failed con razón
-        # "background_delegation_unavailable" — fail-fast en lugar de silenciar.
-        delegate_tool = DelegateTool(
+        # `background_queue` puede ser None hasta que AppContainer la inyecte: el
+        # path sync sigue funcionando y el async reporta failed (fail-fast).
+        delegate_tool = build_delegate_tool(
+            self._global_config,
             allowed_targets=targets,
             build_child=_build_child,
-            max_iterations_per_sub=self._global_config.delegation.max_iterations_per_sub,
-            timeout_seconds=self._global_config.delegation.timeout_seconds,
             caller_agent_id=self.agent_config.id,
-            caller_container=self,
+            caller=self,
             queue=background_queue,
         )
         self._tools.register(delegate_tool)
@@ -952,8 +455,15 @@ class AgentContainer:
         # - The section is PARENT-SIDE ONLY. RunAgentOneShotUseCase (child path)
         #   is NEVER passed extra_sections — it has no _extra_system_sections attr.
         # -----------------------------------------------------------------------
-        discovery_section = self._build_discovery_section(
-            get_agent_container, targets, get_sub_agent_raw=get_sub_agent_raw
+        def _describir(target_id: str) -> _DescripcionDesdeContainer | None:
+            target = get_agent_container(target_id)
+            return _DescripcionDesdeContainer(target) if target is not None else None
+
+        discovery_section = build_discovery_section(
+            self.agent_config.id,
+            targets,
+            get_sub_agent_raw=get_sub_agent_raw,
+            describir_agente=_describir,
         )
         if discovery_section:
             self.run_agent.set_extra_system_sections([discovery_section])
@@ -969,57 +479,14 @@ class AgentContainer:
         )
 
     def build_ephemeral_child(self, definition_raw: dict) -> RunAgentOneShotUseCase:
-        """Construye una instancia efímera one-shot de un sub-agente resuelta contra
-        ESTE container (el caller) — el corazón del flujo delegate con herencia.
-
-        El sub-agente NO es un container pre-construido: cada delegación arma una
-        instancia nueva cuya config se resuelve contra el caller vía ``inherit`` (misma
-        definición + caller P/Q distintos → instancias distintas heredando cada una de
-        su padre). Es one-shot y se descarta al terminar (no persiste estado).
-
-        Resolución de config:
-          ``merged = resolver_inherit(deep_merge(SUBAGENT_DEFAULTS, definition_raw), parent_raw)``
-        con ``parent_raw`` = config EFECTIVA del caller. El hijo hereda el registry
-        ``providers`` del caller (corre con sus credenciales; un sub con providers propios
-        los pisa) para que un override de ``llm.provider`` resuelva.
-
-        Reuso de recursos (decisiones 2026-06-16, ver CLAUDE.md / memoria del plan C):
-          - tools/recursos: SIEMPRE ``self._tools`` (workspace/memory/knowledge del CALLER);
-            el sub recorta el subset visible con ``tools.allowed`` (REQ-OS-5). NO se
-            reconstruye el ``ToolRegistry`` ni se usa embedder (OneShot sin RAG, REQ-OS-4).
-          - LLM: si la config llm efectiva del hijo == la del caller (heredada sin override)
-            → reusar la instancia ``self._llm``; si difiere → instancia nueva vía factory.
-        """
-        parent_raw = self.agent_config.model_dump()
-        merged = resolver_inherit(deep_merge(SUBAGENT_DEFAULTS, definition_raw), parent_raw)
-        # Credenciales: el hijo hereda el registry `providers` del caller como base; un
-        # sub que declare providers propios los pisa (deep-merge child sobre parent).
-        merged["providers"] = deep_merge(
-            parent_raw.get("providers") or {}, merged.get("providers") or {}
-        )
-        child_cfg = assemble_agent_config(merged)
-
-        # T5 — reuso de la instancia LLM del caller cuando la config llm efectiva coincide
-        # (heredada sin override). Mismo criterio que `_resolve_memories_llm`. SIN embedder.
-        if child_cfg.llm == self.agent_config.llm:
-            child_llm = self._llm
-        else:
-            child_llm = LLMProviderFactory.create(child_cfg.llm, child_cfg.providers)
-
-        allowed = child_cfg.tools.allowed
-        settings = OneShotSettings(
-            agent_id=child_cfg.id,
-            system_prompt=child_cfg.system_prompt,
-            circuit_breaker_threshold=child_cfg.tools.circuit_breaker_threshold,
-            request_delay_seconds=child_cfg.llm.request_delay_seconds,
-            allowed_tools=frozenset(allowed) if allowed is not None else None,
-        )
-        return RunAgentOneShotUseCase(
-            llm=child_llm,
+        """Hijo efímero one-shot resuelto contra ESTE caller (ver ``inaki.agents.wiring``)."""
+        return build_ephemeral_child(
+            definition_raw,
+            caller_cfg=self.agent_config,
+            caller_llm=self._llm,
             tools=self._tools,
-            settings=settings,
-            thinking_indicator=self._global_config.channels.thinking_indicator,
             tracer=self._tracer,
+            thinking_indicator=self._global_config.channels.thinking_indicator,
         )
 
     def wire_scheduler(
@@ -1043,12 +510,10 @@ class AgentContainer:
         if self._scheduler_wired:
             return
 
-        from inaki.scheduler.tools.scheduler_tool import SchedulerTool
-
         self._tools.register(
-            SchedulerTool(
-                schedule_task_uc=schedule_task_uc,
-                manual_runner=manual_runner,
+            build_scheduler_tool(
+                use_case=schedule_task_uc,
+                runner=manual_runner,
                 agent_id=self.agent_config.id,
                 user_timezone=user_timezone,
                 get_channel_context=self.get_channel_context,
@@ -1062,36 +527,28 @@ class AgentContainer:
     def wire_telegram_tools(
         self,
         get_telegram_bot: Callable[[], object | None],
-        telegram_file_repo,
+        telegram_file_repo: IFileRecordRepo | None,
     ) -> None:
-        """Phase-7 wiring: registra tools que dependen del bot de Telegram + repo.
+        """Phase-7 wiring: el egress del canal y las tools que dependen del bot.
 
-        Se llama por agente con ``channels.telegram.token`` configurado.
-        ``get_telegram_bot`` resuelve el bot de ESTE agente en runtime.
-        ``telegram_file_repo`` es el singleton compartido por todos los agentes
-        (cada record lleva ``agent_id`` para aislar). Idempotente.
+        Se llama por agente con ``channels.telegram.token``. ``get_telegram_bot``
+        resuelve el bot de ESTE agente en runtime; ``telegram_file_repo`` es el
+        singleton compartido (cada record lleva ``agent_id``). Idempotente.
         """
         if self._telegram_tools_wired:
             return
-
         tg_cfg = telegram_config(self.agent_config)
         if tg_cfg is None or not tg_cfg.token:
             self._telegram_tools_wired = True
             return
-
-        from inaki.channels.telegram.outbound import TelegramChannelOutbound
-
-        # El egress del canal se registra ANTES de las tools: el bot lo necesita
-        # para la narración intermedia y el scheduler para channel_send, tengan o
-        # no repo de ficheros.
-        tg_channel_outbound = TelegramChannelOutbound(
-            get_telegram_bot=get_telegram_bot,
-            history=self._history,
-            agent_id=self.agent_config.id,
-            broadcast=self.broadcast_egress,
+        self.channel_outbound_registry.register(
+            build_telegram_outbound(
+                get_telegram_bot=get_telegram_bot,
+                history=self._history,
+                agent_id=self.agent_config.id,
+                egress=self.broadcast_egress,
+            )
         )
-        self.channel_outbound_registry.register(tg_channel_outbound)
-
         if telegram_file_repo is None:
             logger.warning(
                 "AgentContainer '%s': telegram_file_repo es None — tools no registradas",
@@ -1099,57 +556,17 @@ class AgentContainer:
             )
             self._telegram_tools_wired = True
             return
-
-        from pathlib import Path
-
-        from inaki.channels.telegram.files.downloader import (
-            TelegramFileDownloader,
+        armado = build_telegram_tools(
+            self.agent_config,
+            outbounds=self.channel_outbound_registry,
+            get_telegram_bot=get_telegram_bot,
+            file_repo=telegram_file_repo,
+            get_channel_context=self.get_channel_context,
         )
-        from inaki.channels.telegram.tools.download_from_telegram_tool import (
-            DownloadFromTelegramTool,
-        )
-        from inaki.channels.telegram.tools.send_telegram_message_tool import (
-            SendTelegramMessageTool,
-        )
-        from inaki.channels.telegram.tools.send_to_telegram_tool import (
-            SendToTelegramTool,
-        )
-
-        ws_cfg = self.agent_config.workspace
-        workspace_path = Path(ws_cfg.path).expanduser().resolve()
-
-        # Exponer el repo en el container para que el bot pueda persistir
-        # file_id de los media entrantes.
         self.telegram_file_repo = telegram_file_repo
-
-        downloader = TelegramFileDownloader(get_telegram_bot=get_telegram_bot)
-        self.telegram_file_downloader = downloader
-
-        self._tools.register(
-            SendToTelegramTool(
-                registry=self.channel_outbound_registry,
-                workspace=workspace_path,
-                containment=ws_cfg.containment,
-                get_channel_context=self.get_channel_context,
-                # Dueño único del rastro: con persist_tool_calls activo el tool
-                # loop ya persiste esta llamada; el adapter no debe duplicarla.
-                tool_calls_persisted=self.agent_config.chat_history.persist_tool_calls,
-            )
-        )
-        self._tools.register(
-            SendTelegramMessageTool(
-                registry=self.channel_outbound_registry,
-            )
-        )
-        self._tools.register(
-            DownloadFromTelegramTool(
-                repo=telegram_file_repo,
-                downloader=downloader,
-                workspace=workspace_path,
-                agent_id=self.agent_config.id,
-                get_channel_context=self.get_channel_context,
-            )
-        )
+        self.telegram_file_downloader = armado.downloader
+        for tool in armado.tools:
+            self._tools.register(tool)
         self._telegram_tools_wired = True
         logger.info(
             "AgentContainer '%s': send_to_telegram + send_telegram_message + "
@@ -1159,25 +576,22 @@ class AgentContainer:
 
     def wire_photos(
         self,
-        vision,
-        face_registry,
+        singletons: PhotosSingletons | None,
         global_config: GlobalConfig,
     ) -> None:
-        """Phase-5 wiring: instantiates photo processing use case and face tools.
+        """Phase-5 wiring: el use case de fotos y las face tools del agente.
 
-        Receives the shared vision and face registry singletons from AppContainer.
-        Creates per-agent adapters: scene describer, annotator, metadata repo, use case.
-        No-op when photos is not enabled or already wired.
+        Recibe los singletons del harness (visión + registro de caras). No-op si
+        photos no está habilitado o ya se wireó; si algo falla, las fotos quedan
+        deshabilitadas para ESTE agente y el resto arranca normal.
         """
         if self._photos_wired:
             return
-
         photos_cfg = getattr(global_config, "photos", None)
         if photos_cfg is None or not photos_cfg.enabled:
             self._photos_wired = True
             return
-
-        if vision is None or face_registry is None:
+        if singletons is None:
             logger.warning(
                 "AgentContainer '%s': vision o face_registry no disponibles — "
                 "photos wiring omitido",
@@ -1185,47 +599,14 @@ class AgentContainer:
             )
             self._photos_wired = True
             return
-
         try:
-            from inaki.perception.adapters.face_metadata.sqlite_message_face_metadata_repo import (
-                SqliteMessageFaceMetadataRepo,
-            )
-            from inaki.perception.adapters.imaging.pillow_annotator import PillowPhotoAnnotator
-            from inaki.perception.use_cases.process_photo import ProcessPhotoUseCase
-
-            # Metadata repo: side-table en el mismo history.db del agente.
-            history_db = self.agent_config.chat_history.db_filename
-            metadata_repo = SqliteMessageFaceMetadataRepo(history_db)
-
-            # Scene describer: por agente, resuelto desde global photos config.
-            scene_describer = self._build_scene_describer(photos_cfg)
-
-            annotator = PillowPhotoAnnotator()
-
-            self.process_photo = ProcessPhotoUseCase(
-                vision=vision,
-                face_registry=face_registry,
-                scene_describer=scene_describer,
-                annotator=annotator,
-                metadata_repo=metadata_repo,
-                config=build_photos_settings(photos_cfg),
-            )
-
-            # Registrar las 8 face tools.
-            self._register_face_tools(face_registry, metadata_repo, photos_cfg)
-
-            self._photos_wired = True
-            logger.info(
-                "AgentContainer '%s': photos wired (scene_provider=%s)",
-                self.agent_config.id,
-                photos_cfg.scene.provider,
+            armado = build_photos_for_agent(
+                self.agent_config,
+                photos_cfg,
+                singletons,
+                get_channel_context=self.get_channel_context,
             )
         except Exception as exc:
-            # DEGRADACIÓN DELIBERADA, no descuido: el stack de visión (InsightFace,
-            # modelos ONNX) es una dependencia externa pesada que puede faltar en el
-            # host sin que el resto de la config esté mal. Se degrada esta capacidad
-            # y solo esta — a diferencia del wiring de canales/scheduler/delegación,
-            # que son fatales porque dejarían muda una capacidad declarada.
             logger.error(
                 "Agente '%s': el procesamiento de fotos QUEDA DESHABILITADO — %s. "
                 "El resto del agente arranca normal; las fotos entrantes no se analizan.",
@@ -1233,230 +614,29 @@ class AgentContainer:
                 exc,
             )
             self._photos_wired = True
-
-    def _build_scene_describer(self, photos_cfg):
-        """Instancia el adaptador de descripción de escena según el provider configurado."""
-        from inaki.shared.errors import InakiError
-
-        provider = photos_cfg.scene.provider
-        model = photos_cfg.scene.model
-        prompt = photos_cfg.scene.prompt_template
-
-        # Fallback al api_key del provider global cuando no se especifica en photos.scene.
-        api_key = photos_cfg.scene.api_key
-        if not api_key:
-            providers = self.agent_config.providers
-            # Buscar por key directa (ej: providers.openai) o por type explícito.
-            match = providers.get(provider) or next(
-                (p for p in providers.values() if p.type == provider), None
-            )
-            api_key = (match.api_key if match else None) or ""
-
-        if provider == "anthropic":
-            from inaki.perception.adapters.scene.anthropic_describer import (
-                AnthropicSceneDescriberAdapter,
-            )
-
-            return AnthropicSceneDescriberAdapter(api_key, model, prompt)
-        elif provider == "openai":
-            from inaki.perception.adapters.scene.openai_describer import (
-                OpenAISceneDescriberAdapter,
-            )
-
-            return OpenAISceneDescriberAdapter(api_key, model, prompt)
-        elif provider == "groq":
-            from inaki.perception.adapters.scene.groq_describer import GroqSceneDescriberAdapter
-
-            return GroqSceneDescriberAdapter(api_key, model, prompt)
-        else:
-            raise InakiError(
-                f"Scene provider desconocido: '{provider}'. Válidos: anthropic, openai, groq"
-            )
-
-    def _register_face_tools(self, face_registry, metadata_repo, photos_cfg) -> None:
-        """Registra las 8 face tools en el registry del agente."""
-        from inaki.perception.tools.face_tools import (
-            AddPhotoToPersonTool,
-            FindDuplicatePersonsTool,
-            ForgetPersonTool,
-            ListKnownPersonsTool,
-            MergePersonsTool,
-            RegisterFaceTool,
-            SkipFaceTool,
-            UpdatePersonMetadataTool,
-        )
-
-        agent_id = self.agent_config.id
-        get_ctx = self.get_channel_context
-        dedup_threshold = photos_cfg.dedup.similarity_threshold
-
-        tools = [
-            RegisterFaceTool(face_registry, metadata_repo, agent_id, get_ctx),
-            AddPhotoToPersonTool(face_registry, metadata_repo, agent_id, get_ctx),
-            UpdatePersonMetadataTool(face_registry),
-            ListKnownPersonsTool(face_registry),
-            ForgetPersonTool(face_registry),
-            SkipFaceTool(face_registry, metadata_repo, agent_id, get_ctx),
-            MergePersonsTool(face_registry),
-            FindDuplicatePersonsTool(face_registry, dedup_threshold),
-        ]
-        for tool in tools:
+            return
+        self.process_photo = armado.process_photo
+        for tool in armado.tools:
             self._tools.register(tool)
-
+        self._photos_wired = True
         logger.info(
-            "AgentContainer '%s': %d face tools registradas", self.agent_config.id, len(tools)
+            "AgentContainer '%s': photos wired (scene_provider=%s, %d face tools)",
+            self.agent_config.id,
+            photos_cfg.scene.provider,
+            len(armado.tools),
         )
-
-    def _build_discovery_section(
-        self,
-        get_agent_container: Callable[[str], "AgentContainer | None"],
-        sub_agent_ids: list[str] | None = None,
-        get_sub_agent_raw: Callable[[str], dict | None] | None = None,
-    ) -> str:
-        """
-        Build a human-readable section listing available delegation targets.
-
-        Fuente PRIMARIA: el delta crudo del registry (``get_sub_agent_raw``) — es
-        la verdad post-refactor `subagent-inheritance`: el hijo efímero opera con
-        las tools del CALLER (acotadas por su ``tools.allowed``), así que la lista
-        de tools del container pre-built del sub sería mentira; y el container
-        puede ni existir (si su delta no resuelve standalone contra global, la
-        delegación efímera funciona igual). Fallback: el container (tests
-        parciales sin registry). Un target sin raw NI container se saltea.
-
-        Returns an empty string when:
-        - sub_agent_ids is empty (sin sub-agentes)
-        - ningún ID resuelve (ni raw ni container)
-
-        Format:
-
-            # Available agents for delegation
-
-            You can delegate tasks to other agents via the `delegate` tool.
-
-            ## When to delegate
-            - ...heuristics...
-
-            ## When NOT to delegate
-            - ...anti-heuristics...
-
-            ## Available agents
-
-            - **<id>** (<name>) — <description>.
-              Tools: <tool1>, <tool2>, ...
-        """
-        target_ids = sub_agent_ids or []
-
-        if not target_ids:
-            return ""
-
-        lines: list[str] = []
-        for target_id in target_ids:
-            raw = get_sub_agent_raw(target_id) if get_sub_agent_raw is not None else None
-            if raw is not None:
-                name = raw.get("name") or target_id
-                # El YAML suele declarar description multilinea (`|`) — colapsar
-                # a una línea para el bullet.
-                description = " ".join(str(raw.get("description") or "").split())
-                allowed = (raw.get("tools") or {}).get("allowed") or None
-                tool_list = (
-                    ", ".join(allowed) + " (subset of this agent's toolkit)"
-                    if allowed
-                    else "inherits this agent's full toolkit"
-                )
-            else:
-                target_container = get_agent_container(target_id)
-                if target_container is None:
-                    logger.debug(
-                        "AgentContainer '%s': target '%s' not found in registry — "
-                        "skipping in discovery",
-                        self.agent_config.id,
-                        target_id,
-                    )
-                    continue
-                name = target_container.agent_config.name
-                description = target_container.agent_config.description
-                # Collect tool names from the target's registry (all registered tools)
-                tool_names = list(target_container._tools._tools.keys())
-                tool_list = ", ".join(tool_names) if tool_names else "(no tools)"
-
-            lines.append(f"- **{target_id}** ({name}) — {description}.")
-            lines.append(f"  Tools: {tool_list}")
-
-        if not lines:
-            # All targets were unknown — do not emit an empty header
-            return ""
-
-        header = (
-            "# Available agents for delegation\n\n"
-            "You can delegate tasks to other agents via the `delegate` tool.\n\n"
-            "## When to delegate\n\n"
-            "- The task matches another agent's specialty "
-            "(see their description and tools below).\n"
-            "- You lack a tool that the target agent has.\n"
-            "- The task requires multiple tool calls to complete, especially multi-step "
-            'workflows like: "search the web about X, summarize the highlights, and send '
-            'the result to Y". Delegating keeps your context clean and lets a specialized '
-            "agent orchestrate the steps.\n\n"
-            "## When NOT to delegate\n\n"
-            "- The task is trivial or you already have the tools to solve it in 1-2 steps.\n"
-            "- You need tight back-and-forth with the user — the child is stateless and "
-            "returns a single structured result.\n"
-            "- You already delegated the same task and it failed — try a different approach "
-            "or ask the user.\n\n"
-            "## Available agents\n"
-        )
-        return "\n" + header + "\n" + "\n".join(lines)
 
     def _register_extensions(self, ext_dirs: Sequence[str]) -> None:
-        """Registra lo que declaran las extensiones: tools, skills y fuentes de knowledge.
-
-        El descubrimiento (recorrer ``ext_dirs``, importar cada ``manifest.py``)
-        vive en ``inaki.extensions``; acá solo se instancia y se registra, porque
-        acá están los registros. Orden de fuentes de knowledge garantizado:
-        (1) memoria, (2) config, (3) extensiones — la lista es la MISMA que ya
-        tiene el orquestador, así que las ve sin reconstruirse.
-        """
-        for ext in descubrir_extensiones(ext_dirs):
-            for tool_cls in ext.tools:
-                try:
-                    tool = instanciar_tool(tool_cls, config_store=self._tool_config_store)
-                except Exception as exc:
-                    logger.warning(
-                        "Extensión '%s': falló al instanciar %r (%s) — skipping tool",
-                        ext.nombre,
-                        tool_cls,
-                        exc,
-                    )
-                    continue
-                if tool.name in self._tools:
-                    logger.warning(
-                        "Extensión '%s': tool '%s' ya registrada — skipping (colisión)",
-                        ext.nombre,
-                        tool.name,
-                    )
-                    continue
-                self._tools.register(tool)
-                logger.info("Extensión '%s': tool '%s' registrada", ext.nombre, tool.name)
-            for skill_path in ext.skills:
-                self._skills.add_file(skill_path)
-                logger.info("Extensión '%s': skill '%s' añadida", ext.nombre, skill_path.name)
-            for factory in ext.knowledge_sources:
-                try:
-                    fuente = factory(self.agent_config, self._global_config, self._embedder)
-                except Exception as exc:
-                    logger.warning(
-                        "Extensión '%s': factory de knowledge source falló (%s) — skipping",
-                        ext.nombre,
-                        exc,
-                    )
-                    continue
-                self._pending_knowledge_sources.append(fuente)
-                logger.info(
-                    "Extensión '%s': knowledge source '%s' registrada",
-                    ext.nombre,
-                    fuente.source_id,
-                )
+        registrar_extensiones(
+            ext_dirs,
+            tools=self._tools,
+            skills=self._skills,
+            knowledge_sources=self._pending_knowledge_sources,
+            config_store=self._tool_config_store,
+            agent_cfg=self.agent_config,
+            global_cfg=self._global_config,
+            embedder=self._embedder,
+        )
 
 
 class AppContainer:
@@ -1489,8 +669,7 @@ class AppContainer:
         self._wire_broadcast_adapters()
         self._wire_photos()
         self._wire_telegram_tools()
-        self._wire_memory_extractors()
-        self._wire_memory_reconcilers()
+        self._wire_memory_sub_agents()
         self._build_channels()
 
     def _init_shared_state(self, config_dir: Path | None) -> None:
@@ -1502,10 +681,7 @@ class AppContainer:
         # cubrir el path de ``--config-dir`` override (que saltea ensure_user_config).
         resolved_config_dir = config_dir or get_inaki_home() / "config"
         migrate_tool_config_to_own_file(resolved_config_dir)
-        self.tool_config_store: IToolConfigStore = YamlToolConfigStore(
-            store_path=resolved_config_dir / "tool_config.yaml",
-            key_path=resolved_config_dir.parent / "secret.key",
-        )
+        self.tool_config_store: IToolConfigStore = build_tool_config_store(resolved_config_dir)
 
         # Registro de bots de Telegram — los registra ``_build_channels`` al construirlos
         self._telegram_bots: dict[str, object] = {}
@@ -1584,31 +760,21 @@ class AppContainer:
         )
 
     def _build_background_delegation_queue(self) -> None:
-        # Dispatcher + cola de background-delegation.
-        # Se construyen AHORA porque la cola necesita el dispatcher (para inyectar
-        # resultados al scope original) y un resolver de RunAgentOneShotUseCase
-        # por target. Ambos requieren que ``self.agents`` esté poblado, así que
-        # corre tras _build_agent_containers y antes de _wire_all_delegation.
-        # Reusamos UNA sola instancia de LLMDispatcherAdapter entre scheduler y
-        # queue — comparten el dict de locks-por-scope (REQ-BGD-6).
+        # UNA sola instancia del dispatcher entre scheduler y cola de background:
+        # comparten el dict de locks por scope (REQ-BGD-6).
         self._llm_dispatcher = LLMDispatcherAdapter(self.agents)
 
         def _resolve_one_shot(caller_id: str, target_id: str) -> RunAgentOneShotUseCase | None:
-            # Construye la instancia EFÍMERA del hijo contra el CALLER (hereda su config
-            # vía inherit). Reemplaza el lookup del one-shot pre-built del sub (que corría
-            # contra global). El path async ya carga `caller_agent_id` en cada BackgroundTask.
             caller = self.agents.get(caller_id)
             raw = self.registry.get_sub_agent_raw(target_id)
             if caller is None or raw is None:
                 return None
             return caller.build_ephemeral_child(raw)
 
-        self.background_queue = BackgroundDelegationQueueAdapter(
+        self.background_queue = build_background_queue(
+            self.global_config,
             dispatcher=self._llm_dispatcher,
             one_shot_resolver=_resolve_one_shot,
-            max_iterations_per_sub=self.global_config.delegation.max_iterations_per_sub,
-            timeout_seconds=self.global_config.delegation.timeout_seconds,
-            max_concurrent=3,
             result_sender=self._channel_router,
         )
 
@@ -1639,17 +805,12 @@ class AppContainer:
                 ) from exc
 
     def _build_consolidation(self) -> None:
-        # Global consolidation use case — itera agentes habilitados con delay.
-        # El filtro por `consolidate_memory is not None` es equivalente a filtrar
-        # por `memories.consolidation.enabled` (invariante: AgentContainer construye
-        # el use case solo cuando ese flag es True), pero le da el narrowing a mypy.
-        enabled_consolidators: dict[str, ConsolidateMemoryUseCase] = {
-            agent_id: container.consolidate_memory
-            for agent_id, container in self.agents.items()
-            if container.consolidate_memory is not None
-        }
-        self.consolidate_all_agents = ConsolidateAllAgentsUseCase(
-            enabled_agents=enabled_consolidators,
+        self.consolidate_all_agents = build_consolidate_all(
+            {
+                agent_id: container.consolidate_memory
+                for agent_id, container in self.agents.items()
+                if container.consolidate_memory is not None
+            },
             delay_seconds=self.global_config.memories.consolidation.delay_seconds,
         )
 
@@ -1664,45 +825,20 @@ class AppContainer:
         }
 
     def _build_scheduler(self) -> None:
-        # Scheduler wiring
-        scheduler_cfg = self.global_config.scheduler
-        self.scheduler_repo = SQLiteSchedulerRepo(
-            scheduler_cfg.db_filename,
-            user_timezone=self.global_config.user.timezone,
+        # El router y el dispatcher son los MISMOS que usa la cola de background.
+        self._scheduler = build_scheduler(
+            self.global_config,
+            dispatch=build_dispatch_ports(
+                channel_sender=self._channel_router,
+                llm_dispatcher=self._llm_dispatcher,
+                consolidate_all=self.consolidate_all_agents,
+                reconcilers=self._enabled_reconcilers,
+            ),
         )
-        self.schedule_task_uc = ScheduleTaskUseCase(
-            repo=self.scheduler_repo,
-            on_mutation=self._on_scheduler_mutation,
-            max_active_tasks=scheduler_cfg.max_tasks_per_agent,
-        )
-        # Reconcilia las tareas builtin contra la config en startup(). El *cómo*
-        # (seed/update/reset + recompute next_run en tz del usuario) vive en el
-        # colaborador; el *qué* (qué builtin, qué agente) lo deciden los wrappers.
-        self._scheduler_reconciler = SchedulerReconciler(
-            self.scheduler_repo, self.global_config.user.timezone
-        )
-        # Reusamos las instancias ya construidas en _build_channel_router y
-        # _build_background_delegation_queue: el router es compartido por el
-        # scheduler y la cola de background-delegation, y el dispatcher único
-        # garantiza que ambos compartan el dict de locks-por-scope (REQ-BGD-6).
-        # Sin esto, race entre un bg-result y un scheduled trigger sobre el
-        # mismo scope volvería a estar mal serializada.
-        dispatch_ports = SchedulerDispatchPorts(
-            channel_sender=self._channel_router,
-            llm_dispatcher=self._llm_dispatcher,
-            consolidator=ConsolidationDispatchAdapter(self.consolidate_all_agents),
-            reconciler=ReconcileDispatchAdapter(self._enabled_reconcilers),
-            http_caller=HttpCallerAdapter(),
-            shell_executor=ShellExecAdapter(),
-        )
-        self.scheduler_service = SchedulerService(
-            repo=self.scheduler_repo,
-            dispatch=dispatch_ports,
-            max_retries=scheduler_cfg.max_retries,
-            output_truncation_size=scheduler_cfg.output_truncation_size,
-            user_timezone=self.global_config.user.timezone,
-            retry_backoff_seconds=scheduler_cfg.retry_backoff_seconds,
-        )
+        self.scheduler_repo = self._scheduler.repo
+        self.schedule_task_uc = self._scheduler.use_case
+        self.scheduler_service = self._scheduler.service
+        self._scheduler_reconciler = self._scheduler.reconciler
 
     def _wire_scheduler_tool(self) -> None:
         # Wire scheduler tool into each agent now that schedule_task_uc is ready.
@@ -1739,56 +875,27 @@ class AppContainer:
                 ) from exc
 
     def _wire_photos(self) -> None:
-        # Wire photos — singletons compartidos (vision lazy, face registry)
-        # + per-agent wiring (scene describer, annotator, metadata repo, use case, tools).
-        self._vision_adapter = None
-        self._face_registry_adapter = None
+        """Singletons del harness (visión + caras) y el wiring per-agente de fotos."""
+        self._photos: PhotosSingletons | None = None
         photos_cfg = getattr(self.global_config, "photos", None)
         if photos_cfg is not None and photos_cfg.enabled:
             try:
-                from pathlib import Path
-
-                from inaki.perception.adapters.faces.sqlite_face_registry import (
-                    SqliteFaceRegistryAdapter,
+                self._photos = build_photos_singletons(
+                    photos_cfg, faces_db_path=self._data_db_path("faces.db")
                 )
-                from inaki.perception.adapters.vision.insightface_adapter import (
-                    InsightFaceVisionAdapter,
-                )
-
-                # faces.db: misma carpeta que el history.db del primer agente.
-                first_agent = next(iter(self.agents.values()), None)
-                if first_agent is not None:
-                    history_path = Path(first_agent.agent_config.chat_history.db_filename)
-                    faces_db_path = str(history_path.parent / "faces.db")
-                else:
-                    faces_db_path = "~/.inaki/data/faces.db"
-
-                self._vision_adapter = InsightFaceVisionAdapter(photos_cfg.faces.model)
-                self._face_registry_adapter = SqliteFaceRegistryAdapter(
-                    faces_db_path, embedding_dim=512
-                )
-                logger.info(
-                    "Photos singletons inicializados (faces.db=%s, vision=lazy)", faces_db_path
-                )
+                logger.info("Photos singletons inicializados (vision=lazy)")
             except Exception as exc:
-                # Ídem: dependencia externa pesada. Sin estos singletons ningún
-                # agente analiza fotos, pero el daemon sigue siendo útil.
                 logger.error(
                     "Reconocimiento facial y descripción de escena QUEDAN DESHABILITADOS "
                     "para TODOS los agentes — no se pudieron inicializar los singletons "
                     "de photos: %s",
                     exc,
                 )
-
         for agent_id, container in self.agents.items():
             if self.registry.is_sub_agent(agent_id):
                 continue
             try:
-                container.wire_photos(
-                    self._vision_adapter,
-                    self._face_registry_adapter,
-                    self.global_config,
-                )
+                container.wire_photos(self._photos, self.global_config)
             except Exception as exc:
                 logger.error(
                     "Agente '%s': el procesamiento de fotos QUEDA DESHABILITADO — %s",
@@ -1796,38 +903,26 @@ class AppContainer:
                     exc,
                 )
 
+    def _data_db_path(self, filename: str) -> str:
+        """Un fichero junto al ``history.db`` del primer agente (el directorio de datos)."""
+        first_agent = next(iter(self.agents.values()), None)
+        if first_agent is None:
+            return f"~/.inaki/data/{filename}"
+        return str(Path(first_agent.agent_config.chat_history.db_filename).parent / filename)
+
     def _wire_telegram_tools(self) -> None:
-        # Wire telegram tools (send_to_telegram + download_from_telegram).
-        # El repo telegram_files es singleton compartido (cada record lleva agent_id).
-        # DB en la misma carpeta que history.db / faces.db.
-        self._telegram_file_repo = None
+        self._telegram_file_repo: IFileRecordRepo | None = None
         if any(
             (tg := telegram_config(cfg)) is not None and tg.token
             for cfg in self.registry.list_regular()
         ):
-            from pathlib import Path
-
-            from inaki.channels.telegram.files.repo import (
-                SqliteTelegramFileRepo,
+            self._telegram_file_repo = build_telegram_file_repo(
+                self._data_db_path("telegram_files.db")
             )
-
-            first_agent = next(iter(self.agents.values()), None)
-            if first_agent is not None:
-                history_path = Path(first_agent.agent_config.chat_history.db_filename)
-                files_db_path = str(history_path.parent / "telegram_files.db")
-            else:
-                files_db_path = "~/.inaki/data/telegram_files.db"
-            self._telegram_file_repo = SqliteTelegramFileRepo(files_db_path)
-            logger.info("telegram_files.db inicializado: %s", files_db_path)
-
         for agent_id, container in self.agents.items():
             if self.registry.is_sub_agent(agent_id):
                 continue
             try:
-                # functools.partial captura agent_id por valor (no por referencia
-                # como haría una lambda en un loop), y le da a mypy un
-                # Callable[[], object | None] inferible vs "Cannot infer type of
-                # lambda" con argumento default.
                 container.wire_telegram_tools(
                     partial(self._get_telegram_bot_for, agent_id),
                     self._telegram_file_repo,
@@ -1838,217 +933,50 @@ class AppContainer:
                     f"El agente tiene canal telegram pero no podría usarlas. Detalle: {exc}"
                 ) from exc
 
-    def _wire_memory_extractors(self) -> None:
-        # Wire memory extractor sub-agents.
-        # Si consolidation.agent_id apunta a un sub-agente, le pasamos su
-        # run_agent_one_shot al ConsolidateMemoryUseCase. Si el agent_id
-        # no existe o no es un sub-agente, se loggea ERROR y la consolidación
-        # cae de vuelta al prompt hardcodeado + LLM resuelto (graceful).
+    def _wire_memory_sub_agents(self) -> None:
+        """Conecta a cada agente regular su extractor y su reconciliador sub-agente."""
         delegation_cfg = self.global_config.delegation
+        candidatos = {
+            agent_id: SubAgenteDeMemoria(
+                one_shot=container.run_agent_one_shot,
+                system_prompt=container.agent_config.system_prompt,
+            )
+            for agent_id, container in self.agents.items()
+        }
         for agent_id, container in self.agents.items():
             if self.registry.is_sub_agent(agent_id):
                 continue
-            if container.consolidate_memory is None:
-                continue
-            extractor_id = container.agent_config.memories.consolidation.agent_id
-            if not extractor_id:
-                continue
-            extractor_container = self.agents.get(extractor_id)
-            if extractor_container is None:
-                logger.error(
-                    "Agente '%s': memories.consolidation.agent_id='%s' no existe — "
-                    "consolidación usará el prompt extractor por defecto",
-                    agent_id,
-                    extractor_id,
-                )
-                continue
-            if not self.registry.is_sub_agent(extractor_id):
-                logger.error(
-                    "Agente '%s': memories.consolidation.agent_id='%s' debe apuntar a un "
-                    "sub-agente (en agents/sub-agents/), no a un agente regular — "
-                    "consolidación usará el prompt extractor por defecto",
-                    agent_id,
-                    extractor_id,
-                )
-                continue
-            # El sub-agente sobreescribe las _EXTRACTOR_INSTRUCTIONS default solo
-            # si declara un system_prompt propio (no vacío). Omitirlo en el YAML →
-            # hereda el default canónico del use case (sin duplicar el prompt).
-            sub_prompt = extractor_container.agent_config.system_prompt
-            container.consolidate_memory.set_extractor(
-                extractor_container.run_agent_one_shot,
-                system_prompt_override=sub_prompt if sub_prompt.strip() else None,
+            wire_sub_agentes_de_memoria(
+                agent_id,
+                MemoryJobs(container.consolidate_memory, container.reconcile_memory),
+                container.agent_config.memories,
+                agentes=candidatos,
+                es_sub_agente=self.registry.is_sub_agent,
                 max_iterations=delegation_cfg.max_iterations_per_sub,
                 timeout_seconds=delegation_cfg.timeout_seconds,
-            )
-            logger.info(
-                "Agente '%s': memory extractor wired → sub-agente '%s'",
-                agent_id,
-                extractor_id,
-            )
-
-    def _wire_memory_reconcilers(self) -> None:
-        """Wire del sub-agente reconciliador para cada agente con reconciliation.enabled=True.
-
-        Si ``memories.reconciliation.agent_id`` apunta a un sub-agente válido, le
-        pasamos su ``run_agent_one_shot`` al ``ReconcileMemoryUseCase`` vía
-        ``set_reconciler``. Si el ``agent_id`` no existe o no es un sub-agente,
-        se loggea ERROR y la reconciliación usa el prompt hardcodeado + LLM resuelto
-        (graceful — mismo patrón que ``_wire_memory_extractors``).
-        """
-        delegation_cfg = self.global_config.delegation
-        for agent_id, container in self.agents.items():
-            if self.registry.is_sub_agent(agent_id):
-                continue
-            if container.reconcile_memory is None:
-                continue
-            reconciler_id = container.agent_config.memories.reconciliation.agent_id
-            if not reconciler_id:
-                continue
-            reconciler_container = self.agents.get(reconciler_id)
-            if reconciler_container is None:
-                logger.error(
-                    "Agente '%s': memories.reconciliation.agent_id='%s' no existe — "
-                    "reconciliación usará el prompt hardcodeado + LLM del agente",
-                    agent_id,
-                    reconciler_id,
-                )
-                continue
-            if not self.registry.is_sub_agent(reconciler_id):
-                logger.error(
-                    "Agente '%s': memories.reconciliation.agent_id='%s' debe apuntar a un "
-                    "sub-agente (en agents/sub-agents/), no a un agente regular — "
-                    "reconciliación usará el prompt hardcodeado + LLM del agente",
-                    agent_id,
-                    reconciler_id,
-                )
-                continue
-            # El sub-agente sobreescribe el _RECONCILER_PROMPT default solo si
-            # declara un system_prompt propio (no vacío). Omitirlo en el YAML →
-            # hereda el default canónico del use case (sin duplicar el prompt).
-            sub_prompt = reconciler_container.agent_config.system_prompt
-            container.reconcile_memory.set_reconciler(
-                reconciler_container.run_agent_one_shot,
-                system_prompt_override=sub_prompt if sub_prompt.strip() else None,
-                max_iterations=delegation_cfg.max_iterations_per_sub,
-                timeout_seconds=delegation_cfg.timeout_seconds,
-            )
-            logger.info(
-                "Agente '%s': memory reconciler wired → sub-agente '%s'",
-                agent_id,
-                reconciler_id,
             )
 
     def _wire_broadcast_for_agent(self, agent_cfg: AgentConfig) -> None:
-        """
-        Wirea los recursos derivados de la config telegram de un agente. Parsea
-        ``channels.telegram`` una vez y reparte en dos responsabilidades:
-
-        1. **Rate limiter de grupos** (``group_rate_limiter``): se instancia si
-           ``groups.behavior == "autonomous"``, con ``groups.rate_limiter_window``.
-           NO depende del broadcast — un bot autónomo sin LAN igual lo necesita.
-        2. **TcpBroadcastAdapter** (``broadcast_adapter``): solo si hay bloque
-           ``broadcast:`` con ``enabled=True``. Rol por bloque nombrado: ``server``
-           (escucha en "0.0.0.0") XOR ``client`` (conecta a ``client.host:port``).
-
-        Si el agente no tiene container (falló en _build_agent_containers) o no tiene
-        canal telegram, se omite silenciosamente.
-        """
+        """Recursos derivados de ``channels.telegram`` de un agente: rate limiter de
+        grupos, egress y transporte de broadcast (ver ``channels.telegram.wiring``).
+        Se omite si el agente no tiene container o no tiene canal telegram."""
         container = self.agents.get(agent_cfg.id)
         if container is None:
             return
-
-        # El bloque llega validado desde ``AgentConfig``: una topología inválida
-        # (formato viejo con `port:` suelto, `remote:`, o sin `auth`) ya abortó el
-        # arranque con ConfigError. Antes se revalidaba acá dentro de un
-        # try/except que, al fallar, se llevaba en silencio el transporte de
-        # broadcast Y el rate limiter de grupos con el daemon arrancando sano.
-        tg_cfg = telegram_config(agent_cfg)
-        if tg_cfg is None:
+        recursos = build_broadcast(agent_cfg)
+        if recursos is None:
             return
-        flags = build_telegram_channel_settings(tg_cfg).emit
-
-        # (1) Rate limiter de grupos — solo behavior=autonomous lo necesita
-        # (mention/listen no responden proactivamente). Independiente del broadcast:
-        # se resuelve aunque el agente no tenga transporte TCP configurado.
-        groups_cfg = tg_cfg.groups
-        if groups_cfg is not None and groups_cfg.behavior == "autonomous":
-            container.group_rate_limiter = FixedWindowRateLimiter(
-                window_seconds=float(groups_cfg.rate_limiter_window)
-            )
-            startup_event(
-                logger,
-                "group_rate_limiter",
-                status="ok",
-                agent=agent_cfg.id,
-                window_seconds=groups_cfg.rate_limiter_window,
-            )
-
-        # (2) Adapter TCP de broadcast — solo si hay bloque broadcast habilitado.
-        broadcast_cfg = tg_cfg.broadcast
-        if broadcast_cfg is None:
-            # Sin transporte LAN (el rate limiter de grupos ya se resolvió arriba).
-            startup_event(
-                logger,
-                "broadcast",
-                status="skip",
-                agent=agent_cfg.id,
-                reason="sin bloque broadcast",
-            )
-            container.broadcast_egress = BroadcastEgress(None, agent_cfg.id, flags)
-            return
-        if not broadcast_cfg.enabled:
-            startup_event(
-                logger, "broadcast", status="skip", agent=agent_cfg.id, reason="enabled=false"
-            )
-            container.broadcast_egress = BroadcastEgress(None, agent_cfg.id, flags)
-            return
-
-        # Rol explícito por bloque nombrado: server XOR client (garantizado por el
-        # validador de BroadcastConfig, junto con auth no-None cuando enabled).
-        role: Literal["server", "client"]
-
-        if broadcast_cfg.server is not None:
-            # Modo server: escucha en todas las interfaces de la LAN.
-            role = "server"
-            host = "0.0.0.0"
-            port = broadcast_cfg.server.port
-        else:
-            role = "client"
-            assert broadcast_cfg.client is not None  # satisface narrowing de mypy
-            host = broadcast_cfg.client.host
-            port = broadcast_cfg.client.port
-
-        assert broadcast_cfg.auth is not None  # validado con enabled=True
-        auth_str: str = broadcast_cfg.auth
-
-        buffer = BroadcastBuffer()
-        adapter = TcpBroadcastAdapter(
-            agent_id=agent_cfg.id,
-            role=role,
-            host=host,
-            port=port,
-            auth=auth_str,
-            buffer=buffer,
-        )
-
-        container.broadcast_adapter = adapter
-        container.broadcast_egress = BroadcastEgress(adapter, agent_cfg.id, flags)
-
-        startup_event(
-            logger, "broadcast", status="ok", agent=agent_cfg.id, role=role, host=host, port=port
-        )
+        container.group_rate_limiter = recursos.rate_limiter
+        container.broadcast_adapter = recursos.broadcast
+        container.broadcast_egress = recursos.egress
 
     def _build_channels(self) -> None:
-        """Construye un ``IChannel`` por agente regular con canal telegram configurado.
+        """Un ``IChannel`` por agente regular con canal telegram configurado.
 
         Corre al final del init: el bot necesita los ports ya wireados (scheduler,
         fotos, tools, outbound). Un bot que no se puede construir se reporta como
         ``startup.resource`` con ``status=error`` y no tumba al daemon.
         """
-        from inaki.channels.telegram.bot import TelegramBot
-        from inaki.channels.telegram.channel import TelegramChannel
-
         for agent_cfg in self.registry.list_regular():
             tg_cfg = telegram_config(agent_cfg)
             if tg_cfg is None:
@@ -2065,14 +993,18 @@ class AppContainer:
             container = self.agents.get(agent_cfg.id)
             if container is None:
                 continue
-            try:
-                bot = TelegramBot(
-                    build_telegram_bot_settings(agent_cfg),
-                    build_telegram_bot_ports(container),
-                    broadcast_emitter=container.broadcast_adapter,
-                    broadcast_receiver=container.broadcast_adapter,
+            recursos = (
+                TelegramAgentResources(
+                    egress=container.broadcast_egress,
+                    broadcast=container.broadcast_adapter,
                     rate_limiter=container.group_rate_limiter,
-                    reloader=self.reloader,
+                )
+                if container.broadcast_egress is not None
+                else None
+            )
+            try:
+                bot, channel = build_channel(
+                    agent_cfg, build_telegram_bot_ports(container), recursos, reloader=self.reloader
                 )
             except ValueError as exc:
                 startup_event(
@@ -2080,7 +1012,7 @@ class AppContainer:
                 )
                 continue
             self.register_telegram_bot(agent_cfg.id, bot)
-            self.channels.append(TelegramChannel(agent_cfg.id, bot, container.broadcast_adapter))
+            self.channels.append(channel)
 
     def register_telegram_bot(self, agent_id: str, bot: object) -> None:
         """Registra el bot de Telegram para un agente.
@@ -2110,62 +1042,27 @@ class AppContainer:
         """
         return self._telegram_bots.get(agent_id)
 
-    def _on_scheduler_mutation(self) -> None:
-        self.scheduler_service.invalidate()
-
-    async def _reconcile_consolidate_memory_task(self) -> None:
-        await self._scheduler_reconciler.reconcile_builtin_task(
-            build_consolidate_memory_task(self.global_config.memories.consolidation.schedule)
-        )
-
-    async def _reconcile_reconcile_memory_tasks(self) -> None:
-        """Reconcilia las tareas builtin de reconciliación de memoria.
-
-        Hay UNA tarea por agente que tenga ``memories.reconciliation.enabled=True``
-        (independiente de la consolidación). Los IDs de tarea se asignan
-        secuencialmente a partir de ``_RECONCILE_MEMORY_BASE_ID`` — estables
-        porque el orden del registry es determinista (orden de carga de configs).
-        """
-        agentes_con_reconcile = [
-            agent_cfg
-            for agent_cfg in self.registry.list_all()
-            if not self.registry.is_sub_agent(agent_cfg.id)
-            and agent_cfg.memories.reconciliation.enabled
-        ]
-        for idx, agent_cfg in enumerate(agentes_con_reconcile):
-            task_id = _RECONCILE_MEMORY_BASE_ID + idx
-            task = build_reconcile_memory_task(
-                schedule=agent_cfg.memories.reconciliation.schedule,
-                agent_id=agent_cfg.id,
-                task_id=task_id,
-            )
-            await self._scheduler_reconciler.reconcile_builtin_task(task)
-            logger.info(
-                "reconcile_memory task reconciliada — agente='%s' schedule='%s' task_id=%d",
-                agent_cfg.id,
-                agent_cfg.memories.reconciliation.schedule,
-                task_id,
-            )
-
-    async def _reconcile_face_dedup_task(self) -> None:
-        """No-op si photos está deshabilitado o si dedup.enabled=False."""
+    async def _reconciliar_builtins(self) -> None:
+        """Qué reconciliar lo decide el composition root; cómo, el módulo scheduler."""
         photos_cfg = getattr(self.global_config, "photos", None)
-        if photos_cfg is None or not photos_cfg.enabled:
-            return
-        if not photos_cfg.dedup.enabled:
-            return
-
-        # Elegir el primer agente que tiene photos wired.
-        agent_id = next(
-            (aid for aid, container in self.agents.items() if container.process_photo is not None),
-            None,
-        )
-        if agent_id is None:
-            logger.warning("face_dedup_nightly: no hay agentes con photos wired — omitido")
-            return
-
-        await self._scheduler_reconciler.reconcile_builtin_task(
-            build_face_dedup_task(photos_cfg.dedup.schedule, agent_id)
+        face_dedup: tuple[str, str] | None = None
+        if photos_cfg is not None and photos_cfg.enabled and photos_cfg.dedup.enabled:
+            agent_id = next(
+                (aid for aid, c in self.agents.items() if c.process_photo is not None), None
+            )
+            if agent_id is None:
+                logger.warning("face_dedup_nightly: no hay agentes con photos wired — omitido")
+            else:
+                face_dedup = (photos_cfg.dedup.schedule, agent_id)
+        await reconciliar_builtins(
+            self._scheduler,
+            consolidation_schedule=self.global_config.memories.consolidation.schedule,
+            reconciliaciones=[
+                (cfg.id, cfg.memories.reconciliation.schedule)
+                for cfg in self.registry.list_all()
+                if not self.registry.is_sub_agent(cfg.id) and cfg.memories.reconciliation.enabled
+            ],
+            face_dedup=face_dedup,
         )
 
     async def startup(self) -> None:
@@ -2173,9 +1070,7 @@ class AppContainer:
 
         Los canales (bots, broadcast) los arranca el daemon vía ``self.channels``."""
         if self.global_config.scheduler.enabled:
-            await self._reconcile_consolidate_memory_task()
-            await self._reconcile_reconcile_memory_tasks()
-            await self._reconcile_face_dedup_task()
+            await self._reconciliar_builtins()
             await self.scheduler_service.start()
             logger.info("SchedulerService iniciado")
 

@@ -40,7 +40,8 @@ from inaki.config import (
     MemoriesConfig,
     ProviderConfig,
 )
-from inaki.app.container import AgentContainer, build_run_agent_settings
+from inaki.app.container import AgentContainer
+from inaki.app.settings import build_run_agent_settings
 
 # ===========================================================================
 # Shared helpers and fixtures

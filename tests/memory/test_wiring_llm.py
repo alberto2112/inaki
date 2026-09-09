@@ -1,6 +1,6 @@
 """Tests del wiring del LLM de memoria en `AgentContainer`.
 
-Cubre el helper estático `AgentContainer._resolve_memories_llm`, que decide si
+Cubre `inaki.memory.wiring.resolver_llm_de_memorias`, que decide si
 los jobs de memoria reutilizan el LLM del agente o instancian uno dedicado según
 `cfg.memories.llm`. Los tests son aislados: no corren `__init__` completo
 (requiere IO real). Mismo patrón que `test_container_transcription.py`.
@@ -22,7 +22,7 @@ from inaki.config import (
     MemoryLLMConfig,
     ProviderConfig,
 )
-from inaki.app.container import AgentContainer
+from inaki.memory.wiring import resolver_llm_de_memorias
 from inaki.llm.wiring import LLMProviderFactory
 
 
@@ -58,7 +58,7 @@ def test_resolve_memories_llm_sin_override_reusa_instancia_base() -> None:
     cfg = _mk_cfg(memory_llm=None)
     base_llm = MagicMock()
 
-    resultado = AgentContainer._resolve_memories_llm(cfg, base_llm)
+    resultado = resolver_llm_de_memorias(cfg, base_llm)
 
     assert resultado is base_llm
 
@@ -83,7 +83,7 @@ def test_resolve_memories_llm_override_que_coincide_con_base_reusa() -> None:
     )
     base_llm = MagicMock()
 
-    resultado = AgentContainer._resolve_memories_llm(cfg, base_llm)
+    resultado = resolver_llm_de_memorias(cfg, base_llm)
 
     assert resultado is base_llm
 
@@ -113,7 +113,7 @@ def test_resolve_memories_llm_override_distinto_instancia_provider_nuevo(
         classmethod(fake_create_from_resolved),
     )
 
-    resultado = AgentContainer._resolve_memories_llm(cfg, base_llm)
+    resultado = resolver_llm_de_memorias(cfg, base_llm)
 
     assert resultado is instancia_dedicada
     assert resultado is not base_llm
@@ -142,4 +142,4 @@ def test_resolve_memories_llm_propaga_config_error_de_validacion() -> None:
     base_llm = MagicMock()
 
     with pytest.raises(ConfigError):
-        AgentContainer._resolve_memories_llm(cfg, base_llm)
+        resolver_llm_de_memorias(cfg, base_llm)

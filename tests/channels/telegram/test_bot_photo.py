@@ -17,12 +17,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.domain.entities.face import ProcessPhotoResult
 from inaki.channels.telegram.ports import (
     TelegramChannelSettings,
     TelegramEmitFlags,
     TelegramGroupSettings,
 )
+from inaki.perception.domain.face import ProcessPhotoResult
 
 # ---------------------------------------------------------------------------
 # Helpers de construcción

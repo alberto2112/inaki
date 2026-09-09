@@ -15,7 +15,7 @@ transcription:
 
 ## Providers disponibles
 
-Auto-descubiertos desde `adapters/outbound/transcription/` vía la constante
+Auto-descubiertos desde `inaki/perception/adapters/transcription/` vía la constante
 `PROVIDER_NAME` a nivel de módulo — sin registro manual.
 
 | `provider` | `base_url` por defecto | `model` típico |

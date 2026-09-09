@@ -14,13 +14,13 @@ from dataclasses import dataclass, field
 from core.ports.inbound.scheduler_port import IManualTaskRunner
 from core.ports.outbound.channel_port import IChannelOutbound
 from core.ports.outbound.scope_registry_port import IScopeRegistry
-from core.ports.outbound.transcription_port import ITranscriptionProvider
 from core.use_cases.consolidate_memory import ConsolidateMemoryUseCase
-from core.use_cases.process_photo import ProcessPhotoUseCase
 from core.use_cases.reconcile_memory import ReconcileMemoryUseCase
 from core.use_cases.run_agent import RunAgentUseCase
 from core.use_cases.schedule_task import ScheduleTaskUseCase
 from inaki.channels.telegram.files.ports import IFileDownloader, IFileRecordRepo
+from inaki.perception.use_cases.process_photo import ProcessPhotoUseCase
+from inaki.perception.use_cases.transcribe_audio import TranscribeAudioUseCase
 
 
 @dataclass(frozen=True)
@@ -40,19 +40,11 @@ class TelegramBotPorts:
     schedule_task: ScheduleTaskUseCase | None = None
     manual_task_runner: IManualTaskRunner | None = None
     process_photo: ProcessPhotoUseCase | None = None
-    transcription: ITranscriptionProvider | None = None
+    transcribe_audio: TranscribeAudioUseCase | None = None
     telegram_file_repo: IFileRecordRepo | None = None
     telegram_file_downloader: IFileDownloader | None = None
     channel_outbound: IChannelOutbound | None = None
     """Egress del canal del agente: por acá salen los intermedios en vivo del turno."""
-
-
-@dataclass(frozen=True)
-class TranscriptionLimits:
-    """Slice de la config de transcripción que el bot necesita para el size-check."""
-
-    language: str | None = None
-    max_audio_mb: int = 25
 
 
 @dataclass(frozen=True)
@@ -106,15 +98,10 @@ class TelegramChannelSettings:
 
 @dataclass(frozen=True)
 class TelegramBotSettings:
-    """Identidad del agente + slice de config que el bot consume.
-
-    ``transcription=None`` significa que el agente no tiene transcripción
-    configurada.
-    """
+    """Identidad del agente + slice de config que el bot consume."""
 
     id: str
     name: str = ""
     description: str = ""
     workspace_path: str = ""
-    transcription: TranscriptionLimits | None = None
     telegram: TelegramChannelSettings = field(default_factory=TelegramChannelSettings)

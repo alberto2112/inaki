@@ -4,11 +4,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.domain.entities.face import (
-    BBox,
-    FaceDetection,
-    Person,
-)
 from core.domain.value_objects.conversation_state import ConversationState
 from core.domain.value_objects.llm_response import LLMResponse
 from inaki.channels import registrar_canales_instalados
@@ -19,6 +14,11 @@ from inaki.config import (
     LLMConfig,
     MemoriesConfig,
     ProviderConfig,
+)
+from inaki.perception.domain.face import (
+    BBox,
+    FaceDetection,
+    Person,
 )
 
 

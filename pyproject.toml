@@ -130,6 +130,7 @@ forbidden_modules = [
     "inaki.observability",
     "inaki.config",
     "inaki.channels",
+    "inaki.perception",
 ]
 
 # adapters/ solo conoce core/ e inaki.shared: ni el wiring ni el módulo de config
@@ -145,6 +146,7 @@ forbidden_modules = [
     "inaki.observability",
     "inaki.config",
     "inaki.channels",
+    "inaki.perception",
 ]
 
 [[tool.importlinter.contracts]]
@@ -160,6 +162,7 @@ forbidden_modules = [
     "inaki.observability",
     "inaki.config",
     "inaki.channels",
+    "inaki.perception",
 ]
 
 [[tool.importlinter.contracts]]
@@ -173,6 +176,7 @@ forbidden_modules = [
     "inaki.app",
     "inaki.config",
     "inaki.channels",
+    "inaki.perception",
 ]
 
 
@@ -188,6 +192,7 @@ forbidden_modules = [
     "inaki.app",
     "inaki.observability",
     "inaki.channels",
+    "inaki.perception",
 ]
 
 # Un canal conoce el kernel (core), shared, observability y config (su sección se
@@ -203,3 +208,19 @@ forbidden_modules = ["infrastructure", "inaki.cli", "inaki.app"]
 name = "los canales son independientes entre sí"
 type = "independence"
 modules = ["inaki.channels.telegram", "inaki.channels.rest", "inaki.channels.cli"]
+
+# Un módulo de feature conoce el kernel (core) y shared; recibe su config como
+# Settings VO desde el composition root. Nunca a un canal, al wiring ni a config.
+[[tool.importlinter.contracts]]
+name = "inaki/perception solo conoce core y shared"
+type = "forbidden"
+source_modules = ["inaki.perception"]
+forbidden_modules = [
+    "adapters",
+    "infrastructure",
+    "inaki.cli",
+    "inaki.app",
+    "inaki.channels",
+    "inaki.config",
+    "inaki.observability",
+]

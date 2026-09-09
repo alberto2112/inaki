@@ -30,13 +30,14 @@ from inaki.channels.telegram.message_mapper import (
     extract_sender_name,
     send_html_or_plain,
 )
+from inaki.perception.use_cases.transcribe_audio import EmptyTranscriptionError
 from inaki.shared.attachment import (
     IncomingAttachment,
     format_album,
     format_analysis_delta,
     format_attachment,
 )
-from inaki.shared.errors import TranscriptionError
+from inaki.shared.errors import TranscriptionError, TranscriptionFileTooLargeError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
@@ -880,51 +881,47 @@ class TelegramMediaMixin:
             data=audio_bytes,
         )
 
-        # Size-check: preferimos file_size de Telegram (antes de procesar),
-        # con fallback al tamaño real descargado.
-        transcription_cfg = self._settings.transcription
-        transcription_provider = self._ports.transcription
-        if transcription_cfg is None or transcription_provider is None:
+        # La transcripción es una CAPACIDAD (perception), no del canal: el use case
+        # aplica límite, idioma y provider. Acá solo se decide qué decirle al usuario.
+        transcribe = self._ports.transcribe_audio
+        if transcribe is None:
             await _persistir_marcador(local_path)
             return
-        max_mb = transcription_cfg.max_audio_mb
-        max_bytes = max_mb * 1024 * 1024
+        # Size-check ANTES de mostrar actividad: preferimos file_size de Telegram
+        # (sin descargar), con fallback al tamaño real.
         effective_size = file_size or len(audio_bytes)
-        if effective_size > max_bytes:
+        try:
+            transcribe.check_size(effective_size)
+        except TranscriptionFileTooLargeError as exc:
             logger.warning(
                 "Audio demasiado grande para agente '%s': %d bytes > límite %d bytes",
                 self._settings.id,
-                effective_size,
-                max_bytes,
+                exc.size_bytes,
+                exc.limit_bytes,
             )
             await _persistir_marcador(local_path)
             await self._set_reaction(update, "👎")
             await message.reply_text(
-                f"El audio es demasiado grande ({effective_size // (1024 * 1024)} MB). "
-                f"Máximo permitido: {max_mb} MB."
+                f"El audio es demasiado grande ({exc.size_bytes // (1024 * 1024)} MB). "
+                f"Máximo permitido: {exc.limit_bytes // (1024 * 1024)} MB."
             )
             return
 
         await self._set_reaction(update, "👀")
 
-        # Transcribir — errores del provider se reportan al usuario pero NO
-        # corren el pipeline (sin texto no hay nada que ejecutar).
+        # Errores del provider se reportan al usuario pero NO corren el pipeline
+        # (sin texto no hay nada que ejecutar).
         try:
-            transcribed = await transcription_provider.transcribe(
-                audio_bytes,
-                mime,
-                language=transcription_cfg.language,
-            )
+            transcribed = await transcribe.execute(audio_bytes, mime, declared_size=effective_size)
+        except EmptyTranscriptionError:
+            await _persistir_marcador(local_path)
+            await message.reply_text("La transcripción vino vacía.")
+            await self._set_reaction(update, "👎")
+            return
         except TranscriptionError as exc:
             logger.warning("Transcripción fallida para agente '%s': %s", self._settings.id, exc)
             await _persistir_marcador(local_path)
             await message.reply_text(f"No pude transcribir el audio: {exc}")
-            await self._set_reaction(update, "👎")
-            return
-
-        if not transcribed or not transcribed.strip():
-            await _persistir_marcador(local_path)
-            await message.reply_text("La transcripción vino vacía.")
             await self._set_reaction(update, "👎")
             return
 

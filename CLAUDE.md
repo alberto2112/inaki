@@ -55,7 +55,10 @@ Cuatro capas. La dirección de dependencias es `adapters → core ← infrastruc
 > eventos de arranque), `inaki/config/` (schema por secciones, loader, merge,
 > home, config efectiva, borde de errores; el setup TUI fue retirado) e
 > `inaki/channels/telegram/` (el primer canal vertical: bot, outbound como borde con
-> emisión de broadcast, transporte TCP, ficheros y su sección de config registrada). La ley de dependencias vive en `pyproject.toml` →
+> emisión de broadcast, transporte TCP, ficheros y su sección de config registrada).
+> Después: `inaki/channels/{rest,cli}/`, `inaki/cli/` (un módulo por comando), `inaki/app/`
+> (bootstrap, runner, reloader) e `inaki/perception/` (fotos, caras, escena y voz,
+> independientes del canal; `TranscribeAudioUseCase` reemplaza la transcripción inline). La ley de dependencias vive en `pyproject.toml` →
 > `[tool.importlinter]` y la verifica `lint-imports`. Mientras dure el refactor,
 > las capas `core/`, `adapters/` e `infrastructure/` siguen vigentes con sus
 > reglas; los módulos se mudan de a uno.

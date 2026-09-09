@@ -187,22 +187,28 @@ def test_el_wiring_de_fotos_degrada_y_dice_que_capacidad_queda_muda(
 ) -> None:
     """El stack de visión es una dependencia externa pesada: que falte no puede
     tumbar el daemon entero, pero el operador tiene que enterarse de QUÉ perdió."""
-    from unittest.mock import MagicMock
+    from unittest.mock import MagicMock, patch
 
     from inaki.app.container import AgentContainer
 
     self_ = MagicMock()
     self_._photos_wired = False
     self_.agent_config.id = "inaki"
-    # El describer de escena es lo que puede faltar en el host (modelo ONNX,
-    # InsightFace): que reviente ahí es el caso real que se degrada.
-    self_._build_scene_describer.side_effect = RuntimeError("falta el modelo ONNX")
 
     global_config = MagicMock()
     global_config.photos.enabled = True
 
-    with caplog.at_level("ERROR"):
-        AgentContainer.wire_photos(self_, MagicMock(), MagicMock(), global_config)
+    # El describer de escena es lo que puede faltar en el host (modelo ONNX,
+    # InsightFace): que reviente al armar las fotos del agente es el caso real
+    # que se degrada.
+    with (
+        patch(
+            "inaki.app.container.build_photos_for_agent",
+            side_effect=RuntimeError("falta el modelo ONNX"),
+        ),
+        caplog.at_level("ERROR"),
+    ):
+        AgentContainer.wire_photos(self_, MagicMock(), global_config)
 
     assert self_._photos_wired is True, "la degradación no debe reintentar en loop"
     assert "DESHABILITADO" in caplog.text, (

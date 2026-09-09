@@ -271,7 +271,7 @@ Semántica ``null`` vs ausente (relevante para distinguir override de herencia):
     ``None`` → pisa al base con ``None`` (útil para, p. ej., apagar
     ``reasoning_effort`` en los jobs de memoria sin tocar el LLM del agente).
 
-Las credenciales NO viven acá — si el override cambia ``provider``, las creds se resuelven automáticamente desde el registry ``providers`` del nivel superior. Ver ``AgentContainer._resolve_memories_llm`` (container.py).
+Las credenciales NO viven acá — si el override cambia ``provider``, las creds se resuelven automáticamente desde el registry ``providers`` del nivel superior. Ver ``inaki.memory.wiring.resolver_llm_de_memorias``.
 
 NOTA: ``agent_id`` ya NO vive acá. La delegación a sub-agente es POR JOB y se declara en ``consolidation.agent_id`` / ``reconciliation.agent_id`` — cada job tiene su propio sub-agente especializado (extractor vs reconciler), con prompts distintos. El sub-agente, vía el merge de 4 capas, sobreescribe esta config LLM base de forma individual en su propio fichero.
 

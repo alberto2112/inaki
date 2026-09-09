@@ -106,10 +106,13 @@ Resumen operativo. El texto completo, con el porqué y los antipatrones, está e
 
    **NUNCA** un `knowledge` o `scheduler` per-agente: rompe el tier y multiplica recursos.
 
-3. **Wiring / DI** — `container.py` es el único lugar donde se registra un tool, provider
-   o repo. Los use cases **no reciben `AgentConfig`**: reciben Settings VOs
-   (`inaki/kernel/domain/value_objects/agent_settings.py`), mapeados en los builders públicos de
-   `container.py`. Los módulos de providers usan sus propios DTOs (`Resolved*Config`) en su
+3. **Wiring / DI** — Cada módulo sabe ensamblarse a sí mismo: su `wiring.py` es la factory
+   (config → adapters, use cases y tools) y el ÚNICO fichero del módulo con permiso para
+   importar `inaki.config`. El composition root (`inaki/app/`) solo decide el orden y reparte
+   lo que un módulo necesita de otro; un tool, provider o repo NUNCA se instancia fuera del
+   `wiring.py` de su módulo. Los use cases **no reciben `AgentConfig`**: reciben Settings VOs
+   (`inaki/kernel/domain/value_objects/agent_settings.py`), mapeados en `inaki/app/settings.py`
+   y en el `wiring.py` de su módulo. Los módulos de providers usan sus propios DTOs (`Resolved*Config`) en su
    `base.py` (`inaki/llm`, `inaki/embedding`, transcripción en `inaki/perception`) — **NUNCA**
    moverlos de vuelta a `inaki/config/`.
    Providers (LLM, embedding, transcripción) se auto-descubren por la constante

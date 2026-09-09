@@ -110,7 +110,9 @@ ignore_missing_imports = true
 # pytest: import-linter solo sabe PROHIBIR paquetes, no permitir una lista cerrada.
 #
 # Refactor modular (2026-09): cada fase agrega o endurece un contrato acá. NUNCA se resuelve una violación con ignore_imports —
-# es la lista DEUDA_* con otro nombre.
+# es la lista DEUDA_* con otro nombre. ÚNICA excepción, por diseño: el `wiring.py` de un módulo es
+# su factory (config → adapters) y puede conocer `inaki.config` y el `wiring.py` de otro módulo;
+# se declara como `ignore_imports` en su contrato para que el borde quede escrito, no supuesto.
 # ---------------------------------------------------------------------------
 [tool.importlinter]
 root_packages = ["inaki"]
@@ -271,6 +273,11 @@ forbidden_modules = [
     "inaki.config", "inaki.observability", "inaki.perception",
     "inaki.tools", "inaki.llm", "inaki.extensions", "inaki.scheduler", "inaki.agents",
 ]
+ignore_imports = [
+    "inaki.memory.wiring -> inaki.config",
+    "inaki.memory.wiring -> inaki.llm.wiring",
+    "inaki.knowledge.wiring -> inaki.config",
+]
 
 [[tool.importlinter.contracts]]
 name = "memory, knowledge y skills son independientes entre sí"
@@ -288,6 +295,7 @@ forbidden_modules = [
     "inaki.memory", "inaki.knowledge", "inaki.skills", "inaki.llm", "inaki.extensions",
     "inaki.scheduler", "inaki.agents",
 ]
+ignore_imports = ["inaki.tools.wiring -> inaki.config"]
 
 # llm es un gateway puro: recibe ResolvedLLMConfig del wiring y no conoce a nadie más.
 [[tool.importlinter.contracts]]
@@ -327,6 +335,7 @@ forbidden_modules = [
     "inaki.memory", "inaki.knowledge", "inaki.skills", "inaki.tools", "inaki.llm",
     "inaki.extensions", "inaki.agents",
 ]
+ignore_imports = ["inaki.scheduler.wiring -> inaki.config"]
 
 # agents conoce el kernel (one-shot, ports de delegación y scope) y shared. El
 # builder del hijo efímero y wire_delegation son wiring: viven en el composition
@@ -340,4 +349,9 @@ forbidden_modules = [
     "inaki.config", "inaki.observability", "inaki.perception", "inaki.embedding",
     "inaki.memory", "inaki.knowledge", "inaki.skills", "inaki.tools", "inaki.llm",
     "inaki.extensions", "inaki.scheduler",
+]
+ignore_imports = [
+    "inaki.agents.wiring -> inaki.config",
+    "inaki.agents.wiring -> inaki.config.merge",
+    "inaki.agents.wiring -> inaki.llm.wiring",
 ]

@@ -9,7 +9,7 @@ Cubre:
 5. build_reconcile_memory_task genera el nombre correcto, TriggerType, schedule y task_id.
 6. ReconcileDispatchAdapter llama al use case correcto por agent_id.
 7. ReconcileDispatchAdapter lanza ValueError cuando el agent_id no existe.
-8. _wire_memory_reconcilers llama a set_reconciler cuando reconciliation.agent_id apunta
+8. _wire_memory_sub_agents llama a set_reconciler cuando reconciliation.agent_id apunta
    a un sub-agente válido (happy path).
 """
 
@@ -44,7 +44,8 @@ from inaki.config import (
     ReconciliationConfig,
 )
 from inaki.memory.use_cases.reconcile_memory import ReconcileMemoryUseCase
-from inaki.app.container import AgentContainer, build_memory_settings
+from inaki.app.container import AgentContainer
+from inaki.memory.wiring import build_memory_settings
 
 # ---------------------------------------------------------------------------
 # Helpers — idéntico patrón que test_container_wire_scheduler.py
@@ -347,14 +348,14 @@ async def test_reconcile_dispatch_adapter_lanza_por_agent_id_inexistente() -> No
 
 
 # ---------------------------------------------------------------------------
-# 8. _wire_memory_reconcilers llama a set_reconciler con sub-agente válido
+# 8. _wire_memory_sub_agents llama a set_reconciler con sub-agente válido
 # ---------------------------------------------------------------------------
 
 
 def test_wire_memory_reconcilers_llama_set_reconciler() -> None:
-    """_wire_memory_reconcilers debe llamar set_reconciler cuando reconciliation.agent_id
+    """_wire_memory_sub_agents debe llamar set_reconciler cuando reconciliation.agent_id
     apunta a un sub-agente válido."""
-    # Construimos la mínima infraestructura para invocar _wire_memory_reconcilers
+    # Construimos la mínima infraestructura para invocar _wire_memory_sub_agents
     # sin levantar el AppContainer completo.
     from inaki.app.container import AppContainer
 
@@ -372,6 +373,7 @@ def test_wire_memory_reconcilers_llama_set_reconciler() -> None:
     mock_uc = MagicMock(spec=ReconcileMemoryUseCase)
     mock_uc.set_reconciler = MagicMock()
     main_container.reconcile_memory = mock_uc
+    main_container.consolidate_memory = None
 
     # Container del sub-agente reconciliador
     sub_agent_cfg = _make_agent_config(agent_id="memory_reconciler")
@@ -391,7 +393,7 @@ def test_wire_memory_reconcilers_llama_set_reconciler() -> None:
     app.registry = mock_registry
 
     # Ejecutar el wiring
-    app._wire_memory_reconcilers()
+    app._wire_memory_sub_agents()
 
     # set_reconciler debe haberse llamado con el run_agent_one_shot del sub-agente.
     # El sub-agente de test declara system_prompt="Test prompt" → se pasa como

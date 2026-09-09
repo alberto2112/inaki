@@ -13,7 +13,7 @@ import pytest
 
 from inaki.kernel.use_cases.run_agent import RunAgentUseCase
 from inaki.shared.message import Message, Role
-from inaki.app.container import build_run_agent_settings
+from inaki.app.settings import build_run_agent_settings
 
 # ---------------------------------------------------------------------------
 # Fixtures

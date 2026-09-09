@@ -17,7 +17,7 @@ from inaki.kernel.domain.entities.background_task import BackgroundTaskView
 from inaki.kernel.domain.value_objects.llm_response import LLMResponse
 from inaki.kernel.use_cases._turn_pipeline import render_in_flight_section
 from inaki.kernel.use_cases.run_agent import RunAgentUseCase
-from inaki.app.container import build_run_agent_settings
+from inaki.app.settings import build_run_agent_settings
 
 
 def _view(

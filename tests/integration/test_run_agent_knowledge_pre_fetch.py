@@ -21,7 +21,7 @@ from inaki.knowledge.adapters.sqlite_memory_knowledge_source import (
 )
 from inaki.knowledge.orchestrator import KnowledgeOrchestrator
 from inaki.memory.adapters.sqlite_memory_repo import SQLiteMemoryRepository
-from inaki.app.container import build_run_agent_settings
+from inaki.app.settings import build_run_agent_settings
 
 
 def _vec_normalizado(n: int = 384, value: float = 1.0) -> list[float]:

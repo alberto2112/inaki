@@ -10,7 +10,7 @@ This document covers the two agent extension mechanisms: **tools** (functions in
 |--------|-------|--------|
 | Location | `inaki/tools/builtin/` (núcleo) o `ext/<x>/` (extensiones); las de un módulo, con su módulo (`inaki/memory/tools/`, `inaki/knowledge/tools/`, `inaki/channels/telegram/tools/`) | `ext/<x>/*.yaml` |
 | Base interface | `ITool` + `IToolExecutor` | `ISkillRepository` |
-| Registration | Manual in `AgentContainer._register_tools()` | Automatic via glob `*.yaml` |
+| Registration | The owning module's `wiring.py` builds it; the composition root registers it | Automatic via glob `*.yaml` |
 | Invocable by the LLM | Yes (function calling) | No (text only in the prompt) |
 | Semantic routing | Yes (cosine similarity) | Yes (cosine similarity) |
 | Configuration | Hardcoded in the class | `config/global.yaml` |
@@ -82,17 +82,20 @@ Always accept `**kwargs` in `execute` to silently ignore unknown parameters with
 
 ### Registration
 
-Tools are registered manually in the container. After creating the class, add it in:
+A builtin tool is built by the `wiring.py` of the module that owns it and registered by the composition root. For a generic tool, add it to the list in `inaki/tools/wiring.py`:
 
 ```python
-# inaki/app/container.py
+# inaki/tools/wiring.py
 
-def _register_tools(self) -> None:
-    from inaki.tools.builtin.echo import EchoTool
-    self._tools.register(EchoTool())
+def build_builtin_tools(cfg, *, workspace, config_store) -> list[ITool]:
+    return [
+        WebSearchTool(config_store=config_store),
+        EchoTool(),
+        ...
+    ]
 ```
 
-There is no automatic discovery. If it's not registered, it doesn't exist.
+A tool that belongs to a feature (memory, knowledge, perception, a channel) goes in that module's `wiring.py` instead. There is no automatic discovery for builtins. If it's not built by a wiring, it doesn't exist. Extensions are the exception: their `manifest.py` is auto-discovered.
 
 ### Tool Semantic Routing
 

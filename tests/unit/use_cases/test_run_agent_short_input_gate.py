@@ -23,7 +23,7 @@ from inaki.config import (
     SkillsConfig,
     ToolsConfig,
 )
-from inaki.app.container import build_run_agent_settings
+from inaki.app.settings import build_run_agent_settings
 
 
 def _make_use_case(

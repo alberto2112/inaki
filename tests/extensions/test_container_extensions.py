@@ -60,6 +60,11 @@ def _make_container(tmp_path: Path) -> AgentContainer:
     container._tools = ToolRegistry(embedder=FakeEmbedder())
     container._skills = YamlSkillRepository(FakeEmbedder())
     container._tool_config_store = MagicMock()
+    # Lo que el registro de extensiones lee del container además de los registros.
+    container._embedder = FakeEmbedder()
+    container._pending_knowledge_sources = []
+    container.agent_config = types.SimpleNamespace(id="test-agent")  # type: ignore[assignment]
+    container._global_config = types.SimpleNamespace(knowledge=None)  # type: ignore[assignment]
     return container
 
 

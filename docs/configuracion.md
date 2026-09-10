@@ -71,8 +71,14 @@ Un override de agente se puede volver a "heredar" (borra la clave: manda
 global); en la capa global, heredar es volver al default del schema. Los
 secretos nunca se muestran: se escriben, y la vista solo dice si están puestos.
 
-Endpoints: [`admin-api.md`](admin-api.md). Nota de diseño: `config-web` en
-[`migraciones.md`](migraciones.md).
+Desde la misma página se crean y borran **agentes** (regulares o sub-agentes) y
+**providers**. Borrar un agente borra su YAML, credenciales incluidas, y nada más:
+historial, memoria y `users/` quedan. Dos guards que el loader no aplica: no se
+borra el `app.default_agent`, ni un provider al que apunte `llm`, `embedding`,
+`transcription` o `memories.llm` en cualquier capa; el error dice quién lo usa.
+
+Endpoints: [`admin-api.md`](admin-api.md). Notas de diseño: `config-web` y
+`agentes-y-providers-web` en [`migraciones.md`](migraciones.md).
 
 ## Los ficheros
 

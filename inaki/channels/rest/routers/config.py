@@ -30,8 +30,9 @@ from inaki.channels.rest.routers.deps import check_admin_auth
 from inaki.config.introspection import CampoDelSchema
 from inaki.config.ports import LayerName
 from inaki.config.use_cases.apply_changes import ConfigInvalidaError
+from inaki.config.use_cases.manage_agents import EntidadEnUsoError
 from inaki.config.wiring import ConfigWeb
-from inaki.shared.errors import AgentNotFoundError
+from inaki.shared.errors import AgentNotFoundError, AgentYaExisteError
 
 router = APIRouter(prefix="/admin/config", tags=["config"])
 
@@ -41,6 +42,26 @@ def _web(request: Request) -> ConfigWeb:
     if web is None:
         raise HTTPException(status_code=503, detail="La UI de config no está montada.")
     return web
+
+
+class NuevoAgenteRequest(BaseModel):
+    agent_id: str = Field(min_length=1, pattern=r"^[A-Za-z0-9_-]+$")
+    name: str = Field(min_length=1)
+    description: str = ""
+    system_prompt: str = ""
+    sub_agent: bool = False
+
+
+class ProviderRequest(BaseModel):
+    type: str | None = None
+    base_url: str | None = None
+    api_key: str | None = Field(default=None, description="write-only; vacío = no tocar")
+
+
+def _422_config_invalida(exc: ConfigInvalidaError) -> HTTPException:
+    # La capa ya volvió a su snapshot (o el fichero nuevo se borró): el mensaje es
+    # el del loader, accionable.
+    return HTTPException(status_code=422, detail={"error": "config_invalida", "mensaje": str(exc)})
 
 
 class CambiosRequest(BaseModel):
@@ -119,12 +140,90 @@ async def editar_capa(body: CambiosRequest, request: Request) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ConfigInvalidaError as exc:
-        # La capa ya volvió a su snapshot: el mensaje es el del loader, accionable.
-        raise HTTPException(
-            status_code=422, detail={"error": "config_invalida", "mensaje": str(exc)}
-        ) from exc
+        raise _422_config_invalida(exc) from exc
     vista = _vista(web, body.agent_id if capa is not LayerName.GLOBAL else None)
     return {"cambiados": resultado.cambiados, "heredados": resultado.heredados, **vista}
+
+
+def _agentes(web: ConfigWeb) -> dict[str, Any]:
+    regulares, subs = web.agentes()
+    return {"agents": regulares, "sub_agents": subs}
+
+
+@router.post("/agents", status_code=201, dependencies=[Depends(check_admin_auth)])
+async def crear_agente(body: NuevoAgenteRequest, request: Request) -> dict[str, Any]:
+    web = _web(request)
+    try:
+        web.manage_agents.crear(
+            body.agent_id,
+            body.name,
+            descripcion=body.description,
+            system_prompt=body.system_prompt,
+            sub_agente=body.sub_agent,
+        )
+    except AgentYaExisteError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ConfigInvalidaError as exc:
+        raise _422_config_invalida(exc) from exc
+    return {"creado": body.agent_id, **_agentes(web)}
+
+
+@router.delete("/agents/{agent_id}", dependencies=[Depends(check_admin_auth)])
+async def borrar_agente(agent_id: str, request: Request, sub_agent: bool = False) -> dict[str, Any]:
+    web = _web(request)
+    try:
+        web.manage_agents.borrar(agent_id, sub_agente=sub_agent)
+    except AgentNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except EntidadEnUsoError as exc:
+        raise HTTPException(
+            status_code=422, detail={"error": "en_uso", "mensaje": str(exc)}
+        ) from exc
+    except ConfigInvalidaError as exc:
+        raise _422_config_invalida(exc) from exc
+    return {"borrado": agent_id, **_agentes(web)}
+
+
+def _providers(web: ConfigWeb) -> dict[str, Any]:
+    return {
+        "providers": [
+            {"key": p.key, "type": p.type, "base_url": p.base_url, "tiene_api_key": p.tiene_api_key}
+            for p in web.manage_providers.listar()
+        ]
+    }
+
+
+@router.get("/providers", dependencies=[Depends(check_admin_auth)])
+async def listar_providers(request: Request) -> dict[str, Any]:
+    return _providers(_web(request))
+
+
+@router.put("/providers/{key}", dependencies=[Depends(check_admin_auth)])
+async def guardar_provider(key: str, body: ProviderRequest, request: Request) -> dict[str, Any]:
+    web = _web(request)
+    try:
+        web.manage_providers.guardar(
+            key, type=body.type, base_url=body.base_url, api_key=body.api_key
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ConfigInvalidaError as exc:
+        raise _422_config_invalida(exc) from exc
+    return {"guardado": key, **_providers(web)}
+
+
+@router.delete("/providers/{key}", dependencies=[Depends(check_admin_auth)])
+async def borrar_provider(key: str, request: Request) -> dict[str, Any]:
+    web = _web(request)
+    try:
+        web.manage_providers.borrar(key)
+    except EntidadEnUsoError as exc:
+        raise HTTPException(
+            status_code=422, detail={"error": "en_uso", "mensaje": str(exc)}
+        ) from exc
+    except ConfigInvalidaError as exc:
+        raise _422_config_invalida(exc) from exc
+    return {"borrado": key, **_providers(web)}
 
 
 @router.get("/ui", response_class=HTMLResponse, include_in_schema=False)

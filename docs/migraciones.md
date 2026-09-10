@@ -45,6 +45,7 @@ existe este documento— y la contradicción no queda flotando.
 | [`channel-contextid`](#channel-contextid) | `mv` de los ficheros de contexto a `{context_id}.md` + cambiar la variable del prompt |
 | [`per-user-context-files`](#per-user-context-files) | *(superseded)* `mv` de `USER.md` a `users/{channel}/…` |
 | [`config-falla-ruidoso`](#config-falla-ruidoso) | **Puede impedir el arranque**: corregir el typo/valor que el error nombra (antes se ignoraba en silencio) |
+| [`agentes-y-providers-web`](#agentes-y-providers-web) | La UI de config crea y borra agentes y providers (validado, con rollback y con guards para `default_agent` y providers en uso); borrar un agente no toca sus datos |
 | [`config-web`](#config-web) | Comando nuevo `inaki config web` y endpoints `/admin/config/*` en el admin server: la config efectiva con origen, editable por capa y validada con el loader del arranque |
 | [`instalacion-como-producto`](#instalacion-como-producto) | Nuevos `inaki init` e `inaki service install\|uninstall`; `systemd/install.sh` desaparece; el symlink `/usr/local/bin/inaki` pasa a ser opt-in (`--link-cli`); `insightface` es el extra `faces`; `tokenizers` declarado |
 | [`telegram-composicion`](#telegram-composicion) | Sin cambios de comportamiento: `TelegramBot` deja los mixins y compone objetos con constructor explícito (`auth`, `reactions`, `rate_limit`, `turn`, `group_flow`, `broadcast/ingress`, `media`, `commands`) |
@@ -115,12 +116,47 @@ de `global.yaml`).
 - **Memoria**: `memory-management-tools`, `memory-scoped-by-channel-chat`,
   `agent-state-scoped-by-channel-chat`
 - **Scheduler**: `modulos-scheduler-y-agents`, `scheduler-trigger-type-mutable`, `channel-send-history-persist`
-- **Instalación y producto**: `instalacion-como-producto`, `config-web`
+- **Instalación y producto**: `instalacion-como-producto`, `config-web`, `agentes-y-providers-web`
 - **Tools y config**: `runtimes-tipados`, `wiring-por-modulo`, `kernel-y-fachada-de-tools`, `modulos-tools-llm-extensions`, `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `agentes-y-providers-web`
+
+**Contexto (2026-09-10, fase 11c del refactor modular).** La UI de config (`config-web`)
+editaba campos pero no creaba ni borraba nada. Los use cases del TUI retirado
+(`CreateAgent`, `DeleteAgent`, `UpsertProvider`, `DeleteProvider`) seguían vivos, pero
+escribían y borraban sin validar ni deshacer. Y dos referencias que el loader NO vigila
+revientan recién al ensamblar: `app.default_agent` apuntando a un agente que ya no
+existe, y `llm.provider` (o `embedding`, `transcription`, `memories.llm`) apuntando a
+una entrada borrada de `providers`.
+
+**Cambio.**
+
+- La política "escribir, validar, deshacer" sale de `ApplyConfigChangesUseCase` a un
+  helper único, `escritura_validada` (`apply_changes.py`): snapshot de la capa, mutación,
+  loader; si rechaza, restaura el snapshot o BORRA lo que acaba de nacer.
+- `ManageAgentsUseCase` (`manage_agents.py`): `crear` y `borrar` envuelven los use cases
+  existentes en la escritura validada. Guard: no se borra el `app.default_agent`.
+- `ManageProvidersUseCase` (`manage_providers.py`): `listar` (sin credenciales),
+  `guardar`, `borrar`. Guard: no se borra un provider referenciado en global ni en
+  ninguna capa de agente; el error nombra `capa:path`.
+- Router: `POST/DELETE /admin/config/agents`, `GET/PUT/DELETE /admin/config/providers`.
+  Front: panel "＋ agente" (salta a la capa del agente creado), "borrar agente" con
+  confirmación que avisa que los datos quedan, y panel de providers en la vista global.
+
+**Comportamiento observable.** Endpoints y controles nuevos. Borrar un agente borra
+SOLO su YAML: historial, memoria y `users/` no se tocan (lo que el use case ya prometía).
+
+**Invariante que dejó.** **NUNCA** un carril de escritura de config fuera de
+`escritura_validada`: crear, editar y borrar pasan por el mismo snapshot → loader →
+rollback. Y una referencia que el loader no vigila se vigila en el use case que la
+puede romper, con un error que nombra quién la usa — nunca se deja para que reviente
+al ensamblar.
 
 ---
 

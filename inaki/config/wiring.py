@@ -24,6 +24,8 @@ from inaki.config.merge import deep_merge
 from inaki.config.schema import AgentConfig, GlobalConfig
 from inaki.config.tools.config_tool import ConfigTool
 from inaki.config.use_cases.apply_changes import ApplyConfigChangesUseCase
+from inaki.config.use_cases.manage_agents import ManageAgentsUseCase
+from inaki.config.use_cases.manage_providers import ManageProvidersUseCase
 from inaki.config.use_cases.runtime_config import RuntimeConfigUseCase
 from inaki.config.use_cases.show_effective import ShowEffectiveConfigUseCase
 
@@ -41,6 +43,8 @@ class ConfigWeb:
     schema: list[CampoDelSchema]
     agentes: Callable[[], tuple[list[str], list[str]]]
     """``() -> (agentes regulares, sub-agentes)``, leídos de disco en cada llamada."""
+    manage_agents: ManageAgentsUseCase
+    manage_providers: ManageProvidersUseCase
     daemon: bool
     """``True`` en el admin server: la UI ofrece recargar el daemon tras guardar."""
 
@@ -67,6 +71,8 @@ def build_config_web(*, daemon: bool) -> ConfigWeb:
         apply=ApplyConfigChangesUseCase(repo, validar),
         schema=campos_del_schema(),
         agentes=lambda: (repo.list_agents(), repo.list_sub_agents()),
+        manage_agents=ManageAgentsUseCase(repo, validar),
+        manage_providers=ManageProvidersUseCase(repo, validar),
         daemon=daemon,
     )
 

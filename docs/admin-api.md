@@ -30,6 +30,11 @@ servidor REST por agente.
 | GET | `/admin/config/agents` | Ids de agentes y sub-agentes, y si la UI corre en el daemon |
 | GET | `/admin/config/effective` | Config efectiva con origen y ayuda del schema (`?agent=X`); secretos redactados |
 | PUT | `/admin/config/layer` | Edita una capa — body `{"layer": "global\|agent\|sub_agent", "agent_id", "cambios": {path: valor}, "heredar": [path]}`. Valida con el loader del arranque; `422` con el mensaje del loader y la capa intacta si no carga |
+| POST | `/admin/config/agents` | Crea un agente (`{agent_id, name, description, system_prompt, sub_agent}`); `409` si existe, `422` si el loader rechaza (no queda fichero) |
+| DELETE | `/admin/config/agents/{id}` | Borra el YAML del agente (`?sub_agent=true` para un sub-agente); `422` si es el `app.default_agent` o el loader rechaza (YAML restaurado). Sus datos no se tocan |
+| GET | `/admin/config/providers` | El registry `providers:` sin credenciales (solo si la `api_key` está puesta) |
+| PUT | `/admin/config/providers/{key}` | Crea o edita un provider (`{type, base_url, api_key}`; `api_key` vacía no toca la existente) |
+| DELETE | `/admin/config/providers/{key}` | Borra el provider con su credencial; `422` si `llm`, `embedding`, `transcription` o `memories.llm` lo referencian en global o en algún agente |
 | GET | `/admin/config/ui` | La UI web de config (HTML, sin auth: los datos los pide con la key) |
 
 > `POST /admin/tool/invoke` es el **gateway admin único** de la regla del canal

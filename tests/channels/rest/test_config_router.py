@@ -144,3 +144,66 @@ async def test_sin_config_web_montada_responde_503() -> None:
     async with _client(app) as ac:
         r = await ac.get("/admin/config/agents", headers={"X-Admin-Key": KEY})
     assert r.status_code == 503
+
+
+# --- agentes y providers (fase 11c) ------------------------------------------
+
+
+async def test_crear_agente_valida_y_salta_a_la_lista(daemon_app: FastAPI, home: Path) -> None:
+    body = {"agent_id": "nuevo", "name": "Nuevo", "description": "d", "system_prompt": "Sos Nuevo."}
+    async with _client(daemon_app) as ac:
+        r = await ac.post("/admin/config/agents", json=body, headers={"X-Admin-Key": KEY})
+        dup = await ac.post("/admin/config/agents", json=body, headers={"X-Admin-Key": KEY})
+        malo = await ac.post(
+            "/admin/config/agents",
+            json={"agent_id": "con espacios", "name": "x"},
+            headers={"X-Admin-Key": KEY},
+        )
+    assert r.status_code == 201, r.text
+    assert r.json() == {"creado": "nuevo", "agents": ["dev", "nuevo"], "sub_agents": ["worker"]}
+    assert (
+        yaml.safe_load((home / "agents" / "nuevo.yaml").read_text())["system_prompt"]
+        == "Sos Nuevo."
+    )
+    assert dup.status_code == 409 and "ya existe" in dup.json()["detail"]
+    assert malo.status_code == 422
+
+
+async def test_borrar_agente_respeta_el_default_y_borra_el_resto(
+    standalone_app: FastAPI, home: Path
+) -> None:
+    async with _client(standalone_app) as ac:
+        default = await ac.delete("/admin/config/agents/dev")
+        sub = await ac.delete("/admin/config/agents/worker?sub_agent=true")
+        fantasma = await ac.delete("/admin/config/agents/fantasma")
+    assert default.status_code == 422 and default.json()["detail"]["error"] == "en_uso"
+    assert (home / "agents" / "dev.yaml").exists()
+    assert sub.status_code == 200 and sub.json()["sub_agents"] == []
+    assert not (home / "agents" / "sub-agents" / "worker.yaml").exists()
+    assert fantasma.status_code == 404
+
+
+async def test_providers_listar_guardar_y_borrar_con_guard(
+    standalone_app: FastAPI, home: Path
+) -> None:
+    async with _client(standalone_app) as ac:
+        lista = await ac.get("/admin/config/providers")
+        alta = await ac.put(
+            "/admin/config/providers/ollama", json={"base_url": "http://pi:11434", "api_key": ""}
+        )
+        en_uso = await ac.delete("/admin/config/providers/openrouter")
+        baja = await ac.delete("/admin/config/providers/ollama")
+    assert lista.status_code == 200
+    assert lista.json()["providers"] == [
+        {"key": "openrouter", "type": None, "base_url": None, "tiene_api_key": True}
+    ]
+    assert "sk-real" not in lista.text
+    assert alta.status_code == 200 and [p["key"] for p in alta.json()["providers"]] == [
+        "ollama",
+        "openrouter",
+    ]
+    assert en_uso.status_code == 422 and "global:llm.provider" in en_uso.json()["detail"]["mensaje"]
+    assert baja.status_code == 200 and [p["key"] for p in baja.json()["providers"]] == [
+        "openrouter"
+    ]
+    assert "ollama" not in (home / "config" / "global.yaml").read_text()

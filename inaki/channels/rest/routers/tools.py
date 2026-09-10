@@ -15,7 +15,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from inaki.kernel.domain.value_objects.outbound_kind import OutboundKind
+from inaki.kernel.domain.outbound_kind import OutboundKind
 from inaki.channels.rest.routers.deps import check_admin_auth, resolver_agente
 from inaki.channels.rest.schemas import (
     SendRequest,

@@ -16,12 +16,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from inaki.kernel.domain.value_objects.conversation_state import ConversationState
-from inaki.kernel.domain.value_objects.llm_response import LLMResponse
-from inaki.kernel.ports.outbound.history_port import IHistoryStore
-from inaki.kernel.ports.outbound.scope_registry_port import Scope
-from inaki.kernel.ports.outbound.tool_port import ToolResult
-from inaki.kernel.use_cases._tool_loop import run_tool_loop
+from inaki.kernel.domain.conversation_state import ConversationState
+from inaki.kernel.domain.llm_response import LLMResponse
+from inaki.kernel.ports.history_port import IHistoryStore
+from inaki.kernel.ports.scope_registry_port import Scope
+from inaki.kernel.ports.tool_port import ToolResult
+from inaki.kernel._tool_loop import run_tool_loop
 from inaki.shared.errors import ToolLoopMaxIterationsError
 from inaki.shared.message import Message, Role
 
@@ -241,7 +241,7 @@ async def test_reset_cap_acota_el_turno_ante_pushes_infinitos():
     Con max_iterations=1 y cap=3: el drain resetea 3 veces (llamadas 1-3) y en
     la 4ª ya no resetea → el loop corta y lanza ToolLoopMaxIterationsError.
     """
-    from inaki.kernel.use_cases._tool_loop import _MAX_INFLIGHT_ITER_RESETS
+    from inaki.kernel._tool_loop import _MAX_INFLIGHT_ITER_RESETS
 
     initial_msg = Message(role=Role.USER, content="tarea")
     history = _FakeHistoryStore(initial=[initial_msg])

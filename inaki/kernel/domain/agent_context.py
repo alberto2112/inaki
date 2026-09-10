@@ -6,8 +6,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel
 
-from inaki.kernel.domain.entities.skill import Skill
-from inaki.kernel.domain.value_objects.knowledge_chunk import KnowledgeChunk
+from inaki.kernel.domain.skill import Skill
+from inaki.kernel.domain.knowledge_chunk import KnowledgeChunk
 
 _VAR_RE = re.compile(
     r"\{\{("

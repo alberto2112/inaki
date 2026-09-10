@@ -18,7 +18,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Protocol
 
-from inaki.kernel.domain.value_objects.knowledge_chunk import KnowledgeChunk
+from inaki.kernel.domain.knowledge_chunk import KnowledgeChunk
 
 
 class IKnowledgeSource(ABC):

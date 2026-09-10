@@ -19,9 +19,9 @@ from pathlib import Path
 
 import pytest
 
-from inaki.kernel.domain.value_objects.llm_response import LLMResponse
-from inaki.kernel.ports.outbound.embedding_port import IEmbeddingProvider
-from inaki.kernel.ports.outbound.llm_port import ILLMProvider
+from inaki.kernel.domain.llm_response import LLMResponse
+from inaki.kernel.ports.embedding_port import IEmbeddingProvider
+from inaki.kernel.ports.llm_port import ILLMProvider
 from inaki.shared.message import Message
 
 # Nombre que ``resolve_provider_name`` lee del módulo del embedder (clave del cache).

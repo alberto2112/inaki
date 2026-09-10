@@ -20,7 +20,7 @@ puede saber si está puesto o si falta, nunca su valor.
 
 from __future__ import annotations
 
-from inaki.kernel.ports.outbound.tool_port import ITool, ToolResult
+from inaki.kernel.ports.tool_port import ITool, ToolResult
 from inaki.config.use_cases.runtime_config import CampoRuntime, RuntimeConfigUseCase
 
 _MAX_CAMPOS = 120

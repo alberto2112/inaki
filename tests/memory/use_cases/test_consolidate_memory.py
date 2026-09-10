@@ -6,9 +6,9 @@ from unittest.mock import patch
 
 import pytest
 
-from inaki.kernel.domain.entities.memory import MemoryEntry
-from inaki.kernel.domain.value_objects.agent_settings import ConsolidationSettings, MemorySettings
-from inaki.kernel.domain.value_objects.llm_response import LLMResponse
+from inaki.kernel.domain.memory import MemoryEntry
+from inaki.kernel.domain.agent_settings import ConsolidationSettings, MemorySettings
+from inaki.kernel.domain.llm_response import LLMResponse
 from inaki.memory.use_cases.consolidate_memory import ConsolidateMemoryUseCase
 from inaki.shared.errors import ConsolidationError
 from inaki.shared.message import Message, Role

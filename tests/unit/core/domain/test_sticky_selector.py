@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from inaki.kernel.domain.services.sticky_selector import apply_sticky
+from inaki.kernel.domain.sticky_selector import apply_sticky
 
 # ---------------------------------------------------------------------------
 # Feature deshabilitada

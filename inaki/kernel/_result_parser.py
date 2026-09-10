@@ -23,7 +23,7 @@ import re
 
 from pydantic import ValidationError
 
-from inaki.kernel.domain.value_objects.delegation_result import DelegationResult
+from inaki.kernel.domain.delegation_result import DelegationResult
 
 logger = logging.getLogger(__name__)
 

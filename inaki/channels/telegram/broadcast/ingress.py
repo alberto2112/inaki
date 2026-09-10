@@ -14,7 +14,7 @@ from inaki.channels.telegram.auth import TelegramAuth
 from inaki.channels.telegram.broadcast.port import BroadcastMessage, BroadcastReceiver
 from inaki.channels.telegram.group_flow import GroupFlow
 from inaki.channels.telegram.rate_limit import GroupRateLimit
-from inaki.kernel.use_cases.conversation_history import ConversationHistory
+from inaki.kernel.conversation_history import ConversationHistory
 
 logger = logging.getLogger(__name__)
 

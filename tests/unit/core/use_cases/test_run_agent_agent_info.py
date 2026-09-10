@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from inaki.kernel.use_cases.run_agent import RunAgentUseCase
+from inaki.kernel.run_agent import RunAgentUseCase
 from inaki.app.settings import build_run_agent_settings
 
 # ---------------------------------------------------------------------------

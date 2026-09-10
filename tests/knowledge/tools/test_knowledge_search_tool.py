@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-from inaki.kernel.domain.value_objects.knowledge_chunk import KnowledgeChunk
+from inaki.kernel.domain.knowledge_chunk import KnowledgeChunk
 from inaki.knowledge.tools.knowledge_search_tool import KnowledgeSearchTool
 
 

@@ -852,12 +852,12 @@ CREATE TABLE IF NOT EXISTS task_logs (
 | Cron y fechas | [inaki/scheduler/domain/cron.py](../inaki/scheduler/domain/cron.py), [time_parser.py](../inaki/scheduler/domain/time_parser.py) | `next_cron_occurrence()`, `parse_schedule()` |
 | Use case port | [inaki/scheduler/ports/use_case.py](../inaki/scheduler/ports/use_case.py) | `ISchedulerUseCase`, `IManualTaskRunner` |
 | Repository port | [inaki/scheduler/ports/repository.py](../inaki/scheduler/ports/repository.py) | `ISchedulerRepository` (Protocol) |
-| Dispatch ports | [inaki/scheduler/ports/dispatch.py](../inaki/scheduler/ports/dispatch.py) | `SchedulerDispatchPorts`, `IConsolidator`, `IReconciler`, `IHttpCaller`, `IShellExecutor` (`IChannelSender` es del kernel: `inaki/kernel/ports/outbound/channel_port.py`) |
+| Dispatch ports | [inaki/scheduler/ports/dispatch.py](../inaki/scheduler/ports/dispatch.py) | `SchedulerDispatchPorts`, `IConsolidator`, `IReconciler`, `IHttpCaller`, `IShellExecutor` (`IChannelSender` es del kernel: `inaki/kernel/ports/channel_port.py`) |
 | Repository | [inaki/scheduler/adapters/sqlite_repo.py](../inaki/scheduler/adapters/sqlite_repo.py) | `SQLiteSchedulerRepo` |
 | Dispatch adapters | [inaki/scheduler/adapters/dispatch.py](../inaki/scheduler/adapters/dispatch.py) | `ConsolidationDispatchAdapter`, `ReconcileDispatchAdapter`, `HttpCallerAdapter`, `ShellExecAdapter` (`LLMDispatcherAdapter` vive en `inaki/agents/dispatcher.py`) |
 | LLM tool | [inaki/scheduler/tools/scheduler_tool.py](../inaki/scheduler/tools/scheduler_tool.py) | `SchedulerTool` (fachada); una clase por operación en `tools/operations/`, helpers compartidos en `tools/_params.py` |
-| Egress | [inaki/kernel/domain/services/channel_router.py](../inaki/kernel/domain/services/channel_router.py) | `ChannelRouter`, `FileOutbound`, `NullOutbound` sobre el port único `inaki/kernel/ports/outbound/channel_port.py::IChannelOutbound` (el de Telegram vive con su canal: `inaki/channels/telegram/outbound.py`) |
-| Value objects | [inaki/kernel/domain/value_objects/dispatch_result.py](../inaki/kernel/domain/value_objects/dispatch_result.py) | `DispatchResult(original_target, resolved_target)` |
+| Egress | [inaki/kernel/domain/channel_router.py](../inaki/kernel/domain/channel_router.py) | `ChannelRouter`, `FileOutbound`, `NullOutbound` sobre el port único `inaki/kernel/ports/channel_port.py::IChannelOutbound` (el de Telegram vive con su canal: `inaki/channels/telegram/outbound.py`) |
+| Value objects | [inaki/kernel/domain/dispatch_result.py](../inaki/kernel/domain/dispatch_result.py) | `DispatchResult(original_target, resolved_target)` |
 | Builtin tasks | [inaki/scheduler/adapters/builtin_tasks.py](../inaki/scheduler/adapters/builtin_tasks.py) | `build_consolidate_memory_task()`, `CONSOLIDATE_MEMORY_TASK_ID` |
 | Config | [inaki/config/schema/scheduler.py](../inaki/config/schema/scheduler.py) | `SchedulerConfig`, `GlobalConfig` |
 | Wiring | [inaki/scheduler/wiring.py](../inaki/scheduler/wiring.py) | `build_scheduler`, `build_dispatch_ports`, `build_scheduler_tool`, `reconciliar_builtins` |

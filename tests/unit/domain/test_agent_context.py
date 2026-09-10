@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from freezegun import freeze_time
 
-from inaki.kernel.domain.value_objects.agent_context import AgentContext
+from inaki.kernel.domain.agent_context import AgentContext
 
 BASE_PROMPT = "Eres Inaki, un asistente personal."
 

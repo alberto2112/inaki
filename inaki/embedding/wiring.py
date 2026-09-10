@@ -13,7 +13,7 @@ import logging
 import pkgutil
 from pathlib import Path
 
-from inaki.kernel.ports.outbound.embedding_port import IEmbeddingProvider
+from inaki.kernel.ports.embedding_port import IEmbeddingProvider
 from inaki.config import EmbeddingConfig, ProviderConfig
 from inaki.embedding.base import BaseEmbeddingProvider, ResolvedEmbeddingConfig
 from inaki.shared.errors import ConfigError

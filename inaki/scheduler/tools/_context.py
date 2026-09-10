@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from inaki.kernel.ports.outbound.tool_port import ToolResult
+from inaki.kernel.ports.tool_port import ToolResult
 from inaki.shared.channel_context import ChannelContext
 
 if TYPE_CHECKING:

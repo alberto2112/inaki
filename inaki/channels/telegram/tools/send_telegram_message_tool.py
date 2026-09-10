@@ -23,9 +23,9 @@ import json
 import logging
 from typing import Any
 
-from inaki.kernel.domain.services.channel_outbound_registry import ChannelOutboundRegistry
-from inaki.kernel.domain.value_objects.outbound_kind import OutboundKind
-from inaki.kernel.ports.outbound.tool_port import ITool, ToolResult
+from inaki.kernel.domain.channel_outbound_registry import ChannelOutboundRegistry
+from inaki.kernel.domain.outbound_kind import OutboundKind
+from inaki.kernel.ports.tool_port import ITool, ToolResult
 
 logger = logging.getLogger(__name__)
 

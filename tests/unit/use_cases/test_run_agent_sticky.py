@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
-from inaki.kernel.domain.entities.skill import Skill
-from inaki.kernel.domain.value_objects.conversation_state import ConversationState
-from inaki.kernel.domain.value_objects.llm_response import LLMResponse
-from inaki.kernel.use_cases.run_agent import RunAgentUseCase
+from inaki.kernel.domain.skill import Skill
+from inaki.kernel.domain.conversation_state import ConversationState
+from inaki.kernel.domain.llm_response import LLMResponse
+from inaki.kernel.run_agent import RunAgentUseCase
 from inaki.config import (
     AgentConfig,
     ChatHistoryConfig,
@@ -371,7 +371,7 @@ async def test_sticky_tools_persists_new_ttls(
         mock_history,
         mock_tools,
     )
-    with patch("inaki.kernel.use_cases.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")):
+    with patch("inaki.kernel.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")):
         await uc.execute("mis eventos del 27")
 
     saved_state: ConversationState = mock_history.save_state.call_args.args[1]
@@ -405,7 +405,7 @@ async def test_sticky_tool_survives_ambiguous_followup(
         mock_tools,
     )
     with patch(
-        "inaki.kernel.use_cases.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")
+        "inaki.kernel.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")
     ) as mock_loop:
         await uc.execute("y del siguiente?")
 
@@ -448,7 +448,7 @@ async def test_sticky_tool_filters_ghost_names(
         mock_tools,
     )
     with patch(
-        "inaki.kernel.use_cases.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")
+        "inaki.kernel.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")
     ) as mock_loop:
         await uc.execute("algo")
 
@@ -494,7 +494,7 @@ async def test_tools_override_bypasses_tools_sticky_but_skills_still_apply(
 
     override = [_tool_schema("solo_esta")]
     with patch(
-        "inaki.kernel.use_cases.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")
+        "inaki.kernel.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")
     ) as mock_loop:
         await uc.execute("hola", tools_override=override)
 

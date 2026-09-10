@@ -12,10 +12,10 @@ import json
 from unittest.mock import AsyncMock
 
 from inaki.agents.scope_registry import InMemoryScopeRegistryAdapter
-from inaki.kernel.domain.value_objects.llm_response import LLMResponse
-from inaki.kernel.ports.outbound.scope_registry_port import Scope
-from inaki.kernel.ports.outbound.tool_port import ToolResult
-from inaki.kernel.use_cases._tool_loop import _CANCELLED_TOOL_RESULT, run_tool_loop
+from inaki.kernel.domain.llm_response import LLMResponse
+from inaki.kernel.ports.scope_registry_port import Scope
+from inaki.kernel.ports.tool_port import ToolResult
+from inaki.kernel._tool_loop import _CANCELLED_TOOL_RESULT, run_tool_loop
 from inaki.shared.message import Message, Role
 
 _SCOPE: Scope = ("agent1", "telegram", "chat1")

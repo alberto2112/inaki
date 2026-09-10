@@ -885,7 +885,7 @@ Solo ``id``, ``name`` y ``description`` son obligatorios y exclusivos del agente
 
 Acá viven únicamente los recursos del tier PER-AGENTE (``llm``, ``embedding``, ``memories``, ``chat_history``, ``channels``). Los harness-global (``scheduler``, ``knowledge``, ``photos``) no tienen campo en este modelo a propósito: declararlos en el YAML de un agente es un error de clave, no un override silencioso.
 
-Los use cases NO reciben este objeto: el composition root lo traduce a Settings VOs (``inaki/kernel/domain/value_objects/agent_settings.py``) para que el dominio no dependa del schema de infraestructura.
+Los use cases NO reciben este objeto: el composition root lo traduce a Settings VOs (``inaki/kernel/domain/agent_settings.py``) para que el dominio no dependa del schema de infraestructura.
 
 | Field | Type | Default | Secret |
 |---|---|---|---|

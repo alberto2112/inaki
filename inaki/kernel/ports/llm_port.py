@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 
-from inaki.kernel.domain.value_objects.llm_response import LLMResponse
+from inaki.kernel.domain.llm_response import LLMResponse
 from inaki.shared.message import Message
 
 

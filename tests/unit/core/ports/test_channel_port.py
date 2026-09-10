@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from inaki.kernel.ports.outbound.channel_port import BufferingIntermediateSink
+from inaki.kernel.ports.channel_port import BufferingIntermediateSink
 
 
 async def test_buffering_sink_empieza_vacio():
@@ -35,8 +35,8 @@ async def test_buffering_sink_messages_devuelve_copia():
 async def test_outbound_intermediate_sink_manda_texto_sin_historial() -> None:
     from unittest.mock import AsyncMock, MagicMock
 
-    from inaki.kernel.domain.value_objects.outbound_kind import OutboundKind
-    from inaki.kernel.ports.outbound.channel_port import OutboundIntermediateSink
+    from inaki.kernel.domain.outbound_kind import OutboundKind
+    from inaki.kernel.ports.channel_port import OutboundIntermediateSink
 
     outbound = MagicMock()
     outbound.send = AsyncMock()
@@ -52,7 +52,7 @@ async def test_outbound_intermediate_sink_traga_fallos_del_transporte(caplog) ->
     import logging
     from unittest.mock import AsyncMock, MagicMock
 
-    from inaki.kernel.ports.outbound.channel_port import OutboundIntermediateSink
+    from inaki.kernel.ports.channel_port import OutboundIntermediateSink
 
     outbound = MagicMock()
     outbound.channel_name = "telegram"

@@ -8,7 +8,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from inaki.scheduler.domain.manual_run_result import ManualRunResult
-from inaki.kernel.use_cases.run_agent import AgentInfoDTO, InspectResult
+from inaki.kernel.run_agent import AgentInfoDTO, InspectResult
 from inaki.channels.rest.app import create_admin_app
 from inaki.shared.errors import TaskNotFoundError
 

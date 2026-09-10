@@ -14,10 +14,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from inaki.config import AgentConfig, GlobalConfig, KnowledgeSourceConfig
-from inaki.kernel.ports.outbound.embedding_port import IEmbeddingProvider
-from inaki.kernel.ports.outbound.knowledge_port import IKnowledgeSource
-from inaki.kernel.ports.outbound.memory_port import IMemoryRepository
-from inaki.kernel.ports.outbound.tool_port import ITool
+from inaki.kernel.ports.embedding_port import IEmbeddingProvider
+from inaki.kernel.ports.knowledge_port import IKnowledgeSource
+from inaki.kernel.ports.memory_port import IMemoryRepository
+from inaki.kernel.ports.tool_port import ITool
 from inaki.knowledge.adapters.document_knowledge_source import DocumentKnowledgeSource
 from inaki.knowledge.adapters.sqlite_knowledge_source import SqliteKnowledgeSource
 from inaki.knowledge.adapters.sqlite_memory_knowledge_source import SqliteMemoryKnowledgeSource

@@ -40,7 +40,7 @@ from typing import Any
 from cryptography.fernet import Fernet, InvalidToken
 from ruamel.yaml import YAML
 
-from inaki.kernel.ports.outbound.tool_config_port import IToolConfigStore
+from inaki.kernel.ports.tool_config_port import IToolConfigStore
 
 logger = logging.getLogger(__name__)
 

@@ -14,17 +14,17 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from inaki.config import AgentConfig, MemoriesConfig
-from inaki.kernel.domain.value_objects.agent_settings import (
+from inaki.kernel.domain.agent_settings import (
     ConsolidationSettings,
     MemorySettings,
     ReconciliationSettings,
 )
-from inaki.kernel.ports.outbound.embedding_port import IEmbeddingProvider
-from inaki.kernel.ports.outbound.history_port import IHistoryStore
-from inaki.kernel.ports.outbound.llm_port import ILLMProvider
-from inaki.kernel.ports.outbound.memory_port import IMemoryRepository
-from inaki.kernel.ports.outbound.tool_port import ITool
-from inaki.kernel.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
+from inaki.kernel.ports.embedding_port import IEmbeddingProvider
+from inaki.kernel.ports.history_port import IHistoryStore
+from inaki.kernel.ports.llm_port import ILLMProvider
+from inaki.kernel.ports.memory_port import IMemoryRepository
+from inaki.kernel.ports.tool_port import ITool
+from inaki.kernel.run_agent_one_shot import RunAgentOneShotUseCase
 from inaki.llm.wiring import LLMProviderFactory
 from inaki.memory.adapters.sqlite_history_store import HistoryStoreSettings, SQLiteHistoryStore
 from inaki.memory.adapters.sqlite_memory_repo import SQLiteMemoryRepository

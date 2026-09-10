@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from inaki.kernel.domain.services.channel_outbound_registry import ChannelOutboundRegistry
-from inaki.kernel.domain.value_objects.outbound_kind import OutboundKind
+from inaki.kernel.domain.channel_outbound_registry import ChannelOutboundRegistry
+from inaki.kernel.domain.outbound_kind import OutboundKind
 from inaki.channels.telegram.tools.send_to_telegram_tool import SendToTelegramTool
 from inaki.shared.channel_context import ChannelContext
 

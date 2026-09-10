@@ -6,7 +6,7 @@ Los contratos viven en el kernel (los consume el turno), pero una extensión no
 tiene por qué saber dónde: importa de acá y la próxima mudanza interna no la toca.
 """
 
-from inaki.kernel.ports.outbound.tool_config_port import IToolConfigStore
-from inaki.kernel.ports.outbound.tool_port import ITool, IToolExecutor, ToolResult
+from inaki.kernel.ports.tool_config_port import IToolConfigStore
+from inaki.kernel.ports.tool_port import ITool, IToolExecutor, ToolResult
 
 __all__ = ["ITool", "IToolConfigStore", "IToolExecutor", "ToolResult"]

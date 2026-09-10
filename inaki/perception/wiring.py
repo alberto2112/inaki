@@ -22,8 +22,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from inaki.config import AgentConfig, PhotosConfig, ProviderConfig, TranscriptionConfig
-from inaki.kernel.ports.outbound.tool_port import ITool
-from inaki.kernel.ports.outbound.turn_tracer_port import ITurnTracer
+from inaki.kernel.ports.tool_port import ITool
+from inaki.kernel.ports.turn_tracer_port import ITurnTracer
 from inaki.perception.adapters.face_metadata.sqlite_message_face_metadata_repo import (
     SqliteMessageFaceMetadataRepo,
 )

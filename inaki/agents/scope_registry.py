@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from inaki.kernel.ports.outbound.scope_registry_port import IScopeRegistry, Scope
+from inaki.kernel.ports.scope_registry_port import IScopeRegistry, Scope
 
 logger = logging.getLogger(__name__)
 

@@ -22,7 +22,7 @@ This document covers the two agent extension mechanisms: **tools** (functions in
 ### Interface
 
 ```python
-# inaki/kernel/ports/outbound/tool_port.py
+# inaki/kernel/ports/tool_port.py
 
 class ITool(ABC):
     name: str              # snake_case, e.g.: "shell_exec"
@@ -227,12 +227,12 @@ system_prompt += skills as text              tool_schemas → LLM (function call
 
 | Role | File |
 |------|------|
-| Tool port | `inaki/kernel/ports/outbound/tool_port.py` |
-| Skill port | `inaki/kernel/ports/outbound/skill_port.py` |
+| Tool port | `inaki/kernel/ports/tool_port.py` |
+| Skill port | `inaki/kernel/ports/skill_port.py` |
 | Registry implementation | `inaki/tools/registry.py` (`ToolRegistry`, `instanciar_tool`) |
 | Tool Config Protocol store | `inaki/tools/config_store.py` |
 | Concrete tool (reference) | `inaki/tools/builtin/web_search.py` |
 | Extension discovery | `inaki/extensions/loader.py` |
 | Skills implementation | `inaki/skills/yaml_skill_repo.py` |
 | Assembly (registers what each wiring builds) | `inaki/app/assembly.py` |
-| Usage in the pipeline | `inaki/kernel/use_cases/run_agent.py` |
+| Usage in the pipeline | `inaki/kernel/run_agent.py` |

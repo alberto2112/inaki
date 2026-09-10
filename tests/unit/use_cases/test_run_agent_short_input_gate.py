@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
-from inaki.kernel.domain.entities.skill import Skill
-from inaki.kernel.domain.value_objects.conversation_state import ConversationState
-from inaki.kernel.domain.value_objects.llm_response import LLMResponse
-from inaki.kernel.use_cases.run_agent import RunAgentUseCase
+from inaki.kernel.domain.skill import Skill
+from inaki.kernel.domain.conversation_state import ConversationState
+from inaki.kernel.domain.llm_response import LLMResponse
+from inaki.kernel.run_agent import RunAgentUseCase
 from inaki.config import (
     AgentConfig,
     ChatHistoryConfig,
@@ -201,7 +201,7 @@ async def test_short_input_inherits_sticky_tools_into_tool_loop(
         mock_tools=mock_tools,
     )
     with patch(
-        "inaki.kernel.use_cases.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")
+        "inaki.kernel.run_agent.run_tool_loop", new=AsyncMock(return_value="ok")
     ) as mock_loop:
         await uc.execute("y eso?")
 

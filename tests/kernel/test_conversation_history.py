@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from inaki.kernel.use_cases.conversation_history import ConversationHistory
+from inaki.kernel.conversation_history import ConversationHistory
 from inaki.shared.message import Message, Role
 
 

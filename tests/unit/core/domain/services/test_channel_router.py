@@ -7,16 +7,16 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from inaki.kernel.domain.services.channel_outbound_registry import ChannelOutboundRegistry
-from inaki.kernel.domain.services.channel_router import (
+from inaki.kernel.domain.channel_outbound_registry import ChannelOutboundRegistry
+from inaki.kernel.domain.channel_router import (
     ChannelFallbackSettings,
     ChannelRouter,
     FileOutbound,
     NullOutbound,
     parse_target,
 )
-from inaki.kernel.domain.value_objects.outbound_kind import OutboundKind
-from inaki.kernel.ports.outbound.channel_port import IChannelOutbound, OutboundIntermediateSink
+from inaki.kernel.domain.outbound_kind import OutboundKind
+from inaki.kernel.ports.channel_port import IChannelOutbound, OutboundIntermediateSink
 
 
 class OutboundFalso(IChannelOutbound):

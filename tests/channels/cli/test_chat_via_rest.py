@@ -33,7 +33,7 @@ import typer
 from starlette.testclient import TestClient
 
 from inaki.agents.scope_registry import InMemoryScopeRegistryAdapter
-from inaki.kernel.domain.value_objects.agent_info import AgentInfoDTO
+from inaki.kernel.domain.agent_info import AgentInfoDTO
 from inaki.cli import client as daemon_client_module
 from inaki.cli.client import DaemonClient
 from inaki.shared.message import Message, Role

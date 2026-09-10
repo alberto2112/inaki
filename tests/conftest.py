@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from inaki.kernel.domain.value_objects.conversation_state import ConversationState
-from inaki.kernel.domain.value_objects.llm_response import LLMResponse
+from inaki.kernel.domain.conversation_state import ConversationState
+from inaki.kernel.domain.llm_response import LLMResponse
 from inaki.channels import registrar_canales_instalados
 from inaki.config import (
     AgentConfig,

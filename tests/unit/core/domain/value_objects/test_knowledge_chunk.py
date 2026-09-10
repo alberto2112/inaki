@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from inaki.kernel.domain.value_objects.knowledge_chunk import KnowledgeChunk
+from inaki.kernel.domain.knowledge_chunk import KnowledgeChunk
 
 # ---------------------------------------------------------------------------
 # Score — validación de rango coseno [-1, 1]

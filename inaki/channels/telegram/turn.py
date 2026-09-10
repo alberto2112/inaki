@@ -29,8 +29,8 @@ from inaki.channels.telegram.message_mapper import (
 )
 from inaki.channels.telegram.ports import TelegramBotPorts
 from inaki.channels.telegram.reactions import Reactions
-from inaki.kernel.ports.outbound.channel_port import IIntermediateSink, OutboundIntermediateSink
-from inaki.kernel.use_cases.turn_dispatch import dispatch_inbound_turn
+from inaki.kernel.ports.channel_port import IIntermediateSink, OutboundIntermediateSink
+from inaki.kernel.turn_dispatch import dispatch_inbound_turn
 from inaki.shared.channel_context import ChannelContext
 from inaki.shared.skip_marker import SKIP_MARKER, is_skip_response
 

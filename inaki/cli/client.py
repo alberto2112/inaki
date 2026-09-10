@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 
-from inaki.kernel.domain.value_objects.chat_turn_result import ChatTurnResult
+from inaki.kernel.domain.chat_turn_result import ChatTurnResult
 from inaki.shared.errors import (
     DaemonAuthError,
     DaemonClientError,

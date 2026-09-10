@@ -4,8 +4,8 @@ import json
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
-from inaki.kernel.domain.entities.memory import MemoryEntry
-from inaki.kernel.domain.value_objects.agent_settings import MemorySettings, ReconciliationSettings
+from inaki.kernel.domain.memory import MemoryEntry
+from inaki.kernel.domain.agent_settings import MemorySettings, ReconciliationSettings
 from inaki.memory.use_cases.reconcile_memory import _RECONCILER_PROMPT, ReconcileMemoryUseCase
 
 # ---------------------------------------------------------------------------
@@ -121,7 +121,7 @@ async def test_merge_crea_nuevo_entry_con_reconciled_true(mock_llm, mock_memory,
         "new_relevance": 0.9,
         "new_tags": ["salud"],
     }
-    from inaki.kernel.domain.value_objects.llm_response import LLMResponse
+    from inaki.kernel.domain.llm_response import LLMResponse
 
     mock_llm.complete.return_value = LLMResponse.of_text(json.dumps([accion]))
     mock_embedder.embed_passage.return_value = [0.2] * 384
@@ -166,7 +166,7 @@ async def test_merge_incluye_target_en_ids_borrados_no_reconciliados(
         "new_relevance": 0.85,
         "new_tags": [],
     }
-    from inaki.kernel.domain.value_objects.llm_response import LLMResponse
+    from inaki.kernel.domain.llm_response import LLMResponse
 
     mock_llm.complete.return_value = LLMResponse.of_text(json.dumps([accion]))
     mock_embedder.embed_passage.return_value = [0.2] * 384
@@ -194,7 +194,7 @@ async def test_supersede_borra_target_ids(mock_llm, mock_memory, mock_embedder):
     mock_memory.delete.return_value = vecino
 
     accion = {"action": "supersede", "target_ids": ["vecino-1"]}
-    from inaki.kernel.domain.value_objects.llm_response import LLMResponse
+    from inaki.kernel.domain.llm_response import LLMResponse
 
     mock_llm.complete.return_value = LLMResponse.of_text(json.dumps([accion]))
 
@@ -218,7 +218,7 @@ async def test_downweight_actualiza_relevance(mock_llm, mock_memory, mock_embedd
     mock_memory.update.return_value = vecino
 
     accion = {"action": "downweight", "target_ids": ["vecino-1"], "new_relevance": 0.2}
-    from inaki.kernel.domain.value_objects.llm_response import LLMResponse
+    from inaki.kernel.domain.llm_response import LLMResponse
 
     mock_llm.complete.return_value = LLMResponse.of_text(json.dumps([accion]))
 
@@ -243,7 +243,7 @@ async def test_keep_no_modifica_entries_pero_marca_reconciliados(
     mock_memory.load_unreconciled.return_value = [seed]
     mock_memory.search_with_scores.return_value = [(seed, 0.99), (vecino, 0.91)]
 
-    from inaki.kernel.domain.value_objects.llm_response import LLMResponse
+    from inaki.kernel.domain.llm_response import LLMResponse
 
     mock_llm.complete.return_value = LLMResponse.of_text(json.dumps([{"action": "keep"}]))
 
@@ -282,7 +282,7 @@ async def test_vecino_de_otro_scope_no_entra_al_cluster(mock_llm, mock_memory, m
         (vecino_sin_scope, 0.91),  # scope distinto (None != "telegram")
     ]
 
-    from inaki.kernel.domain.value_objects.llm_response import LLMResponse
+    from inaki.kernel.domain.llm_response import LLMResponse
 
     # LLM solo debe recibir seed-1 y vec-ok
     mock_llm.complete.return_value = LLMResponse.of_text("[]")
@@ -343,7 +343,7 @@ async def test_nuevo_entry_de_merge_tiene_reconciled_true(mock_llm, mock_memory,
         "new_relevance": 0.85,
         "new_tags": [],
     }
-    from inaki.kernel.domain.value_objects.llm_response import LLMResponse
+    from inaki.kernel.domain.llm_response import LLMResponse
 
     mock_llm.complete.return_value = LLMResponse.of_text(json.dumps([accion]))
     mock_embedder.embed_passage.return_value = [0.2] * 384
@@ -373,7 +373,7 @@ async def test_llm_devuelve_json_con_preamble_se_parsea(mock_llm, mock_memory, m
         '[{"action": "supersede", "target_ids": ["v1"]}]\n'
         "No hay nada más que decir."
     )
-    from inaki.kernel.domain.value_objects.llm_response import LLMResponse
+    from inaki.kernel.domain.llm_response import LLMResponse
 
     mock_llm.complete.return_value = LLMResponse.of_text(raw)
 
@@ -405,7 +405,7 @@ async def test_llm_devuelve_basura_saltea_cluster_y_sigue(mock_llm, mock_memory,
 
     mock_memory.search_with_scores.side_effect = fake_search
 
-    from inaki.kernel.domain.value_objects.llm_response import LLMResponse
+    from inaki.kernel.domain.llm_response import LLMResponse
 
     mock_llm.complete.return_value = LLMResponse.of_text("esto no es json para nada!@#$")
 
@@ -500,7 +500,7 @@ async def test_id_procesado_no_se_reprocesa(mock_llm, mock_memory, mock_embedder
         "new_relevance": 0.85,
         "new_tags": [],
     }
-    from inaki.kernel.domain.value_objects.llm_response import LLMResponse
+    from inaki.kernel.domain.llm_response import LLMResponse
 
     mock_llm.complete.return_value = LLMResponse.of_text(json.dumps([accion]))
     mock_embedder.embed_passage.return_value = [0.2] * 384
@@ -534,7 +534,7 @@ async def test_resumen_contiene_contadores(mock_llm, mock_memory, mock_embedder)
         "new_relevance": 0.85,
         "new_tags": [],
     }
-    from inaki.kernel.domain.value_objects.llm_response import LLMResponse
+    from inaki.kernel.domain.llm_response import LLMResponse
 
     mock_llm.complete.return_value = LLMResponse.of_text(json.dumps([accion]))
     mock_embedder.embed_passage.return_value = [0.2] * 384

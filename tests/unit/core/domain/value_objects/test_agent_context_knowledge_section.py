@@ -10,8 +10,8 @@ Verifica:
 
 from __future__ import annotations
 
-from inaki.kernel.domain.value_objects.agent_context import AgentContext
-from inaki.kernel.domain.value_objects.knowledge_chunk import KnowledgeChunk
+from inaki.kernel.domain.agent_context import AgentContext
+from inaki.kernel.domain.knowledge_chunk import KnowledgeChunk
 
 
 def _make_chunk(
@@ -172,7 +172,7 @@ class TestKnowledgeSectionPosition:
         assert pos_knowledge < pos_extra
 
     def test_seccion_knowledge_aparece_despues_de_skills(self) -> None:
-        from inaki.kernel.domain.entities.skill import Skill
+        from inaki.kernel.domain.skill import Skill
 
         ctx = AgentContext(
             agent_id="agente-1",

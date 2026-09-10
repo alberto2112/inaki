@@ -23,15 +23,15 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 
-from inaki.kernel.ports.outbound.channel_port import (
+from inaki.kernel.ports.channel_port import (
     IIntermediateSink,
     NullIntermediateSink,
 )
-from inaki.kernel.ports.outbound.history_port import IHistoryStore
-from inaki.kernel.ports.outbound.llm_port import ILLMProvider
-from inaki.kernel.ports.outbound.scope_registry_port import IScopeRegistry, Scope
-from inaki.kernel.ports.outbound.tool_port import IToolExecutor
-from inaki.kernel.ports.outbound.turn_tracer_port import ITurnTracer, NullTurnTracer
+from inaki.kernel.ports.history_port import IHistoryStore
+from inaki.kernel.ports.llm_port import ILLMProvider
+from inaki.kernel.ports.scope_registry_port import IScopeRegistry, Scope
+from inaki.kernel.ports.tool_port import IToolExecutor
+from inaki.kernel.ports.turn_tracer_port import ITurnTracer, NullTurnTracer
 from inaki.shared.errors import ToolLoopMaxIterationsError
 from inaki.shared.message import Message, Role
 

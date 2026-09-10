@@ -19,8 +19,8 @@ import pytest
 from unittest.mock import MagicMock
 
 from inaki.tools.registry import ToolRegistry
-from inaki.kernel.domain.value_objects.knowledge_chunk import KnowledgeChunk
-from inaki.kernel.ports.outbound.knowledge_port import IKnowledgeSource
+from inaki.kernel.domain.knowledge_chunk import KnowledgeChunk
+from inaki.kernel.ports.knowledge_port import IKnowledgeSource
 from inaki.skills.yaml_skill_repo import YamlSkillRepository
 from inaki.app.extensions import registrar_extensiones
 

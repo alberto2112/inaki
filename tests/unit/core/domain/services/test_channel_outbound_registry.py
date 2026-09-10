@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from inaki.kernel.domain.services.channel_outbound_registry import ChannelOutboundRegistry
-from inaki.kernel.domain.value_objects.outbound_kind import OutboundKind
-from inaki.kernel.ports.outbound.channel_port import IChannelOutbound
+from inaki.kernel.domain.channel_outbound_registry import ChannelOutboundRegistry
+from inaki.kernel.domain.outbound_kind import OutboundKind
+from inaki.kernel.ports.channel_port import IChannelOutbound
 
 # ---------------------------------------------------------------------------
 # Fake adapter para tests

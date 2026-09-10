@@ -26,24 +26,24 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from inaki.kernel.domain.entities.skill import Skill
-from inaki.kernel.domain.value_objects.agent_context import AgentContext
-from inaki.kernel.domain.value_objects.agent_info import AgentInfoDTO
-from inaki.kernel.domain.value_objects.agent_settings import RunAgentSettings
-from inaki.kernel.domain.value_objects.conversation_state import ConversationState
-from inaki.kernel.ports.outbound.background_delegation_port import IBackgroundDelegationQueue
-from inaki.kernel.ports.outbound.channel_port import IIntermediateSink
-from inaki.kernel.ports.outbound.embedding_port import IEmbeddingProvider
-from inaki.kernel.ports.outbound.history_port import IHistoryStore
-from inaki.kernel.ports.outbound.knowledge_port import IKnowledgeRetriever
-from inaki.kernel.ports.outbound.llm_port import ILLMProvider
-from inaki.kernel.ports.outbound.memory_port import IMemoryRepository
-from inaki.kernel.ports.outbound.scope_registry_port import IScopeRegistry
-from inaki.kernel.ports.outbound.skill_port import ISkillRepository
-from inaki.kernel.ports.outbound.tool_port import IToolExecutor
-from inaki.kernel.ports.outbound.turn_tracer_port import ITurnTracer, NullTurnTracer
-from inaki.kernel.use_cases._tool_loop import run_tool_loop
-from inaki.kernel.use_cases._turn_pipeline import (
+from inaki.kernel.domain.skill import Skill
+from inaki.kernel.domain.agent_context import AgentContext
+from inaki.kernel.domain.agent_info import AgentInfoDTO
+from inaki.kernel.domain.agent_settings import RunAgentSettings
+from inaki.kernel.domain.conversation_state import ConversationState
+from inaki.kernel.ports.background_delegation_port import IBackgroundDelegationQueue
+from inaki.kernel.ports.channel_port import IIntermediateSink
+from inaki.kernel.ports.embedding_port import IEmbeddingProvider
+from inaki.kernel.ports.history_port import IHistoryStore
+from inaki.kernel.ports.knowledge_port import IKnowledgeRetriever
+from inaki.kernel.ports.llm_port import ILLMProvider
+from inaki.kernel.ports.memory_port import IMemoryRepository
+from inaki.kernel.ports.scope_registry_port import IScopeRegistry
+from inaki.kernel.ports.skill_port import ISkillRepository
+from inaki.kernel.ports.tool_port import IToolExecutor
+from inaki.kernel.ports.turn_tracer_port import ITurnTracer, NullTurnTracer
+from inaki.kernel._tool_loop import run_tool_loop
+from inaki.kernel._turn_pipeline import (
     ATTACHMENTS_SECTION,
     INFLIGHT_CLARIFICATIONS_SECTION,
     PersistingIntermediateSink,

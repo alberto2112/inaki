@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from inaki.kernel.ports.outbound.knowledge_port import (
+from inaki.kernel.ports.knowledge_port import (
     IIndexableKnowledgeSource,
     IKnowledgeSource,
 )

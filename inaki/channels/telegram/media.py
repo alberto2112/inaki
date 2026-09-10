@@ -21,7 +21,7 @@ from typing import Any
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from inaki.kernel.use_cases.turn_dispatch import INFLIGHT_ACK
+from inaki.kernel.turn_dispatch import INFLIGHT_ACK
 from inaki.channels.telegram.files.model import FileContentType, TelegramFileRecord
 from inaki.channels.telegram.auth import TelegramAuth
 from inaki.channels.telegram.broadcast.egress import BroadcastEgress

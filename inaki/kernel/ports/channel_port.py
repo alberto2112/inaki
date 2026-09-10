@@ -48,8 +48,8 @@ from pathlib import Path
 
 from typing import Protocol
 
-from inaki.kernel.domain.value_objects.dispatch_result import DispatchResult
-from inaki.kernel.domain.value_objects.outbound_kind import OutboundKind
+from inaki.kernel.domain.dispatch_result import DispatchResult
+from inaki.kernel.domain.outbound_kind import OutboundKind
 
 logger = logging.getLogger(__name__)
 

@@ -216,7 +216,7 @@ agent or a bot AT RUNTIME, before the runtimes exist. They receive an empty dict
 that pass 5 fills (`_Registros`): same object, content arrives at the end.
 
 **Note:** use cases never receive `AgentConfig` — each one declares its parameters
-as a frozen settings VO (`inaki/kernel/domain/value_objects/agent_settings.py`); the
+as a frozen settings VO (`inaki/kernel/domain/agent_settings.py`); the
 config→VO mapping lives in `inaki/app/settings.py` and in each module's `wiring.py`.
 
 **Note:** the `delegate` tool is registered in pass 3, once ALL agents exist. On each

@@ -54,8 +54,8 @@ PRs #40 a #59): `core/`, `adapters/` e `infrastructure/` ya no existen, `contain
 disolvió en el `wiring.py` de cada módulo y en `inaki/app/assembly.py`, y el setup TUI se
 retiró a favor de `inaki init` + `inaki config web`. La nota `refactor-modular` de
 [`docs/migraciones.md`](docs/migraciones.md) enlaza, fase por fase, qué se movió y qué
-regla dejó cada una. Lo único pendiente de ese plan es aplanar
-`inaki/kernel/{domain,ports,use_cases}` (12b).
+regla dejó cada una. El plan está cerrado; solo queda retirar `main.py` cuando las unidades
+systemd viejas estén regeneradas con `inaki service install`.
 
 La ley entre paquetes la verifica `lint-imports`. Lo único que import-linter no expresa, el
 allowlist de terceros del kernel, lo verifica `tests/kernel/test_terceros_del_kernel.py`
@@ -73,7 +73,7 @@ Resumen operativo. El texto completo, con el porqué y los antipatrones, está e
    LLM → gateway admin único (`POST /admin/tool/invoke`, cliente `inaki tool <name>`). Un
    **canal** (Telegram, mañana Slack) es un inbound adapter que solo traduce su I/O a un
    turno. Un canal nuevo es UN paquete bajo `inaki/channels/<nombre>/` que implementa el
-   contrato del kernel (`inaki/kernel/ports/outbound/channel_port.py`: `IChannel` + `IChannelOutbound`)
+   contrato del kernel (`inaki/kernel/ports/channel_port.py`: `IChannel` + `IChannelOutbound`)
    y REGISTRA su sección de config con `registrar_canal(...)` (`inaki/config/channels.py`)
    desde `inaki/channels/__init__.py`. El módulo config no conoce ningún canal: el loader
    (validación y migraciones), la introspección y `config-reference.md` leen el registro. **Antipatrón**: que cada canal implemente pasarelas de los CLI — es una
@@ -98,7 +98,7 @@ Resumen operativo. El texto completo, con el porqué y los antipatrones, está e
    importar `inaki.config`. El composition root (`inaki/app/`) solo decide el orden y reparte
    lo que un módulo necesita de otro; un tool, provider o repo NUNCA se instancia fuera del
    `wiring.py` de su módulo. Los use cases **no reciben `AgentConfig`**: reciben Settings VOs
-   (`inaki/kernel/domain/value_objects/agent_settings.py`), mapeados en `inaki/app/settings.py`
+   (`inaki/kernel/domain/agent_settings.py`), mapeados en `inaki/app/settings.py`
    y en el `wiring.py` de su módulo. Los módulos de providers usan sus propios DTOs (`Resolved*Config`) en su
    `base.py` (`inaki/llm`, `inaki/embedding`, transcripción en `inaki/perception`) — **NUNCA**
    moverlos de vuelta a `inaki/config/`.

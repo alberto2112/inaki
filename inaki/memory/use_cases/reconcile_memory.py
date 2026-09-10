@@ -37,13 +37,13 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from inaki.kernel.domain.entities.memory import MemoryEntry
-from inaki.kernel.domain.value_objects.agent_settings import MemorySettings
-from inaki.kernel.ports.outbound.embedding_port import IEmbeddingProvider
-from inaki.kernel.ports.outbound.llm_port import ILLMProvider
-from inaki.kernel.ports.outbound.memory_port import IMemoryRepository
-from inaki.kernel.use_cases._json_extract import extract_json_array
-from inaki.kernel.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
+from inaki.kernel.domain.memory import MemoryEntry
+from inaki.kernel.domain.agent_settings import MemorySettings
+from inaki.kernel.ports.embedding_port import IEmbeddingProvider
+from inaki.kernel.ports.llm_port import ILLMProvider
+from inaki.kernel.ports.memory_port import IMemoryRepository
+from inaki.kernel._json_extract import extract_json_array
+from inaki.kernel.run_agent_one_shot import RunAgentOneShotUseCase
 
 logger = logging.getLogger(__name__)
 

@@ -11,8 +11,8 @@ import logging
 from pathlib import Path
 
 from inaki.config import AgentConfig
-from inaki.kernel.ports.outbound.tool_config_port import IToolConfigStore
-from inaki.kernel.ports.outbound.tool_port import ITool
+from inaki.kernel.ports.tool_config_port import IToolConfigStore
+from inaki.kernel.ports.tool_port import ITool
 from inaki.tools.builtin.edit_file import EditFileTool
 from inaki.tools.builtin.patch_file import PatchFileTool
 from inaki.tools.builtin.read_file import ReadFileTool

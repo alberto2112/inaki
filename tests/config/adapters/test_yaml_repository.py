@@ -113,7 +113,7 @@ def test_write_archivo_nuevo_contiene_header(repo: YamlRepository) -> None:
     """El archivo creado nuevo debe tener un comentario de header."""
     repo.write_layer(LayerName.GLOBAL, {"x": 1})
     contenido = repo._layer_path(LayerName.GLOBAL, None).read_text(encoding="utf-8")
-    assert "# Generado por inaki setup" in contenido
+    assert "# Generado por inaki\n" in contenido
 
 
 # ---------------------------------------------------------------------------

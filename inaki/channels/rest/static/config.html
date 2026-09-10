@@ -43,6 +43,13 @@
   footer { position:fixed; bottom:0; left:0; right:0; background:#fff; border-top:1px solid var(--line); padding:10px 16px; display:flex; gap:10px; align-items:center; }
   .grow { flex:1; }
   .muted { color:var(--muted); }
+  .panel { background:#fff; border:1px solid var(--line); border-radius:6px; padding:10px 12px; margin:10px 0; }
+  .panel h2 { font-size:14px; margin:0 0 8px; }
+  .panel form { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:8px; align-items:end; }
+  .panel label { display:flex; flex-direction:column; gap:3px; font-size:12px; color:var(--muted); }
+  .panel label.wide { grid-column: 1 / -1; }
+  .panel .row-actions { display:flex; gap:6px; align-items:center; }
+  button.danger { color:var(--err); border-color:#f4b6bd; }
 </style>
 </head>
 <body>
@@ -57,11 +64,38 @@
   <label><input id="only-overrides" type="checkbox"> solo lo escrito en esta capa</label>
   <span class="grow"></span>
   <label id="key-wrap" hidden>X-Admin-Key <input id="key" type="password" size="20"></label>
+  <button id="new-agent">＋ agente</button>
+  <button id="delete-agent" class="danger" hidden>borrar agente</button>
   <button id="reload-view">Recargar vista</button>
 </header>
 
 <main>
   <div id="msg" hidden></div>
+
+  <div id="agent-panel" class="panel" hidden>
+    <h2>Nuevo agente</h2>
+    <form id="agent-form">
+      <label>id (slug) <input name="agent_id" type="text" required pattern="[A-Za-z0-9_-]+" placeholder="general"></label>
+      <label>nombre <input name="name" type="text" required placeholder="Inaki"></label>
+      <label>descripción <input name="description" type="text"></label>
+      <label class="wide">system prompt <textarea name="system_prompt" rows="2"></textarea></label>
+      <label><span><input name="sub_agent" type="checkbox"> sub-agente (solo delegación, sin canales)</span></label>
+      <div class="row-actions"><button type="submit" class="primary">Crear</button><button type="button" id="agent-cancel">Cancelar</button></div>
+    </form>
+  </div>
+
+  <div id="providers-panel" class="panel" hidden>
+    <h2>Providers <span class="muted" style="font-weight:normal">— el registry <code>providers:</code> de global.yaml; las credenciales se escriben, nunca se muestran</span></h2>
+    <table id="providers-table"><thead><tr><th>key</th><th>type</th><th>base_url</th><th>api_key</th><th></th></tr></thead><tbody></tbody></table>
+    <form id="provider-form" style="margin-top:8px">
+      <label>key <input name="key" type="text" required pattern="[A-Za-z0-9_-]+" placeholder="groq"></label>
+      <label>type (vacío = la key) <input name="type" type="text"></label>
+      <label>base_url <input name="base_url" type="text"></label>
+      <label>api_key <input name="api_key" type="password" autocomplete="new-password"></label>
+      <div class="row-actions"><button type="submit" class="primary">Guardar provider</button></div>
+    </form>
+  </div>
+
   <div id="tables"></div>
 </main>
 
@@ -125,6 +159,9 @@
       const d = await api('/admin/config/effective' + (agent_id ? `?agent=${encodeURIComponent(agent_id)}` : ''));
       state.campos = d.campos; state.layerKind = layer; state.agentId = agent_id;
       state.cambios = {}; state.heredar = new Set();
+      $('#delete-agent').hidden = !agent_id;
+      $('#providers-panel').hidden = !!agent_id;
+      if (!agent_id) await loadProviders();
       render();
       if (!state.daemon) msg('warn', 'Modo standalone: lo que guardes aplica al próximo arranque del daemon (o `inaki reload`).');
     } catch (e) { msg('err', e.message); }
@@ -225,6 +262,66 @@
       render();
       msg('ok', `Guardado en la capa ${layer}${agent_id ? ' · ' + agent_id : ''}: ${d.cambiados.length} cambio(s), ${d.heredados.length} heredado(s). ${state.daemon ? 'Recargá el daemon para aplicar.' : 'Aplica al próximo arranque.'}`);
     } catch (e) { msg('err', 'No se guardó (la capa quedó como estaba).\n' + e.message); updateDirty(); }
+  });
+
+  // --- agentes: crear y borrar --------------------------------------------
+  $('#new-agent').addEventListener('click', () => { $('#agent-panel').hidden = false; $('#agent-form').agent_id.focus(); });
+  $('#agent-cancel').addEventListener('click', () => { $('#agent-panel').hidden = true; });
+  $('#agent-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const body = { agent_id: f.agent_id.value.trim(), name: f.name.value.trim(), description: f.description.value.trim(), system_prompt: f.system_prompt.value, sub_agent: f.sub_agent.checked };
+    try {
+      const d = await api('/admin/config/agents', { method: 'POST', body: JSON.stringify(body) });
+      f.reset(); $('#agent-panel').hidden = true;
+      await loadAgents();
+      $('#layer').value = (body.sub_agent ? 'sub_agent:' : 'agent:') + d.creado;
+      await load();
+      msg('ok', `Agente '${d.creado}' creado. ${state.daemon ? 'Recargá el daemon para levantarlo.' : 'Arranca con el próximo daemon.'}`);
+    } catch (err) { msg('err', 'No se creó el agente (no quedó nada escrito).\n' + err.message); }
+  });
+  $('#delete-agent').addEventListener('click', async () => {
+    const { layer, agent_id } = currentLayer(); if (!agent_id) return;
+    if (!confirm(`Borrar el YAML del agente '${agent_id}' (credenciales incluidas)?\n\nSus datos (historial, memoria, users/) NO se borran.`)) return;
+    try {
+      await api(`/admin/config/agents/${encodeURIComponent(agent_id)}?sub_agent=${layer === 'sub_agent'}`, { method: 'DELETE' });
+      $('#layer').value = 'global';
+      await load();
+      msg('ok', `Agente '${agent_id}' borrado. ${state.daemon ? 'Recargá el daemon para bajar su canal.' : ''}`);
+    } catch (err) { msg('err', 'No se borró.\n' + err.message); }
+  });
+
+  // --- providers ------------------------------------------------------------
+  async function loadProviders() {
+    const d = await api('/admin/config/providers');
+    const tb = $('#providers-table tbody');
+    tb.innerHTML = d.providers.map(p => `<tr>
+      <td class="path">${escapeHtml(p.key)}</td><td>${escapeHtml(p.type || '')}<span class="muted">${p.type ? '' : '(= key)'}</span></td>
+      <td>${escapeHtml(p.base_url || '')}</td><td>${p.tiene_api_key ? '<span class="badge secret">puesta</span>' : '<span class="muted">—</span>'}</td>
+      <td class="actions"><button data-edit-provider="${escapeAttr(p.key)}">editar</button><button class="danger" data-del-provider="${escapeAttr(p.key)}">borrar</button></td>
+    </tr>`).join('') || '<tr><td colspan="5" class="muted">Sin providers.</td></tr>';
+    state.providers = d.providers;
+  }
+  $('#providers-table').addEventListener('click', async (e) => {
+    const ed = e.target.dataset.editProvider, del = e.target.dataset.delProvider;
+    if (ed) {
+      const p = state.providers.find(x => x.key === ed); const f = $('#provider-form');
+      f.key.value = p.key; f.type.value = p.type || ''; f.base_url.value = p.base_url || ''; f.api_key.value = ''; f.api_key.placeholder = p.tiene_api_key ? 'puesta — escribí para reemplazar' : ''; f.key.focus();
+    }
+    if (del) {
+      if (!confirm(`Borrar el provider '${del}' con su credencial?`)) return;
+      try { await api(`/admin/config/providers/${encodeURIComponent(del)}`, { method: 'DELETE' }); await load(); msg('ok', `Provider '${del}' borrado.`); }
+      catch (err) { msg('err', 'No se borró.\n' + err.message); }
+    }
+  });
+  $('#provider-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const body = { type: f.type.value.trim() || null, base_url: f.base_url.value.trim() || null, api_key: f.api_key.value || null };
+    try {
+      await api(`/admin/config/providers/${encodeURIComponent(f.key.value.trim())}`, { method: 'PUT', body: JSON.stringify(body) });
+      const k = f.key.value.trim(); f.reset(); await load(); msg('ok', `Provider '${k}' guardado.`);
+    } catch (err) { msg('err', 'No se guardó (global.yaml quedó como estaba).\n' + err.message); }
   });
 
   $('#discard').addEventListener('click', load);

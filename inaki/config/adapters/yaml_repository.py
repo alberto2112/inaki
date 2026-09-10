@@ -29,22 +29,22 @@ from inaki.config.ports import LayerName
 # ---------------------------------------------------------------------------
 
 _HEADER_GLOBAL = """\
-# Generado por inaki setup
+# Generado por inaki
 # Config global — ~/.inaki/config/global.yaml
-# Editá este archivo a mano o usá `inaki setup` para modificarlo con la TUI.
+# Editá este archivo a mano, o con `inaki config web` (config efectiva con origen).
 # Contiene credenciales (bloque `providers:`) — NUNCA lo commitees.
 """
 
 _HEADER_AGENT = """\
-# Generado por inaki setup
-# Config de agente — este archivo fue creado con `inaki setup`.
+# Generado por inaki
+# Config de agente — creado con `inaki init` o desde `inaki config web`.
 # Puede contener credenciales (token del canal, auth_keys) — NUNCA lo commitees.
 """
 
 _HEADER_SUB_AGENT = """\
-# Generado por inaki setup
+# Generado por inaki
 # Config de sub-agente — solo para delegación, sin canales.
-# Este archivo fue creado con `inaki setup`.
+# Creado desde `inaki config web`.
 """
 
 _HEADERS: dict[LayerName, str] = {

@@ -278,6 +278,14 @@ server ya tenía auth. Faltaban el pegamento, la validación al escribir y el fr
 **Comportamiento observable.** Comando nuevo `inaki config web`; endpoints nuevos en el
 admin server. Sin cambios en lo existente.
 
+*Cerrado después (fase 12b, 2026-09-10):* el comando `inaki config web` nació en
+`inaki/config/cli.py` importando el router de `inaki.channels.rest`, y eso rompió el
+contrato "inaki/config solo conoce el kernel y shared" desde este PR hasta el #59. No se
+atajó porque la verificación leía la última línea de `lint-imports` (vacía al fallar)
+en vez de su exit code, y el pre-commit solo corre mypy. Un comando que MONTA un canal
+es del composition root: vive en `inaki/cli/config_web.py` y se registra sobre
+`config_app` desde `inaki/cli/__init__.py`. Mismo comando, misma UI.
+
 **Invariante que dejó.** **NUNCA** escribir una capa de config sin validarla con el
 loader del arranque en la misma operación, y **NUNCA** dejar escrita la capa si el
 loader la rechaza: el rollback es parte del carril de escritura, no una cortesía de la

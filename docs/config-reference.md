@@ -155,7 +155,7 @@ Los jobs de memoria pueden usar otro modelo sin tocar este bloque: ver ``memorie
 
 **`provider`** — KEY del registry ``providers:`` que aporta las credenciales y el endpoint.
 
-Adapters incluidos: ``openrouter``, ``openai``, ``openai_responses``, ``anthropic``, ``deepseek``, ``groq``, ``ollama``, ``custom``. Se auto-descubren por la constante ``PROVIDER_NAME`` del módulo, así que agregar uno nuevo es crear ``adapters/outbound/providers/{name}.py`` y declarar ``providers.{name}``.
+Adapters incluidos: ``openrouter``, ``openai``, ``openai_responses``, ``anthropic``, ``deepseek``, ``groq``, ``ollama``, ``custom``. Se auto-descubren por la constante ``PROVIDER_NAME`` del módulo, así que agregar uno nuevo es crear ``inaki/llm/{name}.py`` y declarar ``providers.{name}``.
 
 **`model`** — Identificador del modelo, en el formato que espera el provider elegido.
 

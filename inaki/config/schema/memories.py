@@ -219,7 +219,7 @@ class MemoriesConfig(_ConfigBaseModel):
 
     # La resolución del digest path y de keep_last_messages (lógica de dominio
     # que solo core consume) vive en inaki/kernel/domain/value_objects/agent_settings.py
-    # (``MemorySettings``). El container traduce este modelo a ese VO.
+    # (``MemorySettings``). ``inaki/memory/wiring.py::build_memory_settings`` traduce este modelo a ese VO.
 
     def merged_llm_config(self, base: LLMConfig) -> LLMConfig:
         """
@@ -231,7 +231,7 @@ class MemoriesConfig(_ConfigBaseModel):
         Si no hay override, devuelve el ``base`` tal cual.
 
         ÚNICA excepción declarada al motor de merge del dominio
-        (``core/domain/config_merge``), y a propósito: el motor opera sobre dicts
+        (``inaki/config/merge.py``), y a propósito: el motor opera sobre dicts
         CRUDOS antes de validar, y este merge ocurre DESPUÉS, entre dos modelos ya
         validados. La semántica es la misma —``model_fields_set`` es el
         equivalente pydantic de "la clave está escrita en el YAML", así que

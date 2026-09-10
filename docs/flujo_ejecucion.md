@@ -121,19 +121,18 @@ inaki daemon
     ├── Register SIGTERM/SIGINT → shutdown_event.set()
     │
     ├── Admin server (única superficie HTTP, ruteo por agent_id):
-    │   └── asyncio.create_task(_run_admin_server(app_container, admin_cfg))
-    │       └── uvicorn.Server(create_admin_app(), admin.host, admin.port).serve()
+    │   └── asyncio.create_task(_run_admin_server(harness, admin_cfg))
+    │       └── uvicorn.Server(create_admin_app(harness, auth_key, config_web), host, port).serve()
     │
-    ├── For each agent with 'telegram' channel:
-    │   └── asyncio.create_task(_run_telegram_bot(agent_cfg, container))
-    │       └── async with bot._app:
-    │               await app.start()
-    │               await app.updater.start_polling()
-    │               await asyncio.Event().wait()  # forever
+    ├── _start_channels(harness): for each IChannel in harness.channels → await canal.start()
+    │   └── TelegramChannel.start(): broadcast bind → Application.initialize/start →
+    │       comandos, bot_username, trigger de broadcast, aviso "online" → start_polling
+    │       (un canal que falla al arrancar se reporta y no tumba a los demás)
     │
-    ├── asyncio.wait([*tasks, shutdown_task], FIRST_COMPLETED)
+    ├── asyncio.wait([*tasks, shutdown_task, reload_task], FIRST_COMPLETED)
     │
-    └── On shutdown: app_container.shutdown() → cancel tasks → gather → log
+    └── On shutdown or reload: _stop_channels → harness.shutdown() → cancel tasks → gather → log
+        (reload: bootstrap_fn() re-reads config and ensamblar() again, then repeats)
 ```
 
 ### One-shot Consolidation Mode (`inaki consolidate [--agent id]`)
@@ -147,13 +146,13 @@ inaki consolidate
 └── _run_consolidate(global_config, registry, agent)
     │
     ├── With --agent X:
-    │   ├── container = app.get_agent("X")
-    │   ├── await container.consolidate_memory.execute()
+    │   ├── runtime = harness.get_agent("X")
+    │   ├── await runtime.consolidate_memory.execute()
     │   │   └── consolidates only X (ignores memories.consolidation.enabled)
     │   └── print(f"X: {result}")
     │
     └── Without --agent:
-        └── await app.consolidate_all_agents.execute()
+        └── await harness.consolidate_all.execute()
             ├── iterates enabled_agents
             ├── for each: await uc.execute() + asyncio.sleep(delay_seconds)
             └── print(summary with ✓/✗ per agent)

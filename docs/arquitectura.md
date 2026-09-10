@@ -7,15 +7,17 @@ resumen operativo; este documento es la fuente de verdad cuando hay que decidir
 Índice:
 
 - [Capas y dirección de dependencias](#capas-y-direccion-de-dependencias)
+- [La ley, contrato por contrato](#la-ley-contrato-por-contrato)
 - [Capacidades vs canales — la regla del canal THIN](#capacidades-vs-canales--la-regla-del-canal-thin)
 - [Tiers de recursos — harness-global vs per-agente](#tiers-de-recursos--harness-global-vs-per-agente)
 - [Reglas de wiring (DI)](#reglas-de-wiring-di)
+- [Cómo agregar un canal](#como-agregar-un-canal)
 
 ## Capas y dirección de dependencias
 
 Inaki is a multi-agent AI assistant following **strict hexagonal architecture**:
 
-- **`inaki/kernel/`** — El kernel. El turno (`run_agent`, tool loop), the ports it consumes, entities, value objects and domain services. **NEVER imports a feature module or the composition root**. Allowed imports: stdlib, `core/`, and the third-party allowlist `pydantic` + `croniter` + `numpy` (numpy: 512-float face embeddings on Pi 5 — pure Python would be unviable).
+- **`inaki/kernel/`** — El kernel. El turno (`run_agent`, tool loop), the ports it consumes, entities, value objects and domain services. **NEVER imports a feature module or the composition root**. Allowed imports: stdlib, `inaki/shared`, and the third-party allowlist `pydantic` + `croniter` + `numpy` (numpy: 512-float face embeddings on Pi 5 — pure Python would be unviable).
 - **módulos de `inaki/`** — Un paquete por feature (`llm`, `embedding`, `tools`, `skills`, `memory`, `knowledge`, `scheduler`, `agents`, `perception`, `extensions`, `config`, `observability`) y un paquete por canal bajo `inaki/channels/`. Implementan los ports que el kernel declara. **NUNCA importan el composition root** ni otro módulo salvo lo que su contrato de `import-linter` permite — si un módulo "necesita" el container o el schema, declara un Protocol/Settings VO de lo que usa y el composition root se lo inyecta.
 - **`wiring.py` de cada módulo** — La factory que compone los adapters del módulo desde la config (`inaki/llm/wiring.py`, `inaki/embedding/wiring.py`, `inaki/perception/wiring.py`): el ÚNICO fichero de un módulo con permiso para importar `inaki.config`, declarado como excepción en su contrato.
 - **`inaki/app/assembly.py`** — El composition root: `ensamblar()` llama al `wiring.py` de cada módulo en cinco pasadas explícitas y entrega runtimes tipados e inmutables (`inaki/app/runtime.py`: `AgentRuntime`, `HarnessRuntime`). No instancia adapters: eso lo hace cada módulo; este fichero decide cuándo y con qué se inyectan into use cases.
@@ -24,6 +26,28 @@ Inaki is a multi-agent AI assistant following **strict hexagonal architecture**:
 
 Dependency direction: `composition root (inaki/app, inaki/cli) → módulos → kernel`. Never reversed.
 Enforced by two tools. `lint-imports` (`[tool.importlinter]` in `pyproject.toml`) is the law between modules: what each one may import, and which ones are independent of each other. `tests/kernel/test_terceros_del_kernel.py` (incluye TYPE_CHECKING e imports locales) guards the one rule import-linter cannot express: terceros en el kernel limitados al allowlist. Es **ratchet**: `DEUDA_TERCEROS_KERNEL` quedó **vacía** el 2026-06-13. NUNCA agregar entradas a `DEUDA_*`: resolver el acoplamiento (Settings VOs, Protocols estructurales, o reubicar composition-roots a `inaki/`).
+
+## La ley, contrato por contrato
+
+`[tool.importlinter]` en `pyproject.toml` es la fuente de verdad; `lint-imports` la
+verifica. Los quince contratos, en palabras:
+
+| Quién | Puede conocer | Verificado por |
+|---|---|---|
+| `inaki/kernel` | solo `inaki/shared` (+ terceros `pydantic`, `croniter`, `numpy`) | contrato `forbidden` + `tests/kernel/test_terceros_del_kernel.py` (ratchet, `DEUDA_*` vacía) |
+| `inaki/shared`, `inaki/extensions` | nadie del proyecto | `forbidden` |
+| `inaki/observability`, `inaki/config` | el kernel (ports) y `shared` | `forbidden` |
+| `inaki/llm`, `inaki/perception`, `inaki/embedding`, `inaki/scheduler`, `inaki/agents` | el kernel y `shared` | `forbidden` |
+| `inaki/memory`, `inaki/knowledge`, `inaki/skills`, `inaki/tools` | el kernel, `shared` y `embedding` | `forbidden` |
+| `memory` / `knowledge` / `skills` entre sí | nada | `independence` |
+| `inaki/channels/*` | todo salvo `inaki/app` e `inaki/cli` | `forbidden` |
+| `telegram` / `rest` / `cli` entre sí | nada | `independence` |
+| `inaki/app`, `inaki/cli` | todos (ensamblar es su trabajo) | fuera de la ley |
+
+La ÚNICA excepción, por diseño: el `wiring.py` de un módulo es su factory y puede conocer
+`inaki.config` y el `wiring.py` de otro módulo. Se declara como `ignore_imports` en su
+contrato para que el borde quede escrito, no supuesto. Una violación NUNCA se resuelve
+agregando otro `ignore_imports`: es la lista `DEUDA_*` con otro nombre.
 
 ## Capacidades vs canales — la regla del canal THIN
 
@@ -111,8 +135,48 @@ un `knowledge` o `scheduler` per-agente: rompe el tier y multiplica recursos.
 ## Reglas de wiring (DI)
 
 - **`inaki/app/assembly.py` + `inaki/app/runtime.py`** — `ensamblar()` (five passes, see `flujo_ejecucion.md`) produces an `AgentRuntime` per agent and one `HarnessRuntime`. A new tool, provider or repo is built by its module's `wiring.py`; the assembler only decides where in the order it goes.
-- **Settings VOs** — Los use cases NO reciben `AgentConfig`: cada uno declara sus parámetros en un VO de `inaki/kernel/domain/value_objects/agent_settings.py` (`RunAgentSettings`, `OneShotSettings`, `MemorySettings`, `PhotosSettings`). El mapeo config→VO vive en los builders públicos de `container.py` (`build_run_agent_settings`, etc.) — único punto donde ambos mundos se tocan. Para exponer un campo nuevo de config a un use case: agregarlo al VO + al builder.
-- **DTOs de adapters outbound** — Mismo patrón hacia el otro lado: los `Resolved*Config` (`ResolvedLLMConfig`, `ResolvedEmbeddingConfig`, `ResolvedTranscriptionConfig`) viven en el `base.py` de su módulo (`inaki/llm`, `inaki/embedding`, transcripción en `inaki/perception`), y los Settings VOs `HistoryStoreSettings` / `ChannelFallbackSettings` junto a su adapter. El `wiring.py` de cada módulo y el container los componen desde el schema YAML (`LLMProviderFactory.resolve`, mapeos en `container.py`). NUNCA moverlos de vuelta a `inaki/config/` — `adapters/` no importa `infrastructure/`.
+- **Settings VOs** — Los use cases NO reciben `AgentConfig`: cada uno declara sus parámetros en un VO de `inaki/kernel/domain/value_objects/agent_settings.py` (`RunAgentSettings`, `OneShotSettings`, `MemorySettings`, `PhotosSettings`). El mapeo config→VO vive en `inaki/app/settings.py` (`build_run_agent_settings`, `build_one_shot_settings`) y en el `wiring.py` del módulo dueño (`build_memory_settings`, `build_photos_settings`) — los únicos puntos donde ambos mundos se tocan. Para exponer un campo nuevo de config a un use case: agregarlo al VO + al builder.
+- **DTOs de adapters outbound** — Mismo patrón hacia el otro lado: los `Resolved*Config` (`ResolvedLLMConfig`, `ResolvedEmbeddingConfig`, `ResolvedTranscriptionConfig`) viven en el `base.py` de su módulo (`inaki/llm`, `inaki/embedding`, transcripción en `inaki/perception`), y los Settings VOs `HistoryStoreSettings` / `ChannelFallbackSettings` junto a su adapter. El `wiring.py` de cada módulo los compone desde el schema YAML (`LLMProviderFactory.resolve`). NUNCA moverlos de vuelta a `inaki/config/`: un módulo de providers no conoce `inaki.config` fuera de su `wiring.py`.
 - **Provider discovery** — LLM, embedding and transcription providers are auto-discovered by scanning modules for a `PROVIDER_NAME` module-level constant. No manual registration needed. Los tres registries son **independientes** (escanean paquetes distintos: `inaki/llm/`, `inaki/embedding/`, `inaki/perception/adapters/transcription/`): que un vendor exista como LLM NO lo hace disponible para transcripción. Transcripción hoy: `groq` y `openai`, ambos OpenAI-compatible (`/audio/transcriptions`), comparten `BaseTranscriptionProvider` — cada concreto solo declara `_DEFAULT_BASE_URL` + `_PROVIDER_LABEL`.
 - **Two-phase agent init** — pass 1 builds every agent draft; pass 3 wires delegation (the `delegate` tool), the scheduler tool, photos and Telegram tools once ALL agents exist. The runtimes are frozen last (pass 5): an `X | None` field means the capability is not configured for that agent, never that a pass is missing.
 - **Delegación — subagente efímero con herencia contra el caller** — El pool de DEFINICIONES de sub-agentes es compartido, pero cada delegación NO usa el `run_agent_one_shot` pre-built del sub: construye una **instancia efímera one-shot resuelta contra el CALLER** vía `inaki.agents.wiring.build_ephemeral_child(definition_raw, caller_cfg=...)`. Resolución: `resolve_inherit(_deep_merge(SUBAGENT_DEFAULTS, definition_raw), parent_raw)` con `parent_raw` = config EFECTIVA del caller. El primitivo `inherit` (directiva de merge por bloque, resuelta en dicts crudos ANTES de pydantic y strippeada — NUNCA un campo de modelo) hace que el hijo herede del padre: `llm` por default (vía `SUBAGENT_DEFAULTS`), el resto opt-in. **Tools/recursos = SIEMPRE del caller** (`caller._tools`: workspace/memory/knowledge del padre); el sub recorta el subset visible con `tools.allowed` (filtro REQ-OS-5 en `RunAgentOneShotUseCase`, junto a la exclusión de `delegate` REQ-DG-9). El LLM se REUSA (misma instancia del caller) si la config llm efectiva coincide; si el sub la overridea → `LLMProviderFactory` con los `providers` heredados del caller. SIN embedder (el one-shot expone el toolkit completo sin RAG, REQ-OS-4). Misma def + caller P/Q distintos → instancias independientes heredando cada una de su padre. Ambos paths resuelven el efímero contra el caller: sync (`wire_delegation` arma el closure `build_child` con `get_sub_agent_raw` + `build_ephemeral_child`) y async (`BackgroundDelegationQueueAdapter`, `one_shot_resolver(caller_id, target_id)`). Scope: SOLO `delegate` — el carril de memoria (extractor/reconciliador) hereda por su cuenta vía `merged_llm_config`.
+
+## Cómo agregar un canal
+
+Un canal es UN paquete bajo `inaki/channels/<nombre>/`. Telegram es el modelo; REST y CLI
+son los mínimos. Paso a paso, con lo que el kernel y el composition root esperan de él:
+
+1. **El contrato del kernel** (`inaki/kernel/ports/outbound/channel_port.py`). Implementá
+   `IChannel` (`name`, `start()`, `stop()`: el ciclo de vida que el runner arranca y para) e
+   `IChannelOutbound` (`capabilities()`, `send()`, `emit()`, `shows_thinking`): el BORDE del
+   transporte, por donde sale TODO lo que no es una respuesta conversacional (scheduler,
+   tools, resultados `bg-N`, intermedios). El formateo y el troceo viven ahí, no en los
+   call-sites (`formato-en-el-borde-del-transporte`).
+2. **Traducir la entrada a un turno.** El inbound recibe su I/O nativo, autoriza, y llama a
+   `run_agent.execute()` con un `ChannelContext`; en chats uno-a-uno pasa por
+   `dispatch_inbound_turn` (inyección in-flight). Media: entregá el path del fichero como
+   bloque de la gramática de attachments (`inaki/shared/attachment.py`) y el LLM hace el
+   resto con sus tools. **Nada de capacidades en el canal** (regla THIN, arriba).
+3. **Tu sección de config** vive en `<canal>/config.py` como modelo Pydantic con
+   docstrings (de ahí salen `config-reference.md` y la ayuda de `inaki config web`), y se
+   registra con `registrar_canal(nombre, modelo, migraciones=..., validar_raw=...,
+   validar_agentes=...)` de `inaki/config/channels.py`, llamado desde
+   `inaki/channels/__init__.py::registrar_canales_instalados()`. El módulo config no conoce
+   ningún canal: lee el registro.
+4. **`<canal>/wiring.py`** es la factory: `build_<canal>_settings(cfg)` (config → Settings VO
+   del canal), `build_<canal>_outbound(...)`, `build_channel(...)`. Es el ÚNICO fichero del
+   paquete que importa `inaki.config`.
+5. **El composition root** (`inaki/app/assembly.py`) lo cablea en la pasada 3 (outbound y
+   tools propias del canal, registrados en el `ChannelOutboundRegistry` del agente) y en
+   la pasada 4 (`_construir_canales`: un `IChannel` por agente con la sección configurada).
+   El runner (`inaki/app/runner.py::_start_channels`) arranca cada `IChannel` sin saber
+   cuál es; uno que falle al arrancar no tumba a los demás.
+6. **La ley**: agregá el paquete al contrato `independence` de los canales en
+   `pyproject.toml`. Si el canal necesita algo de otro módulo, lo recibe por constructor
+   desde el ensamblador; nunca importa `inaki.app`.
+7. **Tests**: un golden path en `tests/integration/golden/` (los de Telegram y REST son la
+   plantilla) que atraviese inbound → turno → outbound con los providers parcheados.
+
+Lo que un canal NO hace: slash commands nuevos (son el panel del operador de Telegram, no
+la vía a las capacidades), persistencia propia por tipo de media (la gramática se extiende
+en `shared/attachment.py`), ni un YAML de config fuera del registro.

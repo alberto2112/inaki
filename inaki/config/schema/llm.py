@@ -31,8 +31,7 @@ class LLMConfig(_ConfigBaseModel):
     Adapters incluidos: ``openrouter``, ``openai``, ``openai_responses``,
     ``anthropic``, ``deepseek``, ``groq``, ``ollama``, ``custom``. Se
     auto-descubren por la constante ``PROVIDER_NAME`` del módulo, así que agregar
-    uno nuevo es crear ``adapters/outbound/providers/{name}.py`` y declarar
-    ``providers.{name}``."""
+    uno nuevo es crear ``inaki/llm/{name}.py`` y declarar ``providers.{name}``."""
 
     model: str = "anthropic/claude-3-5-haiku"
     """Identificador del modelo, en el formato que espera el provider elegido.

@@ -23,7 +23,7 @@ from contextlib import contextmanager
 from typing import Iterator
 
 
-def _errores_del_operador() -> tuple[type[BaseException], ...]:
+def errores_del_operador() -> tuple[type[BaseException], ...]:
     """Familias de error que significan "tu config está mal", no "hay un bug".
 
     Import diferido: este módulo lo carga el arranque, antes de que valga la pena
@@ -66,7 +66,7 @@ def borde_de_config(contexto: str | None = None) -> Iterator[None]:
     """
     try:
         yield
-    except _errores_del_operador() as exc:
+    except errores_del_operador() as exc:
         detalle = f" en {contexto}" if contexto and contexto not in str(exc) else ""
         print(f"Error de configuración{detalle}: {exc}", file=sys.stderr)
         sys.exit(1)

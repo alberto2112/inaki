@@ -167,6 +167,8 @@ inaki consolidate --agent dev    # Consolidate a single agent
 inaki inspect "query"            # Inspect RAG pipeline for a message (no LLM call)
 inaki scheduler list             # List scheduled tasks
 inaki knowledge list             # List configured knowledge sources
+inaki config show --origin       # Effective config with the layer each value comes from
+inaki config web                 # Same view, editable per layer, in the browser (no daemon needed)
 ```
 
 ### Remote mode

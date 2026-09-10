@@ -24,6 +24,7 @@ pytest -k test_name              # single test
 lint-imports                     # ley de dependencias entre capas (import-linter)
 inaki config show --origin       # config efectiva con la capa de cada valor
 inaki config show --secrets      # qué credenciales están puestas y cuáles faltan
+inaki config web                 # la misma vista, editable por capa, en el navegador (también en el daemon: /admin/config/ui)
 inaki                            # interactive chat (default agent)
 inaki --debug daemon             # modo diagnóstico: nivel DEBUG + trazas de turno en <home>/debug/turns/
 inaki chat --agent dev           # specific agent

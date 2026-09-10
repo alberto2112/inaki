@@ -36,6 +36,7 @@ verdad**, y de dónde sale cada valor:
 inaki config show --agent dev --origin   # config efectiva + capa de origen
 inaki config show --secrets              # qué credenciales están puestas y cuáles faltan
 inaki config show --json                 # legible por máquina
+inaki config web                         # la misma vista, editable, en http://127.0.0.1:6498/admin/config/ui
 ```
 
 ```
@@ -55,6 +56,23 @@ el schema se emiten como `********`, nunca en claro: la salida está pensada par
 pegarse en un issue. `--secrets` la acota a las credenciales, marcando las que
 siguen `(sin configurar)` — pero solo de las secciones que ya declaraste, así no
 se llena de campos pendientes de features que no usás.
+
+## Editar desde el navegador
+
+`inaki config web` sirve la **misma vista efectiva con origen**, editable por
+capa (global, un agente o un sub-agente), sin daemon y sin build step: un solo
+HTML dentro del paquete, en loopback. Con el daemon corriendo, la misma página
+vive en el admin server (`/admin/config/ui`, con `X-Admin-Key`) y ofrece
+recargarlo después de guardar.
+
+Lo que se guarda pasa por el **mismo loader del arranque**: si el resultado no
+carga, la capa vuelve a como estaba y el error del loader se muestra tal cual.
+Un override de agente se puede volver a "heredar" (borra la clave: manda
+global); en la capa global, heredar es volver al default del schema. Los
+secretos nunca se muestran: se escriben, y la vista solo dice si están puestos.
+
+Endpoints: [`admin-api.md`](admin-api.md). Nota de diseño: `config-web` en
+[`migraciones.md`](migraciones.md).
 
 ## Los ficheros
 

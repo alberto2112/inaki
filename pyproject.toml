@@ -54,6 +54,10 @@ inaki = "inaki.cli:app"
 [tool.setuptools.packages.find]
 include = ["inaki*"]
 
+[tool.setuptools.package-data]
+# La UI web de config viaja dentro del paquete: sin build step ni CDN.
+"inaki.channels.rest" = ["static/*.html"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

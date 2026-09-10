@@ -45,6 +45,7 @@ existe este documento— y la contradicción no queda flotando.
 | [`channel-contextid`](#channel-contextid) | `mv` de los ficheros de contexto a `{context_id}.md` + cambiar la variable del prompt |
 | [`per-user-context-files`](#per-user-context-files) | *(superseded)* `mv` de `USER.md` a `users/{channel}/…` |
 | [`config-falla-ruidoso`](#config-falla-ruidoso) | **Puede impedir el arranque**: corregir el typo/valor que el error nombra (antes se ignoraba en silencio) |
+| [`config-web`](#config-web) | Comando nuevo `inaki config web` y endpoints `/admin/config/*` en el admin server: la config efectiva con origen, editable por capa y validada con el loader del arranque |
 | [`instalacion-como-producto`](#instalacion-como-producto) | Nuevos `inaki init` e `inaki service install\|uninstall`; `systemd/install.sh` desaparece; el symlink `/usr/local/bin/inaki` pasa a ser opt-in (`--link-cli`); `insightface` es el extra `faces`; `tokenizers` declarado |
 | [`telegram-composicion`](#telegram-composicion) | Sin cambios de comportamiento: `TelegramBot` deja los mixins y compone objetos con constructor explícito (`auth`, `reactions`, `rate_limit`, `turn`, `group_flow`, `broadcast/ingress`, `media`, `commands`) |
 | [`instalacion-como-producto`](#instalacion-como-producto) | Con fotos activas: instalar el extra `faces`; cuando convenga, `inaki service install` reemplaza la unidad de `install.sh` (la vieja sigue arrancando gracias a `main.py`) |
@@ -114,12 +115,54 @@ de `global.yaml`).
 - **Memoria**: `memory-management-tools`, `memory-scoped-by-channel-chat`,
   `agent-state-scoped-by-channel-chat`
 - **Scheduler**: `modulos-scheduler-y-agents`, `scheduler-trigger-type-mutable`, `channel-send-history-persist`
-- **Instalación y producto**: `instalacion-como-producto`
+- **Instalación y producto**: `instalacion-como-producto`, `config-web`
 - **Tools y config**: `runtimes-tipados`, `wiring-por-modulo`, `kernel-y-fachada-de-tools`, `modulos-tools-llm-extensions`, `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `config-web`
+
+**Contexto (2026-09-10, fase 11b del refactor modular).** El setup TUI se retiró en
+2026-09 (`modulo-config-y-retiro-del-tui`) con una regla: la interfaz de config que lo
+reemplace se construye sobre la config EFECTIVA con origen, no sobre los ficheros
+crudos (`config-show-effective`). ``ShowEffectiveConfigUseCase`` ya daba esa vista,
+``Update{Global,Agent}LayerUseCase`` ya editaban por capa con tri-estado, y el admin
+server ya tenía auth. Faltaban el pegamento, la validación al escribir y el front.
+
+**Cambio.**
+
+- ``introspection.campos_del_schema()``: por path, tipo, docstring, default y si es
+  secreto — del MISMO schema que genera `config-reference.md`, así que la ayuda de la UI
+  es la del doc por construcción. Los dicts indexados por el operador (`providers`,
+  `channels.<canal>`) van con comodín.
+- ``ApplyConfigChangesUseCase`` (`inaki/config/use_cases/apply_changes.py`): capa +
+  cambios por path + paths a HEREDAR (tri-estado `INHERIT`). Aplica con los use cases de
+  edición por capa y **valida con un callable inyectado** que el wiring arma con el loader
+  del arranque (`load_global_config` + `AgentRegistry`). Si rechaza, restaura el snapshot
+  de la capa y devuelve el mensaje accionable: en disco nunca queda algo que no arranca.
+- Router `/admin/config` (`inaki/channels/rest/routers/config.py`): `agents`, `effective`,
+  `layer` (PUT) y `ui`. UN router, dos modos: montado en el admin server del daemon con
+  `X-Admin-Key` (la página la pide una vez y la guarda en el navegador; tras guardar
+  ofrece `POST /admin/reload`), o servido solo por `inaki config web` en loopback, que
+  anula la auth con `dependency_overrides` (mismo nivel de confianza que editar el YAML a
+  mano). Lo que el router consume lo arma `build_config_web` en `inaki/config/wiring.py`.
+- Front: un HTML en el paquete (`inaki/channels/rest/static/config.html`, package-data),
+  vanilla JS, sin CDN ni build step. Capa, filtro, badge de origen, ayuda desplegable,
+  inputs por tipo (bool, número, `Literal`, JSON para listas y dicts), secretos
+  write-only, botón "heredar" en los overrides.
+
+**Comportamiento observable.** Comando nuevo `inaki config web`; endpoints nuevos en el
+admin server. Sin cambios en lo existente.
+
+**Invariante que dejó.** **NUNCA** escribir una capa de config sin validarla con el
+loader del arranque en la misma operación, y **NUNCA** dejar escrita la capa si el
+loader la rechaza: el rollback es parte del carril de escritura, no una cortesía de la
+UI. Y la ayuda de un campo sale del schema (`campos_del_schema`), nunca de un texto
+duplicado en el front.
 
 ---
 

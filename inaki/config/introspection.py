@@ -19,6 +19,7 @@ Tenerlo en uno de los dos obligaría al otro a importarlo al revés.
 from __future__ import annotations
 
 import inspect
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel
@@ -46,6 +47,67 @@ def defaults_del_schema() -> dict[str, Any]:
             if valor is not None:
                 defaults[nombre] = valor
     return defaults
+
+
+@dataclass(frozen=True)
+class CampoDelSchema:
+    """Lo que el schema sabe de un campo: la ayuda que cualquier UI de config muestra."""
+
+    path: str
+    tipo: str
+    doc: str
+    default: Any
+    secreto: bool
+
+
+def campos_del_schema() -> list[CampoDelSchema]:
+    """Metadata por path de TODOS los campos del schema, incluidos los de canales y providers.
+
+    Sale del mismo schema que ``config-reference.md``: la ayuda que ve el operador
+    en una UI es la del doc, por construcción. Los dicts indexados por el
+    operador (``providers``, ``channels``) van con comodín ``*`` en la clave.
+    """
+    from inaki.config import AgentConfig, GlobalConfig, ProviderConfig
+    from inaki.config.channels import canales_registrados
+    from inaki.config.docs import type_str
+
+    salida: dict[str, CampoDelSchema] = {}
+
+    def _recorrer(modelo: type[BaseModel], prefijo: str, vistos: tuple[type, ...]) -> None:
+        if modelo in vistos:
+            return
+        for nombre, field in modelo.model_fields.items():
+            path = f"{prefijo}{nombre}"
+            submodelos = _submodelos_de(field.annotation)
+            extra = field.json_schema_extra or {}
+            secreto = isinstance(extra, dict) and bool(extra.get("secret"))
+            if path not in salida:
+                salida[path] = CampoDelSchema(
+                    path=path,
+                    tipo=type_str(field.annotation).replace("\\|", "|"),
+                    doc=inspect.cleandoc(field.description or ""),
+                    default=_default_de_campo(field) if not submodelos else None,
+                    secreto=secreto,
+                )
+            for sub in submodelos:
+                _recorrer(sub, f"{path}.", vistos + (modelo,))
+
+    for raiz in (GlobalConfig, AgentConfig):
+        _recorrer(raiz, "", ())
+    _recorrer(ProviderConfig, "providers.*.", ())
+    for canal, registrado in canales_registrados().items():
+        _recorrer(registrado.modelo, f"channels.{canal}.", ())
+    return sorted(salida.values(), key=lambda c: c.path)
+
+
+def _submodelos_de(annotation: Any) -> list[type[BaseModel]]:
+    """Modelos anidados directos o en ``X | None``; un ``dict[str, X]`` no se desciende."""
+    from typing import get_args, get_origin
+
+    if get_origin(annotation) is dict:
+        return []
+    candidatos = [annotation, *get_args(annotation)]
+    return [c for c in candidatos if inspect.isclass(c) and issubclass(c, BaseModel)]
 
 
 def _default_de_campo(field: Any) -> Any:

@@ -41,6 +41,7 @@ async def _run_admin_server(app_container, admin_cfg, servers: list) -> None:
     import uvicorn
 
     from inaki.channels.rest.app import create_admin_app
+    from inaki.config.wiring import build_config_web
 
     if admin_cfg.auth_key is None:
         logger.warning(
@@ -48,7 +49,9 @@ async def _run_admin_server(app_container, admin_cfg, servers: list) -> None:
             "Configurala en global.yaml: admin.auth_key"
         )
 
-    app = create_admin_app(app_container, admin_auth_key=admin_cfg.auth_key)
+    app = create_admin_app(
+        app_container, admin_auth_key=admin_cfg.auth_key, config_web=build_config_web(daemon=True)
+    )
     config = uvicorn.Config(
         app,
         host=admin_cfg.host,

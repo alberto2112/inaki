@@ -155,7 +155,7 @@ async def test_user_no_autorizado_drop_silencioso(agent_cfg, mock_container) -> 
     update = _mk_update(user_id=999)
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
 
     mock_container.process_photo.execute.assert_not_called()
     update.message.reply_text.assert_not_called()
@@ -174,14 +174,14 @@ async def test_album_dispara_pipeline_sin_procesar_como_foto(
     monkeypatch.setattr(media_mod, "ALBUM_DEBOUNCE_SEC", 0.0)
 
     bot = _build_bot(agent_cfg, mock_container)
-    bot._run_pipeline = AsyncMock()
-    bot._set_reaction = AsyncMock()
+    bot._turns.run = AsyncMock()
+    bot._reactions.react = AsyncMock()
     update = _mk_update(media_group_id="abc-123")
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
     # El handler solo agenda el flush (debounce) — esperarlo explícitamente.
-    await bot._album_buffers["abc-123"].task
+    await bot._media.album_buffers["abc-123"].task
 
     mock_container.process_photo.execute.assert_not_called()
     mock_container.history.record_photo_message.assert_not_called()
@@ -193,8 +193,8 @@ async def test_album_dispara_pipeline_sin_procesar_como_foto(
     mock_container.history.record_user_message.assert_awaited_once()
     persisted = mock_container.history.record_user_message.await_args.args[0]
     assert persisted.startswith("@album pending")  # sin repo → gather vacío
-    bot._run_pipeline.assert_awaited_once()
-    args, kwargs = bot._run_pipeline.call_args
+    bot._turns.run.assert_awaited_once()
+    args, kwargs = bot._turns.run.call_args
     user_input = args[1] if len(args) > 1 else kwargs.get("user_input")
     assert user_input is None  # history-derived, no re-adquiere el slot
 
@@ -211,7 +211,7 @@ async def test_feature_disabled_process_photo_none(agent_cfg) -> None:
     update = _mk_update()
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
 
     container.history.record_photo_message.assert_not_called()
     update.message.reply_text.assert_awaited_once()
@@ -234,7 +234,7 @@ async def test_feature_disabled_en_grupo_silencio_total(agent_cfg) -> None:
     update = _mk_update(chat_type="group")
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
 
     container.history.record_photo_message.assert_not_called()
     update.message.reply_text.assert_not_called()
@@ -251,7 +251,7 @@ async def test_should_skip_run_agent_en_grupo_silencio_total(agent_cfg, mock_con
     update = _mk_update(chat_type="group")
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
 
     mock_container.run_agent.execute.assert_not_called()
     update.message.reply_text.assert_not_called()
@@ -262,7 +262,7 @@ async def test_happy_path_private_chat_pipeline_corrido(agent_cfg, mock_containe
     update = _mk_update(chat_type="private")
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
 
     mock_container.history.record_photo_message.assert_awaited_once()
     record_call = mock_container.history.record_photo_message.await_args
@@ -309,7 +309,7 @@ async def test_privado_slot_ocupado_record_user_message_y_ack(agent_cfg, mock_co
     update = _mk_update(chat_type="private")
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
 
     # process_photo se ejecuta igual — necesitamos la descripción para inyectar.
     mock_container.process_photo.execute.assert_awaited_once()
@@ -353,7 +353,7 @@ async def test_privado_slot_ocupado_sin_analisis_no_persiste_segunda_fila(
     bot = _build_bot(agent_cfg, mock_container)
     update = _mk_update(chat_type="private")
 
-    await bot._handle_photo_message(update, MagicMock())
+    await bot._media.handle_photo(update, MagicMock())
 
     mock_container.history.record_photo_message.assert_awaited_once()
     mock_container.history.record_user_message.assert_not_called()
@@ -371,11 +371,11 @@ async def test_grupo_no_consulta_scope_registry(agent_cfg, mock_container) -> No
     la coalescencia. Verificamos que el handler no toca el scope_registry.
     """
     bot = _build_bot(agent_cfg, mock_container)
-    bot._schedule_group_flush = MagicMock()
+    bot._groups.schedule_flush = MagicMock()
     update = _mk_update(chat_type="group")
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
 
     mock_container.scope_registry.try_mark_busy.assert_not_called()
     mock_container.scope_registry.mark_idle.assert_not_called()
@@ -391,17 +391,17 @@ async def test_grupo_delega_al_buffer_flush_idempotente(agent_cfg, mock_containe
     + cualquier texto pendiente del trailing batch del historial.
     """
     bot = _build_bot(agent_cfg, mock_container)
-    bot._schedule_group_flush = MagicMock()
+    bot._groups.schedule_flush = MagicMock()
     update = _mk_update(chat_type="group")
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
 
     call_kwargs = mock_container.process_photo.execute.await_args.kwargs
     assert call_kwargs["chat_type"] == "group"
 
     # El handler delega al buffer, NO ejecuta el agente directo.
-    bot._schedule_group_flush.assert_called_once_with(str(update.effective_chat.id), "group")
+    bot._groups.schedule_flush.assert_called_once_with(str(update.effective_chat.id), "group")
     mock_container.run_agent.execute.assert_not_called()
 
 
@@ -415,7 +415,7 @@ async def test_annotated_image_reply_photo_llamado(agent_cfg, mock_container) ->
     update = _mk_update()
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
 
     update.message.reply_photo.assert_awaited_once_with(b"\xff\xd8\xff")
 
@@ -425,7 +425,7 @@ async def test_sin_imagen_anotada_no_llama_reply_photo(agent_cfg, mock_container
     update = _mk_update()
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
 
     update.message.reply_photo.assert_not_called()
 
@@ -440,7 +440,7 @@ async def test_should_skip_run_agent_no_corre_pipeline(agent_cfg, mock_container
     update = _mk_update()
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
 
     mock_container.run_agent.execute.assert_not_called()
     update.message.reply_text.assert_awaited()
@@ -452,7 +452,7 @@ async def test_error_en_use_case_reply_error_y_reaccion_x(agent_cfg, mock_contai
     update = _mk_update()
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
 
     update.message.reply_text.assert_awaited()
     reply = update.message.reply_text.await_args.args[0]
@@ -485,7 +485,7 @@ async def test_sin_vision_local_avisa_por_el_canal_y_no_tumba_el_bot(
     update = _mk_update()
 
     # No debe propagar: si esto levanta, el handler tumba el turno del usuario.
-    await bot._handle_photo_message(update, MagicMock())
+    await bot._media.handle_photo(update, MagicMock())
 
     update.message.reply_text.assert_awaited()
     aviso = update.message.reply_text.await_args.args[0]
@@ -508,7 +508,7 @@ def test_bot_registra_handler_photo(agent_cfg, mock_container) -> None:
     photo_callbacks = [
         h.callback
         for h in registered
-        if hasattr(h, "callback") and h.callback == bot._handle_photo_message
+        if hasattr(h, "callback") and h.callback == bot._media.handle_photo
     ]
     assert len(photo_callbacks) == 1, (
         f"Se esperaba 1 handler para _handle_photo_message, encontrado {len(photo_callbacks)}"
@@ -521,7 +521,7 @@ async def test_caption_se_adjunta_al_contexto_del_llm(agent_cfg, mock_container)
     update = _mk_update(caption="ese es mi gato durmiendo")
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
 
     # El contenido enriquecido se persiste vía update_message_content (segundo arg posicional).
     mock_container.history.update_message_content.assert_awaited_once()
@@ -535,7 +535,7 @@ async def test_sin_caption_no_agrega_linea_caption(agent_cfg, mock_container) ->
     update = _mk_update(caption=None)
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
 
     mock_container.history.update_message_content.assert_awaited_once()
     enriched_content = mock_container.history.update_message_content.await_args.args[1]
@@ -550,7 +550,7 @@ async def test_privado_no_antepone_prefijo_sender(agent_cfg, mock_container) -> 
     update.message.from_user = MagicMock(username="alberto", first_name="Alberto")
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
 
     enriched_content = mock_container.history.update_message_content.await_args.args[1]
     assert "(foto):" not in enriched_content
@@ -564,7 +564,7 @@ async def test_grupo_antepone_prefijo_sender_foto(agent_cfg, mock_container) -> 
     update.message.from_user = MagicMock(username="alberto", first_name="Alberto")
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
 
     enriched_content = mock_container.history.update_message_content.await_args.args[1]
     assert enriched_content.startswith("alberto (foto):")
@@ -579,7 +579,7 @@ async def test_grupo_con_caption_prefijo_envuelve_caption(agent_cfg, mock_contai
     update.message.from_user = MagicMock(username="alberto", first_name="Alberto")
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
 
     enriched_content = mock_container.history.update_message_content.await_args.args[1]
     assert enriched_content.startswith("alberto (foto):")
@@ -592,7 +592,7 @@ async def test_caption_incluido_en_historial(agent_cfg, mock_container) -> None:
     update = _mk_update(caption="paisaje montañoso")
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
 
     mock_container.history.record_photo_message.assert_awaited_once()
     call_args = mock_container.history.record_photo_message.await_args.args
@@ -612,7 +612,7 @@ async def test_bang_envia_directo_al_chat_sin_pipeline(agent_cfg, mock_container
     update = _mk_update(caption="!transcribí este documento")
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
 
     mock_container.run_agent.execute.assert_not_awaited()
     # send_html_or_plain renderiza a HTML y pasa parse_mode; el texto llega íntegro.
@@ -634,7 +634,7 @@ async def test_bang_texto_largo_se_parte_en_fragmentos(agent_cfg, mock_container
     update = _mk_update(caption="!describí como un fotógrafo profesional")
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
 
     # Más de un reply_text (se partió) y ningún fragmento supera el límite de Telegram.
     assert update.message.reply_text.await_count >= 2
@@ -653,7 +653,7 @@ async def test_bang_guarda_respuesta_en_historial(agent_cfg, mock_container) -> 
     update = _mk_update(caption="!extraé el texto")
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
 
     # Mensaje de usuario: bloque @photo con el prompt "!" verbatim en @caption.
     user_content = mock_container.history.record_photo_message.await_args.args[0]
@@ -673,7 +673,7 @@ async def test_bang_pasa_scene_prompt_al_use_case(agent_cfg, mock_container) -> 
     update = _mk_update(caption="!transcribí este recibo")
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
 
     call_kwargs = mock_container.process_photo.execute.await_args.kwargs
     assert call_kwargs.get("scene_prompt") == "transcribí este recibo"
@@ -698,7 +698,7 @@ def test_photo_handler_registrado_antes_que_texto(agent_cfg, mock_container) -> 
     photo_indices = [
         i
         for i, h in enumerate(registered)
-        if hasattr(h, "callback") and h.callback == bot._handle_photo_message
+        if hasattr(h, "callback") and h.callback == bot._media.handle_photo
     ]
     assert photo_indices, "No se registró el handler de foto"
     assert text_indices, "No se registró el handler de texto"
@@ -753,13 +753,13 @@ async def test_handle_photo_grupo_dispara_emit_event_user_input_photo(mock_conta
         bot = TelegramBot(settings=cfg, ports=mock_container, broadcast_emitter=None)
 
     # Spy sobre _emit_event para verificar argumentos sin depender del emitter real
-    bot._emit_event = AsyncMock()
+    bot._egress.emit = AsyncMock()
 
     update = _mk_update(chat_type="group")
     update.message.from_user = MagicMock(username="alberto", first_name="Alberto")
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
     # Dar chance a las tareas async pendientes (asyncio.ensure_future)
     import asyncio
 
@@ -768,12 +768,12 @@ async def test_handle_photo_grupo_dispara_emit_event_user_input_photo(mock_conta
     # Buscar la llamada con event_type="user_input_photo"
     photo_calls = [
         c
-        for c in bot._emit_event.await_args_list
+        for c in bot._egress.emit.await_args_list
         if c.kwargs.get("event_type") == "user_input_photo"
     ]
     assert len(photo_calls) == 1, (
         f"Esperaba 1 llamada user_input_photo, hubo {len(photo_calls)}: "
-        f"{bot._emit_event.await_args_list}"
+        f"{bot._egress.emit.await_args_list}"
     )
     photo_call = photo_calls[0]
     assert photo_call.kwargs["chat_id"] == "99"
@@ -811,13 +811,13 @@ async def test_handle_photo_modo_bang_emite_user_input_photo_sin_assistant_respo
 
         bot = TelegramBot(settings=cfg, ports=container, broadcast_emitter=None)
 
-    bot._emit_event = AsyncMock()
+    bot._egress.emit = AsyncMock()
 
     update = _mk_update(chat_type="group", caption="!transcribí esto")
     update.message.from_user = MagicMock(username="alberto", first_name="Alberto")
     context = MagicMock()
 
-    await bot._handle_photo_message(update, context)
+    await bot._media.handle_photo(update, context)
     import asyncio
 
     await asyncio.sleep(0)
@@ -830,12 +830,12 @@ async def test_handle_photo_modo_bang_emite_user_input_photo_sin_assistant_respo
     # Solo user_input_photo emitido — no assistant_response
     photo_calls = [
         c
-        for c in bot._emit_event.await_args_list
+        for c in bot._egress.emit.await_args_list
         if c.kwargs.get("event_type") == "user_input_photo"
     ]
     assistant_calls = [
         c
-        for c in bot._emit_event.await_args_list
+        for c in bot._egress.emit.await_args_list
         if c.kwargs.get("event_type") == "assistant_response"
     ]
     assert len(photo_calls) == 1

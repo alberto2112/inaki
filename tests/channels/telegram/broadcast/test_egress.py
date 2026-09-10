@@ -128,7 +128,7 @@ async def test_emit_llamado_despues_de_reply_text(bot_fixture):
     update.message.reply_text = AsyncMock(side_effect=reply_capturado)
     emit_mock.side_effect = emit_capturado
 
-    await bot._run_pipeline(update, "hola bot", chat_type="supergroup")
+    await bot._turns.run(update, "hola bot", chat_type="supergroup")
 
     # Dar tiempo al ensure_future para que el emit corra
     await asyncio.sleep(0.05)
@@ -152,7 +152,7 @@ async def test_emit_fallo_no_previene_reply_text(bot_fixture):
     emit_mock.side_effect = RuntimeError("Error de red simulado")
 
     # No debe propagar la excepción
-    await bot._run_pipeline(update, "hola bot", chat_type="supergroup")
+    await bot._turns.run(update, "hola bot", chat_type="supergroup")
     await asyncio.sleep(0.05)
 
     # reply_text debe haber sido llamado aunque emit falle
@@ -185,7 +185,7 @@ async def test_skip_marker_suprime_reply_y_emit(emit_mock):
 
     update = _make_update(chat_type="supergroup")
 
-    await bot._run_pipeline(update, "mensaje de grupo", chat_type="supergroup")
+    await bot._turns.run(update, "mensaje de grupo", chat_type="supergroup")
     await asyncio.sleep(0.05)
 
     # Ni reply_text ni emit deben haber sido llamados
@@ -217,7 +217,7 @@ async def test_skip_marker_con_whitespace(emit_mock):
 
     update = _make_update(chat_type="supergroup")
 
-    await bot._run_pipeline(update, "pregunta al grupo", chat_type="supergroup")
+    await bot._turns.run(update, "pregunta al grupo", chat_type="supergroup")
     await asyncio.sleep(0.05)
 
     update.message.reply_text.assert_not_called()
@@ -251,7 +251,7 @@ async def test_skip_marker_con_preamble_o_postamble(emit_mock):
 
     update = _make_update(chat_type="supergroup")
 
-    await bot._run_pipeline(update, "pregunta al grupo", chat_type="supergroup")
+    await bot._turns.run(update, "pregunta al grupo", chat_type="supergroup")
     await asyncio.sleep(0.05)
 
     update.message.reply_text.assert_not_called()
@@ -268,7 +268,7 @@ async def test_chat_privado_no_emite_broadcast(bot_fixture):
     bot, emit_mock, container = bot_fixture
     update = _make_update(chat_type="private")
 
-    await bot._run_pipeline(update, "consulta privada", chat_type="private")
+    await bot._turns.run(update, "consulta privada", chat_type="private")
     await asyncio.sleep(0.05)
 
     # reply_text sí, emit no
@@ -298,7 +298,7 @@ async def test_sin_broadcast_emitter_no_falla():
     update = _make_update(chat_type="supergroup")
 
     # No debe lanzar excepción
-    await bot._run_pipeline(update, "hola", chat_type="supergroup")
+    await bot._turns.run(update, "hola", chat_type="supergroup")
     await asyncio.sleep(0.05)
 
     update.message.reply_text.assert_called_once()

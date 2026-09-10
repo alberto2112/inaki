@@ -86,7 +86,7 @@ async def test_cmd_reconcile_ejecuta_use_case_y_muestra_resultado(bot, mock_reco
     update.message.reply_text = AsyncMock()
     context = MagicMock()
 
-    await bot._cmd_reconcile(update, context)
+    await bot._commands.cmd_reconcile(update, context)
 
     mock_reconcile_uc.execute.assert_awaited_once()
     calls = [str(c) for c in update.message.reply_text.call_args_list]
@@ -101,7 +101,7 @@ async def test_cmd_reconcile_no_autorizado_no_hace_nada(bot, mock_reconcile_uc) 
     update.message.reply_text = AsyncMock()
     context = MagicMock()
 
-    await bot._cmd_reconcile(update, context)
+    await bot._commands.cmd_reconcile(update, context)
 
     mock_reconcile_uc.execute.assert_not_called()
     update.message.reply_text.assert_not_called()
@@ -114,7 +114,7 @@ async def test_cmd_reconcile_use_case_none_avisa_no_disponible(bot_sin_reconcile
     update.message.reply_text = AsyncMock()
     context = MagicMock()
 
-    await bot_sin_reconcile._cmd_reconcile(update, context)
+    await bot_sin_reconcile._commands.cmd_reconcile(update, context)
 
     update.message.reply_text.assert_awaited_once_with(
         "La reconciliación de memoria no está disponible."
@@ -129,7 +129,7 @@ async def test_cmd_reconcile_excepcion_muestra_error(bot, mock_reconcile_uc) -> 
     update.message.reply_text = AsyncMock()
     context = MagicMock()
 
-    await bot._cmd_reconcile(update, context)
+    await bot._commands.cmd_reconcile(update, context)
 
     calls = [str(c) for c in update.message.reply_text.call_args_list]
     assert any("Error" in c for c in calls)

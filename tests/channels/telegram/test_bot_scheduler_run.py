@@ -80,7 +80,7 @@ async def test_run_dispara_la_tarea_y_reporta_output(bot, mock_runner) -> None:
     """`/scheduler run 107` llama run_task_now(107) y muestra el output."""
     update, context = _update_and_context(["run", "107"])
 
-    await bot._cmd_scheduler(update, context)
+    await bot._commands.cmd_scheduler(update, context)
 
     mock_runner.run_task_now.assert_awaited_once_with(107)
     textos = [c.args[0] for c in update.message.reply_text.call_args_list]
@@ -94,7 +94,7 @@ async def test_run_sin_output_no_manda_mensaje_vacio(bot, mock_runner) -> None:
     mock_runner.run_task_now.return_value = ManualRunResult(task_id=42, success=True, output=None)
     update, context = _update_and_context(["run", "42"])
 
-    await bot._cmd_scheduler(update, context)
+    await bot._commands.cmd_scheduler(update, context)
 
     textos = [c.args[0] for c in update.message.reply_text.call_args_list]
     assert textos == ["Disparando tarea 42...", "Tarea 42 ejecutada — agenda intacta."]
@@ -106,7 +106,7 @@ async def test_run_output_largo_se_trocea(bot, mock_runner) -> None:
     mock_runner.run_task_now.return_value = ManualRunResult(task_id=7, success=True, output=largo)
     update, context = _update_and_context(["run", "7"])
 
-    await bot._cmd_scheduler(update, context)
+    await bot._commands.cmd_scheduler(update, context)
 
     # Los dos primeros mensajes son el ACK y la confirmación; el resto, el output.
     chunks = [c.args[0] for c in update.message.reply_text.call_args_list][2:]
@@ -121,7 +121,7 @@ async def test_run_trigger_fallido_reporta_el_error_del_trigger(bot, mock_runner
     )
     update, context = _update_and_context(["run", "107"])
 
-    await bot._cmd_scheduler(update, context)
+    await bot._commands.cmd_scheduler(update, context)
 
     textos = [c.args[0] for c in update.message.reply_text.call_args_list]
     assert any("Tarea 107 falló: timeout del provider" in t for t in textos)
@@ -133,7 +133,7 @@ async def test_run_tarea_inexistente(bot, mock_runner) -> None:
     mock_runner.run_task_now.side_effect = TaskNotFoundError("Task 999 not found")
     update, context = _update_and_context(["run", "999"])
 
-    await bot._cmd_scheduler(update, context)
+    await bot._commands.cmd_scheduler(update, context)
 
     textos = [c.args[0] for c in update.message.reply_text.call_args_list]
     assert any("Tarea 999 no encontrada." in t for t in textos)
@@ -142,7 +142,7 @@ async def test_run_tarea_inexistente(bot, mock_runner) -> None:
 async def test_run_sin_id_muestra_uso(bot, mock_runner) -> None:
     update, context = _update_and_context(["run"])
 
-    await bot._cmd_scheduler(update, context)
+    await bot._commands.cmd_scheduler(update, context)
 
     mock_runner.run_task_now.assert_not_awaited()
     update.message.reply_text.assert_awaited_once_with("Uso: /scheduler run <id>")
@@ -151,7 +151,7 @@ async def test_run_sin_id_muestra_uso(bot, mock_runner) -> None:
 async def test_run_id_no_numerico(bot, mock_runner) -> None:
     update, context = _update_and_context(["run", "abc"])
 
-    await bot._cmd_scheduler(update, context)
+    await bot._commands.cmd_scheduler(update, context)
 
     mock_runner.run_task_now.assert_not_awaited()
     update.message.reply_text.assert_awaited_once_with("ID inválido: abc")
@@ -163,7 +163,7 @@ async def test_run_sin_runner_avisa_no_disponible(settings, mock_ports) -> None:
     bot = _build_bot(settings, mock_ports)
     update, context = _update_and_context(["run", "107"])
 
-    await bot._cmd_scheduler(update, context)
+    await bot._commands.cmd_scheduler(update, context)
 
     textos = [c.args[0] for c in update.message.reply_text.call_args_list]
     assert any("El disparo manual no está disponible en este proceso." in t for t in textos)
@@ -172,7 +172,7 @@ async def test_run_sin_runner_avisa_no_disponible(settings, mock_ports) -> None:
 async def test_run_usuario_no_autorizado_no_dispara(bot, mock_runner) -> None:
     update, context = _update_and_context(["run", "107"], user_id=99999)
 
-    await bot._cmd_scheduler(update, context)
+    await bot._commands.cmd_scheduler(update, context)
 
     mock_runner.run_task_now.assert_not_awaited()
     update.message.reply_text.assert_not_called()
@@ -182,7 +182,7 @@ async def test_subcomando_desconocido_menciona_run(bot) -> None:
     """El mensaje de ayuda del fallback lista `run` entre las opciones."""
     update, context = _update_and_context(["frobnicate"])
 
-    await bot._cmd_scheduler(update, context)
+    await bot._commands.cmd_scheduler(update, context)
 
     texto = update.message.reply_text.call_args.args[0]
     assert "run" in texto

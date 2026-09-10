@@ -171,7 +171,7 @@ async def test_user_no_autorizado_drop_silencioso(agent_cfg, mock_container) -> 
     update = _mk_update(user_id=999, voice=_mk_voice())
     context = MagicMock()
 
-    await bot._handle_voice_message(update, context)
+    await bot._media.handle_voice(update, context)
 
     mock_container.transcription.transcribe.assert_not_called()
     mock_container.run_agent.execute.assert_not_called()
@@ -188,7 +188,7 @@ async def test_voice_enabled_false_persiste_marcador_sin_transcribir(
     update = _mk_update(voice=_mk_voice())
     context = MagicMock()
 
-    await bot._handle_voice_message(update, context)
+    await bot._media.handle_voice(update, context)
 
     mock_container.transcription.transcribe.assert_not_called()
     mock_container.run_agent.execute.assert_not_called()
@@ -206,7 +206,7 @@ async def test_happy_path_transcribe_y_pipeline(agent_cfg, mock_container) -> No
 
     mock_container.transcription.transcribe.return_value = "hola mundo"
 
-    await bot._handle_voice_message(update, context)
+    await bot._media.handle_voice(update, context)
 
     # Transcribe invocado con los bytes correctos.
     mock_container.transcription.transcribe.assert_awaited_once()
@@ -238,7 +238,7 @@ async def test_audio_en_grupo_se_prefija_con_sender(agent_cfg, mock_container) -
 
     mock_container.transcription.transcribe.return_value = "cuánto es 5+5"
 
-    await bot._handle_voice_message(update, context)
+    await bot._media.handle_voice(update, context)
 
     user_input = mock_container.run_agent.execute.await_args.args[0]
     assert user_input.startswith("alberto (audio):\n@audio")
@@ -257,7 +257,7 @@ async def test_audio_en_privado_no_se_prefija(agent_cfg, mock_container) -> None
 
     mock_container.transcription.transcribe.return_value = "hola mundo"
 
-    await bot._handle_voice_message(update, context)
+    await bot._media.handle_voice(update, context)
 
     user_input = mock_container.run_agent.execute.await_args.args[0]
     assert user_input.startswith("@audio")
@@ -272,7 +272,7 @@ async def test_audio_demasiado_grande_no_llama_provider(agent_cfg, mock_containe
     update = _mk_update(voice=voice)
     context = MagicMock()
 
-    await bot._handle_voice_message(update, context)
+    await bot._media.handle_voice(update, context)
 
     mock_container.transcription.transcribe.assert_not_called()
     mock_container.run_agent.execute.assert_not_called()
@@ -293,7 +293,7 @@ async def test_provider_raises_transcription_error(agent_cfg, mock_container) ->
     update = _mk_update(voice=_mk_voice(file_size=100))
     context = MagicMock()
 
-    await bot._handle_voice_message(update, context)
+    await bot._media.handle_voice(update, context)
 
     # Pipeline NO debe correr si la transcripción falla.
     mock_container.run_agent.execute.assert_not_called()
@@ -313,7 +313,7 @@ async def test_audio_no_presente_noop(agent_cfg, mock_container) -> None:
     update = _mk_update()  # sin voice/audio/video_note
     context = MagicMock()
 
-    await bot._handle_voice_message(update, context)
+    await bot._media.handle_voice(update, context)
 
     mock_container.transcription.transcribe.assert_not_called()
     mock_container.run_agent.execute.assert_not_called()
@@ -327,7 +327,7 @@ async def test_video_note_se_procesa_igual_que_voice(agent_cfg, mock_container) 
 
     mock_container.transcription.transcribe.return_value = "video transcripto"
 
-    await bot._handle_voice_message(update, context)
+    await bot._media.handle_voice(update, context)
 
     mock_container.transcription.transcribe.assert_awaited_once()
     mock_container.run_agent.execute.assert_awaited_once()
@@ -345,7 +345,7 @@ async def test_audio_file_se_procesa(agent_cfg, mock_container) -> None:
 
     mock_container.transcription.transcribe.return_value = "audio mp3 transcripto"
 
-    await bot._handle_voice_message(update, context)
+    await bot._media.handle_voice(update, context)
 
     mock_container.transcription.transcribe.assert_awaited_once()
     # El mime del audio debe haber llegado al provider como audio/mpeg.
@@ -371,7 +371,7 @@ async def test_document_con_mime_audio_rutea_al_pipeline_de_voz(agent_cfg, mock_
 
     mock_container.transcription.transcribe.return_value = "contenido del mp3"
 
-    await bot._handle_silent_media(update, context)
+    await bot._media.handle_silent_media(update, context)
 
     mock_container.transcription.transcribe.assert_awaited_once()
     mock_container.run_agent.execute.assert_awaited_once()
@@ -388,7 +388,7 @@ async def test_reactions_false_no_envia_set_reaction(mock_container) -> None:
 
     mock_container.transcription.transcribe.return_value = "ok"
 
-    await bot._handle_voice_message(update, context)
+    await bot._media.handle_voice(update, context)
 
     update.message.set_reaction.assert_not_called()
 
@@ -409,7 +409,7 @@ def test_bot_registra_handlers_voice_audio_video_note(agent_cfg, mock_container)
     voice_handler_callbacks = [
         h.callback
         for h in registered
-        if hasattr(h, "callback") and h.callback == bot._handle_voice_message
+        if hasattr(h, "callback") and h.callback == bot._media.handle_voice
     ]
     assert len(voice_handler_callbacks) == 3, (
         f"Se esperaban 3 handlers apuntando a _handle_voice_message, "
@@ -436,7 +436,7 @@ def test_voice_enabled_false_registra_handlers_para_persistencia(mock_container)
     voice_handler_callbacks = [
         h.callback
         for h in registered
-        if hasattr(h, "callback") and h.callback == bot._handle_voice_message
+        if hasattr(h, "callback") and h.callback == bot._media.handle_voice
     ]
     # 3 filtros: VOICE, AUDIO, VIDEO_NOTE — todos apuntan al mismo callback.
     assert len(voice_handler_callbacks) == 3, (
@@ -465,7 +465,7 @@ def test_handlers_de_voz_se_registran_antes_que_handler_de_texto(agent_cfg, mock
     voice_indices = [
         i
         for i, h in enumerate(registered)
-        if hasattr(h, "callback") and h.callback == bot._handle_voice_message
+        if hasattr(h, "callback") and h.callback == bot._media.handle_voice
     ]
     assert text_indices, "No se registró el handler de texto"
     assert voice_indices, "No se registraron los handlers de voz"
@@ -490,7 +490,7 @@ async def test_audio_demasiado_grande_loguea_warning_con_tamano(
     context = MagicMock()
 
     with caplog.at_level(logging.WARNING, logger="inaki.channels.telegram.media"):
-        await bot._handle_voice_message(update, context)
+        await bot._media.handle_voice(update, context)
 
     warning_texts = [r.message for r in caplog.records if r.levelno == logging.WARNING]
     # El warning debe incluir el tamaño efectivo en bytes.

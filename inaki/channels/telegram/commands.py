@@ -1,46 +1,52 @@
 """Comandos slash del TelegramBot (/start, /help, /scheduler, /ratelimit, ...).
 
-Mixin de ``TelegramBot`` — los métodos corren con ``self`` del bot. Estado que
-MUTA acá y se lee en otros módulos: ``_rate_limit_max`` (lo consume el rate
-limiting de group_flow/broadcast)."""
+Colaborador de ``TelegramBot`` con dependencias explícitas. Son el panel del
+OPERADOR: admin-only (``TelegramAuth.is_allowed``), deterministas, sin LLM. Lo
+único que MUTAN es la política de rate limit (``GroupRateLimit``), que el flujo
+de grupos y el ingress de broadcast leen."""
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from telegram import BotCommand, Message, Update
-from telegram.ext import ContextTypes
+from telegram.ext import Application, ContextTypes
 
-from inaki.scheduler.domain.task import ScheduledTask
+from inaki.channels.telegram.auth import TelegramAuth
 from inaki.channels.telegram.message_mapper import split_message
+from inaki.channels.telegram.ports import TelegramBotPorts, TelegramBotSettings
+from inaki.channels.telegram.rate_limit import GroupRateLimit
+from inaki.scheduler.domain.task import ScheduledTask
 from inaki.shared.errors import TaskNotFoundError
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from telegram.ext import Application
-
-    from inaki.channels.telegram.ports import TelegramBotPorts, TelegramBotSettings
 
 logger = logging.getLogger(__name__)
 
 
-class TelegramCommandsMixin:
+class SlashCommands:
     """Handlers de comandos + registro del menú de comandos en Telegram."""
 
-    # Contrato con TelegramBot — estado y colaboradores que este mixin consume.
-    _settings: TelegramBotSettings
-    _ports: TelegramBotPorts
-    _app: Application
-    _reloader: Any
-    _rate_limiter: Any
-    _rate_limit_max: int
-    _rate_limit_max_default: int
-    _rate_limit_window_default: int
-    _is_allowed: Callable[[int], bool]
+    def __init__(
+        self,
+        *,
+        ports: TelegramBotPorts,
+        settings: TelegramBotSettings,
+        app: Application,
+        auth: TelegramAuth,
+        rate_limit: GroupRateLimit,
+        reloader: Any,
+    ) -> None:
+        self._ports = ports
+        self._settings = settings
+        self._app = app
+        self._auth = auth
+        self._rate_limit = rate_limit
+        # DaemonReloader compartido — lo inyecta el composition root. Permite que
+        # /reload cierre y reabra todos los canales del daemon. Opcional: en tests
+        # o arranques sueltos puede ser None y /reload responde sin efecto.
+        self._reloader = reloader
 
-    async def _cmd_chatid(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def cmd_chatid(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """/chatid — responde con el ID del chat actual.
 
         Bypasea ``allowed_chat_ids`` para poder usarlo antes de agregar el grupo a la whitelist
@@ -54,7 +60,7 @@ class TelegramCommandsMixin:
         message = update.message
         if user is None or chat is None or message is None:
             return
-        if not self._is_allowed(user.id):
+        if not self._auth.is_allowed(user.id):
             return
 
         chat_id = chat.id
@@ -69,21 +75,21 @@ class TelegramCommandsMixin:
         )
         await message.reply_text(str(chat_id))
 
-    async def _cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
         message = update.message
         if user is None or message is None:
             return
-        if not self._is_allowed(user.id):
+        if not self._auth.is_allowed(user.id):
             return
         await message.reply_text(f"Hola, soy {self._settings.name}. {self._settings.description}")
 
-    async def _cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
         message = update.message
         if user is None or message is None:
             return
-        if not self._is_allowed(user.id):
+        if not self._auth.is_allowed(user.id):
             return
         await message.reply_text(
             "/stop — Detener la tarea en curso de ESTE chat (kill-switch)\n"
@@ -103,12 +109,12 @@ class TelegramCommandsMixin:
             "/help — Este mensaje"
         )
 
-    async def _cmd_consolidate(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def cmd_consolidate(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
         message = update.message
         if user is None or message is None:
             return
-        if not self._is_allowed(user.id):
+        if not self._auth.is_allowed(user.id):
             return
         uc = self._ports.consolidate_memory
         if uc is None:
@@ -121,12 +127,12 @@ class TelegramCommandsMixin:
         except Exception as exc:
             await message.reply_text(f"Error: {exc}")
 
-    async def _cmd_reconcile(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def cmd_reconcile(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
         message = update.message
         if user is None or message is None:
             return
-        if not self._is_allowed(user.id):
+        if not self._auth.is_allowed(user.id):
             return
         uc = self._ports.reconcile_memory
         if uc is None:
@@ -139,7 +145,7 @@ class TelegramCommandsMixin:
         except Exception as exc:
             await message.reply_text(f"Error: {exc}")
 
-    async def _cmd_stop(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def cmd_stop(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Kill-switch: aborta MECÁNICAMENTE el turno en curso de este chat.
 
         A diferencia de escribir "para" (que se inyecta al turno y depende de
@@ -152,7 +158,7 @@ class TelegramCommandsMixin:
         message = update.message
         if user is None or chat is None or message is None:
             return
-        if not self._is_allowed(user.id):
+        if not self._auth.is_allowed(user.id):
             return
         scope = (self._settings.id, "telegram", str(chat.id))
         if await self._ports.scope_registry.request_cancel(scope):
@@ -160,7 +166,7 @@ class TelegramCommandsMixin:
         else:
             await message.reply_text("No hay ninguna tarea corriendo en este chat.")
 
-    async def _cmd_clear(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def cmd_clear(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Borra el historial SOLO del chat actual (privado o grupo).
 
         Para limpiar el historial del agente en todos los chats, usar /clear_all.
@@ -170,7 +176,7 @@ class TelegramCommandsMixin:
         message = update.message
         if user is None or chat is None or message is None:
             return
-        if not self._is_allowed(user.id):
+        if not self._auth.is_allowed(user.id):
             return
         chat_id = str(chat.id)
         try:
@@ -187,7 +193,7 @@ class TelegramCommandsMixin:
             )
             await message.reply_text(f"Error: {exc}")
 
-    async def _cmd_clear_all(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def cmd_clear_all(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Borra TODO el historial del agente (todos los canales y chats).
 
         También resetea el ``agent_state`` (sticky skills/tools).
@@ -196,7 +202,7 @@ class TelegramCommandsMixin:
         message = update.message
         if user is None or message is None:
             return
-        if not self._is_allowed(user.id):
+        if not self._auth.is_allowed(user.id):
             return
         try:
             await self._ports.history.clear_history()
@@ -205,7 +211,7 @@ class TelegramCommandsMixin:
             logger.exception("Error en /clear_all Telegram para '%s'", self._settings.id)
             await message.reply_text(f"Error: {exc}")
 
-    async def _cmd_new(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def cmd_new(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Alias de ``/consolidate`` + ``/clear``: consolida la memoria y LUEGO limpia
         el historial de ESTE chat, para arrancar una conversación limpia sin perder
         lo aprendido.
@@ -219,7 +225,7 @@ class TelegramCommandsMixin:
         message = update.message
         if user is None or chat is None or message is None:
             return
-        if not self._is_allowed(user.id):
+        if not self._auth.is_allowed(user.id):
             return
         chat_id = str(chat.id)
 
@@ -252,7 +258,7 @@ class TelegramCommandsMixin:
             )
             await message.reply_text(f"Error limpiando: {exc}")
 
-    async def _cmd_reload(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def cmd_reload(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Reinicia el daemon: cierra todos los channels, recarga config y vuelve a levantar.
 
         Equivalente a ``inaki reload`` o ``POST /admin/reload``. El bot que recibió el
@@ -264,7 +270,7 @@ class TelegramCommandsMixin:
         message = update.message
         if user is None or chat is None or message is None:
             return
-        if not self._is_allowed(user.id):
+        if not self._auth.is_allowed(user.id):
             return
         if self._reloader is None:
             await message.reply_text(
@@ -282,7 +288,7 @@ class TelegramCommandsMixin:
         )
         self._reloader.request_reload()
 
-    async def _cmd_ratelimit(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def cmd_ratelimit(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """`/ratelimit [count [window] | reset]` — override en runtime del rate limiter.
 
         Sintaxis:
@@ -298,10 +304,10 @@ class TelegramCommandsMixin:
         message = update.message
         if user is None or message is None:
             return
-        if not self._is_allowed(user.id):
+        if not self._auth.is_allowed(user.id):
             return
 
-        if self._rate_limiter is None:
+        if not self._rate_limit.enabled:
             await message.reply_text(
                 "El rate limiter solo aplica en grupos con behavior=autonomous — "
                 "este agente no tiene ese modo configurado."
@@ -312,11 +318,11 @@ class TelegramCommandsMixin:
 
         # Sin argumentos: mostrar estado actual.
         if not args:
-            display_window = int(self._rate_limiter.window_seconds)
+            display_window = self._rate_limit.window_seconds
             await message.reply_text(
                 f"Rate limiter actual:\n"
-                f"  count = {self._rate_limit_max} (default: {self._rate_limit_max_default})\n"
-                f"  window = {display_window}s (default: {self._rate_limit_window_default}s)\n"
+                f"  count = {self._rate_limit.max_count} (default: {self._rate_limit.default_max_count})\n"
+                f"  window = {display_window}s (default: {self._rate_limit.default_window_seconds}s)\n"
                 f"\n"
                 f"Sintaxis:\n"
                 f"  /ratelimit <count>\n"
@@ -327,17 +333,11 @@ class TelegramCommandsMixin:
 
         # Reset → volver a los valores de config.
         if args[0].lower() == "reset":
-            self._rate_limit_max = self._rate_limit_max_default
-            self._rate_limiter.set_window(float(self._rate_limit_window_default))
-            logger.info(
-                "ratelimit.reset agent=%s count=%d window=%ds",
-                self._settings.id,
-                self._rate_limit_max,
-                self._rate_limit_window_default,
-            )
+            self._rate_limit.restore_defaults()
             await message.reply_text(
                 f"Rate limiter reseteado a config: "
-                f"count={self._rate_limit_max}, window={self._rate_limit_window_default}s."
+                f"count={self._rate_limit.max_count}, "
+                f"window={self._rate_limit.default_window_seconds}s."
             )
             return
 
@@ -375,29 +375,19 @@ class TelegramCommandsMixin:
             window = min(window_raw, 900)
             window_clamped = window_raw > 900
 
-        # Aplicar mutaciones.
-        self._rate_limit_max = count
-        if window is not None:
-            self._rate_limiter.set_window(float(window))
+        self._rate_limit.set(count, window)
 
         # Construir respuesta con avisos de clamp si aplican.
-        current_window = int(self._rate_limiter.window_seconds)
+        current_window = self._rate_limit.window_seconds
         partes = [f"Rate limiter actualizado: count={count}, window={current_window}s."]
         if count_clamped:
             partes.append(f"⚠ count clampeado de {count_raw} a 99 (máx).")
         if window_clamped:
             partes.append(f"⚠ window clampeada de {window_raw}s a 900s (máx).")
         partes.append("(en memoria — se pierde al reiniciar el daemon)")
-
-        logger.info(
-            "ratelimit.update agent=%s count=%d window=%ds",
-            self._settings.id,
-            count,
-            current_window,
-        )
         await message.reply_text("\n".join(partes))
 
-    async def _cmd_scheduler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def cmd_scheduler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """`/scheduler {list|show|enable|disable|run} [id]` — gestión de tareas.
 
         ``run`` dispara la tarea AHORA sin tocar su agenda (mismo motor que
@@ -407,7 +397,7 @@ class TelegramCommandsMixin:
         message = update.message
         if user is None or message is None:
             return
-        if not self._is_allowed(user.id):
+        if not self._auth.is_allowed(user.id):
             return
 
         uc = self._ports.schedule_task

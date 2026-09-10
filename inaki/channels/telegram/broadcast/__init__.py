@@ -1,6 +1,7 @@
 """Broadcast LAN entre instancias — la respuesta a que Telegram no deje hablar a dos bots.
 
 Transporte TCP con HMAC (``tcp``), buffer efímero de contexto (``buffer``), rate
-limiter de grupos (``rate_limiter``), tipos de evento (``port``) y el trigger de
-ingress del bot (``mixin``). Es un concern EXCLUSIVO de este canal.
+limiter de grupos (``rate_limiter``), tipos de evento (``port``), la política de
+emisión (``egress``) y el trigger de ingress del bot (``ingress``). Es un concern
+EXCLUSIVO de este canal.
 """

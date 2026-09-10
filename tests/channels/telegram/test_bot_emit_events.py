@@ -86,7 +86,7 @@ async def test_emit_assistant_response_con_flag_true_emite():
     emitter.emit = AsyncMock()
     bot = _build_bot(cfg, emitter=emitter)
 
-    await bot._emit_event(
+    await bot._egress.emit(
         event_type="assistant_response",
         chat_id="-100123",
         content="hola humano",
@@ -110,7 +110,7 @@ async def test_emit_assistant_response_con_flag_false_no_emite():
     emitter.emit = AsyncMock()
     bot = _build_bot(cfg, emitter=emitter)
 
-    await bot._emit_event(
+    await bot._egress.emit(
         event_type="assistant_response",
         chat_id="-100123",
         content="hola",
@@ -133,7 +133,7 @@ async def test_emit_user_input_voice_con_flag_true_emite_con_sender():
     emitter.emit = AsyncMock()
     bot = _build_bot(cfg, emitter=emitter)
 
-    await bot._emit_event(
+    await bot._egress.emit(
         event_type="user_input_voice",
         chat_id="-100123",
         content="cuánto es 5+5",
@@ -155,7 +155,7 @@ async def test_emit_user_input_voice_con_flag_false_no_emite():
     emitter.emit = AsyncMock()
     bot = _build_bot(cfg, emitter=emitter)
 
-    await bot._emit_event(
+    await bot._egress.emit(
         event_type="user_input_voice",
         chat_id="-100123",
         content="hola",
@@ -178,7 +178,7 @@ async def test_emit_user_input_photo_con_flag_true_emite():
     emitter.emit = AsyncMock()
     bot = _build_bot(cfg, emitter=emitter)
 
-    await bot._emit_event(
+    await bot._egress.emit(
         event_type="user_input_photo",
         chat_id="-100123",
         content="persona caminando",
@@ -200,7 +200,7 @@ async def test_emit_user_input_photo_con_flag_false_no_emite():
     emitter.emit = AsyncMock()
     bot = _build_bot(cfg, emitter=emitter)
 
-    await bot._emit_event(
+    await bot._egress.emit(
         event_type="user_input_photo",
         chat_id="-100123",
         content="x",
@@ -223,7 +223,7 @@ async def test_emit_content_vacio_post_strip_no_emite():
     emitter.emit = AsyncMock()
     bot = _build_bot(cfg, emitter=emitter)
 
-    await bot._emit_event(
+    await bot._egress.emit(
         event_type="assistant_response",
         chat_id="-100123",
         content="   ",
@@ -240,7 +240,7 @@ async def test_emit_sin_emitter_no_falla():
     bot = _build_bot(cfg, emitter=None)
 
     # No debe lanzar excepción
-    await bot._emit_event(
+    await bot._egress.emit(
         event_type="assistant_response",
         chat_id="-100123",
         content="hola",

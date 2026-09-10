@@ -8,7 +8,7 @@ el closure `execute` con sus kwargs específicos (ctx, sink, skip_marker...).
 
 El handler de fotos de Telegram NO usa este helper a propósito: adquiere el
 slot ANTES del procesamiento pesado (reconocimiento facial + descripción de
-escena) y decide el camino al final, porque su `_run_pipeline` anidado con
+escena) y decide el camino al final, porque su turno anidado con
 ``user_input=None`` depende de que el slot ya esté tomado. Comparte solo la
 constante ``INFLIGHT_ACK``.
 """

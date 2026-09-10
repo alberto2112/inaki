@@ -138,7 +138,7 @@ def _album_record(
 
 async def _await_album_flush(bot: TelegramBot, media_group_id: str) -> None:
     """Espera el flush del debounce del álbum indicado (task creado por el handler)."""
-    buf = bot._album_buffers.get(media_group_id)
+    buf = bot._media.album_buffers.get(media_group_id)
     if buf is not None and buf.task is not None:
         await buf.task
     # Dar chance a cualquier continuación pendiente en el loop.
@@ -168,11 +168,11 @@ async def test_album_persiste_file_id_sin_procesar_como_foto(monkeypatch):
     bot, container, repo = _make_bot()
     repo.query_by_media_group.return_value = []
     update = _photo_update(media_group_id="grupo-1")
-    bot._run_pipeline = AsyncMock()
-    bot._set_reaction = AsyncMock()
+    bot._turns.run = AsyncMock()
+    bot._reactions.react = AsyncMock()
     ctx = MagicMock()
 
-    await bot._handle_photo_message(update, ctx)
+    await bot._media.handle_photo(update, ctx)
     await _await_album_flush(bot, "grupo-1")
 
     repo.save.assert_awaited_once()
@@ -186,8 +186,8 @@ async def test_album_persiste_file_id_sin_procesar_como_foto(monkeypatch):
     container.history.record_photo_message.assert_not_awaited()
     container.scope_registry.try_mark_busy.assert_awaited()
     container.scope_registry.mark_idle.assert_awaited()
-    bot._run_pipeline.assert_awaited_once()
-    assert bot._run_pipeline.call_args.args[1] is None
+    bot._turns.run.assert_awaited_once()
+    assert bot._turns.run.call_args.args[1] is None
 
 
 async def test_album_con_caption_dispara_pipeline_en_privado(monkeypatch):
@@ -200,14 +200,14 @@ async def test_album_con_caption_dispara_pipeline_en_privado(monkeypatch):
     update = _photo_update(media_group_id="grupo-1")
     update.message.chat = MagicMock(type="private")
     update.message.caption = "mandá esto a juan"
-    bot._run_pipeline = AsyncMock()
-    bot._set_reaction = AsyncMock()
+    bot._turns.run = AsyncMock()
+    bot._reactions.react = AsyncMock()
 
-    await bot._handle_photo_message(update, MagicMock())
+    await bot._media.handle_photo(update, MagicMock())
     await _await_album_flush(bot, "grupo-1")
 
     repo.save.assert_awaited_once()
-    bot._run_pipeline.assert_awaited_once()
+    bot._turns.run.assert_awaited_once()
     block = _flushed_album_block(container)
     assert block.startswith("@album")
     assert "@caption: mandá esto a juan" in block
@@ -224,14 +224,14 @@ async def test_album_sin_caption_igual_dispara_pipeline(monkeypatch):
     repo.query_by_media_group.return_value = []
     update = _photo_update(media_group_id="grupo-1")
     update.message.caption = None
-    bot._run_pipeline = AsyncMock()
-    bot._set_reaction = AsyncMock()
+    bot._turns.run = AsyncMock()
+    bot._reactions.react = AsyncMock()
 
-    await bot._handle_photo_message(update, MagicMock())
+    await bot._media.handle_photo(update, MagicMock())
     await _await_album_flush(bot, "grupo-1")
 
     repo.save.assert_awaited_once()
-    bot._run_pipeline.assert_awaited_once()
+    bot._turns.run.assert_awaited_once()
     assert _flushed_album_block(container).startswith("@album")
 
 
@@ -244,19 +244,19 @@ async def test_album_debounce_un_solo_flush_para_n_miembros(monkeypatch):
 
     bot, container, repo = _make_bot()
     repo.query_by_media_group.return_value = []
-    bot._run_pipeline = AsyncMock()
-    bot._set_reaction = AsyncMock()
+    bot._turns.run = AsyncMock()
+    bot._reactions.react = AsyncMock()
 
     for _ in range(3):
         update = _photo_update(media_group_id="grupo-dedup")
         update.message.caption = None
-        await bot._handle_photo_message(update, MagicMock())
+        await bot._media.handle_photo(update, MagicMock())
 
     await _await_album_flush(bot, "grupo-dedup")
 
     # Las 3 fotos se persisten, pero solo 1 flush dispara el pipeline.
     assert repo.save.await_count == 3
-    bot._run_pipeline.assert_awaited_once()
+    bot._turns.run.assert_awaited_once()
     # El slot se toma UNA sola vez (al crear el buffer, no por cada miembro).
     assert container.scope_registry.try_mark_busy.await_count == 1
     container.scope_registry.mark_idle.assert_awaited_once()
@@ -271,24 +271,24 @@ async def test_album_miembro_tardio_post_flush_persiste_rastro_sin_returno(monke
 
     bot, container, repo = _make_bot()
     repo.query_by_media_group.return_value = []
-    bot._run_pipeline = AsyncMock()
-    bot._set_reaction = AsyncMock()
+    bot._turns.run = AsyncMock()
+    bot._reactions.react = AsyncMock()
 
     update = _photo_update(media_group_id="grupo-tardio")
-    await bot._handle_photo_message(update, MagicMock())
+    await bot._media.handle_photo(update, MagicMock())
     await _await_album_flush(bot, "grupo-tardio")
-    bot._run_pipeline.assert_awaited_once()
+    bot._turns.run.assert_awaited_once()
 
     # El flush ya persistió el @album vía record_user_message (1ra llamada).
     assert container.history.record_user_message.await_args.args[0].startswith("@album")
 
     # Miembro tardío del MISMO álbum, llega tras el flush.
     tardio = _photo_update(media_group_id="grupo-tardio")
-    await bot._handle_photo_message(tardio, MagicMock())
+    await bot._media.handle_photo(tardio, MagicMock())
 
     # Se persiste el file_id (2 saves) y el rastro @photo, sin segundo turno.
     assert repo.save.await_count == 2
-    bot._run_pipeline.assert_awaited_once()
+    bot._turns.run.assert_awaited_once()
     # La ÚLTIMA persistencia es el straggler @photo (además del @album del flush).
     marker = container.history.record_user_message.await_args.args[0]
     assert marker.startswith("@photo")
@@ -318,10 +318,10 @@ async def test_album_recopila_todos_los_miembros_del_repo(monkeypatch, tmp_path)
 
     update = _photo_update(media_group_id="mgrupo-X")
     update.message.chat = MagicMock(type="private")
-    bot._run_pipeline = AsyncMock()
-    bot._set_reaction = AsyncMock()
+    bot._turns.run = AsyncMock()
+    bot._reactions.react = AsyncMock()
 
-    await bot._handle_photo_message(update, MagicMock())
+    await bot._media.handle_photo(update, MagicMock())
     await _await_album_flush(bot, "mgrupo-X")
 
     repo.query_by_media_group.assert_awaited_once_with(
@@ -330,7 +330,7 @@ async def test_album_recopila_todos_los_miembros_del_repo(monkeypatch, tmp_path)
         chat_id="-100",
         media_group_id="mgrupo-X",
     )
-    bot._run_pipeline.assert_awaited_once()
+    bot._turns.run.assert_awaited_once()
     block = _flushed_album_block(container)
     assert block.startswith("@album (3 items):")
     for i in range(3):
@@ -363,13 +363,13 @@ async def test_album_de_documentos_coalesce_como_fotos(monkeypatch, tmp_path):
     update = _document_update(media_group_id="docs-1")
     update.message.chat = MagicMock(type="private")
     update.message.caption = None
-    bot._run_pipeline = AsyncMock()
-    bot._set_reaction = AsyncMock()
+    bot._turns.run = AsyncMock()
+    bot._reactions.react = AsyncMock()
 
-    await bot._handle_silent_media(update, MagicMock())
+    await bot._media.handle_silent_media(update, MagicMock())
     await _await_album_flush(bot, "docs-1")
 
-    bot._run_pipeline.assert_awaited_once()
+    bot._turns.run.assert_awaited_once()
     block = _flushed_album_block(container)
     assert block.startswith("@album (2 items):")
     assert "@file (application/pdf) at" in block
@@ -415,8 +415,8 @@ async def test_album_concurrente_no_filtra_el_slot(monkeypatch):
     repo.query_by_media_group.return_value = []
     registry = _YieldingScopeRegistry()
     container.scope_registry = registry
-    bot._run_pipeline = AsyncMock()
-    bot._set_reaction = AsyncMock()
+    bot._turns.run = AsyncMock()
+    bot._reactions.react = AsyncMock()
 
     # Dos fotos del mismo media_group_id, concurrentes.
     u1 = _photo_update(media_group_id="grupo-conc", chat_id=-100)
@@ -424,13 +424,13 @@ async def test_album_concurrente_no_filtra_el_slot(monkeypatch):
     u2.message.photo[0].file_unique_id = "FOTO-uniq-2"
 
     await asyncio.gather(
-        bot._handle_photo_message(u1, MagicMock()),
-        bot._handle_photo_message(u2, MagicMock()),
+        bot._media.handle_photo(u1, MagicMock()),
+        bot._media.handle_photo(u2, MagicMock()),
     )
     await _await_album_flush(bot, "grupo-conc")
 
     # Un solo buffer se creó y su flush corrió una vez.
-    bot._run_pipeline.assert_awaited_once()
+    bot._turns.run.assert_awaited_once()
     # El slot quedó LIBRE tras el flush (no filtrado): si estuviera colgado,
     # ``busy`` retendría el scope.
     scope = ("test-agent", "telegram", "-100")
@@ -454,12 +454,12 @@ async def test_texto_durante_album_no_arranca_turno_ciego(monkeypatch):
     repo.query_by_media_group.return_value = []
     # Registry REAL (no el mock que siempre devuelve True): modela busy/idle.
     container.scope_registry = InMemoryScopeRegistryAdapter()
-    bot._set_reaction = AsyncMock()
+    bot._reactions.react = AsyncMock()
 
     # 1) Llega el álbum → toma el slot (privado), agenda el flush (no dispara).
     album_update = _photo_update(media_group_id="grupo-race", chat_id=-100)
-    await bot._handle_photo_message(album_update, MagicMock())
-    assert bot._album_buffers["grupo-race"].slot_held is True
+    await bot._media.handle_photo(album_update, MagicMock())
+    assert bot._media.album_buffers["grupo-race"].slot_held is True
 
     # 2) Llega el texto "ahí están" sobre el MISMO chat.
     text_update = MagicMock()
@@ -484,7 +484,7 @@ async def test_texto_durante_album_no_arranca_turno_ciego(monkeypatch):
     tmsg.reply_text.assert_awaited_once()
 
     # Cleanup: cancelar el flush pendiente (debounce de 30s).
-    buf = bot._album_buffers.get("grupo-race")
+    buf = bot._media.album_buffers.get("grupo-race")
     if buf is not None and buf.task is not None:
         buf.task.cancel()
 
@@ -502,14 +502,14 @@ async def test_handle_silent_media_con_caption_dispara_pipeline_en_privado():
     update.message.caption = "manda este fichero por email"
 
     ctx = MagicMock()
-    bot._run_pipeline = AsyncMock()
-    bot._set_reaction = AsyncMock()
+    bot._turns.run = AsyncMock()
+    bot._reactions.react = AsyncMock()
 
-    await bot._handle_silent_media(update, ctx)
+    await bot._media.handle_silent_media(update, ctx)
 
     repo.save.assert_awaited_once()
-    bot._run_pipeline.assert_awaited_once()
-    args, kwargs = bot._run_pipeline.call_args
+    bot._turns.run.assert_awaited_once()
+    args, kwargs = bot._turns.run.call_args
     user_input = args[1] if len(args) > 1 else kwargs.get("user_input")
     assert user_input.startswith("@file informe.pdf")
     assert "@caption: manda este fichero por email" in user_input
@@ -528,12 +528,12 @@ async def test_handle_silent_media_video_con_caption_usa_bloque_video():
     update.message.chat = MagicMock(type="private")
     update.message.caption = "qué dice acá?"
 
-    bot._run_pipeline = AsyncMock()
-    bot._set_reaction = AsyncMock()
+    bot._turns.run = AsyncMock()
+    bot._reactions.react = AsyncMock()
 
-    await bot._handle_silent_media(update, MagicMock())
+    await bot._media.handle_silent_media(update, MagicMock())
 
-    args, kwargs = bot._run_pipeline.call_args
+    args, kwargs = bot._turns.run.call_args
     user_input = args[1] if len(args) > 1 else kwargs.get("user_input")
     assert user_input.startswith("@video clip.mp4")
 
@@ -546,12 +546,12 @@ async def test_handle_silent_media_sin_caption_persiste_rastro_sin_turno():
     update.message.chat = MagicMock(type="private")
     update.message.document.file_name = "datos.pdf"
     update.message.caption = None
-    bot._run_pipeline = AsyncMock()
+    bot._turns.run = AsyncMock()
 
-    await bot._handle_silent_media(update, MagicMock())
+    await bot._media.handle_silent_media(update, MagicMock())
 
     repo.save.assert_awaited_once()
-    bot._run_pipeline.assert_not_awaited()
+    bot._turns.run.assert_not_awaited()
     container.history.record_user_message.assert_awaited_once()
     marker = container.history.record_user_message.await_args.args[0]
     assert marker.startswith("@file datos.pdf")
@@ -565,7 +565,7 @@ async def test_handle_silent_media_persiste_metadata_correcta():
     update.message.chat = MagicMock(type="private")
     update.message.caption = None  # depósito: persiste rastro, sin pipeline
 
-    await bot._handle_silent_media(update, MagicMock())
+    await bot._media.handle_silent_media(update, MagicMock())
 
     record = repo.save.call_args.args[0]
     assert record.content_type == "file"
@@ -575,11 +575,11 @@ async def test_handle_silent_media_persiste_metadata_correcta():
 
 async def test_silent_media_user_no_autorizado_no_persiste():
     bot, container, repo = _make_bot()
-    bot._allowed_ids = ["999"]  # 42 no está
+    bot._auth.allowed_user_ids = ["999"]  # 42 no está
     update = _document_update()
     ctx = MagicMock()
 
-    await bot._handle_silent_media(update, ctx)
+    await bot._media.handle_silent_media(update, ctx)
 
     repo.save.assert_not_awaited()
     container.history.record_user_message.assert_not_awaited()
@@ -597,13 +597,13 @@ async def test_album_sin_repo_no_rompe(monkeypatch):
 
     bot, container, repo = _make_bot(has_repo=False)
     update = _photo_update(media_group_id="grupo-1")
-    bot._run_pipeline = AsyncMock()
-    bot._set_reaction = AsyncMock()
+    bot._turns.run = AsyncMock()
+    bot._reactions.react = AsyncMock()
     ctx = MagicMock()
     # No debe lanzar; con repo None el álbum igual dispara (bloque pending).
-    await bot._handle_photo_message(update, ctx)
+    await bot._media.handle_photo(update, ctx)
     await _await_album_flush(bot, "grupo-1")
-    bot._run_pipeline.assert_awaited_once()
+    bot._turns.run.assert_awaited_once()
 
 
 async def test_silent_media_sin_repo_no_rompe():
@@ -612,7 +612,7 @@ async def test_silent_media_sin_repo_no_rompe():
     update.message.chat = MagicMock(type="private")
     update.message.caption = None  # depósito: rastro sin pipeline
     ctx = MagicMock()
-    await bot._handle_silent_media(update, ctx)
+    await bot._media.handle_silent_media(update, ctx)
     # El rastro @file se persiste igual aunque no haya repo de transporte.
     container.history.record_user_message.assert_awaited_once()
 
@@ -639,13 +639,13 @@ async def test_pre_descarga_inyecta_path_real_en_user_input(tmp_path):
     fake_dl.download = AsyncMock(side_effect=_fake_download)
     container.telegram_file_downloader = fake_dl
 
-    bot._run_pipeline = AsyncMock()
-    bot._set_reaction = AsyncMock()
+    bot._turns.run = AsyncMock()
+    bot._reactions.react = AsyncMock()
 
-    await bot._handle_silent_media(update, MagicMock())
+    await bot._media.handle_silent_media(update, MagicMock())
 
     fake_dl.download.assert_awaited_once()
-    args, kwargs = bot._run_pipeline.call_args
+    args, kwargs = bot._turns.run.call_args
     user_input = args[1] if len(args) > 1 else kwargs.get("user_input")
     # El path debe estar en el user_input
     expected_path = tmp_path / "telegram" / "DOC-uniq.pdf"
@@ -668,10 +668,10 @@ async def test_pre_descarga_cache_hit_no_re_descarga(tmp_path):
     (tmp_path / "telegram").mkdir()
     (tmp_path / "telegram" / "DOC-uniq.pdf").write_bytes(b"existente")
 
-    bot._run_pipeline = AsyncMock()
-    bot._set_reaction = AsyncMock()
+    bot._turns.run = AsyncMock()
+    bot._reactions.react = AsyncMock()
 
-    await bot._handle_silent_media(update, MagicMock())
+    await bot._media.handle_silent_media(update, MagicMock())
 
     fake_dl.download.assert_not_awaited()
 
@@ -688,13 +688,13 @@ async def test_pre_descarga_falla_no_rompe_pipeline(tmp_path):
     fake_dl.download = AsyncMock(side_effect=TimeoutError("net down"))
     container.telegram_file_downloader = fake_dl
 
-    bot._run_pipeline = AsyncMock()
-    bot._set_reaction = AsyncMock()
+    bot._turns.run = AsyncMock()
+    bot._reactions.react = AsyncMock()
 
-    await bot._handle_silent_media(update, MagicMock())
+    await bot._media.handle_silent_media(update, MagicMock())
 
-    bot._run_pipeline.assert_awaited_once()
-    args, kwargs = bot._run_pipeline.call_args
+    bot._turns.run.assert_awaited_once()
+    args, kwargs = bot._turns.run.call_args
     user_input = args[1] if len(args) > 1 else kwargs.get("user_input")
     # Sin path, pero mantiene el bloque degradado y el caption
     assert "@file x.pdf" in user_input
@@ -733,7 +733,7 @@ async def test_voice_disabled_persiste_pero_no_transcribe():
     update.message = msg
     ctx = MagicMock()
 
-    await bot._handle_voice_message(update, ctx)
+    await bot._media.handle_voice(update, ctx)
 
     repo.save.assert_awaited_once()
     record = repo.save.call_args.args[0]
@@ -755,7 +755,7 @@ async def test_persist_falla_y_no_propaga():
     update.message.caption = None  # depósito: rastro sin pipeline
     ctx = MagicMock()
     # No debe lanzar
-    await bot._handle_silent_media(update, ctx)
+    await bot._media.handle_silent_media(update, ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -766,7 +766,7 @@ async def test_persist_falla_y_no_propaga():
 def test_extract_metadata_photo():
     bot, _, _ = _make_bot()
     msg = _photo_update().message
-    out = bot._extract_file_metadata(msg)
+    out = bot._media.extract_file_metadata(msg)
     assert out is not None
     content_type, payload, mime = out
     assert content_type == "photo"
@@ -777,7 +777,7 @@ def test_extract_metadata_photo():
 def test_extract_metadata_document():
     bot, _, _ = _make_bot()
     msg = _document_update().message
-    out = bot._extract_file_metadata(msg)
+    out = bot._media.extract_file_metadata(msg)
     assert out is not None
     assert out[0] == "file"
     assert out[2] == "application/pdf"
@@ -789,7 +789,7 @@ def test_extract_metadata_document_con_mime_audio_es_audio():
     bot, _, _ = _make_bot()
     update = _document_update()
     update.message.document.mime_type = "audio/mpeg"
-    out = bot._extract_file_metadata(update.message)
+    out = bot._media.extract_file_metadata(update.message)
     assert out is not None
     assert out[0] == "audio"
     assert out[2] == "audio/mpeg"
@@ -804,7 +804,7 @@ def test_extract_metadata_video():
     video.file_unique_id = "VIDu"
     video.mime_type = "video/mp4"
     update.message.video = video
-    out = bot._extract_file_metadata(update.message)
+    out = bot._media.extract_file_metadata(update.message)
     assert out is not None
     assert out[0] == "video"
 
@@ -818,7 +818,7 @@ def test_extract_metadata_voice():
     voice.file_unique_id = "Vu"
     voice.mime_type = "audio/ogg"
     update.message.voice = voice
-    out = bot._extract_file_metadata(update.message)
+    out = bot._media.extract_file_metadata(update.message)
     assert out is not None
     assert out[0] == "audio"
     assert out[2] == "audio/ogg"
@@ -833,5 +833,5 @@ def test_extract_metadata_devuelve_none_sin_media():
     msg.video = None
     msg.video_note = None
     msg.document = None
-    out = bot._extract_file_metadata(msg)
+    out = bot._media.extract_file_metadata(msg)
     assert out is None

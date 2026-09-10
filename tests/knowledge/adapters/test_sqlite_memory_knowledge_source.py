@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from inaki.kernel.domain.entities.memory import MemoryEntry
+from inaki.kernel.domain.memory import MemoryEntry
 from inaki.knowledge.adapters.sqlite_memory_knowledge_source import (
     SqliteMemoryKnowledgeSource,
 )

@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from inaki.kernel.ports.outbound.tool_port import ToolResult
+from inaki.kernel.ports.tool_port import ToolResult
 from inaki.scheduler.tools._context import Contexto
 
 

@@ -17,11 +17,11 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from inaki.kernel.domain.services.channel_outbound_registry import ChannelOutboundRegistry
-    from inaki.kernel.ports.outbound.scope_registry_port import IScopeRegistry
-    from inaki.kernel.ports.outbound.tool_port import IToolExecutor
-    from inaki.kernel.use_cases.conversation_history import ConversationHistory
-    from inaki.kernel.use_cases.run_agent import RunAgentUseCase
+    from inaki.kernel.domain.channel_outbound_registry import ChannelOutboundRegistry
+    from inaki.kernel.ports.scope_registry_port import IScopeRegistry
+    from inaki.kernel.ports.tool_port import IToolExecutor
+    from inaki.kernel.conversation_history import ConversationHistory
+    from inaki.kernel.run_agent import RunAgentUseCase
     from inaki.memory.use_cases.consolidate_memory import ConsolidateMemoryUseCase
 
 

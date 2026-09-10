@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from inaki.kernel.domain.entities.memory import MemoryEntry
+from inaki.kernel.domain.memory import MemoryEntry
 from inaki.memory.tools.memory_tools import (
     DeleteMemoryTool,
     SearchMemoryTool,

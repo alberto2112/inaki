@@ -25,7 +25,7 @@ from inaki.channels.telegram.message_mapper import (
 from inaki.channels.telegram.rate_limit import GroupRateLimit
 from inaki.channels.telegram.reactions import Reactions
 from inaki.channels.telegram.turn import TurnRunner
-from inaki.kernel.use_cases.conversation_history import ConversationHistory
+from inaki.kernel.conversation_history import ConversationHistory
 
 logger = logging.getLogger(__name__)
 

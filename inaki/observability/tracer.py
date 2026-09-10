@@ -16,7 +16,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from inaki.kernel.ports.outbound.turn_tracer_port import ITurnTracer
+from inaki.kernel.ports.turn_tracer_port import ITurnTracer
 
 logger = logging.getLogger(__name__)
 

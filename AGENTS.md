@@ -27,7 +27,8 @@ inaki/
   shared/         ← Domain primitives every module may use: Message/Role, attachment grammar,
                     ChannelContext, errors, skip marker. Imports NOTHING from the project.
   kernel/         ← The turn: RunAgentUseCase, tool loop, ConversationHistory, the ports it
-                    consumes (domain/, ports/, use_cases/). Never imports a feature module.
+                    consumes. Three flat levels: domain/ (entities, VOs, services), ports/,
+                    and the turn itself at the package root. Never imports a feature module.
   observability/  ← Logging, debug mode, turn traces (ITurnTracer), startup events
   config/         ← Schema (one section per area), 2-layer YAML loader + migrations, merge
                     engine, instance home, effective-config use cases, `config` tool, web UI
@@ -86,7 +87,7 @@ the wiring to the composition root.
    `channels`, `llm`, `embedding`) live in `AgentConfig` and each `AgentRuntime`. Never a third
    ad-hoc pattern. Isolation of a global resource = another harness process with its own `--home`.
 3. **Wiring** — each module assembles itself in its `wiring.py`; use cases receive Settings VOs
-   (`inaki/kernel/domain/value_objects/agent_settings.py`, mapped in `inaki/app/settings.py`),
+   (`inaki/kernel/domain/agent_settings.py`, mapped in `inaki/app/settings.py`),
    never `AgentConfig`. Provider modules own their `Resolved*Config` DTOs.
 
 ## Configuration System

@@ -9,7 +9,7 @@ Defecto cazado en producción: el LLM emitía una tool call de `delegate` sin
 from unittest.mock import AsyncMock, MagicMock
 
 from inaki.tools.registry import ToolRegistry
-from inaki.kernel.ports.outbound.tool_port import ToolResult
+from inaki.kernel.ports.tool_port import ToolResult
 
 
 def _make_tool(

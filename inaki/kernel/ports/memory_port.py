@@ -1,6 +1,6 @@
 from typing import Protocol, runtime_checkable
 
-from inaki.kernel.domain.entities.memory import MemoryEntry
+from inaki.kernel.domain.memory import MemoryEntry
 
 
 @runtime_checkable

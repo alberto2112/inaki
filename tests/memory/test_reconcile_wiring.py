@@ -25,7 +25,7 @@ from inaki.scheduler.adapters.builtin_tasks import (
 )
 from inaki.scheduler.adapters.dispatch import ReconcileDispatchAdapter
 from inaki.scheduler.domain.task import TriggerType
-from inaki.kernel.domain.value_objects.agent_settings import MemorySettings
+from inaki.kernel.domain.agent_settings import MemorySettings
 from inaki.config import (
     AgentConfig,
     AgentDelegationConfig,

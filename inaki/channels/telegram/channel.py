@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 
-from inaki.kernel.ports.outbound.channel_port import IChannel
+from inaki.kernel.ports.channel_port import IChannel
 from inaki.channels.telegram.bot import TelegramBot
 from inaki.channels.telegram.broadcast.tcp import TcpBroadcastAdapter
 from inaki.observability import startup_event

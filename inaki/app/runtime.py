@@ -24,18 +24,18 @@ from inaki.channels.telegram.broadcast.rate_limiter import FixedWindowRateLimite
 from inaki.channels.telegram.broadcast.tcp import TcpBroadcastAdapter
 from inaki.channels.telegram.files.ports import IFileDownloader, IFileRecordRepo
 from inaki.config import AgentConfig, AgentRegistry, GlobalConfig
-from inaki.kernel.domain.services.channel_outbound_registry import ChannelOutboundRegistry
-from inaki.kernel.domain.services.channel_router import ChannelRouter
-from inaki.kernel.ports.outbound.channel_port import IChannel
-from inaki.kernel.ports.outbound.embedding_port import IEmbeddingProvider
-from inaki.kernel.ports.outbound.llm_port import ILLMProvider
-from inaki.kernel.ports.outbound.memory_port import IMemoryRepository
-from inaki.kernel.ports.outbound.scope_registry_port import IScopeRegistry
-from inaki.kernel.ports.outbound.tool_config_port import IToolConfigStore
-from inaki.kernel.ports.outbound.turn_tracer_port import ITurnTracer
-from inaki.kernel.use_cases.conversation_history import ConversationHistory
-from inaki.kernel.use_cases.run_agent import RunAgentUseCase
-from inaki.kernel.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
+from inaki.kernel.domain.channel_outbound_registry import ChannelOutboundRegistry
+from inaki.kernel.domain.channel_router import ChannelRouter
+from inaki.kernel.ports.channel_port import IChannel
+from inaki.kernel.ports.embedding_port import IEmbeddingProvider
+from inaki.kernel.ports.llm_port import ILLMProvider
+from inaki.kernel.ports.memory_port import IMemoryRepository
+from inaki.kernel.ports.scope_registry_port import IScopeRegistry
+from inaki.kernel.ports.tool_config_port import IToolConfigStore
+from inaki.kernel.ports.turn_tracer_port import ITurnTracer
+from inaki.kernel.conversation_history import ConversationHistory
+from inaki.kernel.run_agent import RunAgentUseCase
+from inaki.kernel.run_agent_one_shot import RunAgentOneShotUseCase
 from inaki.knowledge.wiring import KnowledgeBundle
 from inaki.memory.adapters.sqlite_history_store import SQLiteHistoryStore
 from inaki.memory.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase

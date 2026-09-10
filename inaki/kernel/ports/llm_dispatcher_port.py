@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from inaki.kernel.ports.outbound.channel_port import IIntermediateSink
+from inaki.kernel.ports.channel_port import IIntermediateSink
 
 
 class ILLMDispatcher(Protocol):

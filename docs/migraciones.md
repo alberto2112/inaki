@@ -45,7 +45,8 @@ existe este documento— y la contradicción no queda flotando.
 | [`channel-contextid`](#channel-contextid) | `mv` de los ficheros de contexto a `{context_id}.md` + cambiar la variable del prompt |
 | [`per-user-context-files`](#per-user-context-files) | *(superseded)* `mv` de `USER.md` a `users/{channel}/…` |
 | [`config-falla-ruidoso`](#config-falla-ruidoso) | **Puede impedir el arranque**: corregir el typo/valor que el error nombra (antes se ignoraba en silencio) |
-| [`refactor-modular`](#refactor-modular) | Índice del refactor modular 2026-09 (fases 0–12, PRs #40–#59): qué se movió y qué nota dejó cada fase |
+| [`kernel-plano`](#kernel-plano) | Sin cambios de comportamiento: `inaki/kernel` pierde un nivel (`domain/`, `ports/` planos; el turno en la raíz) |
+| [`refactor-modular`](#refactor-modular) | Índice del refactor modular 2026-09 (fases 0–12, PRs #40–#60): qué se movió y qué nota dejó cada fase |
 | [`agentes-y-providers-web`](#agentes-y-providers-web) | La UI de config crea y borra agentes y providers (validado, con rollback y con guards para `default_agent` y providers en uso); borrar un agente no toca sus datos |
 | [`config-web`](#config-web) | Comando nuevo `inaki config web` y endpoints `/admin/config/*` en el admin server: la config efectiva con origen, editable por capa y validada con el loader del arranque |
 | [`instalacion-como-producto`](#instalacion-como-producto) | Nuevos `inaki init` e `inaki service install\|uninstall`; `systemd/install.sh` desaparece; el symlink `/usr/local/bin/inaki` pasa a ser opt-in (`--link-cli`); `insightface` es el extra `faces`; `tokenizers` declarado |
@@ -117,13 +118,47 @@ de `global.yaml`).
 - **Memoria**: `memory-management-tools`, `memory-scoped-by-channel-chat`,
   `agent-state-scoped-by-channel-chat`
 - **Scheduler**: `modulos-scheduler-y-agents`, `scheduler-trigger-type-mutable`, `channel-send-history-persist`
-- **Refactor modular 2026-09 (índice)**: `refactor-modular`
+- **Refactor modular 2026-09 (índice)**: `refactor-modular`, `kernel-plano`
 - **Instalación y producto**: `instalacion-como-producto`, `config-web`, `agentes-y-providers-web`
 - **Tools y config**: `runtimes-tipados`, `wiring-por-modulo`, `kernel-y-fachada-de-tools`, `modulos-tools-llm-extensions`, `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `kernel-plano`
+
+**Contexto (2026-09-10, fase 12b del refactor modular).** El kernel arrastraba la
+estructura de `core/`: `domain/{entities,value_objects,services}`, `ports/{inbound,outbound}`
+y `use_cases/`. Tres niveles para 4.900 líneas, con `ports/inbound/agent_port.py` muerto,
+`domain/utils/` vacío y los ocho `__init__.py` vacíos (nadie re-exportaba: todo se importaba
+por módulo, con rutas de cinco segmentos).
+
+**Cambio.** Se quita UN nivel, no tres: `inaki/kernel/domain/` (entidades, VOs y servicios
+en un solo nivel), `inaki/kernel/ports/` (los catorce ports, sin `inbound`/`outbound`) y el
+turno en la raíz del paquete (`run_agent`, `run_agent_one_shot`, `conversation_history`,
+`turn_dispatch` y sus privados). `git mv` para conservar la historia; 475 reemplazos de
+import en 179 ficheros; `agent_port.py` y `domain/utils/` borrados.
+
+| Antes | Después |
+|---|---|
+| `inaki.kernel.domain.value_objects.X` / `.entities.X` / `.services.X` | `inaki.kernel.domain.X` |
+| `inaki.kernel.ports.outbound.X` | `inaki.kernel.ports.X` |
+| `inaki.kernel.use_cases.X` | `inaki.kernel.X` |
+
+No se aplanó del todo (cuarenta ficheros sueltos): la distinción `domain` / `ports` / turno es
+la que usan los docs y la ley ("un módulo conoce el kernel, sus ports"); lo que sobraba era el
+nivel de abajo.
+
+**Comportamiento observable.** Ninguno. Las extensiones no se enteran: su contrato es la
+fachada `inaki.tools`, no el kernel.
+
+**Invariante que dejó.** **NUNCA** un subpaquete por "tipo de cosa" (`value_objects/`,
+`entities/`) dentro de un módulo: se agrupa por lo que el módulo ES (dominio, ports, turno),
+y un nivel más solo cuando hay ficheros suficientes como para que el nombre del directorio
+diga algo que el nombre del fichero no dice.
 
 ---
 
@@ -161,11 +196,10 @@ invariante; leé la de la zona que vas a tocar.
 | 11b | #57 | `inaki config web`: la config efectiva con origen, editable por capa y validada | `config-web` |
 | 11c | #58 | La UI crea y borra agentes y providers, con guards para lo que el loader no vigila | `agentes-y-providers-web` |
 | 12a | #59 | Documentación y reglas reescritas sobre el layout nuevo (esta nota) | `refactor-modular` |
+| 12b | #60 | `inaki/kernel` pierde un nivel: `domain/` y `ports/` planos, el turno en la raíz | `kernel-plano` |
 
-**Lo que quedó fuera, a propósito.** Aplanar `inaki/kernel/{domain,ports,use_cases}` (12b):
-mover ficheros del kernel toca cientos de imports y no cambia ninguna regla, así que va en
-su propio PR mecánico. Y `main.py` sigue como wrapper hasta que las unidades systemd viejas
-se regeneren con `inaki service install`.
+**Lo único abierto.** `main.py` sigue como wrapper hasta que las unidades systemd viejas se
+regeneren con `inaki service install`; después se retira en un PR propio.
 
 **Invariante que dejó.** La que subyace a todas las demás: **el árbol es la arquitectura**.
 Un módulo nuevo es un paquete bajo `inaki/` con su `wiring.py` y su contrato en
@@ -365,7 +399,7 @@ nadie.
 
 **Cambio.**
 
-- **``ConversationHistory``** (``inaki/kernel/use_cases/conversation_history.py``):
+- **``ConversationHistory``** (``inaki/kernel/conversation_history.py``):
   ``record_user_message``, ``record_photo_message``, ``record_assistant_message``,
   ``update_message_content``, ``get_history`` y ``clear_history`` salen de
   ``RunAgentUseCase``. Vive en el kernel (no en ``memory/``, como decía el plan)

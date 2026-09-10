@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from inaki.kernel.domain.entities.background_task import BackgroundTaskView
+from inaki.kernel.domain.background_task import BackgroundTaskView
 
 
 class IBackgroundDelegationQueue(Protocol):

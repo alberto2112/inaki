@@ -24,10 +24,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from inaki.kernel.domain.services.channel_outbound_registry import ChannelOutboundRegistry
-from inaki.kernel.domain.value_objects.dispatch_result import DispatchResult
-from inaki.kernel.domain.value_objects.outbound_kind import OutboundKind
-from inaki.kernel.ports.outbound.channel_port import (
+from inaki.kernel.domain.channel_outbound_registry import ChannelOutboundRegistry
+from inaki.kernel.domain.dispatch_result import DispatchResult
+from inaki.kernel.domain.outbound_kind import OutboundKind
+from inaki.kernel.ports.channel_port import (
     IChannelOutbound,
     IIntermediateSink,
     OutboundIntermediateSink,

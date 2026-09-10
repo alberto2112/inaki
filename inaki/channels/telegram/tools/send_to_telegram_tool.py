@@ -29,9 +29,9 @@ from inaki.tools.path_resolution import (
     WorkspaceEscapeError,
     resolve_path,
 )
-from inaki.kernel.domain.services.channel_outbound_registry import ChannelOutboundRegistry
-from inaki.kernel.domain.value_objects.outbound_kind import OutboundKind
-from inaki.kernel.ports.outbound.tool_port import ITool, ToolResult
+from inaki.kernel.domain.channel_outbound_registry import ChannelOutboundRegistry
+from inaki.kernel.domain.outbound_kind import OutboundKind
+from inaki.kernel.ports.tool_port import ITool, ToolResult
 from inaki.shared.channel_context import ChannelContext
 
 logger = logging.getLogger(__name__)

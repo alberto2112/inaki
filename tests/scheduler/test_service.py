@@ -20,7 +20,7 @@ from inaki.scheduler.domain.task import (
 )
 from inaki.scheduler.domain.task_log import TaskLog
 from inaki.scheduler.service import SchedulerService
-from inaki.kernel.domain.value_objects.dispatch_result import DispatchResult
+from inaki.kernel.domain.dispatch_result import DispatchResult
 from inaki.shared.errors import TaskNotFoundError
 
 # ---------------------------------------------------------------------------

@@ -28,7 +28,7 @@ from inaki.perception.ports.face_metadata import IMessageFaceMetadataRepo
 from inaki.perception.ports.face_registry import IFaceRegistryPort
 from inaki.perception.ports.scene import ISceneDescriberPort
 from inaki.perception.ports.vision import IVisionPort
-from inaki.kernel.ports.outbound.turn_tracer_port import ITurnTracer, NullTurnTracer
+from inaki.kernel.ports.turn_tracer_port import ITurnTracer, NullTurnTracer
 from inaki.perception.settings import PhotosSettings
 
 logger = logging.getLogger(__name__)

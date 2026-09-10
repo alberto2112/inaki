@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from pydantic import ValidationError
 
-from inaki.kernel.domain.entities.background_task import BackgroundTask, BackgroundTaskView
+from inaki.kernel.domain.background_task import BackgroundTask, BackgroundTaskView
 
 
 def _make_task(

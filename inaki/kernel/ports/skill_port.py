@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from inaki.kernel.domain.entities.skill import Skill
+from inaki.kernel.domain.skill import Skill
 
 
 class ISkillRepository(ABC):

@@ -13,9 +13,9 @@ from collections.abc import Sequence
 
 from inaki.config import AgentConfig, GlobalConfig
 from inaki.extensions import descubrir_extensiones
-from inaki.kernel.ports.outbound.embedding_port import IEmbeddingProvider
-from inaki.kernel.ports.outbound.knowledge_port import IKnowledgeSource
-from inaki.kernel.ports.outbound.tool_config_port import IToolConfigStore
+from inaki.kernel.ports.embedding_port import IEmbeddingProvider
+from inaki.kernel.ports.knowledge_port import IKnowledgeSource
+from inaki.kernel.ports.tool_config_port import IToolConfigStore
 from inaki.skills.yaml_skill_repo import YamlSkillRepository
 from inaki.tools.registry import ToolRegistry, instanciar_tool
 

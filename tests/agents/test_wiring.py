@@ -5,8 +5,8 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from inaki.agents.wiring import build_discovery_section, build_ephemeral_child
-from inaki.kernel.ports.outbound.turn_tracer_port import NullTurnTracer
-from inaki.kernel.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
+from inaki.kernel.ports.turn_tracer_port import NullTurnTracer
+from inaki.kernel.run_agent_one_shot import RunAgentOneShotUseCase
 from tests.app.conftest import agent_cfg
 
 

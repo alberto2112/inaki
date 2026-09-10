@@ -18,8 +18,8 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from inaki.kernel.ports.outbound.scope_registry_port import IScopeRegistry, Scope
-from inaki.kernel.use_cases.conversation_history import ConversationHistory
+from inaki.kernel.ports.scope_registry_port import IScopeRegistry, Scope
+from inaki.kernel.conversation_history import ConversationHistory
 
 # ACK único para todos los canales — antes cada adapter tenía su propio texto
 # y divergían silenciosamente. Si algún día un canal necesita otro tono, que

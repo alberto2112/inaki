@@ -1,6 +1,6 @@
 """Canales de Inaki — un canal = un paquete bajo ``inaki/channels/``.
 
-Cada canal implementa el contrato del kernel (``inaki/kernel/ports/outbound/channel_port.py``):
+Cada canal implementa el contrato del kernel (``inaki/kernel/ports/channel_port.py``):
 ciclo de vida ``IChannel``, egress ``IChannelOutbound``, y aporta su sección de config
 al registro de ``inaki.config.channels``. El composition root llama a
 ``registrar_canales_instalados()`` ANTES de cargar config: con cien canales

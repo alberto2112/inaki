@@ -14,7 +14,7 @@ import pkgutil
 from pathlib import Path
 
 from inaki.llm.base import BaseLLMProvider, ResolvedLLMConfig
-from inaki.kernel.ports.outbound.llm_port import ILLMProvider
+from inaki.kernel.ports.llm_port import ILLMProvider
 from inaki.config import LLMConfig, ProviderConfig
 from inaki.shared.errors import ConfigError
 

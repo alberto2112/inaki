@@ -25,7 +25,7 @@ from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
 
-from inaki.kernel.domain.value_objects.chat_turn_result import ChatTurnResult
+from inaki.kernel.domain.chat_turn_result import ChatTurnResult
 from inaki.channels.cli.ports import IDaemonClient
 from inaki.shared.errors import DaemonNotRunningError, DaemonTimeoutError
 

@@ -19,8 +19,8 @@ from typing import Any
 
 import httpx
 
-from inaki.kernel.ports.outbound.tool_config_port import IToolConfigStore
-from inaki.kernel.ports.outbound.tool_port import ITool, ToolResult
+from inaki.kernel.ports.tool_config_port import IToolConfigStore
+from inaki.kernel.ports.tool_port import ITool, ToolResult
 
 logger = logging.getLogger(__name__)
 

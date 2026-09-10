@@ -13,8 +13,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 from inaki.config import GlobalConfig
-from inaki.kernel.ports.outbound.channel_port import IChannelSender
-from inaki.kernel.ports.outbound.llm_dispatcher_port import ILLMDispatcher
+from inaki.kernel.ports.channel_port import IChannelSender
+from inaki.kernel.ports.llm_dispatcher_port import ILLMDispatcher
 from inaki.scheduler.adapters.builtin_tasks import (
     _RECONCILE_MEMORY_BASE_ID,
     build_consolidate_memory_task,

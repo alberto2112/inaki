@@ -20,14 +20,14 @@ from inaki.config import (
     assemble_agent_config,
 )
 from inaki.config.merge import deep_merge, resolver_inherit
-from inaki.kernel.domain.value_objects.agent_settings import OneShotSettings
-from inaki.kernel.ports.outbound.background_delegation_port import IBackgroundDelegationQueue
-from inaki.kernel.ports.outbound.channel_port import IChannelSender
-from inaki.kernel.ports.outbound.llm_dispatcher_port import ILLMDispatcher
-from inaki.kernel.ports.outbound.llm_port import ILLMProvider
-from inaki.kernel.ports.outbound.tool_port import IToolExecutor
-from inaki.kernel.ports.outbound.turn_tracer_port import ITurnTracer
-from inaki.kernel.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
+from inaki.kernel.domain.agent_settings import OneShotSettings
+from inaki.kernel.ports.background_delegation_port import IBackgroundDelegationQueue
+from inaki.kernel.ports.channel_port import IChannelSender
+from inaki.kernel.ports.llm_dispatcher_port import ILLMDispatcher
+from inaki.kernel.ports.llm_port import ILLMProvider
+from inaki.kernel.ports.tool_port import IToolExecutor
+from inaki.kernel.ports.turn_tracer_port import ITurnTracer
+from inaki.kernel.run_agent_one_shot import RunAgentOneShotUseCase
 from inaki.llm.wiring import LLMProviderFactory
 
 logger = logging.getLogger(__name__)

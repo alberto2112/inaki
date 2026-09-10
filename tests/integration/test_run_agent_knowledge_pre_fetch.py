@@ -13,9 +13,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from inaki.kernel.domain.entities.memory import MemoryEntry
-from inaki.kernel.domain.value_objects.llm_response import LLMResponse
-from inaki.kernel.use_cases.run_agent import RunAgentUseCase
+from inaki.kernel.domain.memory import MemoryEntry
+from inaki.kernel.domain.llm_response import LLMResponse
+from inaki.kernel.run_agent import RunAgentUseCase
 from inaki.knowledge.adapters.sqlite_memory_knowledge_source import (
     SqliteMemoryKnowledgeSource,
 )
@@ -192,7 +192,7 @@ class TestPreFetchBypassOnShortInput:
         mock_history,
         mock_tools,
     ) -> None:
-        from inaki.kernel.domain.value_objects.conversation_state import ConversationState
+        from inaki.kernel.domain.conversation_state import ConversationState
         from inaki.config import (
             AgentConfig,
             ChatHistoryConfig,

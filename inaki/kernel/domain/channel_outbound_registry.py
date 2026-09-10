@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import logging
 
-from inaki.kernel.domain.value_objects.outbound_kind import OutboundKind
-from inaki.kernel.ports.outbound.channel_port import IChannelOutbound
+from inaki.kernel.domain.outbound_kind import OutboundKind
+from inaki.kernel.ports.channel_port import IChannelOutbound
 
 logger = logging.getLogger(__name__)
 

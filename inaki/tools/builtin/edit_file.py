@@ -15,7 +15,7 @@ from inaki.tools.path_resolution import (
     WorkspaceEscapeError,
     resolve_path,
 )
-from inaki.kernel.ports.outbound.tool_port import ITool, ToolResult
+from inaki.kernel.ports.tool_port import ITool, ToolResult
 
 logger = logging.getLogger(__name__)
 

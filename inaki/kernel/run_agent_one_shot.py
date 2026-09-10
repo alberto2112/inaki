@@ -24,11 +24,11 @@ import asyncio
 import logging
 import uuid
 
-from inaki.kernel.domain.value_objects.agent_settings import OneShotSettings
-from inaki.kernel.ports.outbound.llm_port import ILLMProvider
-from inaki.kernel.ports.outbound.tool_port import IToolExecutor
-from inaki.kernel.ports.outbound.turn_tracer_port import ITurnTracer, NullTurnTracer
-from inaki.kernel.use_cases._tool_loop import run_tool_loop
+from inaki.kernel.domain.agent_settings import OneShotSettings
+from inaki.kernel.ports.llm_port import ILLMProvider
+from inaki.kernel.ports.tool_port import IToolExecutor
+from inaki.kernel.ports.turn_tracer_port import ITurnTracer, NullTurnTracer
+from inaki.kernel._tool_loop import run_tool_loop
 from inaki.shared.message import Message, Role
 
 logger = logging.getLogger(__name__)

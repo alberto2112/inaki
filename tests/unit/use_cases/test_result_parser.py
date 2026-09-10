@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 
-from inaki.kernel.domain.value_objects.delegation_result import DelegationResult
-from inaki.kernel.use_cases._result_parser import parse_delegation_result
+from inaki.kernel.domain.delegation_result import DelegationResult
+from inaki.kernel._result_parser import parse_delegation_result
 
 # ---------------------------------------------------------------------------
 # Helpers

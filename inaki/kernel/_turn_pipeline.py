@@ -28,18 +28,18 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from inaki.kernel.domain.entities.background_task import BackgroundTaskView
-from inaki.kernel.domain.entities.skill import Skill
-from inaki.kernel.domain.services.prepend_timestamps import prepend_timestamps
-from inaki.kernel.domain.services.sticky_selector import apply_sticky
-from inaki.kernel.domain.value_objects.agent_settings import RunAgentSettings
-from inaki.kernel.domain.value_objects.conversation_state import ConversationState
-from inaki.kernel.domain.value_objects.knowledge_chunk import KnowledgeChunk
-from inaki.kernel.ports.outbound.channel_port import IIntermediateSink
-from inaki.kernel.ports.outbound.embedding_port import IEmbeddingProvider
-from inaki.kernel.ports.outbound.knowledge_port import IKnowledgeRetriever
-from inaki.kernel.ports.outbound.skill_port import ISkillRepository
-from inaki.kernel.ports.outbound.tool_port import IToolExecutor
+from inaki.kernel.domain.background_task import BackgroundTaskView
+from inaki.kernel.domain.skill import Skill
+from inaki.kernel.domain.prepend_timestamps import prepend_timestamps
+from inaki.kernel.domain.sticky_selector import apply_sticky
+from inaki.kernel.domain.agent_settings import RunAgentSettings
+from inaki.kernel.domain.conversation_state import ConversationState
+from inaki.kernel.domain.knowledge_chunk import KnowledgeChunk
+from inaki.kernel.ports.channel_port import IIntermediateSink
+from inaki.kernel.ports.embedding_port import IEmbeddingProvider
+from inaki.kernel.ports.knowledge_port import IKnowledgeRetriever
+from inaki.kernel.ports.skill_port import ISkillRepository
+from inaki.kernel.ports.tool_port import IToolExecutor
 from inaki.shared.message import Message, Role
 
 logger = logging.getLogger(__name__)
@@ -170,7 +170,7 @@ INFLIGHT_CLARIFICATIONS_SECTION = (
 
 # Texto que se inyecta como sección del system prompt para que el LLM sepa
 # leer los bloques de attachments (gramática de
-# ``core/domain/value_objects/attachment.py``). En INGLÉS por convención del
+# ``inaki/shared/attachment.py``). En INGLÉS por convención del
 # proyecto (system-prompts-language).
 ATTACHMENTS_SECTION = (
     "## Incoming attachments\n\n"

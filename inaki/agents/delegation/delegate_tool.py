@@ -27,14 +27,14 @@ import copy
 import logging
 from typing import TYPE_CHECKING, Callable, Protocol
 
-from inaki.kernel.domain.value_objects.delegation_result import DelegationResult
-from inaki.kernel.ports.outbound.tool_port import ITool, ToolResult
-from inaki.kernel.use_cases._result_parser import parse_delegation_result
+from inaki.kernel.domain.delegation_result import DelegationResult
+from inaki.kernel.ports.tool_port import ITool, ToolResult
+from inaki.kernel._result_parser import parse_delegation_result
 from inaki.shared.errors import ToolLoopMaxIterationsError
 
 if TYPE_CHECKING:
-    from inaki.kernel.ports.outbound.background_delegation_port import IBackgroundDelegationQueue
-    from inaki.kernel.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
+    from inaki.kernel.ports.background_delegation_port import IBackgroundDelegationQueue
+    from inaki.kernel.run_agent_one_shot import RunAgentOneShotUseCase
     from inaki.shared.channel_context import ChannelContext
 
 logger = logging.getLogger(__name__)

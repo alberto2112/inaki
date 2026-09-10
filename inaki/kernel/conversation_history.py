@@ -10,7 +10,7 @@ solo necesita la segunda.
 
 from __future__ import annotations
 
-from inaki.kernel.ports.outbound.history_port import IHistoryStore
+from inaki.kernel.ports.history_port import IHistoryStore
 from inaki.shared.message import Message, Role
 
 

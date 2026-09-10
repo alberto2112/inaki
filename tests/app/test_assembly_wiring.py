@@ -23,10 +23,10 @@ from inaki.app.assembly import (
 )
 from inaki.channels.telegram.files.downloader import TelegramFileDownloader
 from inaki.config import AgentConfig
-from inaki.kernel.ports.outbound.turn_tracer_port import NullTurnTracer
-from inaki.kernel.use_cases.conversation_history import ConversationHistory
-from inaki.kernel.use_cases.run_agent import RunAgentUseCase
-from inaki.kernel.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
+from inaki.kernel.ports.turn_tracer_port import NullTurnTracer
+from inaki.kernel.conversation_history import ConversationHistory
+from inaki.kernel.run_agent import RunAgentUseCase
+from inaki.kernel.run_agent_one_shot import RunAgentOneShotUseCase
 from inaki.memory.wiring import MemoryJobs
 from inaki.scheduler.tools.scheduler_tool import SchedulerTool
 from inaki.shared.channel_context import (

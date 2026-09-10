@@ -2,7 +2,7 @@ from abc import abstractmethod
 
 from pydantic import BaseModel
 
-from inaki.kernel.ports.outbound.embedding_port import IEmbeddingProvider
+from inaki.kernel.ports.embedding_port import IEmbeddingProvider
 
 
 class ResolvedEmbeddingConfig(BaseModel):

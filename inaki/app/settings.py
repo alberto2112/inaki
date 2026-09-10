@@ -1,7 +1,7 @@
 """Config → Settings VOs del kernel. El ÚNICO punto que conoce a los dos mundos.
 
 Los use cases del kernel NO reciben ``AgentConfig``: declaran en un VO
-(``inaki/kernel/domain/value_objects/agent_settings.py``) exactamente lo que
+(``inaki/kernel/domain/agent_settings.py``) exactamente lo que
 consumen, y acá, en el composition root, se mapea el schema user-facing a ese
 vocabulario. Los renombres del mapeo son deliberados: ver el docstring del VO.
 """
@@ -13,7 +13,7 @@ from pathlib import Path
 from inaki.channels.telegram.config import telegram_config
 from inaki.config import AgentConfig
 from inaki.config.home import get_inaki_home
-from inaki.kernel.domain.value_objects.agent_settings import OneShotSettings, RunAgentSettings
+from inaki.kernel.domain.agent_settings import OneShotSettings, RunAgentSettings
 from inaki.memory.wiring import build_memory_settings
 
 

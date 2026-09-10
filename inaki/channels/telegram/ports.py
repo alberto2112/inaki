@@ -12,10 +12,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from inaki.scheduler.ports.use_case import IManualTaskRunner
-from inaki.kernel.ports.outbound.channel_port import IChannelOutbound
-from inaki.kernel.ports.outbound.scope_registry_port import IScopeRegistry
-from inaki.kernel.use_cases.conversation_history import ConversationHistory
-from inaki.kernel.use_cases.run_agent import RunAgentUseCase
+from inaki.kernel.ports.channel_port import IChannelOutbound
+from inaki.kernel.ports.scope_registry_port import IScopeRegistry
+from inaki.kernel.conversation_history import ConversationHistory
+from inaki.kernel.run_agent import RunAgentUseCase
 from inaki.scheduler.use_cases.schedule_task import ScheduleTaskUseCase
 from inaki.channels.telegram.files.ports import IFileDownloader, IFileRecordRepo
 from inaki.memory.use_cases.consolidate_memory import ConsolidateMemoryUseCase

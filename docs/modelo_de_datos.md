@@ -5,7 +5,7 @@ The kernel never imports a feature module of `inaki/`, the composition root, or 
 
 ---
 
-## Entities (`inaki/kernel/domain/entities/`)
+## Entities (`inaki/kernel/domain/`)
 
 ### `Message` — `message.py`
 
@@ -167,7 +167,7 @@ class ScheduledTask(BaseModel):
 
 ---
 
-## Value Objects (`inaki/kernel/domain/value_objects/`)
+## Value Objects (`inaki/kernel/domain/`)
 
 ### `Embedding` — `embedding.py`
 
@@ -226,7 +226,7 @@ InakiError
 
 Ports are contracts (ABC) that the core defines and adapters implement.
 
-> **The authoritative list is the directory itself** — `inaki/kernel/ports/outbound/` and
+> **The authoritative list is the directory itself** — `inaki/kernel/ports/` and
 > `inaki/kernel/ports/inbound/` (27 ports today), each with its docstrings. The table below
 > is an orientation map of the ones you meet first, not an inventory: a
 > hand-maintained copy of every signature rots, and this one did.

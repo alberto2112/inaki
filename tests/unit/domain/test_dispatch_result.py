@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from inaki.kernel.domain.value_objects.dispatch_result import DispatchResult
+from inaki.kernel.domain.dispatch_result import DispatchResult
 
 
 def test_construccion_valida_guarda_ambos_targets() -> None:

@@ -22,14 +22,14 @@ import pytest
 
 from inaki.agents.delegation.delegate_tool import _RESULT_FORMAT_FOOTER, DelegateTool
 from inaki.tools.registry import ToolRegistry
-from inaki.kernel.domain.value_objects.agent_settings import OneShotSettings
-from inaki.kernel.domain.value_objects.conversation_state import ConversationState
-from inaki.kernel.domain.value_objects.delegation_result import DelegationResult
-from inaki.kernel.domain.value_objects.llm_response import LLMResponse
-from inaki.kernel.ports.outbound.turn_tracer_port import NullTurnTracer
-from inaki.kernel.use_cases.conversation_history import ConversationHistory
-from inaki.kernel.use_cases.run_agent import RunAgentUseCase
-from inaki.kernel.use_cases.run_agent_one_shot import RunAgentOneShotUseCase
+from inaki.kernel.domain.agent_settings import OneShotSettings
+from inaki.kernel.domain.conversation_state import ConversationState
+from inaki.kernel.domain.delegation_result import DelegationResult
+from inaki.kernel.domain.llm_response import LLMResponse
+from inaki.kernel.ports.turn_tracer_port import NullTurnTracer
+from inaki.kernel.conversation_history import ConversationHistory
+from inaki.kernel.run_agent import RunAgentUseCase
+from inaki.kernel.run_agent_one_shot import RunAgentOneShotUseCase
 from inaki.config import (
     AgentConfig,
     AgentDelegationConfig,
@@ -688,7 +688,7 @@ async def test_failure_max_iterations_exceeded():
     )
 
     # dummy_tool ejecutable EN EL PARENT: bajo C el hijo efímero usa el toolkit del caller.
-    from inaki.kernel.ports.outbound.tool_port import ToolResult
+    from inaki.kernel.ports.tool_port import ToolResult
 
     dummy_tool = _make_dummy_tool("dummy_tool")
     dummy_tool.execute = AsyncMock(

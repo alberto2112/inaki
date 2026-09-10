@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, MagicMock
 
-from inaki.kernel.domain.services.channel_outbound_registry import ChannelOutboundRegistry
-from inaki.kernel.domain.value_objects.outbound_kind import OutboundKind
+from inaki.kernel.domain.channel_outbound_registry import ChannelOutboundRegistry
+from inaki.kernel.domain.outbound_kind import OutboundKind
 from inaki.channels.telegram.tools.send_telegram_message_tool import (
     SendTelegramMessageTool,
 )

@@ -17,7 +17,7 @@ from typing import Any, cast
 
 from pydantic import BaseModel
 
-from inaki.kernel.ports.outbound.tool_port import ToolResult
+from inaki.kernel.ports.tool_port import ToolResult
 from inaki.scheduler.domain.task import (
     AgentSendPayload,
     ChannelSendPayload,

@@ -218,7 +218,7 @@ class MemoriesConfig(_ConfigBaseModel):
     sub-agente reconciliador. Corre aunque la consolidación esté apagada."""
 
     # La resolución del digest path y de keep_last_messages (lógica de dominio
-    # que solo core consume) vive en inaki/kernel/domain/value_objects/agent_settings.py
+    # que solo core consume) vive en inaki/kernel/domain/agent_settings.py
     # (``MemorySettings``). ``inaki/memory/wiring.py::build_memory_settings`` traduce este modelo a ese VO.
 
     def merged_llm_config(self, base: LLMConfig) -> LLMConfig:

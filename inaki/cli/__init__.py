@@ -1,7 +1,7 @@
 """Entry point del CLI ``inaki`` — composition root de los comandos.
 
-Cada comando vive en su módulo (``chat``, ``daemon``, ``admin``, ``tool``, ``send``,
-``scheduler``, ``knowledge``) y se registra acá. Los helpers compartidos están en
+Cada comando vive en su módulo (``init``, ``chat``, ``daemon``, ``admin``, ``tool``, ``send``,
+``scheduler``, ``knowledge``, ``service``) y se registra acá. Los helpers compartidos están en
 ``_common``; el bootstrap del daemon en ``inaki.app``.
 """
 
@@ -15,10 +15,11 @@ import typer
 
 from inaki import __version__
 from inaki.channels import registrar_canales_instalados
-from inaki.cli import admin, chat, daemon, send, tool
+from inaki.cli import admin, chat, daemon, init, send, tool
 from inaki.cli.chat import invoke_default_chat, invoke_task
 from inaki.cli.knowledge import knowledge_app
 from inaki.cli.scheduler import scheduler_app
+from inaki.cli.service import service_app
 from inaki.config.cli import config_app
 from inaki.config.home import set_inaki_home
 from inaki.observability import set_debug_override
@@ -40,7 +41,9 @@ def _version_callback(value: bool) -> None:
 app.add_typer(scheduler_app, name="scheduler", help="Manage scheduled tasks")
 app.add_typer(knowledge_app, name="knowledge", help="Manage document knowledge sources")
 app.add_typer(config_app, name="config", help="Inspeccionar la configuración efectiva")
+app.add_typer(service_app, name="service", help="Instalar o quitar la unidad systemd")
 
+app.command()(init.init)
 app.command()(chat.chat)
 app.command()(daemon.daemon)
 app.command()(admin.inspect)

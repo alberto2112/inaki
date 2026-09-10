@@ -51,22 +51,32 @@ A modular monolith under a single namespace: kernel + feature modules + channels
 
 - Python 3.11+
 - Raspberry Pi 5 recommended (works on any ARM64 or x86-64 Linux machine)
-- For embeddings: ONNX model files (`intfloat/multilingual-e5-small`) placed in `~/.inaki/models/e5-small/`
+- For embeddings: ONNX model files (`intfloat/multilingual-e5-small`) in `~/.inaki/models/e5-small/` — `inaki init` downloads them
 - For face recognition: InsightFace (~400MB RAM when loaded, lazy-loaded on first photo)
 
 ---
 
 ## Installation
 
+Inaki is a regular Python package with an `inaki` console script. On the Pi (or anywhere), install it isolated with [pipx](https://pipx.pypa.io/) and let the wizard do the rest:
+
+```bash
+pipx install "git+https://github.com/alberto2112/inaki"   # add [faces] for face recognition
+inaki init                                                  # provider, first agent, Telegram, embeddings model
+inaki service install                                       # systemd unit (prints the sudo steps)
+```
+
+`inaki init` asks a handful of sequential questions, writes `~/.inaki/config/global.yaml` and the first agent YAML through the same config use cases every other editor uses, validates the result with the **same loader the daemon boots with**, and offers to download the local embeddings model (`intfloat/multilingual-e5-small`, ~470 MB) into `~/.inaki/models/e5-small/`. Re-running it is safe: it asks before replacing a credential or creating another agent.
+
+Face recognition (`photos.enabled`) needs `insightface`, which compiles on ARM, so it is an **optional extra**: `pipx install "inaki[faces] @ git+https://github.com/alberto2112/inaki"`. With photos enabled and the extra missing, the daemon starts without photos and logs an `ERROR` saying so.
+
+For development, clone and install editable:
+
 ```bash
 git clone https://github.com/alberto2112/inaki.git
 cd inaki
 pip install -e ".[dev]"
 ```
-
-This installs the `inaki` CLI entrypoint.
-
----
 
 ## Configuration
 
@@ -239,49 +249,17 @@ See [`docs/tools_y_skills.md`](docs/tools_y_skills.md) for conventions.
 ## Deployment on Raspberry Pi 5
 
 ```bash
-# Install systemd service
-sudo bash systemd/install.sh
-
-# Start / stop / status
-sudo systemctl start inaki
-sudo systemctl stop inaki
+inaki service install          # generates the unit; without root it prints the exact sudo steps
 sudo systemctl status inaki
-
-# View logs
 journalctl -u inaki -f
+inaki service uninstall
 ```
 
-The service file is at [`systemd/inaki.service`](systemd/inaki.service). It runs the `inaki daemon` command which starts all configured agents and channels.
+`inaki service install` renders `/etc/systemd/system/inaki.service` from a template shipped **inside the package**, with the absolute path of the `inaki` executable that ran the command (a repo venv or a pipx venv alike), the invoking user and group, and `Environment=INAKI_HOME=<home>` so the daemon runs the same instance your shell sees. It never depends on `PATH`: systemd does not read `.bashrc` or `.profile`. Run without root it writes the unit to `~/.inaki/inaki.service` and prints the three `sudo` commands; run with `sudo` (use the full path to the executable, e.g. `sudo ~/.local/pipx/venvs/inaki/bin/inaki service install`) it installs, enables and restarts the service itself.
 
-### What `install.sh` does
+`--print` only shows the rendered unit. `--link-cli` additionally symlinks the CLI to `/usr/local/bin/inaki`. That is opt-in on purpose: `/usr/local/bin` is in systemd's minimal `PATH`, so the link makes the whole harness (`inaki scheduler`, `inaki knowledge`, `inaki tool`, …) reachable from the agent's `shell_exec` tool. Prefer capabilities as tools; `shell_exec` reaching for the CLI is usually a smell. Your login shell already finds `inaki` through pipx's `~/.local/bin` (or the venv), no link needed.
 
-1. Generates `/etc/systemd/system/inaki.service` from the template, substituting the real `User`, `Group`, `WorkingDirectory` and the absolute path to the venv interpreter. The file in the repo is a **template** — the values in it are placeholders.
-2. Enables the service (autostart on boot) and restarts it.
-3. **Symlinks the CLI**: `/usr/local/bin/inaki` → `<repo>/.venv/bin/inaki`.
-
-### Why the CLI symlink (and where it points)
-
-Without it, the `inaki` command only exists inside the venv — you would have to activate it, or type `.venv/bin/inaki` every time.
-
-`/usr/local/bin` is the only directory that satisfies both requirements:
-
-- The FHS reserves it for locally-installed software. `/usr/bin` belongs to `dpkg`/`apt` — a package could overwrite or remove anything you put there.
-- **It is in systemd's minimal `PATH`.** systemd does not read `.bashrc` or `.profile`, so the daemon's environment is just `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`.
-
-A bare symlink is enough: pip's console script carries a shebang with the **absolute** path to the venv interpreter, so it resolves correctly no matter where the link lives. The link is re-pointed on every `install.sh` run; if `/usr/local/bin/inaki` already exists as a **real file** (not a symlink), the step is skipped rather than clobbering it.
-
-> **Consequence — read this.** Because `/usr/local/bin` is in the daemon's `PATH`, the symlink also makes the CLI reachable from the agent's `shell_exec` tool. That gives the LLM the whole harness (`inaki scheduler`, `inaki knowledge`, `inaki tool`, …) outside the tool layer. Prefer capabilities as tools; `shell_exec` reaching for the CLI is usually a smell.
->
-> To keep the CLI for yourself only, remove the link and put it in your user bin instead — your login shell sees it, systemd's minimal `PATH` does not:
->
-> ```bash
-> sudo rm /usr/local/bin/inaki
-> mkdir -p ~/.local/bin && ln -sfn "$PWD/.venv/bin/inaki" ~/.local/bin/inaki
-> ```
->
-> (run from the repo root — `$PWD` must be the repo)
-
-If the repo moves, re-run `sudo bash systemd/install.sh` — it re-points both the unit and the symlink.
+Running a second, isolated instance: install the unit under another name with its own home (`inaki --home /srv/inaki-b service --print > inaki-b.service`, then edit `admin.port` / `broadcast.port` in that home's YAML so they do not collide).
 
 ---
 

@@ -2,7 +2,7 @@
 Scheduler CLI sub-app.
 
 Expone `inaki scheduler <cmd>` para gestionar tareas programadas a través de
-la interfaz `ISchedulerUseCase` (ScheduleTaskUseCase). Montado en main.py via:
+la interfaz `ISchedulerUseCase` (ScheduleTaskUseCase). Montado en el CLI via:
 
     app.add_typer(scheduler_app, name="scheduler", help="Manage scheduled tasks")
 

@@ -194,6 +194,6 @@ def run_inspect(
     agent_id: str,
     query: str,
 ) -> None:
-    """One-shot inspect desde --inspect flag de main.py."""
+    """One-shot inspect desde el CLI (`inaki inspect`)."""
     result = client.inspect(agent_id, query)
     print(json.dumps(result, indent=2, ensure_ascii=False))

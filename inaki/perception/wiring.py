@@ -11,6 +11,8 @@ Convención obligatoria para adaptadores en inaki/perception/adapters/transcript
 
 from __future__ import annotations
 
+import importlib.util
+
 import importlib
 import logging
 import pkgutil
@@ -187,6 +189,12 @@ class PhotosSingletons:
 
 
 def build_photos_singletons(photos_cfg: PhotosConfig, *, faces_db_path: str) -> PhotosSingletons:
+    """Lanza si falta ``insightface`` (extra ``faces``): el composition root loguea qué
+    capacidad queda muda y arranca sin fotos, en vez de fallar en la primera foto."""
+    if importlib.util.find_spec("insightface") is None:
+        raise RuntimeError(
+            "photos.enabled=true pero insightface no está instalado: pip install 'inaki[faces]'"
+        )
     return PhotosSingletons(
         vision=InsightFaceVisionAdapter(photos_cfg.faces.model),
         face_registry=SqliteFaceRegistryAdapter(faces_db_path, embedding_dim=512),

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Inaki es un asistente multi-agente con arquitectura hexagonal estricta, memoria RAG,
 scheduler y delegación entre agentes. Corre en una **Raspberry Pi 5** (ARM64, 4GB) vía
-systemd (`systemd/inaki.service`).
+systemd (la unidad la genera `inaki service install`).
 
 > Este documento contiene **lo esencial de cada turno**. El detalle vive en `docs/` —
 > ver [Referencias](#referencias) al final. Antes de tocar una zona que tenga documento

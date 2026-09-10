@@ -65,6 +65,13 @@ HTML dentro del paquete, en loopback. Con el daemon corriendo, la misma página
 vive en el admin server (`/admin/config/ui`, con `X-Admin-Key`) y ofrece
 recargarlo después de guardar.
 
+**Gestión remota (la Pi desde tu laptop).** El camino es el daemon: en `global.yaml`,
+`admin.host: 0.0.0.0` y `admin.auth_key: <una key larga>`, reiniciar, y abrir
+`http://<pi>:6497/admin/config/ui` (la página pide la key una vez). El standalone también
+puede escuchar fuera de loopback (`inaki config web --host 0.0.0.0`), pero entonces
+exige la misma `admin.auth_key` y sin ella no arranca: un editor de credenciales abierto
+a la red sin auth no es un default, es un agujero.
+
 Lo que se guarda pasa por el **mismo loader del arranque**: si el resultado no
 carga, la capa vuelve a como estaba y el error del loader se muestra tal cual.
 Un override de agente se puede volver a "heredar" (borra la clave: manda

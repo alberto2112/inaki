@@ -168,10 +168,13 @@ inaki inspect "query"            # Inspect RAG pipeline for a message (no LLM ca
 inaki scheduler list             # List scheduled tasks
 inaki knowledge list             # List configured knowledge sources
 inaki config show --origin       # Effective config with the layer each value comes from
-inaki config web                 # Same view, editable per layer, in the browser (no daemon needed)
+inaki config web                 # Same view, editable per layer, in the browser (no daemon needed; loopback, no auth)
+inaki config web --host 0.0.0.0  # Reachable from the LAN: requires admin.auth_key (same key as the admin API)
 ```
 
 ### Remote mode
+
+To manage a Pi from your laptop, let the daemon listen on the LAN (`admin.host: 0.0.0.0` plus `admin.auth_key` in `global.yaml`, then restart) and open `http://<pi>:6497/admin/config/ui`; the page asks for the key once. The CLI reaches the same daemon with `--remote`:
 
 ```bash
 inaki --remote http://raspi.local:6497 chat

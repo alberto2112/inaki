@@ -1,7 +1,7 @@
 """Pipeline de media entrante del TelegramBot: fotos, álbumes, voz, video y documentos.
 
-Mixin de ``TelegramBot``. Incluye la persistencia de file_id en
-``telegram_files.db`` y la pre-descarga al workspace.
+Colaborador de ``TelegramBot`` con dependencias explícitas. Incluye la
+persistencia de file_id en ``telegram_files.db`` y la pre-descarga al workspace.
 
 Principio rector — **persistencia simétrica**: TODO media que llega deja un
 bloque de attachments en ``history.db`` (gramática de
@@ -16,13 +16,16 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from inaki.kernel.use_cases.turn_dispatch import INFLIGHT_ACK
 from inaki.channels.telegram.files.model import FileContentType, TelegramFileRecord
+from inaki.channels.telegram.auth import TelegramAuth
+from inaki.channels.telegram.broadcast.egress import BroadcastEgress
+from inaki.channels.telegram.group_flow import GroupFlow
 from inaki.channels.telegram.message_mapper import (
     _TIPOS_GRUPO,
     extract_audio_payload,
@@ -30,6 +33,9 @@ from inaki.channels.telegram.message_mapper import (
     extract_sender_name,
     send_html_or_plain,
 )
+from inaki.channels.telegram.ports import TelegramBotPorts, TelegramBotSettings
+from inaki.channels.telegram.reactions import Reactions
+from inaki.channels.telegram.turn import TurnRunner
 from inaki.perception.use_cases.transcribe_audio import EmptyTranscriptionError
 from inaki.shared.attachment import (
     IncomingAttachment,
@@ -38,11 +44,6 @@ from inaki.shared.attachment import (
     format_attachment,
 )
 from inaki.shared.errors import TranscriptionError, TranscriptionFileTooLargeError
-
-if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine
-
-    from inaki.channels.telegram.ports import TelegramBotPorts, TelegramBotSettings
 
 logger = logging.getLogger(__name__)
 
@@ -96,25 +97,36 @@ class _AlbumBuffer:
     slot_held: bool = False
 
 
-class TelegramMediaMixin:
+class MediaHandlers:
     """Handlers de media + helpers de persistencia/descarga de files."""
 
-    # Contrato con TelegramBot — estado y colaboradores que este mixin consume.
-    _settings: TelegramBotSettings
-    _ports: TelegramBotPorts
-    _voice_enabled: bool
-    _is_authorized: Callable[[Update], bool]
-    _set_reaction: Callable[..., Coroutine[Any, Any, None]]
-    _run_pipeline: Callable[..., Coroutine[Any, Any, None]]
-    _handle_group_message: Callable[..., Coroutine[Any, Any, None]]
-    _schedule_group_flush: Callable[[str, str], None]
-    _emit_event: Callable[..., Coroutine[Any, Any, None]]
-    _album_buffers: dict[str, _AlbumBuffer]
-    _albums_flushed: dict[str, None]
-
-    async def _handle_photo_message(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    def __init__(
+        self,
+        *,
+        ports: TelegramBotPorts,
+        settings: TelegramBotSettings,
+        auth: TelegramAuth,
+        reactions: Reactions,
+        turns: TurnRunner,
+        groups: GroupFlow,
+        egress: BroadcastEgress,
     ) -> None:
+        self._ports = ports
+        self._settings = settings
+        self._voice_enabled: bool = settings.telegram.voice_enabled
+        self._auth = auth
+        self._reactions = reactions
+        self._turns = turns
+        self._groups = groups
+        self._egress = egress
+        # Álbumes en curso (media_group_id → buffer con timer de debounce).
+        # Telegram entrega un álbum como N mensajes; cada miembro reinicia el
+        # timer y el flush corre cuando pasa ALBUM_DEBOUNCE_SEC sin nuevos.
+        self.album_buffers: dict[str, _AlbumBuffer] = {}
+        # Álbumes ya flusheados (dedup para miembros tardíos). Acotado.
+        self.albums_flushed: dict[str, None] = {}
+
+    async def handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handler para mensajes con foto (``filters.PHOTO``).
 
         Flujo:
@@ -128,14 +140,14 @@ class TelegramMediaMixin:
         4. Persiste el bloque ``@photo`` en el historial → obtiene history_id.
         5. Llama a ``ProcessPhotoUseCase.execute()`` → análisis + imagen anotada.
         6. Enriquece el bloque con ``@analysis`` vía ``update_message_content``.
-        7. Llama a ``_run_pipeline`` en modo history-derived.
+        7. Llama a ``TurnRunner.run`` en modo history-derived.
         """
         user = update.effective_user
         chat = update.effective_chat
         message = update.message
         if user is None or chat is None or message is None:
             return
-        if not self._is_authorized(update):
+        if not self._auth.is_authorized(update):
             logger.warning(
                 "Foto rechazada de user_id=%s (no autorizado)",
                 user.id,
@@ -149,7 +161,7 @@ class TelegramMediaMixin:
             media_group_id = str(message.media_group_id)
             await self._persist_incoming_file(update)
             caption_msg = (getattr(message, "caption", None) or "").strip()
-            if media_group_id in self._albums_flushed:
+            if media_group_id in self.albums_flushed:
                 # Miembro tardío: el álbum ya cerró y su turno ya corrió.
                 # Persistencia simétrica igual — rastro @photo sin re-turno.
                 await self._record_straggler(update, str(chat.id))
@@ -185,7 +197,7 @@ class TelegramMediaMixin:
             scene_prompt = None
             caption = caption_raw
 
-        await self._set_reaction(update, "👀")
+        await self._reactions.react(update, "👀")
 
         # Los bytes ya están en memoria → al workspace sin segunda descarga.
         # Mismo dest (key = file_unique_id) que usaría download_from_telegram.
@@ -202,12 +214,12 @@ class TelegramMediaMixin:
         # In-flight protection: en privados, si ya hay un turno corriendo sobre
         # este scope, tomamos un camino alternativo (record_user_message + ACK)
         # para no disparar un execute() paralelo. En grupos, el buffer-flush ya
-        # se encarga (vía _schedule_group_flush idempotente al final).
+        # se encarga (vía schedule_flush idempotente al final).
         # Ver `in-flight-message-injection` y CLAUDE.md.
         # NO usa dispatch_inbound_turn a propósito: acá el slot se adquiere ANTES
         # del procesamiento pesado de la foto y el camino se decide al final,
-        # porque el _run_pipeline anidado (user_input=None) depende de que el
-        # slot ya esté tomado. Ver docstring de adapters/inbound/turn_dispatch.py.
+        # porque el turno anidado (user_input=None) depende de que el
+        # slot ya esté tomado. Ver docstring de ``turn_dispatch``.
         agent_id = self._ports.run_agent.get_agent_info().id
         scope = (agent_id, "telegram", chat_id)
         slot_acquired = False
@@ -242,7 +254,7 @@ class TelegramMediaMixin:
             except Exception as exc:
                 logger.exception("Error procesando foto Telegram para '%s'", self._settings.id)
                 await message.reply_text(f"Error al procesar la foto: {exc}")
-                await self._set_reaction(update, "👎")
+                await self._reactions.react(update, "👎")
                 return
 
             # Enviar imagen anotada si existe (cara desconocida en chat privado).
@@ -280,7 +292,7 @@ class TelegramMediaMixin:
                 # porque este modo no pasa por LLM. Gated por flag.
                 if chat_type in _TIPOS_GRUPO:
                     asyncio.ensure_future(
-                        self._emit_event(
+                        self._egress.emit(
                             event_type="user_input_photo",
                             chat_id=chat_id,
                             content=direct_text,
@@ -332,7 +344,7 @@ class TelegramMediaMixin:
             # otros agentes vean la descripción antes que la respuesta del LLM.
             if chat_type in _TIPOS_GRUPO and result.text_context:
                 asyncio.ensure_future(
-                    self._emit_event(
+                    self._egress.emit(
                         event_type="user_input_photo",
                         chat_id=chat_id,
                         content=result.text_context,
@@ -345,12 +357,12 @@ class TelegramMediaMixin:
             #   pendiente disparado por mensajes previos, esta llamada es no-op y
             #   ese flush eventual va a leer la foto enriquecida junto con todo lo
             #   demás. Evita el race "foto + texto rápido" → dos execute() paralelos.
-            # - Privado con slot adquirido: history-derived run_pipeline (la query
+            # - Privado con slot adquirido: turno history-derived (la query
             #   del turno se deriva del trailing role=user que acabamos de actualizar).
             if chat_type in _TIPOS_GRUPO:
-                self._schedule_group_flush(chat_id, chat_type)
+                self._groups.schedule_flush(chat_id, chat_type)
             else:
-                await self._run_pipeline(update, None, chat_type=chat_type)
+                await self._turns.run(update, None, chat_type=chat_type)
         finally:
             # Liberar el slot SIEMPRE que lo hayamos adquirido, incluso si algún
             # camino lanzó excepción. Sin esto un fallo dejaría el scope busy
@@ -358,7 +370,7 @@ class TelegramMediaMixin:
             if slot_acquired:
                 await self._ports.scope_registry.mark_idle(scope)
 
-    def _extract_file_metadata(self, message) -> tuple[FileContentType, Any, str | None] | None:
+    def extract_file_metadata(self, message) -> tuple[FileContentType, Any, str | None] | None:
         """Detecta el media payload de un Message y devuelve (content_type, payload, mime).
 
         ``payload`` es el objeto de telegram (PhotoSize, Voice, Audio, Video,
@@ -398,7 +410,7 @@ class TelegramMediaMixin:
         usuario cae al camino in-flight (``record_user_message`` + ACK) en vez
         de arrancar un turno paralelo ciego. El flush lo drena y libera el slot.
         En grupos NO se toma el slot — la coalescencia la maneja el buffer de
-        grupo (``_schedule_group_flush``).
+        grupo (``GroupFlow.schedule_flush``).
 
         CONCURRENCIA (``concurrent_updates(True)``): el buffer se guarda en el
         dict ANTES de cualquier ``await`` — así dos miembros del mismo álbum que
@@ -408,13 +420,13 @@ class TelegramMediaMixin:
         set hacía que el perdedor sobrescribiera al ganador y el flush no liberara
         el slot (leak → fotos de álbum posteriores dejaban de reaccionar).
         """
-        buf = self._album_buffers.get(media_group_id)
+        buf = self.album_buffers.get(media_group_id)
         is_new = buf is None
         if buf is None:
             buf = _AlbumBuffer(update=update, chat_type=chat_type)
             # Guardar SINCRÓNICAMENTE (sin await antes) para cerrar la ventana de
             # carrera: a partir de acá, un miembro concurrente ve este buffer.
-            self._album_buffers[media_group_id] = buf
+            self.album_buffers[media_group_id] = buf
         # Telegram suele poner el caption en UNA sola foto del álbum (no
         # siempre la primera) — el primer no-vacío gana como fallback del
         # que se recupere de los records al flushear.
@@ -444,21 +456,21 @@ class TelegramMediaMixin:
         errores se capturan acá y se loguean; no hay error handler upstream.
 
         Persistencia + turno según el tier:
-        - Grupo: delega a ``_handle_group_message`` (buffer de grupo).
+        - Grupo: delega a ``GroupFlow.handle_message`` (buffer de grupo).
         - Privado con slot tomado: persiste el bloque ``@album`` y corre un
-          turno history-derived (``_run_pipeline(update, None)``) que ve el
+          turno history-derived (``TurnRunner.run(update, None)``) que ve el
           ``@album`` + cualquier mensaje recordado in-flight mientras juntábamos
           el álbum. Libera el slot en ``finally``.
         - Privado sin slot (había un turno corriendo al crear el álbum): solo
           persiste el ``@album`` — ese turno en curso lo drena. No dispara otro.
         """
         await asyncio.sleep(ALBUM_DEBOUNCE_SEC)
-        buf = self._album_buffers.pop(media_group_id, None)
+        buf = self.album_buffers.pop(media_group_id, None)
         if buf is None:
             return
-        self._albums_flushed[media_group_id] = None
-        if len(self._albums_flushed) > _ALBUM_DEDUP_MAX:
-            del self._albums_flushed[next(iter(self._albums_flushed))]
+        self.albums_flushed[media_group_id] = None
+        if len(self.albums_flushed) > _ALBUM_DEDUP_MAX:
+            del self.albums_flushed[next(iter(self.albums_flushed))]
 
         update = buf.update
         scope = self._scope_for(update) if buf.slot_held else None
@@ -474,19 +486,19 @@ class TelegramMediaMixin:
             user_input = format_album(members, caption=caption)
 
             if buf.chat_type in _TIPOS_GRUPO:
-                await self._handle_group_message(
+                await self._groups.handle_message(
                     update, user_input, buf.chat_type, preformatted=True
                 )
             elif buf.slot_held:
                 # Tenemos el slot: persistir el @album y correr un turno
                 # history-derived. La query se deriva del trailing batch
                 # (@album + lo recordado in-flight). No re-adquiere el slot
-                # (user_input=None ⇒ _run_pipeline salta dispatch_inbound_turn).
+                # (user_input=None ⇒ ``TurnRunner.run`` salta dispatch_inbound_turn).
                 await self._ports.history.record_user_message(
                     user_input, channel="telegram", chat_id=chat_id_str
                 )
-                await self._set_reaction(update, "👀")
-                await self._run_pipeline(update, None, chat_type=buf.chat_type)
+                await self._reactions.react(update, "👀")
+                await self._turns.run(update, None, chat_type=buf.chat_type)
             else:
                 # Había un turno corriendo cuando llegó el álbum: solo dejamos el
                 # bloque persistido para que ese turno lo drene entre iteraciones.
@@ -511,7 +523,7 @@ class TelegramMediaMixin:
         principio que el depósito de archivos sin caption).
         """
         message = update.message
-        meta = self._extract_file_metadata(message) if message is not None else None
+        meta = self.extract_file_metadata(message) if message is not None else None
         if meta is None:
             return
         content_type, payload, mime_type = meta
@@ -669,7 +681,7 @@ class TelegramMediaMixin:
         message = update.message
         if chat is None or message is None:
             return
-        meta = self._extract_file_metadata(message)
+        meta = self.extract_file_metadata(message)
         if meta is None:
             return
         content_type, payload, mime_type = meta
@@ -708,9 +720,7 @@ class TelegramMediaMixin:
                 exc,
             )
 
-    async def _handle_silent_media(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def handle_silent_media(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handler para video/document.
 
         - Documento con mime ``audio/*`` → delega al pipeline de voz (un mp3
@@ -725,14 +735,14 @@ class TelegramMediaMixin:
         user = update.effective_user
         if user is None:
             return
-        if not self._is_authorized(update):
+        if not self._auth.is_authorized(update):
             return
 
         message = update.message
         if message is None:
             return
 
-        meta = self._extract_file_metadata(message)
+        meta = self.extract_file_metadata(message)
         if meta is None:
             return
         content_type, payload, mime_type = meta
@@ -740,7 +750,7 @@ class TelegramMediaMixin:
         # Audio disfrazado de documento → pipeline de voz completo (persiste
         # su propio record y su bloque @audio, con o sin transcripción).
         if content_type == "audio":
-            await self._handle_voice_message(update, context)
+            await self.handle_voice(update, context)
             return
 
         await self._persist_incoming_file(update)
@@ -754,7 +764,7 @@ class TelegramMediaMixin:
         # de coalescencia que los álbumes de fotos.
         if getattr(message, "media_group_id", None) is not None:
             media_group_id = str(message.media_group_id)
-            if media_group_id in self._albums_flushed:
+            if media_group_id in self.albums_flushed:
                 await self._record_straggler(update, chat_id_str)
                 return
             await self._debounce_album(media_group_id, update, chat_type, caption)
@@ -790,14 +800,12 @@ class TelegramMediaMixin:
 
         user_input = format_attachment(att, caption=caption)
         if chat_type in _TIPOS_GRUPO:
-            await self._handle_group_message(update, user_input, chat_type, preformatted=True)
+            await self._groups.handle_message(update, user_input, chat_type, preformatted=True)
         else:
-            await self._set_reaction(update, "👀")
-            await self._run_pipeline(update, user_input, chat_type=chat_type)
+            await self._reactions.react(update, "👀")
+            await self._turns.run(update, user_input, chat_type=chat_type)
 
-    async def _handle_voice_message(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handler único para ``voice``, ``audio``, ``video_note`` y document-audio.
 
         Flujo: allow → persist file_id → voice_enabled → descarga+mime →
@@ -814,7 +822,7 @@ class TelegramMediaMixin:
         message = update.message
         if user is None or message is None:
             return
-        if not self._is_authorized(update):
+        if not self._auth.is_authorized(update):
             logger.warning(
                 "Audio rechazado de user_id=%s (no autorizado)",
                 user.id,
@@ -826,7 +834,7 @@ class TelegramMediaMixin:
         # apagada o el audio sea demasiado grande para procesar.
         await self._persist_incoming_file(update)
 
-        meta = self._extract_file_metadata(message)
+        meta = self.extract_file_metadata(message)
         if meta is None:
             return
         content_type, payload, mime_type = meta
@@ -894,14 +902,14 @@ class TelegramMediaMixin:
                 exc.limit_bytes,
             )
             await _persistir_marcador(local_path)
-            await self._set_reaction(update, "👎")
+            await self._reactions.react(update, "👎")
             await message.reply_text(
                 f"El audio es demasiado grande ({exc.size_bytes // (1024 * 1024)} MB). "
                 f"Máximo permitido: {exc.limit_bytes // (1024 * 1024)} MB."
             )
             return
 
-        await self._set_reaction(update, "👀")
+        await self._reactions.react(update, "👀")
 
         # Errores del provider se reportan al usuario pero NO corren el pipeline
         # (sin texto no hay nada que ejecutar).
@@ -910,13 +918,13 @@ class TelegramMediaMixin:
         except EmptyTranscriptionError:
             await _persistir_marcador(local_path)
             await message.reply_text("La transcripción vino vacía.")
-            await self._set_reaction(update, "👎")
+            await self._reactions.react(update, "👎")
             return
         except TranscriptionError as exc:
             logger.warning("Transcripción fallida para agente '%s': %s", self._settings.id, exc)
             await _persistir_marcador(local_path)
             await message.reply_text(f"No pude transcribir el audio: {exc}")
-            await self._set_reaction(update, "👎")
+            await self._reactions.react(update, "👎")
             return
 
         sender = extract_sender_name(message)
@@ -927,7 +935,7 @@ class TelegramMediaMixin:
         # format sin cambios — los otros bots aplican su propio prefijo).
         if chat_type in _TIPOS_GRUPO and chat is not None:
             asyncio.ensure_future(
-                self._emit_event(
+                self._egress.emit(
                     event_type="user_input_voice",
                     chat_id=str(chat.id),
                     content=transcribed,
@@ -949,4 +957,4 @@ class TelegramMediaMixin:
             user_input = f"{sender} (audio):\n{block}"
         else:
             user_input = block
-        await self._run_pipeline(update, user_input, chat_type=chat_type)
+        await self._turns.run(update, user_input, chat_type=chat_type)

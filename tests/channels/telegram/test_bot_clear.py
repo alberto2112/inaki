@@ -56,7 +56,7 @@ async def test_cmd_clear_llama_clear_history_api_publica(bot, mock_container) ->
     update.message.reply_text = AsyncMock()
     context = MagicMock()
 
-    await bot._cmd_clear(update, context)
+    await bot._commands.cmd_clear(update, context)
 
     # Verificar que la API pública fue llamada
     mock_container.history.clear_history.assert_awaited_once()
@@ -70,7 +70,7 @@ async def test_cmd_clear_no_accede_a_historial_privado(bot, mock_container) -> N
     update.message.reply_text = AsyncMock()
     context = MagicMock()
 
-    await bot._cmd_clear(update, context)
+    await bot._commands.cmd_clear(update, context)
 
     # _history NO debe tener .clear() llamado directamente
     assert not mock_container.run_agent._history.clear.called
@@ -84,7 +84,7 @@ async def test_cmd_clear_maneja_excepcion(bot, mock_container) -> None:
     update.message.reply_text = AsyncMock()
     context = MagicMock()
 
-    await bot._cmd_clear(update, context)
+    await bot._commands.cmd_clear(update, context)
 
     # Debe haber enviado un mensaje de error
     update.message.reply_text.assert_awaited()

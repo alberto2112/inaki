@@ -6,7 +6,7 @@ Cubre los dos paths que pueblan el ``ChannelContext.sender_*``:
   1. ``_run_pipeline`` con grupo (voice/foto que disparan inmediato): se toma
      del ``update.message.from_user`` actual.
   2. ``_run_group_pipeline`` (autonomous flush, texto plano en grupo): se toma
-     del snapshot ``self._last_group_sender[chat_id]``, que ``_handle_group_message``
+     del snapshot ``self._groups.last_sender[chat_id]``, que ``_handle_group_message``
      actualiza con cada mensaje humano entrante. Heurística: el más reciente del
      batch gana.
 """
@@ -100,19 +100,19 @@ async def test_handle_group_message_snapshot_sender_humano(agent_cfg_autonomous,
     """``_handle_group_message`` debe poblar ``_last_group_sender[chat_id]`` con
     sender_name/username/first_name/last_name cuando llega un humano."""
     bot = _build_bot(agent_cfg_autonomous, mock_container)
-    bot._bot_username = "inaki_bot"
-    bot._set_group_reaction = AsyncMock()
+    bot._groups.bot_username = "inaki_bot"
+    bot._reactions.react_group = AsyncMock()
 
     # Evitamos el flush real para foco del test: stub el scheduler.
-    bot._schedule_group_flush = MagicMock()
+    bot._groups.schedule_flush = MagicMock()
 
     update = _human_update(chat_id=-100123, user_id=42, username="juan")
     with patch(
         "inaki.channels.telegram.group_flow.format_group_message", return_value="juan said: hola"
     ):
-        await bot._handle_group_message(update, "hola", "supergroup")
+        await bot._groups.handle_message(update, "hola", "supergroup")
 
-    snap = bot._last_group_sender["-100123"]
+    snap = bot._groups.last_sender["-100123"]
     assert snap["username"] == "juan"
     assert snap["first_name"] == "Juan"
     assert snap["last_name"] == "Pérez"
@@ -124,12 +124,12 @@ async def test_handle_group_message_no_snapshot_si_remitente_es_bot(
 ):
     """Bots no actualizan ``_last_group_sender`` — la heurística es "última persona humana"."""
     bot = _build_bot(agent_cfg_autonomous, mock_container)
-    bot._bot_username = "inaki_bot"
-    bot._set_group_reaction = AsyncMock()
-    bot._schedule_group_flush = MagicMock()
+    bot._groups.bot_username = "inaki_bot"
+    bot._reactions.react_group = AsyncMock()
+    bot._groups.schedule_flush = MagicMock()
 
     # Pre-poblar con un humano previo.
-    bot._last_group_sender["-100123"] = {
+    bot._groups.last_sender["-100123"] = {
         "sender_name": "Maria",
         "username": "maria",
         "first_name": "Maria",
@@ -139,29 +139,29 @@ async def test_handle_group_message_no_snapshot_si_remitente_es_bot(
     update = _human_update(chat_id=-100123, user_id=99, username="otro_bot")
     update.message.from_user.is_bot = True
     with patch("inaki.channels.telegram.group_flow.format_group_message", return_value="x"):
-        await bot._handle_group_message(update, "msg de bot", "supergroup")
+        await bot._groups.handle_message(update, "msg de bot", "supergroup")
 
     # El snapshot del bot NO sobrescribe el humano previo.
-    snap = bot._last_group_sender["-100123"]
+    snap = bot._groups.last_sender["-100123"]
     assert snap["username"] == "maria"
 
 
 async def test_handle_group_message_ultimo_sobrescribe(agent_cfg_autonomous, mock_container):
     """Llegan dos humanos consecutivos: el último gana."""
     bot = _build_bot(agent_cfg_autonomous, mock_container)
-    bot._bot_username = "inaki_bot"
-    bot._set_group_reaction = AsyncMock()
-    bot._schedule_group_flush = MagicMock()
+    bot._groups.bot_username = "inaki_bot"
+    bot._reactions.react_group = AsyncMock()
+    bot._groups.schedule_flush = MagicMock()
 
     with patch("inaki.channels.telegram.group_flow.format_group_message", return_value="x"):
-        await bot._handle_group_message(
+        await bot._groups.handle_message(
             _human_update(chat_id=-100123, user_id=1, username="juan"), "1", "supergroup"
         )
-        await bot._handle_group_message(
+        await bot._groups.handle_message(
             _human_update(chat_id=-100123, user_id=2, username="maria"), "2", "supergroup"
         )
 
-    assert bot._last_group_sender["-100123"]["username"] == "maria"
+    assert bot._groups.last_sender["-100123"]["username"] == "maria"
 
 
 # ---------------------------------------------------------------------------
@@ -175,15 +175,15 @@ async def test_run_group_pipeline_inyecta_sender_desde_snapshot(
     """``_run_group_pipeline`` debe leer ``_last_group_sender`` y armar el
     ``ChannelContext`` con los 4 campos sender_* poblados."""
     bot = _build_bot(agent_cfg_autonomous, mock_container)
-    bot._last_group_sender["-100123"] = {
+    bot._groups.last_sender["-100123"] = {
         "sender_name": "Juan Pérez (@juan)",
         "username": "juan",
         "first_name": "Juan",
         "last_name": "Pérez",
     }
-    bot._broadcast_receiver = None
+    bot._turns.receiver = None
 
-    await bot._run_group_pipeline("-100123", "supergroup")
+    await bot._turns.run_group("-100123", "supergroup", bot._groups.last_sender.get("-100123", {}))
 
     mock_container.run_agent.execute.assert_awaited_once()
     ctx = mock_container.run_agent.execute.await_args.kwargs["ctx"]
@@ -202,10 +202,10 @@ async def test_run_group_pipeline_sin_snapshot_deja_sender_none(
     """Si ``_last_group_sender`` no tiene entrada para el chat, los 4 sender_*
     quedan en None y las variables ``{{CHANNEL.*}}`` se dejan literales."""
     bot = _build_bot(agent_cfg_autonomous, mock_container)
-    bot._broadcast_receiver = None
+    bot._turns.receiver = None
     # _last_group_sender vacío deliberadamente.
 
-    await bot._run_group_pipeline("-100999", "supergroup")
+    await bot._turns.run_group("-100999", "supergroup", bot._groups.last_sender.get("-100999", {}))
 
     mock_container.run_agent.execute.assert_awaited_once()
     ctx = mock_container.run_agent.execute.await_args.kwargs["ctx"]
@@ -229,14 +229,14 @@ async def test_handle_group_message_preformatted_persiste_el_bloque(
     ``message.text`` y para un media devolvería ``"juan said: "`` vacío (bug
     histórico de álbumes/files en grupos)."""
     bot = _build_bot(agent_cfg_autonomous, mock_container)
-    bot._bot_username = "inaki_bot"
-    bot._set_group_reaction = AsyncMock()
-    bot._schedule_group_flush = MagicMock()
+    bot._groups.bot_username = "inaki_bot"
+    bot._reactions.react_group = AsyncMock()
+    bot._groups.schedule_flush = MagicMock()
 
     update = _human_update(chat_id=-100123, username="juan", text=None)
     bloque = "@album (2 items):\n@photo at /ws/1.jpg\n@photo at /ws/2.jpg"
 
-    await bot._handle_group_message(update, bloque, "supergroup", preformatted=True)
+    await bot._groups.handle_message(update, bloque, "supergroup", preformatted=True)
 
     mock_container.history.record_user_message.assert_awaited_once()
     persistido = mock_container.history.record_user_message.await_args.args[0]
@@ -249,13 +249,13 @@ async def test_handle_group_message_texto_plano_sigue_usando_format_group_messag
     """Sin ``preformatted`` el path legacy no cambia: el contenido persistido
     se deriva de ``format_group_message`` (con contexto de reply)."""
     bot = _build_bot(agent_cfg_autonomous, mock_container)
-    bot._bot_username = "inaki_bot"
-    bot._set_group_reaction = AsyncMock()
-    bot._schedule_group_flush = MagicMock()
+    bot._groups.bot_username = "inaki_bot"
+    bot._reactions.react_group = AsyncMock()
+    bot._groups.schedule_flush = MagicMock()
 
     update = _human_update(chat_id=-100123, username="juan", text="hola grupo")
 
-    await bot._handle_group_message(update, "hola grupo", "supergroup")
+    await bot._groups.handle_message(update, "hola grupo", "supergroup")
 
     persistido = mock_container.history.record_user_message.await_args.args[0]
     assert persistido == "juan said: hola grupo"

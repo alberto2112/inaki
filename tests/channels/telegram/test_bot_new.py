@@ -68,14 +68,14 @@ async def test_cmd_new_consolida_antes_de_limpiar(bot, mock_container) -> None:
     mock_container.consolidate_memory.execute.side_effect = _consolidate
     mock_container.history.clear_history.side_effect = _clear
 
-    await bot._cmd_new(_make_update(), MagicMock())
+    await bot._commands.cmd_new(_make_update(), MagicMock())
 
     assert order == ["consolidate", "clear"]
 
 
 async def test_cmd_new_limpia_scope_del_chat(bot, mock_container) -> None:
     """El clear apunta al chat actual, no a todo el agente."""
-    await bot._cmd_new(_make_update(), MagicMock())
+    await bot._commands.cmd_new(_make_update(), MagicMock())
 
     mock_container.history.clear_history.assert_awaited_once_with(
         channel="telegram",
@@ -87,7 +87,7 @@ async def test_cmd_new_aborta_clear_si_consolidacion_falla(bot, mock_container) 
     """Si consolidate explota, NO se limpia el historial (protección de datos)."""
     mock_container.consolidate_memory.execute.side_effect = RuntimeError("LLM caído")
 
-    await bot._cmd_new(_make_update(), MagicMock())
+    await bot._commands.cmd_new(_make_update(), MagicMock())
 
     mock_container.history.clear_history.assert_not_awaited()
 
@@ -96,6 +96,6 @@ async def test_cmd_new_sin_consolidador_limpia_igual(bot, mock_container) -> Non
     """Sin use case de consolidación disponible, igual limpia el chat."""
     mock_container.consolidate_memory = None
 
-    await bot._cmd_new(_make_update(), MagicMock())
+    await bot._commands.cmd_new(_make_update(), MagicMock())
 
     mock_container.history.clear_history.assert_awaited_once()

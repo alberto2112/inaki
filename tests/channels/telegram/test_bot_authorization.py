@@ -66,13 +66,13 @@ def _group_update(*, chat_id: int, user_id: int) -> MagicMock:
 def test_is_allowed_chat_vacio_rechaza():
     """SCN-2.1: lista vacía => ningún grupo autorizado (cambio de comportamiento)."""
     bot = _build_bot(allowed_user_ids=[], allowed_chat_ids=[])
-    assert bot._is_allowed_chat(-100123) is False
+    assert bot._auth.is_allowed_chat(-100123) is False
 
 
 def test_is_allowed_chat_en_lista_acepta():
     bot = _build_bot(allowed_user_ids=[], allowed_chat_ids=[-100123])
-    assert bot._is_allowed_chat(-100123) is True
-    assert bot._is_allowed_chat(-100999) is False
+    assert bot._auth.is_allowed_chat(-100123) is True
+    assert bot._auth.is_allowed_chat(-100999) is False
 
 
 # ---------------------------------------------------------------------------
@@ -83,19 +83,19 @@ def test_is_allowed_chat_en_lista_acepta():
 def test_privado_lista_vacia_acepta_todos():
     """SCN-1.1: privado + allowed_user_ids vacío => cualquier usuario."""
     bot = _build_bot(allowed_user_ids=[], allowed_chat_ids=[])
-    assert bot._is_authorized(_private_update(user_id=777)) is True
+    assert bot._auth.is_authorized(_private_update(user_id=777)) is True
 
 
 def test_privado_user_en_lista_acepta():
     """SCN-1.2."""
     bot = _build_bot(allowed_user_ids=[123], allowed_chat_ids=[])
-    assert bot._is_authorized(_private_update(user_id=123)) is True
+    assert bot._auth.is_authorized(_private_update(user_id=123)) is True
 
 
 def test_privado_user_fuera_de_lista_rechaza():
     """SCN-1.3."""
     bot = _build_bot(allowed_user_ids=[123], allowed_chat_ids=[])
-    assert bot._is_authorized(_private_update(user_id=456)) is False
+    assert bot._auth.is_authorized(_private_update(user_id=456)) is False
 
 
 # ---------------------------------------------------------------------------
@@ -106,25 +106,25 @@ def test_privado_user_fuera_de_lista_rechaza():
 def test_grupo_chat_ids_vacio_rechaza():
     """SCN-2.1: grupo + allowed_chat_ids vacío => solo privados."""
     bot = _build_bot(allowed_user_ids=[], allowed_chat_ids=[])
-    assert bot._is_authorized(_group_update(chat_id=-100123, user_id=42)) is False
+    assert bot._auth.is_authorized(_group_update(chat_id=-100123, user_id=42)) is False
 
 
 def test_grupo_chat_en_lista_user_dentro_acepta():
     """SCN-2.2: chat autorizado + user en allowed_user_ids => acepta."""
     bot = _build_bot(allowed_user_ids=[42], allowed_chat_ids=[-100123])
-    assert bot._is_authorized(_group_update(chat_id=-100123, user_id=42)) is True
+    assert bot._auth.is_authorized(_group_update(chat_id=-100123, user_id=42)) is True
 
 
 def test_grupo_chat_en_lista_user_fuera_acepta_igual():
     """SCN-2.3 (clave): en grupo autorizado el filtro allowed_user_ids se IGNORA."""
     bot = _build_bot(allowed_user_ids=[42], allowed_chat_ids=[-100123])
-    assert bot._is_authorized(_group_update(chat_id=-100123, user_id=999)) is True
+    assert bot._auth.is_authorized(_group_update(chat_id=-100123, user_id=999)) is True
 
 
 def test_grupo_chat_fuera_de_lista_rechaza():
     """SCN-2.4: grupo no whitelisted."""
     bot = _build_bot(allowed_user_ids=[], allowed_chat_ids=[-100123])
-    assert bot._is_authorized(_group_update(chat_id=-100999, user_id=42)) is False
+    assert bot._auth.is_authorized(_group_update(chat_id=-100999, user_id=42)) is False
 
 
 # ---------------------------------------------------------------------------
@@ -136,11 +136,11 @@ def test_update_sin_user_rechaza():
     bot = _build_bot(allowed_user_ids=[], allowed_chat_ids=[])
     update = _private_update(user_id=1)
     update.effective_user = None
-    assert bot._is_authorized(update) is False
+    assert bot._auth.is_authorized(update) is False
 
 
 def test_update_sin_chat_rechaza():
     bot = _build_bot(allowed_user_ids=[], allowed_chat_ids=[])
     update = _private_update(user_id=1)
     update.effective_chat = None
-    assert bot._is_authorized(update) is False
+    assert bot._auth.is_authorized(update) is False

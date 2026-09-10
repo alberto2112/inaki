@@ -4,7 +4,7 @@ Todo lo que sale de Telegram hacia un grupo puede tener que replicarse al LAN
 (otros bots del mismo grupo no lo ven de otra forma). La decisión de emitir vive
 acá y solo acá: la consultan el egress del canal (``TelegramChannelOutbound``:
 scheduler, tools, ``/admin/send``, resultados ``bg-N``) y la respuesta
-conversacional del bot (``_run_pipeline`` / flush de grupos), que no pasa por el
+conversacional del bot (``TurnRunner``: turno con update y flush de grupos), que no pasa por el
 outbound porque responde citando el mensaje del usuario.
 
 Antes la misma decisión estaba copiada en el bot y en ``/admin/send``, y ausente

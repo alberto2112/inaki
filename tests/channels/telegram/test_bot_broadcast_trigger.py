@@ -114,7 +114,7 @@ async def test_subscribe_broadcast_trigger_registra_en_autonomous(
     """autonomous + receiver → se registra el callback."""
     bot = _build_bot(agent_cfg_autonomous, mock_container, receiver=mock_receiver)
     await bot.subscribe_broadcast_trigger()
-    mock_receiver.subscribe.assert_awaited_once_with(bot._on_broadcast_received)
+    mock_receiver.subscribe.assert_awaited_once_with(bot._ingress.on_received)
 
 
 async def test_subscribe_broadcast_trigger_sin_receiver_noop(agent_cfg_autonomous, mock_container):
@@ -159,7 +159,7 @@ async def test_on_broadcast_persiste_en_historial_y_programa_flush(
         rate_limiter=mock_rate_limiter,
     )
     msg = _msg("comentario sobre el clima")
-    await bot._on_broadcast_received(msg)
+    await bot._ingress.on_received(msg)
 
     mock_container.history.record_user_message.assert_awaited_once()
     call = mock_container.history.record_user_message.await_args
@@ -169,11 +169,11 @@ async def test_on_broadcast_persiste_en_historial_y_programa_flush(
     assert call.kwargs.get("chat_id") == "-100123"
 
     # Un flush task fue creado para este chat
-    assert "-100123" in bot._pending_tasks
+    assert "-100123" in bot._groups.pending_tasks
     # Cancelamos para no dejar tasks colgadas en el loop de tests
-    bot._pending_tasks["-100123"].cancel()
+    bot._groups.pending_tasks["-100123"].cancel()
     try:
-        await bot._pending_tasks["-100123"]
+        await bot._groups.pending_tasks["-100123"]
     except (asyncio.CancelledError, BaseException):
         pass
 
@@ -189,11 +189,11 @@ async def test_on_broadcast_no_invoca_llm_directamente(
         emitter=mock_emitter,
         rate_limiter=mock_rate_limiter,
     )
-    await bot._on_broadcast_received(_msg("hola"))
+    await bot._ingress.on_received(_msg("hola"))
     mock_container.run_agent.execute.assert_not_awaited()
 
     # Limpiamos el task pendiente
-    for task in bot._pending_tasks.values():
+    for task in bot._groups.pending_tasks.values():
         task.cancel()
         try:
             await task
@@ -220,10 +220,10 @@ async def test_on_broadcast_assistant_response_respeta_rate_limiter(
         emitter=mock_emitter,
         rate_limiter=rl,
     )
-    await bot._on_broadcast_received(_msg("cualquier cosa"))
+    await bot._ingress.on_received(_msg("cualquier cosa"))
 
     mock_container.history.record_user_message.assert_awaited_once()
-    assert bot._pending_tasks == {}
+    assert bot._groups.pending_tasks == {}
     rl.check_and_increment.assert_called_once_with("inaki", "-100123", 5)
     # Un bot NO resetea el presupuesto: solo un humano lo hace.
     rl.reset.assert_not_called()
@@ -256,16 +256,16 @@ async def test_on_broadcast_user_input_voice_no_consume_rate_limiter(
         content="qué hora es",
         sender="alberto",
     )
-    await bot._on_broadcast_received(msg)
+    await bot._ingress.on_received(msg)
 
     mock_container.history.record_user_message.assert_awaited_once()
-    assert "-100123" in bot._pending_tasks
+    assert "-100123" in bot._groups.pending_tasks
     rl.check_and_increment.assert_not_called()
     rl.reset.assert_called_once_with("inaki", "-100123")
 
-    bot._pending_tasks["-100123"].cancel()
+    bot._groups.pending_tasks["-100123"].cancel()
     try:
-        await bot._pending_tasks["-100123"]
+        await bot._groups.pending_tasks["-100123"]
     except (asyncio.CancelledError, BaseException):
         pass
 
@@ -291,16 +291,16 @@ async def test_on_broadcast_user_input_photo_no_consume_rate_limiter(
         content="alberto sonriendo",
         sender="alberto",
     )
-    await bot._on_broadcast_received(msg)
+    await bot._ingress.on_received(msg)
 
     mock_container.history.record_user_message.assert_awaited_once()
-    assert "-100123" in bot._pending_tasks
+    assert "-100123" in bot._groups.pending_tasks
     rl.check_and_increment.assert_not_called()
     rl.reset.assert_called_once_with("inaki", "-100123")
 
-    bot._pending_tasks["-100123"].cancel()
+    bot._groups.pending_tasks["-100123"].cancel()
     try:
-        await bot._pending_tasks["-100123"]
+        await bot._groups.pending_tasks["-100123"]
     except (asyncio.CancelledError, BaseException):
         pass
 
@@ -320,12 +320,12 @@ async def test_on_broadcast_es_idempotente_si_hay_flush_activo(
     # Forzamos que el delay no termine durante el test
     import inaki.channels.telegram.bot as bot_module
 
-    await bot._on_broadcast_received(_msg("primer broadcast"))
-    primer_task = bot._pending_tasks["-100123"]
+    await bot._ingress.on_received(_msg("primer broadcast"))
+    primer_task = bot._groups.pending_tasks["-100123"]
 
-    await bot._on_broadcast_received(_msg("segundo broadcast"))
+    await bot._ingress.on_received(_msg("segundo broadcast"))
     # Mismo task — no se reemplazó
-    assert bot._pending_tasks["-100123"] is primer_task
+    assert bot._groups.pending_tasks["-100123"] is primer_task
     # Pero ambos broadcasts fueron persistidos
     assert mock_container.history.record_user_message.await_count == 2
 
@@ -362,16 +362,16 @@ async def test_on_broadcast_user_input_voice_persiste_con_prefijo_audio(
         content="cuánto es 5+5",
         sender="alberto",
     )
-    await bot._on_broadcast_received(msg)
+    await bot._ingress.on_received(msg)
 
     mock_container.history.record_user_message.assert_awaited_once()
     contenido = mock_container.history.record_user_message.await_args.args[0]
     assert contenido == "alberto (audio): cuánto es 5+5"
     # Flush programado
-    assert "-100123" in bot._pending_tasks
-    bot._pending_tasks["-100123"].cancel()
+    assert "-100123" in bot._groups.pending_tasks
+    bot._groups.pending_tasks["-100123"].cancel()
     try:
-        await bot._pending_tasks["-100123"]
+        await bot._groups.pending_tasks["-100123"]
     except (asyncio.CancelledError, BaseException):
         pass
 
@@ -395,15 +395,15 @@ async def test_on_broadcast_user_input_photo_persiste_con_prefijo_foto(
         content="persona caminando",
         sender="alberto",
     )
-    await bot._on_broadcast_received(msg)
+    await bot._ingress.on_received(msg)
 
     mock_container.history.record_user_message.assert_awaited_once()
     contenido = mock_container.history.record_user_message.await_args.args[0]
     assert contenido == "alberto (foto): persona caminando"
-    assert "-100123" in bot._pending_tasks
-    bot._pending_tasks["-100123"].cancel()
+    assert "-100123" in bot._groups.pending_tasks
+    bot._groups.pending_tasks["-100123"].cancel()
     try:
-        await bot._pending_tasks["-100123"]
+        await bot._groups.pending_tasks["-100123"]
     except (asyncio.CancelledError, BaseException):
         pass
 
@@ -426,13 +426,13 @@ async def test_on_broadcast_assistant_response_mantiene_prefijo_legacy(
         event_type="assistant_response",
         content="hola humano",
     )
-    await bot._on_broadcast_received(msg)
+    await bot._ingress.on_received(msg)
 
     contenido = mock_container.history.record_user_message.await_args.args[0]
     assert contenido == "anacleto said: hola humano"
-    bot._pending_tasks["-100123"].cancel()
+    bot._groups.pending_tasks["-100123"].cancel()
     try:
-        await bot._pending_tasks["-100123"]
+        await bot._groups.pending_tasks["-100123"]
     except (asyncio.CancelledError, BaseException):
         pass
 
@@ -462,10 +462,10 @@ async def test_on_broadcast_chat_no_autorizado_no_persiste_ni_flushea(
     )
     # -999 NO está en allowed_chat_ids ([-100123]).
     msg = _msg("respuesta en un grupo donde ya no estoy", chat_id="-999")
-    await bot._on_broadcast_received(msg)
+    await bot._ingress.on_received(msg)
 
     mock_container.history.record_user_message.assert_not_awaited()
-    assert bot._pending_tasks == {}
+    assert bot._groups.pending_tasks == {}
     # Ni siquiera consumió el rate limiter — cortó antes de todo.
     mock_rate_limiter.check_and_increment.assert_not_called()
 
@@ -498,7 +498,7 @@ async def test_on_broadcast_allowed_chat_ids_vacio_ignora_todo(
         emitter=mock_emitter,
         rate_limiter=mock_rate_limiter,
     )
-    await bot._on_broadcast_received(_msg("cualquier cosa", chat_id="-100123"))
+    await bot._ingress.on_received(_msg("cualquier cosa", chat_id="-100123"))
 
     mock_container.history.record_user_message.assert_not_awaited()
-    assert bot._pending_tasks == {}
+    assert bot._groups.pending_tasks == {}

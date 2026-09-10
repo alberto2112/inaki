@@ -125,17 +125,17 @@ async def test_run_pipeline_timed_out_no_muestra_error_al_usuario(bot, caplog) -
 
     with (
         patch(
-            "inaki.channels.telegram.bot.dispatch_inbound_turn",
+            "inaki.channels.telegram.turn.dispatch_inbound_turn",
             new=AsyncMock(return_value=MagicMock(executed=True, reply="respuesta larga")),
         ),
-        patch("inaki.channels.telegram.bot.compose_sender_identity", return_value=None),
+        patch("inaki.channels.telegram.turn.compose_sender_identity", return_value=None),
         patch(
-            "inaki.channels.telegram.bot.send_html_or_plain",
+            "inaki.channels.telegram.turn.send_html_or_plain",
             new=AsyncMock(side_effect=TimedOut()),
         ),
         caplog.at_level(logging.WARNING),
     ):
-        await bot._run_pipeline(update, user_input="hola", chat_type="private")
+        await bot._turns.run(update, user_input="hola", chat_type="private")
 
     # Se logueó como blip de red, sin ERROR ni traceback.
     assert any("error de red entregando" in r.getMessage() for r in caplog.records)
@@ -148,21 +148,21 @@ async def test_run_pipeline_error_real_si_muestra_error(bot, caplog) -> None:
     """Una excepción NO de red sigue avisándole al usuario con 'Error: ...'."""
     update = _pipeline_update()
     bot._ports.run_agent.get_agent_info.return_value.id = "dev"
-    bot._set_reaction = AsyncMock()
+    bot._reactions.react = AsyncMock()
 
     with (
         patch(
-            "inaki.channels.telegram.bot.dispatch_inbound_turn",
+            "inaki.channels.telegram.turn.dispatch_inbound_turn",
             new=AsyncMock(return_value=MagicMock(executed=True, reply="r")),
         ),
-        patch("inaki.channels.telegram.bot.compose_sender_identity", return_value=None),
+        patch("inaki.channels.telegram.turn.compose_sender_identity", return_value=None),
         patch(
-            "inaki.channels.telegram.bot.send_html_or_plain",
+            "inaki.channels.telegram.turn.send_html_or_plain",
             new=AsyncMock(side_effect=RuntimeError("boom")),
         ),
         caplog.at_level(logging.WARNING),
     ):
-        await bot._run_pipeline(update, user_input="hola", chat_type="private")
+        await bot._turns.run(update, user_input="hola", chat_type="private")
 
     assert any(r.levelno == logging.ERROR for r in caplog.records)
     update.message.reply_text.assert_awaited_once()

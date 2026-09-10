@@ -45,6 +45,7 @@ existe este documento— y la contradicción no queda flotando.
 | [`channel-contextid`](#channel-contextid) | `mv` de los ficheros de contexto a `{context_id}.md` + cambiar la variable del prompt |
 | [`per-user-context-files`](#per-user-context-files) | *(superseded)* `mv` de `USER.md` a `users/{channel}/…` |
 | [`config-falla-ruidoso`](#config-falla-ruidoso) | **Puede impedir el arranque**: corregir el typo/valor que el error nombra (antes se ignoraba en silencio) |
+| [`telegram-composicion`](#telegram-composicion) | Sin cambios de comportamiento: `TelegramBot` deja los mixins y compone objetos con constructor explícito (`auth`, `reactions`, `rate_limit`, `turn`, `group_flow`, `broadcast/ingress`, `media`, `commands`) |
 | [`kernel-limpio`](#kernel-limpio) | `"Thinking..."` deja de persistirse en `history.db`; el análisis de fotos sale como traza `photo.analysis` en vez de `/tmp`; `user.timezone` por fin llega al prompt |
 | [`runtimes-tipados`](#runtimes-tipados) | Sin cambios de comportamiento: `container.py` desaparece; `inaki/app/assembly.py` entrega `AgentRuntime`/`HarnessRuntime` inmutables |
 | [`wiring-por-modulo`](#wiring-por-modulo) | Sin cambios de comportamiento: cada módulo se ensambla en su `wiring.py`; `container.py` queda como orquestador fino |
@@ -99,7 +100,7 @@ de `global.yaml`).
   `in-flight-message-injection`, `turn-kill-switch`
 - **Retención y alcance del registro**: `trim-cuenta-conversacion`,
   `search-history-retention-horizon`
-- **Telegram y canales**: `channels-validados-al-cargar`, `attachment-grammar`,
+- **Telegram y canales**: `telegram-composicion`, `channels-validados-al-cargar`, `attachment-grammar`,
   `formato-en-el-borde-del-transporte`,
   `groups-vs-broadcast`, `broadcast-human-reset`,
   `broadcast-topology-config`, `broadcast-arranque-observable`,
@@ -116,6 +117,53 @@ de `global.yaml`).
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `telegram-composicion`
+
+**Contexto (2026-09-10, fase 4b del refactor modular).** ``TelegramBot`` heredaba de
+cuatro mixins (``commands``, ``media``, ``group_flow``, ``broadcast.mixin``) y cada
+uno declaraba por anotaciones de clase el estado que "esperaba" que el bot hubiera
+inicializado: 31 atributos en total, con cruces en todas direcciones. ``media``
+llamaba a ``_run_pipeline`` (bot), ``_handle_group_message`` (group_flow) y
+``_emit_event`` (broadcast); ``broadcast`` a ``_schedule_group_flush`` (group_flow);
+``commands`` MUTABA ``_rate_limit_max``, que leían ``group_flow`` y ``broadcast``; y
+``verificar_bot_username`` (bot) mutaba ``_bot_username``, que leía ``group_flow``.
+Nada de eso lo veía un constructor: lo veía mypy si la anotación existía, y se
+descubría en runtime si no.
+
+**Cambio.** El bot pasa a ser un agregado que COMPONE colaboradores con constructor
+explícito, cada uno recibiendo SOLO lo que usa, en orden de dependencia (grafo
+acíclico): ``TelegramAuth`` (``auth.py``), ``Reactions`` (``reactions.py``),
+``GroupRateLimit`` (``rate_limit.py``), ``TurnRunner`` (``turn.py``: ``run`` con update
+y ``run_group`` para el flush, que antes eran ``_run_pipeline`` en el bot y
+``_run_group_pipeline`` en group_flow), ``GroupFlow`` (``group_flow.py``),
+``BroadcastIngress`` (``broadcast/ingress.py``, reemplaza a ``broadcast/mixin.py``),
+``MediaHandlers`` (``media.py``) y ``SlashCommands`` (``commands.py``). Dos decisiones
+que el diseño hizo visibles:
+
+- El rate limit era CUATRO atributos sueltos (``_rate_limiter``, ``_rate_limit_max`` y
+  los dos defaults) que un mixin escribía y otros dos leían, con ``if rate_limiter is
+  not None`` repetido en tres sitios. Ahora es UN objeto (``GroupRateLimit``) con
+  ``reset``/``check``/``set``/``restore_defaults``; sin limiter todo es no-op.
+- ``bot_username`` lo muta la validación contra ``get_me()`` y lo lee la detección
+  de menciones. Su ÚNICO consumidor es el flujo de grupos, así que la validación
+  vive ahí (``GroupFlow.resolve_bot_username``), no en el bot.
+
+``_emit_event`` desaparece: era un wrapper de una línea sobre ``BroadcastEgress.emit``.
+La firma de ``TelegramBot(settings, ports, ...)`` NO cambia: el bot arma sus partes
+adentro, así que ``wiring.py`` sigue igual. ``bot.py`` baja de 730 a 448 líneas.
+
+**Comportamiento observable.** Ninguno. Los tests del bot se adaptaron
+mecánicamente al nuevo path de cada colaborador (``bot._turns.run``,
+``bot._groups.pending_tasks``, ``bot._rate_limit.max_count``…); ``TelegramAuth`` y
+``GroupRateLimit`` ganan tests propios, que antes solo existían a través del bot.
+
+**Invariante que dejó.** **NUNCA** un mixin con "contrato por anotaciones" (un
+``_algo: Tipo`` declarado en la clase esperando que otro lo inicialice): lo que un
+objeto necesita entra por su constructor. Si dos objetos comparten estado que uno
+muta y otro lee, ese estado es un TERCER objeto que los dos reciben.
 
 ---
 
@@ -646,6 +694,8 @@ así que un `channel_send` a un grupo era invisible para los otros bots.
 `media`, `broadcast.mixin`) siguen siendo mixins con contrato por anotaciones de clase.
 Convertirlos a composición es un refactor propio, ortogonal al movimiento, y se hace en
 una fase dedicada.
+
+*Cerrado después:* fase 4b, 2026-09-10, nota `telegram-composicion`.
 
 **Invariante que dejó.** **NUNCA** un módulo de config que importe un canal: el canal
 se registra, config lee el registro. Y **NUNCA** un `AppContainer` que arranque el

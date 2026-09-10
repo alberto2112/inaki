@@ -45,7 +45,9 @@ existe este documento— y la contradicción no queda flotando.
 | [`channel-contextid`](#channel-contextid) | `mv` de los ficheros de contexto a `{context_id}.md` + cambiar la variable del prompt |
 | [`per-user-context-files`](#per-user-context-files) | *(superseded)* `mv` de `USER.md` a `users/{channel}/…` |
 | [`config-falla-ruidoso`](#config-falla-ruidoso) | **Puede impedir el arranque**: corregir el typo/valor que el error nombra (antes se ignoraba en silencio) |
+| [`instalacion-como-producto`](#instalacion-como-producto) | Nuevos `inaki init` e `inaki service install\|uninstall`; `systemd/install.sh` desaparece; el symlink `/usr/local/bin/inaki` pasa a ser opt-in (`--link-cli`); `insightface` es el extra `faces`; `tokenizers` declarado |
 | [`telegram-composicion`](#telegram-composicion) | Sin cambios de comportamiento: `TelegramBot` deja los mixins y compone objetos con constructor explícito (`auth`, `reactions`, `rate_limit`, `turn`, `group_flow`, `broadcast/ingress`, `media`, `commands`) |
+| [`instalacion-como-producto`](#instalacion-como-producto) | Con fotos activas: instalar el extra `faces`; cuando convenga, `inaki service install` reemplaza la unidad de `install.sh` (la vieja sigue arrancando gracias a `main.py`) |
 | [`kernel-limpio`](#kernel-limpio) | `"Thinking..."` deja de persistirse en `history.db`; el análisis de fotos sale como traza `photo.analysis` en vez de `/tmp`; `user.timezone` por fin llega al prompt |
 | [`runtimes-tipados`](#runtimes-tipados) | Sin cambios de comportamiento: `container.py` desaparece; `inaki/app/assembly.py` entrega `AgentRuntime`/`HarnessRuntime` inmutables |
 | [`wiring-por-modulo`](#wiring-por-modulo) | Sin cambios de comportamiento: cada módulo se ensambla en su `wiring.py`; `container.py` queda como orquestador fino |
@@ -112,11 +114,65 @@ de `global.yaml`).
 - **Memoria**: `memory-management-tools`, `memory-scoped-by-channel-chat`,
   `agent-state-scoped-by-channel-chat`
 - **Scheduler**: `modulos-scheduler-y-agents`, `scheduler-trigger-type-mutable`, `channel-send-history-persist`
+- **Instalación y producto**: `instalacion-como-producto`
 - **Tools y config**: `runtimes-tipados`, `wiring-por-modulo`, `kernel-y-fachada-de-tools`, `modulos-tools-llm-extensions`, `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `instalacion-como-producto`
+
+**Contexto (2026-09-10, fase 11a del refactor modular).** Instalar Inaki era clonar
+el repo, crear un venv, `pip install -e .`, escribir los YAML a mano, bajar el modelo
+de embeddings de HuggingFace a mano, y correr `sudo bash systemd/install.sh`, que
+asumía `<repo>/.venv` y arrancaba `python main.py daemon`. Nada de eso servía para
+`pipx`. Además, `tokenizers` (que `e5_onnx` importa en runtime) NO estaba declarado
+como dependencia: en el entorno de desarrollo lo traía otro paquete, y una
+instalación limpia habría fallado en el primer embedding.
+
+**Cambio.**
+
+- **`inaki init`** (`inaki/cli/init.py`): wizard secuencial (provider LLM y credencial,
+  modelo, primer agente, Telegram opcional, descarga del modelo). Escribe por los
+  use cases de config que el TUI retirado dejó huérfanos (`UpsertProvider`,
+  `UpdateGlobalLayer`, `CreateAgent`) y valida al final con el MISMO loader del
+  arranque. Idempotente: pregunta antes de pisar una credencial o crear otro agente.
+- **`inaki service install|uninstall`** (`inaki/cli/service.py`): la unidad systemd se
+  renderiza desde una plantilla DENTRO del paquete con la ruta absoluta del `inaki`
+  que corre el comando (venv del repo o pipx), el usuario que invocó `sudo` y
+  `Environment=INAKI_HOME=<home>`. Sin root escribe `<home>/inaki.service` y dicta
+  los tres `sudo`; con root instala, habilita y arranca. `systemd/install.sh` y
+  `systemd/inaki.service` desaparecen.
+- **Descarga del modelo** (`inaki/embedding/download.py`): `model.onnx` +
+  `tokenizer.json` de `intfloat/multilingual-e5-small` a `embedding.model_dirname`,
+  a un `.part` que se renombra al terminar; idempotente.
+- **Packaging**: `tokenizers` pasa a dependencia declarada; `insightface` pasa al
+  extra opcional `faces` (compila en ARM y una instalación sin fotos no tiene por qué
+  pagarlo). Con `photos.enabled: true` y el extra ausente, `build_photos_singletons`
+  lanza y el composition root arranca SIN fotos con un `ERROR` que nombra la
+  capacidad muda y el `pip install 'inaki[faces]'` (`config-falla-ruidoso`: la única
+  degradación legítima es la de una dependencia externa, y con nombre).
+
+**Acción del operador.**
+
+- **Instalaciones existentes con la unidad vieja** (`ExecStart=... python main.py daemon`):
+  siguen arrancando — `main.py` se conserva como wrapper de compatibilidad justamente
+  para que un `git pull` (o el `update.sh` que dispara un agente) no tumbe el daemon.
+  Cuando convenga, `inaki service install` regenera la unidad con el console script; ahí
+  `main.py` sobra.
+- **Con fotos activas**: `pip install -e ".[faces]"` (o el extra en `pipx`). Si no, el
+  daemon arranca sin fotos y lo dice en el log.
+- **El symlink `/usr/local/bin/inaki`** ya no se crea por default: `--link-cli` lo pide.
+  El daemon no lo necesita (`ExecStart` absoluto) y la shell lo encuentra por pipx o el
+  venv. Quien dependía de que el `shell_exec` del agente viera el CLI, lo pide con el flag.
+
+**Invariante que dejó.** **NUNCA** un script de instalación que asuma dónde está el
+código o el intérprete: lo que arranca el daemon es el console script del entorno que
+corre el instalador, con ruta absoluta. Y **NUNCA** una dependencia que "ya estaba":
+si un módulo la importa, va en `pyproject.toml`.
 
 ---
 

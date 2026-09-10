@@ -61,14 +61,14 @@ def _unwrap_optional(annotation: Any) -> Any:
     return annotation
 
 
-def _type_str(annotation: Any) -> str:
+def type_str(annotation: Any) -> str:
     """Anotación → string legible para la columna ``Type``."""
     # Annotated[X, ...] (ExpandedPath / RuntimePath / ExpandedPathList) → tipo
     # base X. Sin esto, el fallback ``str()`` imprime el repr del validador, que
     # incluye la DIRECCIÓN DE MEMORIA de la función → no determinista entre
     # procesos (rompería el test de drift). Se detecta por ``__metadata__``.
     if hasattr(annotation, "__metadata__"):
-        return _type_str(annotation.__origin__)
+        return type_str(annotation.__origin__)
 
     origin = get_origin(annotation)
 
@@ -81,20 +81,20 @@ def _type_str(annotation: Any) -> str:
     ):
         args = get_args(annotation)
         non_none = [a for a in args if a is not type(None)]
-        inner = " \\| ".join(_type_str(a) for a in non_none)
+        inner = " \\| ".join(type_str(a) for a in non_none)
         return f"{inner} \\| None" if type(None) in args else inner
 
     if origin in (list, set, frozenset):
-        inner = ", ".join(_type_str(a) for a in get_args(annotation))
+        inner = ", ".join(type_str(a) for a in get_args(annotation))
         return f"{origin.__name__}[{inner}]"
 
     if origin is tuple:
-        inner = ", ".join(_type_str(a) for a in get_args(annotation))
+        inner = ", ".join(type_str(a) for a in get_args(annotation))
         return f"tuple[{inner}]"
 
     if origin is dict:
         k, v = get_args(annotation)
-        return f"dict[{_type_str(k)}, {_type_str(v)}]"
+        return f"dict[{type_str(k)}, {type_str(v)}]"
 
     if inspect.isclass(annotation):
         return annotation.__name__
@@ -230,7 +230,7 @@ def _emit_model(
         annotation = field_info.annotation
         secret = "🔒" if _is_secret(field_info) else ""
         lines.append(
-            f"| `{name}` | `{_type_str(annotation)}` | {_default_md(field_info)} | {secret} |"
+            f"| `{name}` | `{type_str(annotation)}` | {_default_md(field_info)} | {secret} |"
         )
         for sub in _nested_models(annotation):
             if sub not in documented and sub not in nested:

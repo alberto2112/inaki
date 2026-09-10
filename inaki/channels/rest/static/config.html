@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inaki — Config</title>
+<style>
+  :root { --bg:#fafafa; --fg:#222; --muted:#777; --line:#e3e3e3; --acc:#2a6df4; --warn:#b35c00; --err:#b00020; --ok:#1b7f3b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color:var(--fg); background:var(--bg); }
+  header { position:sticky; top:0; background:#fff; border-bottom:1px solid var(--line); padding:10px 16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; z-index:2; }
+  header h1 { font-size:16px; margin:0 8px 0 0; }
+  input, select, button, textarea { font:inherit; }
+  input[type=text], input[type=password], input[type=number], select, textarea { padding:5px 7px; border:1px solid #bbb; border-radius:4px; background:#fff; }
+  button { padding:6px 12px; border:1px solid #bbb; border-radius:4px; background:#fff; cursor:pointer; }
+  button.primary { background:var(--acc); color:#fff; border-color:var(--acc); }
+  button:disabled { opacity:.5; cursor:default; }
+  main { padding: 12px 16px 80px; max-width: 1200px; margin: 0 auto; }
+  .msg { padding:10px 12px; border-radius:6px; margin:10px 0; white-space:pre-wrap; }
+  .msg.err { background:#fde8ea; color:var(--err); border:1px solid #f4b6bd; }
+  .msg.ok { background:#e6f4ea; color:var(--ok); border:1px solid #b7dfc2; }
+  .msg.warn { background:#fff3e0; color:var(--warn); border:1px solid #f5cf9a; }
+  section { margin: 18px 0; }
+  section h2 { font-size:15px; margin:0 0 6px; padding-bottom:4px; border-bottom:1px solid var(--line); }
+  table { width:100%; border-collapse:collapse; background:#fff; }
+  td, th { text-align:left; vertical-align:top; padding:6px 8px; border-bottom:1px solid var(--line); }
+  th { font-weight:600; color:var(--muted); font-size:12px; }
+  td.path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12.5px; width:34%; }
+  td.path small { display:block; color:var(--muted); font-family:inherit; }
+  td.val { width:44%; }
+  td.val input[type=text], td.val input[type=password], td.val input[type=number], td.val textarea, td.val select { width:100%; }
+  td.val textarea { min-height:52px; font-family: ui-monospace, Menlo, monospace; font-size:12px; }
+  .badge { display:inline-block; font-size:11px; padding:1px 7px; border-radius:10px; border:1px solid var(--line); color:var(--muted); }
+  .badge.global { color:#1b5e9e; border-color:#9ec3e6; background:#eef5fc; }
+  .badge.agent { color:#6a1b9a; border-color:#cfa8e6; background:#f6effb; }
+  .badge.secret { color:var(--warn); border-color:#f5cf9a; background:#fff7ea; }
+  tr.dirty td { background:#fffbe6; }
+  tr.inherit td { background:#f0f0f0; text-decoration: line-through; }
+  details summary { cursor:pointer; color:var(--acc); font-size:12px; }
+  details p { margin:6px 0 0; color:#444; white-space:pre-wrap; font-size:12.5px; }
+  .actions { display:flex; gap:6px; flex-wrap:wrap; }
+  .actions button { padding:3px 8px; font-size:12px; }
+  footer { position:fixed; bottom:0; left:0; right:0; background:#fff; border-top:1px solid var(--line); padding:10px 16px; display:flex; gap:10px; align-items:center; }
+  .grow { flex:1; }
+  .muted { color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Inaki · Config</h1>
+  <label>Capa
+    <select id="layer">
+      <option value="global">global</option>
+    </select>
+  </label>
+  <input id="filter" type="text" placeholder="filtrar por path o texto…" size="32">
+  <label><input id="only-overrides" type="checkbox"> solo lo escrito en esta capa</label>
+  <span class="grow"></span>
+  <label id="key-wrap" hidden>X-Admin-Key <input id="key" type="password" size="20"></label>
+  <button id="reload-view">Recargar vista</button>
+</header>
+
+<main>
+  <div id="msg" hidden></div>
+  <div id="tables"></div>
+</main>
+
+<footer>
+  <span id="dirty-count" class="muted">Sin cambios</span>
+  <span class="grow"></span>
+  <button id="discard">Descartar</button>
+  <button id="save" class="primary" disabled>Guardar en la capa</button>
+  <button id="reload-daemon" hidden>Recargar daemon</button>
+</footer>
+
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const state = { agents: [], subAgents: [], daemon: false, campos: [], cambios: {}, heredar: new Set(), layerKind: 'global', agentId: null };
+
+  const key = () => localStorage.getItem('inaki.adminKey') || '';
+  $('#key').value = key();
+  $('#key').addEventListener('change', (e) => { localStorage.setItem('inaki.adminKey', e.target.value); load(); });
+
+  async function api(path, opts = {}) {
+    const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
+    if (key()) headers['X-Admin-Key'] = key();
+    const r = await fetch(path, Object.assign({}, opts, { headers }));
+    let body = null;
+    try { body = await r.json(); } catch (_) {}
+    if (r.status === 401 || r.status === 403) { $('#key-wrap').hidden = false; }
+    if (!r.ok) {
+      const d = body && body.detail;
+      const text = d && d.mensaje ? d.mensaje : (typeof d === 'string' ? d : JSON.stringify(d || body));
+      throw new Error(`${r.status}: ${text}`);
+    }
+    return body;
+  }
+
+  function msg(kind, text) { const m = $('#msg'); m.hidden = !text; m.className = 'msg ' + kind; m.textContent = text || ''; }
+
+  function currentLayer() {
+    const v = $('#layer').value;
+    if (v === 'global') return { layer: 'global', agent_id: null };
+    const [kind, id] = v.split(':', 2);
+    return { layer: kind, agent_id: id };
+  }
+
+  async function loadAgents() {
+    const d = await api('/admin/config/agents');
+    state.agents = d.agents; state.subAgents = d.sub_agents; state.daemon = d.daemon;
+    const sel = $('#layer'); const prev = sel.value;
+    sel.innerHTML = '<option value="global">global</option>' +
+      state.agents.map(a => `<option value="agent:${a}">agente · ${a}</option>`).join('') +
+      state.subAgents.map(a => `<option value="sub_agent:${a}">sub-agente · ${a}</option>`).join('');
+    if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+    $('#reload-daemon').hidden = !state.daemon;
+  }
+
+  async function load() {
+    try {
+      msg('', '');
+      await loadAgents();
+      const { layer, agent_id } = currentLayer();
+      const d = await api('/admin/config/effective' + (agent_id ? `?agent=${encodeURIComponent(agent_id)}` : ''));
+      state.campos = d.campos; state.layerKind = layer; state.agentId = agent_id;
+      state.cambios = {}; state.heredar = new Set();
+      render();
+      if (!state.daemon) msg('warn', 'Modo standalone: lo que guardes aplica al próximo arranque del daemon (o `inaki reload`).');
+    } catch (e) { msg('err', e.message); }
+  }
+
+  const layerOfThisView = () => state.layerKind === 'global' ? 'global' : 'agent';
+
+  function inputFor(c) {
+    const t = c.tipo || '';
+    const v = c.valor;
+    if (c.secreto) return `<input type="password" data-path="${c.path}" placeholder="${c.configurado ? 'configurado — escribí para reemplazar' : 'sin configurar'}" autocomplete="new-password">`;
+    if (t === 'bool') return `<select data-path="${c.path}" data-kind="bool"><option value="true" ${v === true ? 'selected' : ''}>true</option><option value="false" ${v === false ? 'selected' : ''}>false</option></select>`;
+    if (t === 'int' || t === 'float') return `<input type="number" step="any" data-path="${c.path}" data-kind="number" value="${v ?? ''}">`;
+    const lit = t.match(/^Literal\[(.*)\]$/);
+    if (lit) {
+      const opts = lit[1].split(',').map(s => s.trim().replace(/^'|'$/g, ''));
+      return `<select data-path="${c.path}">${opts.map(o => `<option value="${o}" ${o === v ? 'selected' : ''}>${o}</option>`).join('')}</select>`;
+    }
+    if (v !== null && typeof v === 'object') return `<textarea data-path="${c.path}" data-kind="json">${escapeHtml(JSON.stringify(v, null, 2))}</textarea>`;
+    if (typeof v === 'string' && v.includes('\n')) return `<textarea data-path="${c.path}">${escapeHtml(v)}</textarea>`;
+    return `<input type="text" data-path="${c.path}" value="${escapeAttr(v === null ? '' : String(v))}" placeholder="${v === null ? 'null' : ''}">`;
+  }
+
+  function escapeHtml(s) { return s.replace(/[&<>]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[ch])); }
+  function escapeAttr(s) { return escapeHtml(s).replace(/"/g, '&quot;'); }
+
+  function render() {
+    const f = $('#filter').value.trim().toLowerCase();
+    const onlyMine = $('#only-overrides').checked;
+    const mine = layerOfThisView();
+    const groups = new Map();
+    for (const c of state.campos) {
+      if (onlyMine && c.origen !== mine) continue;
+      if (f && !(c.path.toLowerCase().includes(f) || (c.doc || '').toLowerCase().includes(f) || String(c.valor).toLowerCase().includes(f))) continue;
+      const sec = c.path.split('.')[0];
+      if (!groups.has(sec)) groups.set(sec, []);
+      groups.get(sec).push(c);
+    }
+    const out = [];
+    for (const [sec, campos] of groups) {
+      out.push(`<section><h2>${sec}</h2><table><thead><tr><th>path</th><th>valor</th><th>origen</th><th></th></tr></thead><tbody>`);
+      for (const c of campos) {
+        const dirty = c.path in state.cambios; const inh = state.heredar.has(c.path);
+        const canInherit = c.origen === mine;
+        out.push(`<tr class="${dirty ? 'dirty' : ''} ${inh ? 'inherit' : ''}" data-row="${c.path}">
+          <td class="path">${c.path}${c.secreto ? ' <span class="badge secret">secreto</span>' : ''}<small>${c.tipo || ''}${c.default !== null && c.default !== undefined && typeof c.default !== 'object' ? ' · default: ' + escapeHtml(String(c.default)) : ''}</small>
+            ${c.doc ? `<details><summary>ayuda</summary><p>${escapeHtml(c.doc)}</p></details>` : ''}</td>
+          <td class="val">${inputFor(c)}</td>
+          <td><span class="badge ${c.origen}">${c.origen}</span></td>
+          <td class="actions">${canInherit ? `<button data-inherit="${c.path}" title="${mine === 'global' ? 'volver al default del schema' : 'volver a heredar de global'}">${inh ? 'no heredar' : 'heredar'}</button>` : ''}</td>
+        </tr>`);
+      }
+      out.push('</tbody></table></section>');
+    }
+    $('#tables').innerHTML = out.join('') || '<p class="muted">Nada que mostrar.</p>';
+    updateDirty();
+  }
+
+  function parseValue(el) {
+    const kind = el.dataset.kind;
+    const raw = el.value;
+    if (kind === 'bool') return raw === 'true';
+    if (kind === 'number') { if (raw === '') return null; const n = Number(raw); if (Number.isNaN(n)) throw new Error(`${el.dataset.path}: no es un número`); return n; }
+    if (kind === 'json') { try { return JSON.parse(raw); } catch (e) { throw new Error(`${el.dataset.path}: JSON inválido (${e.message})`); } }
+    return raw;
+  }
+
+  $('#tables').addEventListener('change', (e) => {
+    const el = e.target; if (!el.dataset.path) return;
+    try {
+      const v = parseValue(el);
+      if (el.type === 'password' && v === '') { delete state.cambios[el.dataset.path]; }
+      else { state.cambios[el.dataset.path] = v; state.heredar.delete(el.dataset.path); }
+      msg('', '');
+    } catch (err) { msg('err', err.message); return; }
+    const row = el.closest('tr'); row.classList.add('dirty'); row.classList.remove('inherit');
+    updateDirty();
+  });
+
+  $('#tables').addEventListener('click', (e) => {
+    const p = e.target.dataset && e.target.dataset.inherit; if (!p) return;
+    if (state.heredar.has(p)) state.heredar.delete(p); else { state.heredar.add(p); delete state.cambios[p]; }
+    render();
+  });
+
+  function updateDirty() {
+    const n = Object.keys(state.cambios).length + state.heredar.size;
+    $('#dirty-count').textContent = n ? `${n} cambio(s) sin guardar` : 'Sin cambios';
+    $('#save').disabled = n === 0;
+  }
+
+  $('#save').addEventListener('click', async () => {
+    const { layer, agent_id } = currentLayer();
+    try {
+      $('#save').disabled = true;
+      const d = await api('/admin/config/layer', { method: 'PUT', body: JSON.stringify({ layer, agent_id, cambios: state.cambios, heredar: [...state.heredar] }) });
+      state.campos = d.campos; state.cambios = {}; state.heredar = new Set();
+      render();
+      msg('ok', `Guardado en la capa ${layer}${agent_id ? ' · ' + agent_id : ''}: ${d.cambiados.length} cambio(s), ${d.heredados.length} heredado(s). ${state.daemon ? 'Recargá el daemon para aplicar.' : 'Aplica al próximo arranque.'}`);
+    } catch (e) { msg('err', 'No se guardó (la capa quedó como estaba).\n' + e.message); updateDirty(); }
+  });
+
+  $('#discard').addEventListener('click', load);
+  $('#reload-view').addEventListener('click', load);
+  $('#layer').addEventListener('change', load);
+  $('#filter').addEventListener('input', render);
+  $('#only-overrides').addEventListener('change', render);
+  $('#reload-daemon').addEventListener('click', async () => {
+    try { await api('/reload', { method: 'POST' }); msg('ok', 'Reload solicitado: el daemon cierra y vuelve a levantar los canales.'); }
+    catch (e) { msg('err', e.message); }
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>

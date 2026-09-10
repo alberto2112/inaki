@@ -27,6 +27,10 @@ servidor REST por agente.
 | GET | `/admin/tool/list` | Lista las tools registradas en un agente |
 | POST | `/admin/tool/invoke` | Invoca una tool directamente |
 | POST | `/admin/send` | Manda texto/media a un canal desde un agente |
+| GET | `/admin/config/agents` | Ids de agentes y sub-agentes, y si la UI corre en el daemon |
+| GET | `/admin/config/effective` | Config efectiva con origen y ayuda del schema (`?agent=X`); secretos redactados |
+| PUT | `/admin/config/layer` | Edita una capa — body `{"layer": "global\|agent\|sub_agent", "agent_id", "cambios": {path: valor}, "heredar": [path]}`. Valida con el loader del arranque; `422` con el mensaje del loader y la capa intacta si no carga |
+| GET | `/admin/config/ui` | La UI web de config (HTML, sin auth: los datos los pide con la key) |
 
 > `POST /admin/tool/invoke` es el **gateway admin único** de la regla del canal
 > THIN: una capacidad se implementa una vez y se expone por use case, tool del

@@ -29,8 +29,8 @@ tool_config:
 
 ## Cómo funciona
 
-Una tool declara `config_namespace` (class attr) y el container le inyecta el
-store en construcción. Las escrituras de `configure` tienen efecto inmediato (sin
+Una tool declara `config_namespace` (class attr) y el `wiring.py` de su módulo le
+inyecta el store al construirla. Las escrituras de `configure` tienen efecto inmediato (sin
 reinicio) y sobreviven reinicios.
 
 Los campos sensibles se cifran en reposo con la clave autogenerada en

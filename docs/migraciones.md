@@ -45,6 +45,7 @@ existe este documento— y la contradicción no queda flotando.
 | [`channel-contextid`](#channel-contextid) | `mv` de los ficheros de contexto a `{context_id}.md` + cambiar la variable del prompt |
 | [`per-user-context-files`](#per-user-context-files) | *(superseded)* `mv` de `USER.md` a `users/{channel}/…` |
 | [`config-falla-ruidoso`](#config-falla-ruidoso) | **Puede impedir el arranque**: corregir el typo/valor que el error nombra (antes se ignoraba en silencio) |
+| [`refactor-modular`](#refactor-modular) | Índice del refactor modular 2026-09 (fases 0–12, PRs #40–#59): qué se movió y qué nota dejó cada fase |
 | [`agentes-y-providers-web`](#agentes-y-providers-web) | La UI de config crea y borra agentes y providers (validado, con rollback y con guards para `default_agent` y providers en uso); borrar un agente no toca sus datos |
 | [`config-web`](#config-web) | Comando nuevo `inaki config web` y endpoints `/admin/config/*` en el admin server: la config efectiva con origen, editable por capa y validada con el loader del arranque |
 | [`instalacion-como-producto`](#instalacion-como-producto) | Nuevos `inaki init` e `inaki service install\|uninstall`; `systemd/install.sh` desaparece; el symlink `/usr/local/bin/inaki` pasa a ser opt-in (`--link-cli`); `insightface` es el extra `faces`; `tokenizers` declarado |
@@ -116,12 +117,61 @@ de `global.yaml`).
 - **Memoria**: `memory-management-tools`, `memory-scoped-by-channel-chat`,
   `agent-state-scoped-by-channel-chat`
 - **Scheduler**: `modulos-scheduler-y-agents`, `scheduler-trigger-type-mutable`, `channel-send-history-persist`
+- **Refactor modular 2026-09 (índice)**: `refactor-modular`
 - **Instalación y producto**: `instalacion-como-producto`, `config-web`, `agentes-y-providers-web`
 - **Tools y config**: `runtimes-tipados`, `wiring-por-modulo`, `kernel-y-fachada-de-tools`, `modulos-tools-llm-extensions`, `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `refactor-modular`
+
+**Contexto (2026-09-08 → 2026-09-10).** Trece fases, veinte PRs (#40 a #59), un objetivo: que
+el árbol diga qué hace el sistema. Antes, `core/` + `adapters/` + `infrastructure/` +
+`container.py` (un dios de 1.500 líneas) + un setup TUI de 5.000 líneas que peleaba con la
+semántica de merge. Después, un **monolito modular** bajo `inaki/`: kernel + un paquete por
+feature (cada uno con su `wiring.py`) + un paquete por canal + un composition root que solo
+decide el orden. La ley de dependencias dejó de ser un test con listas de deuda y pasó a ser
+quince contratos de `import-linter`.
+
+Esta nota es el índice. Cada fase dejó su nota con el porqué, el cambio, lo observable y la
+invariante; leé la de la zona que vas a tocar.
+
+| Fase | PR | Qué pasó | Nota |
+|---|---|---|---|
+| 0 | #40 | Red de seguridad: golden paths, contratos de broadcast, `lint-imports` | *(sin nota: sin cambios de comportamiento)* |
+| 1 | #41 | Nacen `inaki/shared` (primitivas sin dependencias) e `inaki/observability` (un solo stack de logging, modo debug, trazas de turno) | `observabilidad-un-solo-stack` |
+| 2 | #42 | Nace `inaki/config` (schema por secciones, loader, merge, home); el setup TUI se retira | `modulo-config-y-retiro-del-tui` |
+| 3 | #43 | Contrato de canal en el kernel (`IChannel` + `IChannelOutbound`); un solo egress | `egress-unico` |
+| 4 | #44 | Nace `inaki/channels/telegram` con el broadcast adentro; registro de canales en config | `canal-telegram-vertical` |
+| 5 | #45 | `inaki/channels/{rest,cli}`, `inaki/cli` (un módulo por comando), `inaki/app` | `composition-root-y-canales-rest-cli` |
+| 6 | #46 | Nace `inaki/perception` (fotos, caras, escena, transcripción como use case) | `modulo-perception` |
+| 7a | #47 | Nacen `inaki/embedding`, `inaki/memory`, `inaki/knowledge`, `inaki/skills` | `modulos-embedding-memory-knowledge-skills` |
+| 7b | #49 | Nacen `inaki/tools`, `inaki/llm`, `inaki/extensions`; `ext_dirs` anclado al home | `modulos-tools-llm-extensions` |
+| 8 | #50 | Nacen `inaki/scheduler` (tier entero) e `inaki/agents`; `adapters/` desaparece | `modulos-scheduler-y-agents` |
+| 9a | #51 | `core/` pasa a `inaki/kernel`; las factories a `wiring.py`; `infrastructure/` desaparece | `kernel-y-fachada-de-tools` |
+| 9b | #52 | Cada módulo se ensambla en su `wiring.py`; `container.py` queda fino | `wiring-por-modulo` |
+| 9c | #53 | `container.py` desaparece; `inaki/app/assembly.py` entrega runtimes tipados e inmutables | `runtimes-tipados` |
+| 10 | #54 | El kernel corre el turno: `ConversationHistory`, thinking como capacidad del outbound, debug de fotos → trazas | `kernel-limpio` |
+| 4b | #55 | `TelegramBot` deja los mixins y compone colaboradores con constructor explícito | `telegram-composicion` |
+| 11a | #56 | `inaki init`, `inaki service install`, descarga del modelo, `insightface` como extra | `instalacion-como-producto` |
+| 11b | #57 | `inaki config web`: la config efectiva con origen, editable por capa y validada | `config-web` |
+| 11c | #58 | La UI crea y borra agentes y providers, con guards para lo que el loader no vigila | `agentes-y-providers-web` |
+| 12a | #59 | Documentación y reglas reescritas sobre el layout nuevo (esta nota) | `refactor-modular` |
+
+**Lo que quedó fuera, a propósito.** Aplanar `inaki/kernel/{domain,ports,use_cases}` (12b):
+mover ficheros del kernel toca cientos de imports y no cambia ninguna regla, así que va en
+su propio PR mecánico. Y `main.py` sigue como wrapper hasta que las unidades systemd viejas
+se regeneren con `inaki service install`.
+
+**Invariante que dejó.** La que subyace a todas las demás: **el árbol es la arquitectura**.
+Un módulo nuevo es un paquete bajo `inaki/` con su `wiring.py` y su contrato en
+`pyproject.toml`; una capacidad nueva es un use case + una tool; un canal nuevo es un paquete
+bajo `inaki/channels/`. Si para agregar algo hay que tocar el composition root en más de un
+sitio, o importar algo que la ley prohíbe, el diseño está mal — no la ley.
 
 ---
 

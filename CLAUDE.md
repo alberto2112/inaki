@@ -23,6 +23,8 @@ pytest tests/integration/        # integration only
 pytest -k test_name              # single test
 lint-imports                     # ley de dependencias entre capas (import-linter)
 inaki config show --origin       # config efectiva con la capa de cada valor
+inaki init                       # primer arranque: provider, agente, Telegram, modelo de embeddings
+inaki service install            # unidad systemd generada desde el paquete (sin root, dicta los sudo)
 inaki config show --secrets      # qué credenciales están puestas y cuáles faltan
 inaki config web                 # la misma vista, editable por capa, en el navegador (también en el daemon: /admin/config/ui)
 inaki                            # interactive chat (default agent)
@@ -47,29 +49,13 @@ dirección de dependencias es `composition root → módulos → kernel`. **Nunc
 
 `<home>/ext/` (`app.ext_dirs`) — extensiones de usuario, auto-descubiertas vía `manifest.py` por `inaki/extensions/`.
 
-> **Refactor modular en curso (2026-09).** El código se está reorganizando por
-> FEATURE bajo el namespace `inaki/` (monolito modular: kernel + módulos +
-> canales + composition root). Ya existen `inaki/shared/` (primitivas de dominio
-> compartidas: `Message`/`Role`, gramática de attachments, `ChannelContext`,
-> errores, skip marker — **no importa nada del proyecto**) e
-> `inaki/observability/` (logging unificado, modo debug, trazas de turno,
-> eventos de arranque), `inaki/config/` (schema por secciones, loader, merge,
-> home, config efectiva, borde de errores; el setup TUI fue retirado) e
-> `inaki/channels/telegram/` (el primer canal vertical: bot, outbound como borde con
-> emisión de broadcast, transporte TCP, ficheros y su sección de config registrada).
-> Después: `inaki/channels/{rest,cli}/`, `inaki/cli/` (un módulo por comando), `inaki/app/`
-> (bootstrap, runner, reloader) e `inaki/perception/` (fotos, caras, escena y voz,
-> independientes del canal; `TranscribeAudioUseCase` reemplaza la transcripción inline).
-> Y los módulos del núcleo `inaki/embedding/`, `inaki/memory/`, `inaki/knowledge/` e
-> `inaki/skills/` (adapters, use cases y tools; los ports que consume el turno viven en el kernel),
-> `inaki/tools/` (registro con routing, builtins, store del Tool Config Protocol), `inaki/llm/`
-> (providers), `inaki/extensions/` (descubrimiento de `manifest.py`), `inaki/scheduler/` (tier
-> harness-global entero: dominio, ports, servicio, repo, reconciler y la tool partida por operación)
-> e `inaki/agents/` (dispatcher por scope, scope registry, `delegate` y la cola background). La ley de
-> dependencias vive en `pyproject.toml` → `[tool.importlinter]` y la verifica `lint-imports`.
-> `core/` es ahora `inaki/kernel/` y las factories son el `wiring.py` de su módulo; `adapters/` e
-> `infrastructure/` ya no existen; `container.py` se disolvió en el `wiring.py` de cada módulo y
-> en `inaki/app/assembly.py`, que entrega `AgentRuntime`/`HarnessRuntime` inmutables.
+El layout de arriba es el resultado del **refactor modular de 2026-09** (fases 0 a 12,
+PRs #40 a #59): `core/`, `adapters/` e `infrastructure/` ya no existen, `container.py` se
+disolvió en el `wiring.py` de cada módulo y en `inaki/app/assembly.py`, y el setup TUI se
+retiró a favor de `inaki init` + `inaki config web`. La nota `refactor-modular` de
+[`docs/migraciones.md`](docs/migraciones.md) enlaza, fase por fase, qué se movió y qué
+regla dejó cada una. Lo único pendiente de ese plan es aplanar
+`inaki/kernel/{domain,ports,use_cases}` (12b).
 
 La ley entre paquetes la verifica `lint-imports`. Lo único que import-linter no expresa, el
 allowlist de terceros del kernel, lo verifica `tests/kernel/test_terceros_del_kernel.py`
@@ -254,7 +240,7 @@ Cada una salió de un fallo en producción. El caso completo está en
   → cabecera de [`migraciones.md`](docs/migraciones.md)
 - **NUNCA** construir una interfaz de config sobre los ficheros crudos: se construye
   sobre la config EFECTIVA con origen (`ShowEffectiveConfigUseCase`, `inaki config
-  show`). Sobre ficheros crudos + semántica de merge es el problema en el que el setup TUI se
+  show`, `inaki config web`). Sobre ficheros crudos + semántica de merge es el problema en el que el setup TUI se
   enterró con 5.000 líneas (retirado en 2026-09). → `config-show-effective`
 - **NUNCA** sanitizar un valor de config a un default "para no romper el arranque":
   un default silencioso que contradice el YAML es un bug que no se puede diagnosticar.

@@ -54,8 +54,7 @@ PRs #40 a #59): `core/`, `adapters/` e `infrastructure/` ya no existen, `contain
 disolvió en el `wiring.py` de cada módulo y en `inaki/app/assembly.py`, y el setup TUI se
 retiró a favor de `inaki init` + `inaki config web`. La nota `refactor-modular` de
 [`docs/migraciones.md`](docs/migraciones.md) enlaza, fase por fase, qué se movió y qué
-regla dejó cada una. El plan está cerrado; solo queda retirar `main.py` cuando las unidades
-systemd viejas estén regeneradas con `inaki service install`.
+regla dejó cada una. El plan está cerrado.
 
 La ley entre paquetes la verifica `lint-imports`. Lo único que import-linter no expresa, el
 allowlist de terceros del kernel, lo verifica `tests/kernel/test_terceros_del_kernel.py`

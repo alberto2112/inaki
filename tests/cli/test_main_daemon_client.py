@@ -1,4 +1,4 @@
-"""Tests para el routing de CLI via daemon client en main.py."""
+"""Tests para el routing de CLI via daemon client (`inaki/cli`)."""
 
 from __future__ import annotations
 

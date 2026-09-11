@@ -198,8 +198,8 @@ invariante; leé la de la zona que vas a tocar.
 | 12a | #59 | Documentación y reglas reescritas sobre el layout nuevo (esta nota) | `refactor-modular` |
 | 12b | #60 | `inaki/kernel` pierde un nivel: `domain/` y `ports/` planos, el turno en la raíz | `kernel-plano` |
 
-**Lo único abierto.** `main.py` sigue como wrapper hasta que las unidades systemd viejas se
-regeneren con `inaki service install`; después se retira en un PR propio.
+*Cerrado después (2026-09-11, PR #62):* `main.py` se retiró una vez que la unidad
+generada por `inaki service install` quedó corriendo en la Pi. No queda nada abierto del plan.
 
 **Invariante que dejó.** La que subyace a todas las demás: **el árbol es la arquitectura**.
 Un módulo nuevo es un paquete bajo `inaki/` con su `wiring.py` y su contrato en
@@ -339,6 +339,12 @@ instalación limpia habría fallado en el primer embedding.
 - **El symlink `/usr/local/bin/inaki`** ya no se crea por default: `--link-cli` lo pide.
   El daemon no lo necesita (`ExecStart` absoluto) y la shell lo encuentra por pipx o el
   venv. Quien dependía de que el `shell_exec` del agente viera el CLI, lo pide con el flag.
+
+*Cerrado después (2026-09-11, PR #62):* `main.py` se retiró; la unidad nueva ya corría en la
+Pi. De paso, la instalación real en esa máquina destapó dos cosas que el README no decía: la vía
+`pipx` exige un pipx moderno sobre Python 3.11+ (el de Debian 10 ni parsea el extra `[faces]` ni
+puede correr Inaki), y en una máquina con el repo clonado el camino simple es un venv editable
+dentro del repo. Las dos quedaron documentadas.
 
 **Invariante que dejó.** **NUNCA** un script de instalación que asuma dónde está el
 código o el intérprete: lo que arranca el daemon es el console script del entorno que

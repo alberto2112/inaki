@@ -70,13 +70,23 @@ inaki service install                                       # systemd unit (prin
 
 Face recognition (`photos.enabled`) needs `insightface`, which compiles on ARM, so it is an **optional extra**: `pipx install "inaki[faces] @ git+https://github.com/alberto2112/inaki"`. With photos enabled and the extra missing, the daemon starts without photos and logs an `ERROR` saying so.
 
-For development, clone and install editable:
+> **Requirements for the pipx route**: Python **3.11+** and a modern pipx (1.1+). The pipx shipped by Debian 10/11 runs on the system Python 3.7/3.9 and cannot even parse the `[faces]` extra — it creates a venv literally named `.[faces]`. On an old OS, either upgrade it (Debian 12 ships Python 3.11) or use the clone route below with a Python you install yourself (for example `uv venv --python 3.12 .venv`).
+
+### From a clone (a Pi you update with `git pull`)
+
+If the repo lives on the machine, skip pipx and use an **editable venv inside the repo**: `git pull` updates the code in place, and the systemd unit points at that venv's interpreter.
 
 ```bash
-git clone https://github.com/alberto2112/inaki.git
-cd inaki
-pip install -e ".[dev]"
+git clone https://github.com/alberto2112/inaki.git ~/python/inaki
+cd ~/python/inaki
+python3 -m venv .venv && .venv/bin/pip install --upgrade pip
+.venv/bin/pip install -e ".[faces]"      # drop [faces] without face recognition; add ,dev for development
+.venv/bin/inaki init
+.venv/bin/inaki service install          # the unit's ExecStart is this venv's inaki, absolute path
+ln -sfn ~/python/inaki/.venv/bin/inaki ~/.local/bin/inaki   # for your shell; the daemon never needs PATH
 ```
+
+After a `git pull`, code changes are live on the next restart. When `pyproject.toml` changes its dependencies, run `.venv/bin/pip install -e ".[faces]"` again (with pipx: `pipx reinstall inaki`). For development, add the `dev` extra: `pip install -e ".[dev]"`.
 
 ## Configuration
 

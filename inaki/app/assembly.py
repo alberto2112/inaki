@@ -805,7 +805,7 @@ def _congelar(b: _Borrador) -> AgentRuntime:
         process_photo=b.process_photo,
         broadcast_egress=b.telegram.egress if b.telegram else None,
         broadcast_adapter=b.telegram.broadcast if b.telegram else None,
-        group_rate_limiter=b.telegram.rate_limiter if b.telegram else None,
+        group_rate_limit=b.telegram.rate_limit if b.telegram else None,
         telegram_file_repo=b.telegram_file_repo,
         telegram_file_downloader=b.telegram_file_downloader,
     )

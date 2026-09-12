@@ -72,11 +72,11 @@ class BroadcastIngress:
         """Callback invocado por el adapter por cada ``BroadcastMessage`` válido.
 
         Se persiste SIEMPRE con prefijo ``<agent_id> said: ...`` y luego se decide
-        si programar un flush task. Si el rate limiter hace breach, el broadcast
-        queda guardado en historial pero NO se programa respuesta — cuando
-        despierte el flush activo (o llegue un trigger posterior), el batch
-        acumulado va a ser leído íntegro. Mismo orden que ``GroupFlow.handle_message``
-        para mensajes humanos: persistir primero, rate-limitar solo el flush.
+        si programar un flush task. Si el agente está en cooldown, el broadcast
+        queda guardado en historial pero NO se programa respuesta — cuando el
+        cooldown venza (o lo levante un humano), el batch acumulado va a ser
+        leído íntegro. Mismo orden que ``GroupFlow.handle_message`` para mensajes
+        humanos: persistir primero, rate-limitar solo el flush.
 
         Silencioso y defensivo: cualquier excepción queda aquí.
         """
@@ -109,26 +109,25 @@ class BroadcastIngress:
                 _format_history_prefix(msg), channel="telegram", chat_id=msg.chat_id
             )
 
-            # Rate limiter por (agent_id, chat_id) — evita tormentas bot-to-bot.
-            # Solo ``assistant_response`` consume el contador (único event_type que
-            # puede producir loops entre bots). Los ``user_input_*`` vienen de un
-            # humano: no consumen y además RESETEAN, igual que un mensaje humano
-            # nativo. La señal es "habló un humano", da igual por qué transporte
-            # llegó (``broadcast-human-reset``). Gobierna SOLO el flush: el
-            # broadcast ya quedó persistido arriba.
+            # Rate limit de grupo — evita tormentas bot-to-bot. Los ``user_input_*``
+            # vienen de un humano de la otra Pi: RESETEAN, igual que un mensaje
+            # humano nativo. La señal es "habló un humano", da igual por qué
+            # transporte llegó (``broadcast-human-reset``). Gobierna SOLO el flush:
+            # el broadcast ya quedó persistido arriba.
             if msg.event_type.startswith("user_input_"):
                 self._rate_limit.reset(msg.chat_id)
 
-            if msg.event_type == "assistant_response":
-                breach = self._rate_limit.check(msg.chat_id)
-                if breach is not None:
-                    logger.info(
-                        "broadcast.trigger.skip.rate_limited agent=%s chat_id=%s counter=%d",
-                        self._agent_id,
-                        msg.chat_id,
-                        breach.counter,
-                    )
-                    return
+            enfriando = self._rate_limit.cooldown(msg.chat_id)
+            if enfriando is not None:
+                logger.info(
+                    "broadcast.trigger.skip.cooldown agent=%s chat_id=%s consecutivas=%d "
+                    "retry_in=%.1fs",
+                    self._agent_id,
+                    msg.chat_id,
+                    enfriando.consecutive,
+                    enfriando.retry_in,
+                )
+                return
 
             self._groups.schedule_flush(msg.chat_id, "supergroup")
         except Exception:

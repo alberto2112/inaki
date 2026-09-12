@@ -83,7 +83,7 @@ class TelegramBot:
         ports: TelegramBotPorts,
         broadcast_emitter: BroadcastEmitter | None = None,
         broadcast_receiver: BroadcastReceiver | None = None,
-        rate_limiter=None,
+        rate_limit: GroupRateLimit | None = None,
         reloader=None,
     ) -> None:
         self._settings = settings
@@ -128,8 +128,10 @@ class TelegramBot:
         # --- colaboradores, en orden de dependencia ---
         self._auth = TelegramAuth(tg_cfg.allowed_user_ids, tg_cfg.allowed_chat_ids)
         self._reactions = Reactions(private=tg_cfg.reactions, groups=grupos.reactions)
-        self._rate_limit = GroupRateLimit(
-            rate_limiter,
+        # La política la construye el ``wiring`` (sabe si el agente es autónomo);
+        # el fallback deshabilitado cubre al caller que arma un bot suelto (tests).
+        self._rate_limit = rate_limit or GroupRateLimit(
+            enabled=False,
             agent_id=settings.id,
             max_count=grupos.rate_limiter,
             window_seconds=grupos.rate_limiter_window,

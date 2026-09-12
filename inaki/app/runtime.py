@@ -20,7 +20,7 @@ from inaki.agents.dispatcher import LLMDispatcherAdapter
 from inaki.app.reloader import DaemonReloader
 from inaki.channels.telegram.bot import TelegramBot
 from inaki.channels.telegram.broadcast.egress import BroadcastEgress
-from inaki.channels.telegram.broadcast.rate_limiter import FixedWindowRateLimiter
+from inaki.channels.telegram.rate_limit import GroupRateLimit
 from inaki.channels.telegram.broadcast.tcp import TcpBroadcastAdapter
 from inaki.channels.telegram.files.ports import IFileDownloader, IFileRecordRepo
 from inaki.config import AgentConfig, AgentRegistry, GlobalConfig
@@ -85,7 +85,7 @@ class AgentRuntime:
     process_photo: ProcessPhotoUseCase | None
     broadcast_egress: BroadcastEgress | None
     broadcast_adapter: TcpBroadcastAdapter | None
-    group_rate_limiter: FixedWindowRateLimiter | None
+    group_rate_limit: GroupRateLimit | None
     telegram_file_repo: IFileRecordRepo | None
     telegram_file_downloader: IFileDownloader | None
 

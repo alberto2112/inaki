@@ -151,15 +151,19 @@ class GroupFlow:
         if behavior == "autonomous" and self._rate_limit.enabled:
             sender = update.message.from_user if update.message is not None else None
             if sender and not sender.is_bot:
+                # Habló un humano: re-armado inmediato. Va ANTES del gate, así
+                # el mismo mensaje que levanta el cooldown ya puede responderse.
                 self._rate_limit.reset(chat_id_str)
 
-            breach = self._rate_limit.check(chat_id_str)
-            if breach is not None:
+            enfriando = self._rate_limit.cooldown(chat_id_str)
+            if enfriando is not None:
                 logger.debug(
-                    "Rate limit alcanzado en grupo (agent=%s, chat_id=%s, counter=%d)",
+                    "Cooldown activo en grupo (agent=%s, chat_id=%s, consecutivas=%d, "
+                    "retry_in=%.1fs)",
                     self._agent_id,
                     chat_id,
-                    breach.counter,
+                    enfriando.consecutive,
+                    enfriando.retry_in,
                 )
                 return
 
@@ -182,6 +186,11 @@ class GroupFlow:
 
         El turno lee el historial vía ``execute()`` sin user_input — la query
         se deriva del trailing batch de role=user del historial.
+
+        Lo que el agente EMITE cuenta como intervención (``record_response``):
+        el presupuesto se gasta al hablar, no al recibir. Un turno que termina
+        en ``__SKIP__`` no cuenta, y los N mensajes que se coalescieron en este
+        flush son UNA sola intervención.
         """
         delay = random.uniform(self._min_delay, self._max_delay)
         logger.debug(
@@ -191,7 +200,11 @@ class GroupFlow:
             delay,
         )
         await asyncio.sleep(delay)
-        await self._turns.run_group(chat_id_str, chat_type, self.last_sender.get(chat_id_str, {}))
+        respondio = await self._turns.run_group(
+            chat_id_str, chat_type, self.last_sender.get(chat_id_str, {})
+        )
+        if respondio and self._behavior == "autonomous":
+            self._rate_limit.record_response(chat_id_str)
 
     async def resolve_bot_username(self, bot: Bot) -> None:
         """Obtiene y valida el username del bot contra la API de Telegram.

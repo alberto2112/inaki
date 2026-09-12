@@ -18,7 +18,6 @@ from typing import Literal, Protocol
 from inaki.channels.telegram.bot import TelegramBot
 from inaki.channels.telegram.broadcast.buffer import BroadcastBuffer
 from inaki.channels.telegram.broadcast.egress import BroadcastEgress
-from inaki.channels.telegram.broadcast.rate_limiter import FixedWindowRateLimiter
 from inaki.channels.telegram.broadcast.tcp import TcpBroadcastAdapter
 from inaki.channels.telegram.channel import TelegramChannel
 from inaki.channels.telegram.config import TelegramChannelConfig, telegram_config
@@ -26,6 +25,7 @@ from inaki.channels.telegram.files.downloader import TelegramFileDownloader
 from inaki.channels.telegram.files.ports import IFileDownloader, IFileRecordRepo
 from inaki.channels.telegram.files.repo import SqliteTelegramFileRepo
 from inaki.channels.telegram.outbound import TelegramChannelOutbound
+from inaki.channels.telegram.rate_limit import GroupRateLimit
 from inaki.channels.telegram.ports import (
     TelegramBotPorts,
     TelegramBotSettings,
@@ -173,8 +173,9 @@ class TelegramAgentResources:
     """Política de emisión al LAN (flags ``emit.*``): la comparten outbound y bot."""
     broadcast: TcpBroadcastAdapter | None
     """Transporte TCP; ``None`` sin bloque ``broadcast:`` o con ``enabled=false``."""
-    rate_limiter: FixedWindowRateLimiter | None
-    """Rate limiter de grupos (``behavior=autonomous``). No depende del broadcast."""
+    rate_limit: GroupRateLimit
+    """Política de rate limit de grupos (``behavior=autonomous``). No depende del
+    broadcast: deshabilitada es un no-op, nunca ``None``."""
 
 
 def build_broadcast(agent_cfg: AgentConfig) -> TelegramAgentResources | None:
@@ -189,16 +190,23 @@ def build_broadcast(agent_cfg: AgentConfig) -> TelegramAgentResources | None:
     if tg_cfg is None:
         return None
     flags = build_telegram_channel_settings(tg_cfg).emit
-    rate_limiter: FixedWindowRateLimiter | None = None
     groups_cfg = tg_cfg.groups
-    if groups_cfg is not None and groups_cfg.behavior == "autonomous":
-        rate_limiter = FixedWindowRateLimiter(window_seconds=float(groups_cfg.rate_limiter_window))
+    autonomo = groups_cfg is not None and groups_cfg.behavior == "autonomous"
+    rate_limit = GroupRateLimit(
+        enabled=autonomo,
+        agent_id=agent_cfg.id,
+        max_count=groups_cfg.rate_limiter if groups_cfg is not None else 0,
+        window_seconds=groups_cfg.rate_limiter_window if groups_cfg is not None else 1,
+    )
+    if autonomo:
+        assert groups_cfg is not None  # narrowing: autonomo lo implica
         startup_event(
             logger,
-            "group_rate_limiter",
+            "group_rate_limit",
             status="ok",
             agent=agent_cfg.id,
-            window_seconds=groups_cfg.rate_limiter_window,
+            max_consecutivas=groups_cfg.rate_limiter,
+            cooldown_seconds=groups_cfg.rate_limiter_window,
         )
     broadcast_cfg = tg_cfg.broadcast
     if broadcast_cfg is None or not broadcast_cfg.enabled:
@@ -212,7 +220,7 @@ def build_broadcast(agent_cfg: AgentConfig) -> TelegramAgentResources | None:
         return TelegramAgentResources(
             egress=BroadcastEgress(None, agent_cfg.id, flags),
             broadcast=None,
-            rate_limiter=rate_limiter,
+            rate_limit=rate_limit,
         )
     role: Literal["server", "client"]
     if broadcast_cfg.server is not None:
@@ -235,7 +243,7 @@ def build_broadcast(agent_cfg: AgentConfig) -> TelegramAgentResources | None:
     return TelegramAgentResources(
         egress=BroadcastEgress(adapter, agent_cfg.id, flags),
         broadcast=adapter,
-        rate_limiter=rate_limiter,
+        rate_limit=rate_limit,
     )
 
 
@@ -325,7 +333,7 @@ def build_channel(
         ports,
         broadcast_emitter=resources.broadcast if resources else None,
         broadcast_receiver=resources.broadcast if resources else None,
-        rate_limiter=resources.rate_limiter if resources else None,
+        rate_limit=resources.rate_limit if resources else None,
         reloader=reloader,
     )
     return bot, TelegramChannel(cfg.id, bot, resources.broadcast if resources else None)

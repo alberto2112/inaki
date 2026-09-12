@@ -2,7 +2,7 @@
 Test de integración: egress de broadcast en _run_pipeline del TelegramBot.
 
 Usa mocks para las dependencias externas (Telegram, LLM) y objetos reales
-para BroadcastBuffer y FixedWindowRateLimiter. Ejercita el flujo completo
+para BroadcastBuffer y GroupRateLimit. Ejercita el flujo completo
 de _run_pipeline para un chat de grupo.
 
 Cubre:
@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from inaki.channels.telegram.bot import TelegramBot
-from inaki.channels.telegram.broadcast.rate_limiter import FixedWindowRateLimiter
+from inaki.channels.telegram.rate_limit import GroupRateLimit
 from inaki.channels.telegram.ports import TelegramChannelSettings, TelegramGroupSettings
 
 # ---------------------------------------------------------------------------
@@ -85,7 +85,7 @@ def bot_fixture(emit_mock):
     agent_cfg = _make_agent_cfg(behavior="mention")
     container = _make_container()
 
-    rate_limiter = FixedWindowRateLimiter()
+    rate_limit = GroupRateLimit(enabled=True, agent_id="dev", max_count=5, window_seconds=60)
 
     # Mock del emitter con la interface correcta
     emitter = MagicMock()
@@ -100,7 +100,7 @@ def bot_fixture(emit_mock):
             ports=container,
             broadcast_emitter=emitter,
             broadcast_receiver=None,
-            rate_limiter=rate_limiter,
+            rate_limit=rate_limit,
         )
 
     return bot, emit_mock, container

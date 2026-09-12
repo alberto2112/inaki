@@ -6,7 +6,7 @@ Cubre:
 - Cambio de count + window (clamp window 1..900s).
 - Reset a defaults de config.
 - Autorización vía `allowed_user_ids` (no autorizado → silencio).
-- Sin rate_limiter wired (broadcast desactivado) → mensaje informativo.
+- Sin política wired / agente no autónomo → mensaje informativo.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from inaki.channels.telegram.broadcast.rate_limiter import FixedWindowRateLimiter
+from inaki.channels.telegram.rate_limit import GroupRateLimit
 from inaki.channels.telegram.ports import TelegramChannelSettings, TelegramGroupSettings
 
 
@@ -44,12 +44,12 @@ def agent_cfg() -> MagicMock:
 
 
 @pytest.fixture
-def rate_limiter() -> FixedWindowRateLimiter:
-    return FixedWindowRateLimiter(window_seconds=60.0)
+def rate_limit() -> GroupRateLimit:
+    return GroupRateLimit(enabled=True, agent_id="dev", max_count=5, window_seconds=60)
 
 
 @pytest.fixture
-def bot(agent_cfg, mock_container, rate_limiter):
+def bot(agent_cfg, mock_container, rate_limit):
     with patch("inaki.channels.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
         mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.connect_timeout.return_value.read_timeout.return_value.write_timeout.return_value.pool_timeout.return_value.build.return_value = mock_app
@@ -58,7 +58,7 @@ def bot(agent_cfg, mock_container, rate_limiter):
         return TelegramBot(
             settings=agent_cfg,
             ports=mock_container,
-            rate_limiter=rate_limiter,
+            rate_limit=rate_limit,
         )
 
 
@@ -101,7 +101,7 @@ async def test_cambio_de_count_solo(bot):
 
     assert bot._rate_limit.max_count == 3
     # Window NO cambia.
-    assert bot._rate_limit.limiter.window_seconds == 60.0
+    assert bot._rate_limit.window_seconds == 60
     msg = update.message.reply_text.call_args.args[0]
     assert "count=3" in msg
     assert "window=60s" in msg
@@ -158,7 +158,7 @@ async def test_cambio_de_count_y_window(bot):
     await bot._commands.cmd_ratelimit(update, context)
 
     assert bot._rate_limit.max_count == 7
-    assert bot._rate_limit.limiter.window_seconds == 300.0
+    assert bot._rate_limit.window_seconds == 300
     msg = update.message.reply_text.call_args.args[0]
     assert "count=7" in msg
     assert "window=300s" in msg
@@ -169,7 +169,7 @@ async def test_window_clampea_a_900(bot):
 
     await bot._commands.cmd_ratelimit(update, context)
 
-    assert bot._rate_limit.limiter.window_seconds == 900.0
+    assert bot._rate_limit.window_seconds == 900
     msg = update.message.reply_text.call_args.args[0]
     assert "window=900s" in msg
     assert "clampeada de 1500s a 900s" in msg
@@ -180,7 +180,7 @@ async def test_window_minimo_1(bot):
 
     await bot._commands.cmd_ratelimit(update, context)
 
-    assert bot._rate_limit.limiter.window_seconds == 1.0
+    assert bot._rate_limit.window_seconds == 1
 
 
 async def test_window_menor_a_1_es_rechazada(bot):
@@ -190,7 +190,7 @@ async def test_window_menor_a_1_es_rechazada(bot):
 
     # Ni count ni window mutan.
     assert bot._rate_limit.max_count == 5
-    assert bot._rate_limit.limiter.window_seconds == 60.0
+    assert bot._rate_limit.window_seconds == 60
     msg = update.message.reply_text.call_args.args[0]
     assert "Window debe ser >= 1" in msg
 
@@ -202,7 +202,7 @@ async def test_window_no_entera_es_rechazada(bot):
 
     # Ni count ni window mutan.
     assert bot._rate_limit.max_count == 5
-    assert bot._rate_limit.limiter.window_seconds == 60.0
+    assert bot._rate_limit.window_seconds == 60
 
 
 # ---------------------------------------------------------------------------
@@ -213,14 +213,14 @@ async def test_window_no_entera_es_rechazada(bot):
 async def test_reset_vuelve_a_defaults(bot):
     # Mutar primero.
     bot._rate_limit.max_count = 99
-    bot._rate_limit.limiter.set_window(900.0)
+    bot._rate_limit.set(99, 900)
 
     update, context = _make_update_and_context(["reset"])
 
     await bot._commands.cmd_ratelimit(update, context)
 
     assert bot._rate_limit.max_count == 5  # default de config
-    assert bot._rate_limit.limiter.window_seconds == 60.0  # default de config
+    assert bot._rate_limit.window_seconds == 60  # default de config
     msg = update.message.reply_text.call_args.args[0]
     assert "reseteado" in msg.lower()
 
@@ -250,12 +250,12 @@ async def test_usuario_no_autorizado_es_silencioso(bot):
 
 
 # ---------------------------------------------------------------------------
-# Sin rate_limiter (broadcast desactivado)
+# Sin política de rate limit (agente no autónomo)
 # ---------------------------------------------------------------------------
 
 
-async def test_sin_rate_limiter_responde_aviso(agent_cfg, mock_container):
-    # Bot sin rate_limiter inyectado.
+async def test_sin_rate_limit_responde_aviso(agent_cfg, mock_container):
+    # Bot sin política inyectada → fallback deshabilitado.
     with patch("inaki.channels.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
         mock_app_cls.builder.return_value.token.return_value.concurrent_updates.return_value.connect_timeout.return_value.read_timeout.return_value.write_timeout.return_value.pool_timeout.return_value.build.return_value = mock_app
@@ -264,7 +264,7 @@ async def test_sin_rate_limiter_responde_aviso(agent_cfg, mock_container):
         bot = TelegramBot(
             settings=agent_cfg,
             ports=mock_container,
-            rate_limiter=None,
+            rate_limit=None,
         )
 
     update, context = _make_update_and_context([])

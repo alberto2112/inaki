@@ -320,9 +320,12 @@ class SlashCommands:
         if not args:
             display_window = self._rate_limit.window_seconds
             await message.reply_text(
-                f"Rate limiter actual:\n"
-                f"  count = {self._rate_limit.max_count} (default: {self._rate_limit.default_max_count})\n"
-                f"  window = {display_window}s (default: {self._rate_limit.default_window_seconds}s)\n"
+                f"Rate limiter actual (intervenciones consecutivas sin humano):\n"
+                f"  count = {self._rate_limit.max_count} respuestas seguidas "
+                f"(default: {self._rate_limit.default_max_count})\n"
+                f"  window = {display_window}s de cooldown al llegar al count "
+                f"(default: {self._rate_limit.default_window_seconds}s)\n"
+                f"\nUn mensaje humano re-arma el contador al instante.\n"
                 f"\n"
                 f"Sintaxis:\n"
                 f"  /ratelimit <count>\n"

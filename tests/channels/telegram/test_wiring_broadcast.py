@@ -133,6 +133,6 @@ def test_grupos_autonomous_validos_si_wirean_el_rate_limiter():
     )
 
     assert recursos is not None
-    limiter = recursos.rate_limiter
-    assert limiter is not None, "un agente autonomous necesita rate limiter de grupos"
-    assert limiter._window == 45.0
+    politica = recursos.rate_limit
+    assert politica.enabled, "un agente autonomous necesita la política de rate limit"
+    assert politica.window_seconds == 45

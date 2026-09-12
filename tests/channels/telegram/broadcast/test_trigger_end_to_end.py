@@ -21,7 +21,7 @@ import pytest
 from inaki.channels.telegram.bot import TelegramBot
 from inaki.channels.telegram.broadcast.buffer import BroadcastBuffer
 from inaki.channels.telegram.broadcast.port import BroadcastMessage
-from inaki.channels.telegram.broadcast.rate_limiter import FixedWindowRateLimiter
+from inaki.channels.telegram.rate_limit import GroupRateLimit
 from inaki.channels.telegram.broadcast.tcp import TcpBroadcastAdapter
 from inaki.channels.telegram.ports import TelegramChannelSettings, TelegramGroupSettings
 
@@ -71,7 +71,7 @@ def _container(respuesta: str) -> MagicMock:
     return c
 
 
-def _build_bot(agent_cfg, container, emitter, receiver, rate_limiter):
+def _build_bot(agent_cfg, container, emitter, receiver, rate_limit):
     with patch("inaki.channels.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
         mock_app.bot.send_message = AsyncMock()
@@ -81,7 +81,7 @@ def _build_bot(agent_cfg, container, emitter, receiver, rate_limiter):
             ports=container,
             broadcast_emitter=emitter,
             broadcast_receiver=receiver,
-            rate_limiter=rate_limiter,
+            rate_limit=rate_limit,
         )
 
 
@@ -124,7 +124,9 @@ async def par_bots():
     await adapter_b.start()
     await asyncio.sleep(TICK)
 
-    rl = FixedWindowRateLimiter()
+    # Una política POR BOT: el presupuesto es del agente, no del par.
+    def _rl(agent_id: str) -> GroupRateLimit:
+        return GroupRateLimit(enabled=True, agent_id=agent_id, max_count=5, window_seconds=60)
 
     # A responde __SKIP__ por defecto para romper el loop: cuando B re-emite su
     # respuesta, A la recibe pero no vuelve a emitir. Simula un LLM sensato.
@@ -133,14 +135,14 @@ async def par_bots():
         _container("__SKIP__"),
         emitter=adapter_a,
         receiver=adapter_a,
-        rate_limiter=rl,
+        rate_limit=_rl("anacleto"),
     )
     bot_b = _build_bot(
         _agent_cfg("inaki", "inaki_bot"),
         _container("Hola desde Inaki"),
         emitter=adapter_b,
         receiver=adapter_b,
-        rate_limiter=rl,
+        rate_limit=_rl("inaki"),
     )
 
     await bot_a.subscribe_broadcast_trigger()

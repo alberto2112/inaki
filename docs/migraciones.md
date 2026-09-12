@@ -97,6 +97,7 @@ de `global.yaml`).
 | [`modulo-config-y-retiro-del-tui`](#modulo-config-y-retiro-del-tui) | Desaparece `inaki setup` (TUI retirado; la config se edita en YAML con `inaki config show --origin` de espejo); `textual` deja de ser dependencia; la config vive en `inaki/config/` con el schema partido por secciones |
 | [`observabilidad-un-solo-stack`](#observabilidad-un-solo-stack) | Cada línea de log lleva hora, nivel, logger y los campos `extra` (antes solo el mensaje); `structlog` deja de ser dependencia; nuevos `app.log_format`, `app.debug` y `inaki --debug` con trazas de turno en `<home>/debug/turns/` |
 | [`user-timezone-default`](#user-timezone-default) | Un `global.yaml` sin bloque `user:` arranca (timezone autodetectada); antes el container moría con un `ValueError` de `ZoneInfo` |
+| [`rate-limit-por-intervenciones`](#rate-limit-por-intervenciones) | El rate limiter de grupos deja de contar mensajes ENTRANTES por ventana de pared y cuenta **respuestas propias seguidas sin humano**: `rate_limiter` es el máximo de intervenciones consecutivas y `rate_limiter_window` el cooldown que dispara la última, contado desde ella. Un turno `__SKIP__` ya no gasta presupuesto |
 | [`broadcast-human-reset`](#broadcast-human-reset) | Un `user_input_voice`/`user_input_photo` recibido por broadcast **resetea** el rate limiter del grupo, igual que un mensaje humano nativo |
 
 ## Índice por subsistema
@@ -108,7 +109,7 @@ de `global.yaml`).
   `search-history-retention-horizon`
 - **Telegram y canales**: `telegram-composicion`, `channels-validados-al-cargar`, `attachment-grammar`,
   `formato-en-el-borde-del-transporte`,
-  `groups-vs-broadcast`, `broadcast-human-reset`,
+  `groups-vs-broadcast`, `broadcast-human-reset`, `rate-limit-por-intervenciones`,
   `broadcast-topology-config`, `broadcast-arranque-observable`,
   `broadcast-cross-agent-events`,
   `multi-agent-telegram-broadcast`, `telegram-group-auth`,
@@ -125,6 +126,55 @@ de `global.yaml`).
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
 - **Delegación**: `subagent-inheritance`, `background-delegation`
+
+---
+
+### `rate-limit-por-intervenciones`
+
+**Contexto (2026-09-12).** Dos agentes en `behavior: autonomous` se turnaron más
+de diez minutos en un grupo, sin un solo humano en el medio. La config de
+producción (anacleto `rate_limiter: 2` / `rate_limiter_window: 200`, inaki `2`/`60`)
+tenía el limiter puesto y activo: el limiter no estaba roto, estaba midiendo otra
+cosa.
+
+**El agujero.** `FixedWindowRateLimiter` era una **ventana fija de pared**: el
+contador arrancaba con el primer mensaje que llegaba y volvía a 1 a los
+`rate_limiter_window` segundos, sin que hablara nadie. El ciclo bot-a-bot
+(`min_delay_response`…`max_delay_response` + turno LLM + red) rondaba los 70s, o
+sea del mismo orden que la ventana: cada intercambio caía en una ventana nueva y
+el presupuesto se renovaba solo. La nota `broadcast-human-reset` ya había
+nombrado el mecanismo sin verle el filo —"la ventana fija tapaba el hueco por
+accidente"—: lo que tapaba por accidente en aquel caso, acá era el agujero
+entero. Una simulación con el limiter real y esa config daba 10 breaches y la
+conversación seguía; el ciclo lo marcaba el loop, y un loop que se autoregula el
+ritmo siempre le gana a una ventana de pared.
+
+Segundo desfasaje, más chico: el contador se consumía por **mensaje entrante**,
+no por respuesta emitida. Un turno que terminaba en `__SKIP__` —el freno sano del
+modo autónomo— gastaba presupuesto igual, y N mensajes coalescidos en un flush
+gastaban N.
+
+**Cambio.** La política pasó a contar **intervenciones consecutivas sin humano**.
+`GroupRateLimit` (que ya era el único estado mutable en runtime del bot) absorbió
+el mecanismo y `FixedWindowRateLimiter` desapareció: `record_response` cuenta lo
+que el agente EMITE (`TurnRunner.run_group` pasó a devolver `bool`: `False` para
+batch vacío, `__SKIP__` o error), y al llegar a `rate_limiter` dispara un cooldown
+de `rate_limiter_window` **contado desde esa última intervención**, no desde el
+primer mensaje de una ventana. El gate (`cooldown()`) no tiene efectos: preguntar
+no gasta. Los dos re-armados: un humano por cualquiera de los dos transportes
+(inmediato, el de `broadcast-human-reset`) o el vencimiento del cooldown. Los
+nombres de config no cambiaron —`rate_limiter` y `rate_limiter_window` siguen
+siendo los mismos campos— pero su **significado** sí: de "mensajes por ventana" a
+"respuestas seguidas" y "cooldown". El log `broadcast.trigger.skip.rate_limited`
+pasó a `broadcast.trigger.skip.cooldown`.
+
+**Invariante que dejó.** **NUNCA** expresar "no hablen solos" como una ventana de
+pared: en un loop bot-a-bot el reloj lo controla el propio loop, así que la
+ventana se le sincroniza y el presupuesto se renueva justo a tiempo para el
+turno siguiente. Lo que hay que acotar son las intervenciones **consecutivas**, y
+el único reset barato que no miente es el que exige una señal externa (un humano).
+Y **NUNCA** cobrarle presupuesto a un silencio: si el modelo eligió `__SKIP__`,
+gastar cupo por eso castiga exactamente la conducta que se quiere premiar.
 
 ---
 

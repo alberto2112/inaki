@@ -189,6 +189,12 @@ Cada una salió de un fallo en producción. El caso completo está en
 - **NUNCA** estado mutable en un use case que un canal setea "para el próximo turno": lo que
   un turno necesita entra por `execute()` o por settings; lo que un operador quiere ver sale
   por el `ITurnTracer`. → `kernel-limpio`
+- **NUNCA** expresar "que no hablen solos" como una ventana de pared: en un loop bot-a-bot
+  el reloj lo marca el propio loop, la ventana se le sincroniza y el presupuesto se renueva
+  justo a tiempo. Se acotan las intervenciones CONSECUTIVAS, y el reset barato que no miente
+  es el que exige una señal externa. → `rate-limit-por-intervenciones`
+- **NUNCA** cobrarle presupuesto a un silencio: si el modelo eligió `__SKIP__`, gastar cupo
+  castiga justo la conducta que se quiere premiar. → `rate-limit-por-intervenciones`
 
 **Tools**
 

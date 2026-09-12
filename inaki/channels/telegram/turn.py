@@ -237,8 +237,12 @@ class TurnRunner:
 
     async def run_group(
         self, chat_id_str: str, chat_type: str, last_sender: dict[str, str | None]
-    ) -> None:
+    ) -> bool:
         """Flush de un grupo: construye la respuesta desde el historial y la envía.
+
+        Devuelve ``True`` solo si el agente EMITIÓ al grupo. El ``False`` cubre
+        los tres no-eventos —batch vacío, ``__SKIP__`` y error— y es lo que el
+        rate limit cuenta como intervención: un silencio no gasta presupuesto.
 
         Inyecta contexto de broadcast vía ``receiver.render`` y, en modo
         autónomo, la sección ``__SKIP__`` que permite al LLM optar por silencio.
@@ -277,7 +281,7 @@ class TurnRunner:
             if not response:
                 # execute() devolvió vacío — historial sin trailing role=user.
                 # Puede pasar si otro flush concurrente ya consumió el batch.
-                return
+                return False
 
             if self._behavior == "autonomous" and is_skip_response(response):
                 logger.debug(
@@ -285,7 +289,7 @@ class TurnRunner:
                     self._agent_id,
                     chat_id_str,
                 )
-                return
+                return False
 
             await send_html_or_plain(
                 lambda text, pm: self._app.bot.send_message(
@@ -299,6 +303,7 @@ class TurnRunner:
                     event_type="assistant_response", chat_id=chat_id_str, content=response
                 )
             )
+            return True
 
         except Exception as exc:
             # Mismo criterio que ``run``: el blip de red se loguea, no se responde.
@@ -309,7 +314,7 @@ class TurnRunner:
                     self._agent_id,
                     exc,
                 )
-                return
+                return False
             logger.exception(
                 "Error procesando flush de grupo (agent=%s, chat_id=%s)",
                 self._agent_id,
@@ -319,5 +324,6 @@ class TurnRunner:
                 await self._app.bot.send_message(chat_id=chat_id_int, text=f"Error: {exc}")
             except Exception:
                 pass
+            return False
         finally:
             self._ports.run_agent.set_extra_system_sections([])

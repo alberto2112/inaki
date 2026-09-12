@@ -125,13 +125,14 @@ into its buffer.
 ## Scenario C — `autonomous` mode with rate limiter
 
 **Objective:** bots respond on their own. The rate limiter caps how many times a bot
-is triggered by *other bots* per `(agent, chat)` within `rate_limiter_window`
-seconds. A human message, native or received via broadcast (voice/photo), resets
-the counter — so the limiter only exhausts on bot-to-bot traffic.
+may answer *in a row* in a chat without a human speaking: after `rate_limiter`
+of its own responses it enters a `rate_limiter_window`-second cooldown, counted
+from that last response. A human message, native or received via broadcast
+(voice/photo), resets the counter and lifts the cooldown at once — so the budget
+only runs out on bot-to-bot traffic.
 
 **Preparation:** `behavior: autonomous`, `rate_limiter: 3` and
-`rate_limiter_window: 300` on both sides (the window must be longer than one
-bot-to-bot cycle, ~15-40s, or the counter resets by itself). Restart.
+`rate_limiter_window: 300` on both sides. Restart.
 
 **Steps:**
 
@@ -139,13 +140,14 @@ bot-to-bot cycle, ~15-40s, or the counter resets by itself). Restart.
    **Expected:** one or both bots may respond (the LLM decides). If the LLM responds
    `[SKIP]` internally, nothing appears in Telegram.
 2. Let the bots talk to each other without intervening.
-   **Expected:** after 3 bot-triggered responses on a Pi, the next incoming
-   `assistant_response` is persisted but not answered. In that Pi's logs a
-   `broadcast.trigger.skip.rate_limited` line appears.
+   **Expected:** after 3 responses of its own on a Pi, that bot goes quiet for
+   the whole cooldown: incoming `assistant_response` messages are persisted but
+   not answered, and a `broadcast.trigger.skip.cooldown` line appears in its
+   logs. A turn answered with `__SKIP__` does not consume budget.
 3. Send a message yourself (text, or a voice note/photo so it reaches the other
    Pi only via broadcast).
    **Expected:** the counter resets on every bot that saw the human, and the
-   silenced bot is enabled to respond again without waiting for the window.
+   silenced bot is enabled to respond again without waiting out the cooldown.
 
 ## Scenario D — `chat_id` bootstrap with `/chatid`
 

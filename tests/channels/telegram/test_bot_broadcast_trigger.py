@@ -16,6 +16,8 @@ import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from inaki.channels.telegram.rate_limit import GroupRateLimit
+
 import pytest
 
 from inaki.channels.telegram.broadcast.port import BroadcastMessage
@@ -70,14 +72,12 @@ def mock_emitter() -> MagicMock:
 
 
 @pytest.fixture
-def mock_rate_limiter() -> MagicMock:
-    """Rate limiter que nunca hace breach por defecto."""
-    rl = MagicMock()
-    rl.check_and_increment = MagicMock(return_value=None)
-    return rl
+def rate_limit() -> GroupRateLimit:
+    """Política real (no mock): con presupuesto de sobra, nunca enfría."""
+    return GroupRateLimit(enabled=True, agent_id="dev", max_count=5, window_seconds=60)
 
 
-def _build_bot(agent_cfg, container, receiver=None, emitter=None, rate_limiter=None):
+def _build_bot(agent_cfg, container, receiver=None, emitter=None, rate_limit=None):
     with patch("inaki.channels.telegram.bot.Application") as mock_app_cls:
         mock_app = MagicMock()
         mock_app.bot.send_message = AsyncMock()
@@ -89,7 +89,7 @@ def _build_bot(agent_cfg, container, receiver=None, emitter=None, rate_limiter=N
             ports=container,
             broadcast_emitter=emitter,
             broadcast_receiver=receiver,
-            rate_limiter=rate_limiter,
+            rate_limit=rate_limit,
         )
 
 
@@ -148,7 +148,7 @@ async def test_subscribe_broadcast_trigger_mention_noop(mock_container, mock_rec
 
 
 async def test_on_broadcast_persiste_en_historial_y_programa_flush(
-    agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter, mock_rate_limiter
+    agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter, rate_limit
 ):
     """Un broadcast válido se persiste vía record_user_message y se crea un flush task."""
     bot = _build_bot(
@@ -156,7 +156,7 @@ async def test_on_broadcast_persiste_en_historial_y_programa_flush(
         mock_container,
         receiver=mock_receiver,
         emitter=mock_emitter,
-        rate_limiter=mock_rate_limiter,
+        rate_limit=rate_limit,
     )
     msg = _msg("comentario sobre el clima")
     await bot._ingress.on_received(msg)
@@ -179,7 +179,7 @@ async def test_on_broadcast_persiste_en_historial_y_programa_flush(
 
 
 async def test_on_broadcast_no_invoca_llm_directamente(
-    agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter, mock_rate_limiter
+    agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter, rate_limit
 ):
     """El callback NO llama a execute() — eso lo hace el flush task tras el delay."""
     bot = _build_bot(
@@ -187,7 +187,7 @@ async def test_on_broadcast_no_invoca_llm_directamente(
         mock_container,
         receiver=mock_receiver,
         emitter=mock_emitter,
-        rate_limiter=mock_rate_limiter,
+        rate_limit=rate_limit,
     )
     await bot._ingress.on_received(_msg("hola"))
     mock_container.run_agent.execute.assert_not_awaited()
@@ -204,49 +204,46 @@ async def test_on_broadcast_no_invoca_llm_directamente(
 async def test_on_broadcast_assistant_response_respeta_rate_limiter(
     agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter
 ):
-    """assistant_response con breach → persiste igual pero NO programa flush.
+    """En cooldown → persiste igual pero NO programa flush.
 
     El broadcast queda en historial para que el próximo flush lo vea — evita
-    perder eventos cuando el bot está en delay y la ventana se agotó. El
-    rate limiter solo aplica a ``assistant_response`` porque es el único
-    event_type que puede generar tormentas bot-to-bot.
+    perder eventos cuando el bot está enfriando. Y un ``assistant_response`` de
+    otro bot NO re-arma el contador: solo un humano lo hace.
     """
-    rl = MagicMock()
-    rl.check_and_increment = MagicMock(return_value=MagicMock(counter=6))
+    rl = GroupRateLimit(enabled=True, agent_id="dev", max_count=1, window_seconds=60)
+    rl.record_response("-100123")  # ya agotó su única intervención seguida
     bot = _build_bot(
         agent_cfg_autonomous,
         mock_container,
         receiver=mock_receiver,
         emitter=mock_emitter,
-        rate_limiter=rl,
+        rate_limit=rl,
     )
     await bot._ingress.on_received(_msg("cualquier cosa"))
 
     mock_container.history.record_user_message.assert_awaited_once()
     assert bot._groups.pending_tasks == {}
-    rl.check_and_increment.assert_called_once_with("inaki", "-100123", 5)
-    # Un bot NO resetea el presupuesto: solo un humano lo hace.
-    rl.reset.assert_not_called()
+    assert rl.cooldown("-100123") is not None, "el mensaje de un bot no re-arma"
 
 
 async def test_on_broadcast_user_input_voice_no_consume_rate_limiter(
     agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter
 ):
-    """user_input_voice viene del humano → no consume el contador y lo RESETEA.
+    """user_input_voice viene del humano → levanta el cooldown y programa flush.
 
-    Aunque el rate limiter esté saturado por respuestas previas de otro bot,
-    una transcripción humana siempre debe persistirse Y programar flush. Y como
-    "habló un humano", el presupuesto vuelve a cero — misma regla que el mensaje
-    humano nativo en ``_handle_group_message``, sin importar el transporte.
+    Aunque el agente esté enfriando por respuestas previas de otro bot, una
+    transcripción humana siempre debe persistirse Y programar flush: "habló un
+    humano" re-arma el contador — misma regla que el mensaje humano nativo en
+    ``handle_message``, sin importar el transporte.
     """
-    rl = MagicMock()
-    rl.check_and_increment = MagicMock(return_value=MagicMock(counter=99))
+    rl = GroupRateLimit(enabled=True, agent_id="dev", max_count=1, window_seconds=60)
+    rl.record_response("-100123")  # enfriando por respuestas previas de otro bot
     bot = _build_bot(
         agent_cfg_autonomous,
         mock_container,
         receiver=mock_receiver,
         emitter=mock_emitter,
-        rate_limiter=rl,
+        rate_limit=rl,
     )
     msg = BroadcastMessage(
         timestamp=time.time(),
@@ -260,8 +257,7 @@ async def test_on_broadcast_user_input_voice_no_consume_rate_limiter(
 
     mock_container.history.record_user_message.assert_awaited_once()
     assert "-100123" in bot._groups.pending_tasks
-    rl.check_and_increment.assert_not_called()
-    rl.reset.assert_called_once_with("inaki", "-100123")
+    assert rl.cooldown("-100123") is None, "habló un humano: re-armado inmediato"
 
     bot._groups.pending_tasks["-100123"].cancel()
     try:
@@ -273,15 +269,15 @@ async def test_on_broadcast_user_input_voice_no_consume_rate_limiter(
 async def test_on_broadcast_user_input_photo_no_consume_rate_limiter(
     agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter
 ):
-    """user_input_photo viene del humano → no consume el contador y lo RESETEA."""
-    rl = MagicMock()
-    rl.check_and_increment = MagicMock(return_value=MagicMock(counter=99))
+    """user_input_photo viene del humano → levanta el cooldown y programa flush."""
+    rl = GroupRateLimit(enabled=True, agent_id="dev", max_count=1, window_seconds=60)
+    rl.record_response("-100123")  # enfriando por respuestas previas de otro bot
     bot = _build_bot(
         agent_cfg_autonomous,
         mock_container,
         receiver=mock_receiver,
         emitter=mock_emitter,
-        rate_limiter=rl,
+        rate_limit=rl,
     )
     msg = BroadcastMessage(
         timestamp=time.time(),
@@ -295,8 +291,7 @@ async def test_on_broadcast_user_input_photo_no_consume_rate_limiter(
 
     mock_container.history.record_user_message.assert_awaited_once()
     assert "-100123" in bot._groups.pending_tasks
-    rl.check_and_increment.assert_not_called()
-    rl.reset.assert_called_once_with("inaki", "-100123")
+    assert rl.cooldown("-100123") is None, "habló un humano: re-armado inmediato"
 
     bot._groups.pending_tasks["-100123"].cancel()
     try:
@@ -306,7 +301,7 @@ async def test_on_broadcast_user_input_photo_no_consume_rate_limiter(
 
 
 async def test_on_broadcast_es_idempotente_si_hay_flush_activo(
-    agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter, mock_rate_limiter
+    agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter, rate_limit
 ):
     """Si ya hay un flush task corriendo para el chat, los broadcasts se acumulan en
     el historial pero NO se crea un nuevo task."""
@@ -315,7 +310,7 @@ async def test_on_broadcast_es_idempotente_si_hay_flush_activo(
         mock_container,
         receiver=mock_receiver,
         emitter=mock_emitter,
-        rate_limiter=mock_rate_limiter,
+        rate_limit=rate_limit,
     )
     # Forzamos que el delay no termine durante el test
     import inaki.channels.telegram.bot as bot_module
@@ -344,7 +339,7 @@ async def test_on_broadcast_es_idempotente_si_hay_flush_activo(
 
 
 async def test_on_broadcast_user_input_voice_persiste_con_prefijo_audio(
-    agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter, mock_rate_limiter
+    agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter, rate_limit
 ):
     """user_input_voice se persiste con prefijo '{sender} (audio): {content}'."""
     bot = _build_bot(
@@ -352,7 +347,7 @@ async def test_on_broadcast_user_input_voice_persiste_con_prefijo_audio(
         mock_container,
         receiver=mock_receiver,
         emitter=mock_emitter,
-        rate_limiter=mock_rate_limiter,
+        rate_limit=rate_limit,
     )
     msg = BroadcastMessage(
         timestamp=time.time(),
@@ -377,7 +372,7 @@ async def test_on_broadcast_user_input_voice_persiste_con_prefijo_audio(
 
 
 async def test_on_broadcast_user_input_photo_persiste_con_prefijo_foto(
-    agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter, mock_rate_limiter
+    agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter, rate_limit
 ):
     """user_input_photo se persiste con prefijo '{sender} (foto): {content}'."""
     bot = _build_bot(
@@ -385,7 +380,7 @@ async def test_on_broadcast_user_input_photo_persiste_con_prefijo_foto(
         mock_container,
         receiver=mock_receiver,
         emitter=mock_emitter,
-        rate_limiter=mock_rate_limiter,
+        rate_limit=rate_limit,
     )
     msg = BroadcastMessage(
         timestamp=time.time(),
@@ -409,7 +404,7 @@ async def test_on_broadcast_user_input_photo_persiste_con_prefijo_foto(
 
 
 async def test_on_broadcast_assistant_response_mantiene_prefijo_legacy(
-    agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter, mock_rate_limiter
+    agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter, rate_limit
 ):
     """assistant_response sigue persistiendo con '{agent_id} said: {content}' (backward-compat)."""
     bot = _build_bot(
@@ -417,7 +412,7 @@ async def test_on_broadcast_assistant_response_mantiene_prefijo_legacy(
         mock_container,
         receiver=mock_receiver,
         emitter=mock_emitter,
-        rate_limiter=mock_rate_limiter,
+        rate_limit=rate_limit,
     )
     msg = BroadcastMessage(
         timestamp=time.time(),
@@ -443,7 +438,7 @@ async def test_on_broadcast_assistant_response_mantiene_prefijo_legacy(
 
 
 async def test_on_broadcast_chat_no_autorizado_no_persiste_ni_flushea(
-    agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter, mock_rate_limiter
+    agent_cfg_autonomous, mock_container, mock_receiver, mock_emitter, rate_limit
 ):
     """Un broadcast de un chat FUERA de allowed_chat_ids se ignora por completo.
 
@@ -458,7 +453,7 @@ async def test_on_broadcast_chat_no_autorizado_no_persiste_ni_flushea(
         mock_container,
         receiver=mock_receiver,
         emitter=mock_emitter,
-        rate_limiter=mock_rate_limiter,
+        rate_limit=rate_limit,
     )
     # -999 NO está en allowed_chat_ids ([-100123]).
     msg = _msg("respuesta en un grupo donde ya no estoy", chat_id="-999")
@@ -466,12 +461,12 @@ async def test_on_broadcast_chat_no_autorizado_no_persiste_ni_flushea(
 
     mock_container.history.record_user_message.assert_not_awaited()
     assert bot._groups.pending_tasks == {}
-    # Ni siquiera consumió el rate limiter — cortó antes de todo.
-    mock_rate_limiter.check_and_increment.assert_not_called()
+    # Ni siquiera miró el rate limit — cortó antes de todo.
+    assert rate_limit.cooldown("-999") is None
 
 
 async def test_on_broadcast_allowed_chat_ids_vacio_ignora_todo(
-    mock_container, mock_receiver, mock_emitter, mock_rate_limiter
+    mock_container, mock_receiver, mock_emitter, rate_limit
 ):
     """allowed_chat_ids vacío = no responde en grupos = ignora todo broadcast.
 
@@ -496,7 +491,7 @@ async def test_on_broadcast_allowed_chat_ids_vacio_ignora_todo(
         mock_container,
         receiver=mock_receiver,
         emitter=mock_emitter,
-        rate_limiter=mock_rate_limiter,
+        rate_limit=rate_limit,
     )
     await bot._ingress.on_received(_msg("cualquier cosa", chat_id="-100123"))
 

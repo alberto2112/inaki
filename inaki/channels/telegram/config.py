@@ -176,17 +176,23 @@ class TelegramGroupsConfig(_ConfigBaseModel):
     """Username del bot Telegram (sin ``@``) para detección de menciones en modo ``mention``."""
 
     rate_limiter: int = 5
-    """Máximo de respuestas proactivas (modo ``autonomous``) por ventana por chat.
+    """Intervenciones SEGUIDAS que el agente puede hacer en un chat sin que hable un humano.
 
-    El primer mensaje que SUPERA este límite (``counter > rate_limiter``) es bloqueado;
-    es decir, exactamente ``rate_limiter`` mensajes pasan por ventana."""
+    Cuenta lo que el agente EMITE, no lo que le llega: un turno que termina en
+    ``__SKIP__`` no gasta presupuesto, y varios mensajes coalescidos en un mismo
+    flush son UNA intervención. Al llegar a este número, el agente entra en
+    cooldown por ``rate_limiter_window`` segundos. Un mensaje humano —nativo o
+    ``user_input_*`` por broadcast— pone el contador en cero y levanta el
+    cooldown al instante."""
 
     rate_limiter_window: int = 30
-    """Duración de la ventana del rate limiter en segundos. Default 30s.
+    """Duración del cooldown en segundos, contado desde la última intervención. Default 30s.
 
-    Importante: el ciclo bot-to-bot toma típicamente 15-40s (delay de flush + LLM + red).
-    Si la ventana es menor que el ciclo, el contador se resetea entre intercambios
-    y el limiter es inefectivo — bots pueden hablar indefinidamente. Para grupos con
+    No es una ventana de pared: el reloj lo arranca el agente al agotar sus
+    ``rate_limiter`` intervenciones seguidas, no el primer mensaje que le llegue.
+    Es el único re-armado que no necesita un humano, así que fija el caudal
+    máximo de un intercambio bot-a-bot sin nadie presente: ``rate_limiter``
+    respuestas por cada ``rate_limiter_window``. Para grupos con
     ``behavior='autonomous'`` se recomienda 300s (5min) o más."""
 
     @model_validator(mode="after")

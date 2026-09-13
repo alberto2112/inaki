@@ -120,10 +120,12 @@ class AgentConfig(_ConfigBaseModel):
     """Sandbox de filesystem de este agente. Un ``path`` propio lo aísla de los demás."""
 
     delegation: AgentDelegationConfig = AgentDelegationConfig()
-    """Si este agente puede delegar y a qué sub-agentes. Opt-in, per-agente.
+    """Si este agente puede delegar, a qué sub-agentes y con qué presupuesto.
 
-    Los presupuestos de una delegación (iteraciones, timeout) NO viven acá: son
-    globales (``GlobalConfig.delegation``)."""
+    ``enabled`` y ``allowed_targets`` son opt-in per-agente. Los presupuestos
+    (``max_iterations_per_sub``, ``timeout_seconds``) heredan el default de
+    ``GlobalConfig.delegation`` y se pisan acá. En un sub-agente declarar los
+    presupuestos es error: manda siempre el del caller."""
 
     transcription: TranscriptionConfig | None = None
     """Provider de transcripción de audio de este agente. ``None`` → hereda el global.
@@ -204,13 +206,14 @@ class GlobalConfig(_ConfigBaseModel):
 
     1. **Base del merge**: los bloques que también existen en ``AgentConfig``
        (``llm``, ``embedding``, ``memories``, ``chat_history``, ``skills``,
-       ``tools``, ``semantic_routing``, ``workspace``, ``transcription``) son
-       DEFAULTS — cada agente los hereda y pisa solo los campos que declara.
+       ``tools``, ``semantic_routing``, ``workspace``, ``transcription``,
+       ``delegation``) son DEFAULTS — cada agente los hereda y pisa solo los
+       campos que declara.
     2. **Config exclusivamente global**: ``app``, ``scheduler``, ``knowledge``,
-       ``photos``, ``admin``, ``user``, ``channels``, ``delegation`` y
-       ``providers`` no tienen contraparte per-agente. Son recursos del arnés o
-       políticas del proceso; escribirlos en ``agents/{id}.yaml`` no los
-       override — según el caso se rechaza como clave desconocida o se filtra.
+       ``photos``, ``admin``, ``user``, ``channels`` y ``providers`` no tienen
+       contraparte per-agente. Son recursos del arnés o políticas del proceso;
+       escribirlos en ``agents/{id}.yaml`` no los override — según el caso se
+       rechaza como clave desconocida o se filtra.
 
     Las credenciales viven en este mismo fichero (registry ``providers``,
     ``admin.auth_key``), que se crea con permisos 600 y NUNCA se commitea. La
@@ -262,11 +265,11 @@ class GlobalConfig(_ConfigBaseModel):
     """Sandbox de filesystem por DEFECTO para las tools. Heredable por agente."""
 
     delegation: DelegationConfig = DelegationConfig()
-    """Presupuestos de una llamada delegada: iteraciones y timeout. Solo global.
+    """Presupuestos por DEFECTO de una llamada delegada: iteraciones y timeout.
 
-    QUIÉN puede delegar y a quién se decide per-agente
-    (``AgentConfig.delegation``); acá van únicamente los límites, iguales para
-    todas las delegaciones del arnés."""
+    Cada agente los hereda y los pisa en su ``AgentConfig.delegation``. QUIÉN
+    puede delegar y a quién (``enabled``, ``allowed_targets``) se decide solo
+    per-agente: acá no se aceptan."""
 
     admin: AdminConfig = AdminConfig()
     """Admin server HTTP del daemon: dónde escucha y con qué clave se protege.

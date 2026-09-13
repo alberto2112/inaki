@@ -367,7 +367,13 @@ workspace:
 # [delegation]
 # -----------------------------------------------------------------------------
 #
-# Config global de delegación (aplica a todos los agentes como valores por defecto).
+# Presupuestos de una llamada delegada: iteraciones y timeout.
+#
+# En ``global.yaml`` son los DEFAULTS; cada agente los hereda por el merge y
+# los pisa en su propio bloque ``delegation`` (``AgentDelegationConfig``).
+# Manda el valor del agente que DELEGA (el caller): el que delega fija el
+# presupuesto de la tarea. Declararlos en un sub-agente es un error de carga —
+# el sub no delega, así que ahí no tendrían efecto.
 
 delegation:
   # Vueltas máximas del tool loop que puede gastar UNA llamada delegada.

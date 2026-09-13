@@ -138,9 +138,10 @@ _DELEGATION_SECTION_COMMENT = """\
 # [delegation] — Delegación agente-a-agente (defaults globales)
 # -----------------------------------------------------------------------------
 #
-# Controla los valores por defecto para la ejecución de sub-agentes delegados.
-# Per-agent `delegation.enabled: true` y `allowed_targets: [...]` siguen siendo
-# necesarios en cada agents/{id}.yaml para habilitar la delegación en ese agente.
+# Presupuestos POR DEFECTO de una llamada delegada. Cada agents/{id}.yaml los
+# pisa en su propio bloque `delegation` (manda el del agente que delega).
+# `delegation.enabled: true` y `allowed_targets: [...]` van solo per-agente:
+# habilitan la delegación en ese agente y acá no se aceptan.
 #
 # Nota: NO existe campo `max_depth` — la prevención de recursión es estructural
 # (el tool `delegate` se filtra automáticamente de los schemas del sub-agente).
@@ -721,6 +722,32 @@ def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
     return global_cfg, merged
 
 
+def _check_presupuestos_de_delegacion_en_sub(raw: dict, path: Path) -> None:
+    """Rechaza presupuestos de delegación declarados en el YAML CRUDO de un sub-agente.
+
+    ``max_iterations_per_sub`` y ``timeout_seconds`` los fija el agente que
+    DELEGA: el sub-agente nunca delega, así que en su fichero no tendrían
+    efecto, y el operador que los escribió cree que aplican. Aborta en vez de
+    ignorarlos (ver ``config-falla-ruidoso``). Va sobre el fichero crudo porque
+    tras el merge el sub HEREDA los defaults del global y ya no se distingue lo
+    declarado de lo heredado.
+    """
+    from inaki.shared.errors import ConfigError
+
+    bloque = raw.get("delegation")
+    if not isinstance(bloque, dict):
+        return
+    declarados = sorted(k for k in DelegationConfig.model_fields if k in bloque)
+    if not declarados:
+        return
+    raise ConfigError(
+        f"Config inválida para el sub-agente '{path.stem}' ({path}): "
+        f"{', '.join(f'delegation.{k}' for k in declarados)} no tiene efecto en un "
+        f"sub-agente — el presupuesto de una delegación lo fija el agente que delega. "
+        f"Va en agents/{{caller}}.yaml (o como default en config/global.yaml)."
+    )
+
+
 def _filter_channel_adapters(raw: dict) -> dict:
     """Filtra el campo ``channels`` heredado del global para excluir flags transversales.
 
@@ -884,6 +911,8 @@ class AgentRegistry:
                 if ".secrets" in yaml_file.name or ".example" in yaml_file.name:
                     continue
                 agent_id = yaml_file.stem
+                raw_delta = self._load_sub_agent_raw_delta(agent_id, sub_agents_dir)
+                _check_presupuestos_de_delegacion_en_sub(raw_delta, yaml_file)
 
                 # Defaults de rol (SUBAGENT_DEFAULTS) inyectados como capa de prioridad
                 # más baja: el YAML del sub-agente (explícito) y global_raw siguen
@@ -893,9 +922,7 @@ class AgentRegistry:
                 if cfg is not None:
                     self._agents[agent_id] = cfg
                     self._sub_agent_ids.add(agent_id)
-                    self._sub_agent_raw[agent_id] = self._load_sub_agent_raw_delta(
-                        agent_id, sub_agents_dir
-                    )
+                    self._sub_agent_raw[agent_id] = raw_delta
                     logger.debug("Sub-agente '%s' cargado: %s", agent_id, cfg.name)
 
         regular_count = len(self._agents) - len(self._sub_agent_ids)

@@ -31,6 +31,8 @@ def _make_task(
         system_prompt=None,
         channel="telegram",
         chat_id="42",
+        max_iterations=10,
+        timeout_seconds=60,
         started_at=started_at or datetime(2026, 5, 14, 10, 0, 0, tzinfo=timezone.utc),
         status=status,  # type: ignore[arg-type]
     )

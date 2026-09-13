@@ -291,3 +291,67 @@ def test_registry_skips_secrets_and_examples(tmp_path: Path) -> None:
     registry = AgentRegistry(agents_dir, _GLOBAL_RAW)
 
     assert [a.id for a in registry.list_all()] == ["real"]
+
+
+# ---------------------------------------------------------------------------
+# Presupuestos de delegación: default global, override per-agente, error en sub
+# ---------------------------------------------------------------------------
+
+
+def _write_raw(agents_dir: Path, agent_id: str, extra_yaml: str) -> None:
+    _write_agent(agents_dir, agent_id)
+    path = agents_dir / f"{agent_id}.yaml"
+    path.write_text(path.read_text(encoding="utf-8") + extra_yaml, encoding="utf-8")
+
+
+def test_presupuestos_de_delegacion_del_global_arrancan_y_se_heredan(tmp_path: Path) -> None:
+    """Regresión: ``delegation.timeout_seconds`` en el global abortaba TODOS los agentes.
+
+    El merge arrastraba el bloque global al ``AgentDelegationConfig``, que no
+    declaraba los presupuestos, y la carga fallaba como "clave desconocida"
+    culpando al fichero del agente.
+    """
+    agents_dir = tmp_path / "agents"
+    _write_agent(agents_dir, "principal")  # sin bloque delegation
+    _write_agent(agents_dir / "sub-agents", "worker")
+    global_raw = {**_GLOBAL_RAW, "delegation": {"timeout_seconds": 120}}
+
+    registry = AgentRegistry(agents_dir, global_raw)
+
+    delegation = registry.get("principal").delegation
+    assert delegation.timeout_seconds == 120
+    assert delegation.max_iterations_per_sub == 10
+    assert registry.get("worker").delegation.timeout_seconds == 120
+
+
+def test_el_agente_pisa_los_presupuestos_del_global(tmp_path: Path) -> None:
+    agents_dir = tmp_path / "agents"
+    _write_raw(agents_dir, "coordinador", "delegation:\n  enabled: true\n  timeout_seconds: 300\n")
+    _write_agent(agents_dir, "otro")
+    global_raw = {
+        **_GLOBAL_RAW,
+        "delegation": {"timeout_seconds": 120, "max_iterations_per_sub": 4},
+    }
+
+    registry = AgentRegistry(agents_dir, global_raw)
+
+    coordinador = registry.get("coordinador").delegation
+    assert coordinador.timeout_seconds == 300
+    assert coordinador.max_iterations_per_sub == 4  # no lo declara: hereda
+    assert registry.get("otro").delegation.timeout_seconds == 120
+
+
+@pytest.mark.parametrize("campo", ["timeout_seconds", "max_iterations_per_sub"])
+def test_presupuesto_de_delegacion_en_un_sub_agente_aborta(tmp_path: Path, campo: str) -> None:
+    """El sub no delega: el presupuesto lo fija el caller. Ignorarlo mentiría."""
+    agents_dir = tmp_path / "agents"
+    _write_agent(agents_dir, "principal")
+    _write_raw(agents_dir / "sub-agents", "worker", f"delegation:\n  {campo}: 300\n")
+
+    with pytest.raises(ConfigError) as exc:
+        AgentRegistry(agents_dir, _GLOBAL_RAW)
+
+    mensaje = str(exc.value)
+    assert f"delegation.{campo}" in mensaje
+    assert "worker.yaml" in mensaje
+    assert "agente que delega" in mensaje

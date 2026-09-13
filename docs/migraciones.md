@@ -97,6 +97,7 @@ de `global.yaml`).
 | [`modulo-config-y-retiro-del-tui`](#modulo-config-y-retiro-del-tui) | Desaparece `inaki setup` (TUI retirado; la config se edita en YAML con `inaki config show --origin` de espejo); `textual` deja de ser dependencia; la config vive en `inaki/config/` con el schema partido por secciones |
 | [`observabilidad-un-solo-stack`](#observabilidad-un-solo-stack) | Cada línea de log lleva hora, nivel, logger y los campos `extra` (antes solo el mensaje); `structlog` deja de ser dependencia; nuevos `app.log_format`, `app.debug` y `inaki --debug` con trazas de turno en `<home>/debug/turns/` |
 | [`user-timezone-default`](#user-timezone-default) | Un `global.yaml` sin bloque `user:` arranca (timezone autodetectada); antes el container moría con un `ValueError` de `ZoneInfo` |
+| [`delegation-limites-per-agente`](#delegation-limites-per-agente) | `delegation.max_iterations_per_sub` y `delegation.timeout_seconds` en `global.yaml` dejan de abortar el arranque de TODOS los agentes; pasan a ser defaults que cada `agents/{id}.yaml` pisa, y valen también para la delegación en background |
 | [`rate-limit-por-intervenciones`](#rate-limit-por-intervenciones) | El rate limiter de grupos deja de contar mensajes ENTRANTES por ventana de pared y cuenta **respuestas propias seguidas sin humano**: `rate_limiter` es el máximo de intervenciones consecutivas y `rate_limiter_window` el cooldown que dispara la última, contado desde ella. Un turno `__SKIP__` ya no gasta presupuesto |
 | [`broadcast-human-reset`](#broadcast-human-reset) | Un `user_input_voice`/`user_input_photo` recibido por broadcast **resetea** el rate limiter del grupo, igual que un mensaje humano nativo |
 
@@ -125,7 +126,48 @@ de `global.yaml`).
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
-- **Delegación**: `subagent-inheritance`, `background-delegation`
+- **Delegación**: `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
+
+---
+
+### `delegation-limites-per-agente`
+
+**Contexto (2026-09-13).** Al fijar `delegation.timeout_seconds` en `global.yaml`
+—su único lugar válido según el schema— el daemon no arrancó: `AgentDelegationConfig:
+clave(s) desconocida(s): 'timeout_seconds'`, culpando al fichero de un agente que
+no declaraba nada de delegación. Hasta entonces nadie lo había visto porque el
+`global.yaml` generado trae ese bloque comentado.
+
+**El agujero.** Dos bloques distintos compartían la clave `delegation`:
+`DelegationConfig` en el global (`max_iterations_per_sub`, `timeout_seconds`) y
+`AgentDelegationConfig` en el agente (`enabled`, `allowed_targets`).
+`load_agent_config` mergea el dict crudo del global ENTERO sobre el del agente, así
+que los presupuestos del global caían dentro del bloque del agente, que no los
+declaraba, y la carga abortaba. Un valor legítimo en el global rompía a todos los
+agentes a la vez.
+
+**Cambio.** Los presupuestos pasaron a ser per-agente con default global, igual
+que `tools.tool_call_max_iterations`: `AgentDelegationConfig` hereda de
+`DelegationConfig`, así que el merge que antes rompía pasó a ser la herencia. Manda
+el valor del agente que DELEGA. Dos consecuencias de wiring:
+
+1. `build_delegate_tool` recibe el `delegation` del caller en vez del
+   `GlobalConfig`.
+2. La cola de background es UNA para todo el arnés y recibía los límites al
+   construirse. Cambiar solo la tool dejaba el camino por defecto (`wait=false`)
+   corriendo con el global. `IBackgroundDelegationQueue.enqueue` y
+   `BackgroundTask` pasaron a llevar `max_iterations` y `timeout_seconds` por task.
+
+Declarar un presupuesto en `agents/sub-agents/*.yaml` aborta la carga con un error
+que nombra el campo y dónde va (`_check_presupuestos_de_delegacion_en_sub`): el sub
+no delega, ahí no tendría efecto. Se descartó avisar con `WARNING` e ignorar el
+valor por `config-falla-ruidoso`. No rompió instalaciones: antes esa clave en un
+sub ya abortaba, como clave desconocida.
+
+**Invariante que dejó.** **NUNCA** leer de `GlobalConfig` un valor que el agente
+pueda pisar: se lee de la config del agente, que ya trae el default mergeado. Y
+**NUNCA** fijarle a un recurso harness-global (la cola) una política que depende
+de quién lo usa: esa política viaja con cada pedido.
 
 ---
 

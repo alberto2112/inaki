@@ -42,6 +42,8 @@ class BackgroundTask(BaseModel):
     system_prompt: str | None
     channel: str
     chat_id: str
+    max_iterations: int
+    timeout_seconds: int
     started_at: datetime
     status: Literal["queued", "running"]
 

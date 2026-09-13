@@ -434,7 +434,6 @@ def _construir_harness(
         )
 
     background_queue = build_background_queue(
-        global_cfg,
         dispatcher=dispatcher,
         one_shot_resolver=_resolve_one_shot,
         result_sender=router,
@@ -525,7 +524,7 @@ def _wire_delegation(
         build_child = _constructor_de_hijos(b, global_cfg, registry)
         b.tools.register(
             build_delegate_tool(
-                global_cfg,
+                b.cfg.delegation,
                 allowed_targets=targets,
                 build_child=build_child,
                 caller_agent_id=b.cfg.id,

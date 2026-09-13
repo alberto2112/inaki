@@ -17,13 +17,14 @@ Cumple dos roles que conviene no confundir:
 
 1. **Base del merge**: los bloques que también existen en ``AgentConfig``
    (``llm``, ``embedding``, ``memories``, ``chat_history``, ``skills``,
-   ``tools``, ``semantic_routing``, ``workspace``, ``transcription``) son
-   DEFAULTS — cada agente los hereda y pisa solo los campos que declara.
+   ``tools``, ``semantic_routing``, ``workspace``, ``transcription``,
+   ``delegation``) son DEFAULTS — cada agente los hereda y pisa solo los
+   campos que declara.
 2. **Config exclusivamente global**: ``app``, ``scheduler``, ``knowledge``,
-   ``photos``, ``admin``, ``user``, ``channels``, ``delegation`` y
-   ``providers`` no tienen contraparte per-agente. Son recursos del arnés o
-   políticas del proceso; escribirlos en ``agents/{id}.yaml`` no los
-   override — según el caso se rechaza como clave desconocida o se filtra.
+   ``photos``, ``admin``, ``user``, ``channels`` y ``providers`` no tienen
+   contraparte per-agente. Son recursos del arnés o políticas del proceso;
+   escribirlos en ``agents/{id}.yaml`` no los override — según el caso se
+   rechaza como clave desconocida o se filtra.
 
 Las credenciales viven en este mismo fichero (registry ``providers``, ``admin.auth_key``), que se crea con permisos 600 y NUNCA se commitea. La marca ``secret`` del schema sirve para redactar el campo al mostrarlo (``inaki config show``), no para separarlo en otro archivo.
 
@@ -74,9 +75,9 @@ Solo corre bajo ``inaki daemon``. Para aislar agendas hay que levantar otra inst
 
 **`workspace`** — Sandbox de filesystem por DEFECTO para las tools. Heredable por agente.
 
-**`delegation`** — Presupuestos de una llamada delegada: iteraciones y timeout. Solo global.
+**`delegation`** — Presupuestos por DEFECTO de una llamada delegada: iteraciones y timeout.
 
-QUIÉN puede delegar y a quién se decide per-agente (``AgentConfig.delegation``); acá van únicamente los límites, iguales para todas las delegaciones del arnés.
+Cada agente los hereda y los pisa en su ``AgentConfig.delegation``. QUIÉN puede delegar y a quién (``enabled``, ``allowed_targets``) se decide solo per-agente: acá no se aceptan.
 
 **`admin`** — Admin server HTTP del daemon: dónde escucha y con qué clave se protege.
 
@@ -615,7 +616,9 @@ Es también la frontera que aplica ``containment``. ``~`` se expande al cargar l
 
 ### `DelegationConfig`
 
-Config global de delegación (aplica a todos los agentes como valores por defecto).
+Presupuestos de una llamada delegada: iteraciones y timeout.
+
+En ``global.yaml`` son los DEFAULTS; cada agente los hereda por el merge y los pisa en su propio bloque ``delegation`` (``AgentDelegationConfig``). Manda el valor del agente que DELEGA (el caller): el que delega fija el presupuesto de la tarea. Declararlos en un sub-agente es un error de carga — el sub no delega, así que ahí no tendrían efecto.
 
 | Field | Type | Default | Secret |
 |---|---|---|---|
@@ -624,11 +627,11 @@ Config global de delegación (aplica a todos los agentes como valores por defect
 
 **`max_iterations_per_sub`** — Vueltas máximas del tool loop que puede gastar UNA llamada delegada.
 
-Equivalente de ``tools.tool_call_max_iterations`` para el turno one-shot del sub-agente, y con default más generoso (10 vs 5): al sub se le delega una tarea completa, no un intercambio conversacional.
+Equivalente de ``tools.tool_call_max_iterations`` para el turno one-shot del sub-agente, y con default más generoso (10 vs 5): al sub se le delega una tarea completa, no un intercambio conversacional. Lo fija el agente que delega: en ``global.yaml`` es el default, en ``agents/{id}.yaml`` lo pisa.
 
 **`timeout_seconds`** — Presupuesto de reloj de una llamada delegada, en segundos.
 
-Se aplica como ``asyncio.wait_for`` sobre el turno del sub-agente: al vencerse, la delegación se corta y el caller recibe el timeout como resultado. Es un techo de tiempo real, independiente de ``max_iterations_per_sub``, que cuenta vueltas.
+Se aplica como ``asyncio.wait_for`` sobre el turno del sub-agente: al vencerse, la delegación se corta y el caller recibe el timeout como resultado. Es un techo de tiempo real, independiente de ``max_iterations_per_sub``, que cuenta vueltas. Vale igual para ``wait=true`` y para la delegación en background. Lo fija el agente que delega: en ``global.yaml`` es el default, en ``agents/{id}.yaml`` lo pisa.
 
 ### `AdminConfig`
 
@@ -940,9 +943,9 @@ Además de heredar el bloque global, es donde un SUB-agente declara ``tools.allo
 
 **`workspace`** — Sandbox de filesystem de este agente. Un ``path`` propio lo aísla de los demás.
 
-**`delegation`** — Si este agente puede delegar y a qué sub-agentes. Opt-in, per-agente.
+**`delegation`** — Si este agente puede delegar, a qué sub-agentes y con qué presupuesto.
 
-Los presupuestos de una delegación (iteraciones, timeout) NO viven acá: son globales (``GlobalConfig.delegation``).
+``enabled`` y ``allowed_targets`` son opt-in per-agente. Los presupuestos (``max_iterations_per_sub``, ``timeout_seconds``) heredan el default de ``GlobalConfig.delegation`` y se pisan acá. En un sub-agente declarar los presupuestos es error: manda siempre el del caller.
 
 **`transcription`** — Provider de transcripción de audio de este agente. ``None`` → hereda el global.
 
@@ -956,12 +959,22 @@ Los bloques de los canales REGISTRADOS (``inaki.config.channels``) llegan acá *
 
 ### `AgentDelegationConfig`
 
-Config de delegación por agente.
+Config de delegación por agente: si delega, a quién, y con qué presupuesto.
 
 | Field | Type | Default | Secret |
 |---|---|---|---|
+| `max_iterations_per_sub` | `int` | `10` |  |
+| `timeout_seconds` | `int` | `60` |  |
 | `enabled` | `bool` | `False` |  |
 | `allowed_targets` | `list[str]` | `[]` |  |
+
+**`max_iterations_per_sub`** — Vueltas máximas del tool loop que puede gastar UNA llamada delegada.
+
+Equivalente de ``tools.tool_call_max_iterations`` para el turno one-shot del sub-agente, y con default más generoso (10 vs 5): al sub se le delega una tarea completa, no un intercambio conversacional. Lo fija el agente que delega: en ``global.yaml`` es el default, en ``agents/{id}.yaml`` lo pisa.
+
+**`timeout_seconds`** — Presupuesto de reloj de una llamada delegada, en segundos.
+
+Se aplica como ``asyncio.wait_for`` sobre el turno del sub-agente: al vencerse, la delegación se corta y el caller recibe el timeout como resultado. Es un techo de tiempo real, independiente de ``max_iterations_per_sub``, que cuenta vueltas. Vale igual para ``wait=true`` y para la delegación en background. Lo fija el agente que delega: en ``global.yaml`` es el default, en ``agents/{id}.yaml`` lo pisa.
 
 **`enabled`** — Habilita la tool ``delegate`` para ESTE agente. Opt-in.
 

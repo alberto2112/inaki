@@ -39,8 +39,15 @@ class IBackgroundDelegationQueue(Protocol):
         system_prompt: str | None,
         channel: str,
         chat_id: str,
+        max_iterations: int,
+        timeout_seconds: int,
     ) -> str:
-        """Encola una delegación. Retorna el ``task_id`` (``bg-N``) en <50ms."""
+        """Encola una delegación. Retorna el ``task_id`` (``bg-N``) en <50ms.
+
+        ``max_iterations`` y ``timeout_seconds`` son el presupuesto del CALLER:
+        viajan con cada task porque la cola es una sola para todo el arnés y
+        cada agente que delega fija el suyo.
+        """
         ...
 
     def snapshot_inflight(self, caller_agent_id: str) -> list[BackgroundTaskView]:

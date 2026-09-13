@@ -28,8 +28,6 @@ def _build_adapter(
     one_shot_for: dict | None = None,
     dispatcher: MagicMock | None = None,
     max_concurrent: int = 3,
-    timeout_seconds: int = 30,
-    max_iterations: int = 5,
     result_sender: MagicMock | None = None,
     conversational_channels: frozenset[str] = frozenset(),
 ) -> tuple[BackgroundDelegationQueueAdapter, MagicMock]:
@@ -49,8 +47,6 @@ def _build_adapter(
     adapter = BackgroundDelegationQueueAdapter(
         dispatcher=dispatcher,
         one_shot_resolver=resolver,
-        max_iterations_per_sub=max_iterations,
-        timeout_seconds=timeout_seconds,
         max_concurrent=max_concurrent,
         result_sender=result_sender,
     )
@@ -87,6 +83,8 @@ class TestEnqueue:
             system_prompt=None,
             channel="telegram",
             chat_id="42",
+            max_iterations=5,
+            timeout_seconds=30,
         )
 
         assert task_id == "bg-1"
@@ -102,6 +100,8 @@ class TestEnqueue:
             system_prompt=None,
             channel="",
             chat_id="",
+            max_iterations=5,
+            timeout_seconds=30,
         )
         id2 = await adapter.enqueue(
             caller_agent_id="inaki",
@@ -110,6 +110,8 @@ class TestEnqueue:
             system_prompt=None,
             channel="",
             chat_id="",
+            max_iterations=5,
+            timeout_seconds=30,
         )
         id3 = await adapter.enqueue(
             caller_agent_id="otro",
@@ -118,6 +120,8 @@ class TestEnqueue:
             system_prompt=None,
             channel="",
             chat_id="",
+            max_iterations=5,
+            timeout_seconds=30,
         )
 
         assert (id1, id2, id3) == ("bg-1", "bg-2", "bg-3")
@@ -134,6 +138,8 @@ class TestEnqueue:
             system_prompt=None,
             channel="",
             chat_id="",
+            max_iterations=5,
+            timeout_seconds=30,
         )
         elapsed = time.perf_counter() - inicio
 
@@ -156,6 +162,8 @@ class TestSnapshotInflight:
             system_prompt=None,
             channel="telegram",
             chat_id="42",
+            max_iterations=5,
+            timeout_seconds=30,
         )
 
         snap = adapter.snapshot_inflight("inaki")
@@ -176,6 +184,8 @@ class TestSnapshotInflight:
             system_prompt=None,
             channel="",
             chat_id="",
+            max_iterations=5,
+            timeout_seconds=30,
         )
         await adapter.enqueue(
             caller_agent_id="alberto",
@@ -184,6 +194,8 @@ class TestSnapshotInflight:
             system_prompt=None,
             channel="",
             chat_id="",
+            max_iterations=5,
+            timeout_seconds=30,
         )
 
         snap_inaki = adapter.snapshot_inflight("inaki")
@@ -202,6 +214,8 @@ class TestSnapshotInflight:
             system_prompt=None,
             channel="",
             chat_id="",
+            max_iterations=5,
+            timeout_seconds=30,
         )
 
         assert adapter.snapshot_inflight("otro") == []
@@ -283,6 +297,8 @@ class TestLifecycle:
             system_prompt=None,
             channel="",
             chat_id="",
+            max_iterations=5,
+            timeout_seconds=30,
         )
         # Dejar que el consumer la levante y la lance
         await asyncio.sleep(0.05)
@@ -311,6 +327,8 @@ class TestSemaphoreYFIFO:
                 system_prompt=None,
                 channel="",
                 chat_id="",
+                max_iterations=5,
+                timeout_seconds=30,
             )
 
         # Dar tiempo al consumer a tomar 3 y arrancar la 4ta (queue)
@@ -343,6 +361,8 @@ class TestSemaphoreYFIFO:
                     system_prompt=None,
                     channel="",
                     chat_id="",
+                    max_iterations=5,
+                    timeout_seconds=30,
                 )
             )
 
@@ -379,6 +399,8 @@ class TestHappyPathDispatch:
             system_prompt=None,
             channel="telegram",
             chat_id="42",
+            max_iterations=5,
+            timeout_seconds=30,
         )
         await asyncio.sleep(0.05)
         await adapter.stop()
@@ -391,6 +413,36 @@ class TestHappyPathDispatch:
             chat_id="42",
             skip_marker=SKIP_MARKER,
         )
+
+    async def test_cada_task_corre_con_el_presupuesto_de_su_caller(self) -> None:
+        """La cola es una sola para el arnés: el presupuesto viaja con la task.
+
+        Si la cola usara un presupuesto propio, el ``delegation`` per-agente se
+        ignoraría en el camino por defecto (``wait=false``).
+        """
+        one_shot = _one_shot_returning("ok")
+        adapter, _ = _build_adapter(one_shot_for={"r": one_shot})
+
+        await adapter.start()
+        for caller, iteraciones, timeout in (("rapido", 2, 15), ("paciente", 20, 600)):
+            await adapter.enqueue(
+                caller_agent_id=caller,
+                target_agent_id="r",
+                prompt="x",
+                system_prompt=None,
+                channel="telegram",
+                chat_id="42",
+                max_iterations=iteraciones,
+                timeout_seconds=timeout,
+            )
+        await asyncio.sleep(0.05)
+        await adapter.stop()
+
+        presupuestos = sorted(
+            (c.kwargs["max_iterations"], c.kwargs["timeout_seconds"])
+            for c in one_shot.execute.await_args_list
+        )
+        assert presupuestos == [(2, 15), (20, 600)]
 
     async def test_dispatch_propaga_channel_y_chat_id_originales(self) -> None:
         """Triangulación: el resultado vuelve al scope ORIGINAL, no al default."""
@@ -405,6 +457,8 @@ class TestHappyPathDispatch:
             system_prompt=None,
             channel="cli",
             chat_id="local",
+            max_iterations=5,
+            timeout_seconds=30,
         )
         await asyncio.sleep(0.05)
         await adapter.stop()
@@ -441,6 +495,8 @@ class TestHappyPathDispatch:
             system_prompt=None,
             channel="",
             chat_id="",
+            max_iterations=5,
+            timeout_seconds=30,
         )
         await asyncio.sleep(0.05)
         await adapter.stop()
@@ -468,6 +524,8 @@ class TestHappyPathDispatch:
             system_prompt=None,
             channel="",
             chat_id="",
+            max_iterations=5,
+            timeout_seconds=30,
         )
         # Esperar a que se agoten los reintentos (3 intentos con backoff 0.5*n).
         await asyncio.sleep(2.0)
@@ -503,6 +561,8 @@ class TestHappyPathDispatch:
             system_prompt=None,
             channel="",
             chat_id="",
+            max_iterations=5,
+            timeout_seconds=30,
         )
         await asyncio.sleep(1.0)
         await adapter.stop()
@@ -531,6 +591,8 @@ class TestErrorPath:
             system_prompt=None,
             channel="cli",
             chat_id="",
+            max_iterations=5,
+            timeout_seconds=30,
         )
         await asyncio.sleep(0.05)
         await adapter.stop()
@@ -552,6 +614,8 @@ class TestErrorPath:
             system_prompt=None,
             channel="",
             chat_id="",
+            max_iterations=5,
+            timeout_seconds=30,
         )
         await asyncio.sleep(0.05)
         await adapter.stop()
@@ -575,6 +639,8 @@ class TestErrorPath:
             system_prompt=None,
             channel="",
             chat_id="",
+            max_iterations=5,
+            timeout_seconds=30,
         )
         await asyncio.sleep(0.05)
         await adapter.stop()
@@ -602,6 +668,8 @@ async def _enqueue_and_run(
         system_prompt=None,
         channel=channel,
         chat_id=chat_id,
+        max_iterations=5,
+        timeout_seconds=30,
     )
     await asyncio.sleep(0.05)
     await adapter.stop()

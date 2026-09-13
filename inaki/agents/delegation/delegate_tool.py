@@ -159,9 +159,9 @@ class DelegateTool(ITool):
                          Lo arma el ensamblador con `inaki.agents.wiring.build_ephemeral_child`
                          + el delta crudo del registry — una instancia nueva por delegación.
             max_iterations_per_sub: Límite de iteraciones para el loop del agente hijo.
-                                    Proviene de global_config.delegation.max_iterations_per_sub.
+                                    Proviene del ``delegation`` del agente que delega.
             timeout_seconds: Límite de tiempo en segundos para la ejecución del hijo.
-                             Proviene de global_config.delegation.timeout_seconds.
+                             Proviene del ``delegation`` del agente que delega.
         """
         self._allowed_targets = allowed_targets
         self._build_child = build_child
@@ -460,6 +460,8 @@ class DelegateTool(ITool):
                 system_prompt=system_prompt,
                 channel=channel,
                 chat_id=chat_id,
+                max_iterations=self._max_iterations_per_sub,
+                timeout_seconds=self._timeout_seconds,
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception(

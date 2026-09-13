@@ -57,12 +57,14 @@ def agent_cfg(
         embedding=EmbeddingConfig(provider="e5_onnx", model_dirname="models/test"),
         memories=MemoriesConfig(db_filename=":memory:"),
         chat_history=ChatHistoryConfig(db_filename="data/history.db"),
-        delegation=AgentDelegationConfig(
-            enabled=delegation_enabled, allowed_targets=allowed_targets or []
-        ),
         providers={"openrouter": ProviderConfig(api_key="test-key")},
         channels=channels or {},
-        **extra,  # type: ignore[arg-type]
+        **{  # type: ignore[arg-type]
+            "delegation": AgentDelegationConfig(
+                enabled=delegation_enabled, allowed_targets=allowed_targets or []
+            ),
+            **extra,
+        },
     )
 
 

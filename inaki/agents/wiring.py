@@ -16,7 +16,7 @@ from inaki.agents.delegation.delegate_tool import DelegateTool, DelegationCaller
 from inaki.config import (
     SUBAGENT_DEFAULTS,
     AgentConfig,
-    GlobalConfig,
+    DelegationConfig,
     assemble_agent_config,
 )
 from inaki.config.merge import deep_merge, resolver_inherit
@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 
 
 def build_background_queue(
-    global_cfg: GlobalConfig,
     *,
     dispatcher: ILLMDispatcher,
     one_shot_resolver: Callable[[str, str], RunAgentOneShotUseCase | None],
@@ -43,8 +42,6 @@ def build_background_queue(
     return BackgroundDelegationQueueAdapter(
         dispatcher=dispatcher,
         one_shot_resolver=one_shot_resolver,
-        max_iterations_per_sub=global_cfg.delegation.max_iterations_per_sub,
-        timeout_seconds=global_cfg.delegation.timeout_seconds,
         max_concurrent=3,
         result_sender=result_sender,
     )
@@ -102,7 +99,7 @@ def build_ephemeral_child(
 
 
 def build_delegate_tool(
-    global_cfg: GlobalConfig,
+    delegation: DelegationConfig,
     *,
     allowed_targets: list[str],
     build_child: Callable[[str], RunAgentOneShotUseCase | None],
@@ -113,8 +110,8 @@ def build_delegate_tool(
     return DelegateTool(
         allowed_targets=allowed_targets,
         build_child=build_child,
-        max_iterations_per_sub=global_cfg.delegation.max_iterations_per_sub,
-        timeout_seconds=global_cfg.delegation.timeout_seconds,
+        max_iterations_per_sub=delegation.max_iterations_per_sub,
+        timeout_seconds=delegation.timeout_seconds,
         caller_agent_id=caller_agent_id,
         caller_container=caller,
         queue=queue,

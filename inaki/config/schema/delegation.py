@@ -10,14 +10,21 @@ from inaki.config.schema._base import _ConfigBaseModel
 
 
 class DelegationConfig(_ConfigBaseModel):
-    """Config global de delegación (aplica a todos los agentes como valores por defecto)."""
+    """Presupuestos de una llamada delegada: iteraciones y timeout.
+
+    En ``global.yaml`` son los DEFAULTS; cada agente los hereda por el merge y
+    los pisa en su propio bloque ``delegation`` (``AgentDelegationConfig``).
+    Manda el valor del agente que DELEGA (el caller): el que delega fija el
+    presupuesto de la tarea. Declararlos en un sub-agente es un error de carga —
+    el sub no delega, así que ahí no tendrían efecto."""
 
     max_iterations_per_sub: int = 10
     """Vueltas máximas del tool loop que puede gastar UNA llamada delegada.
 
     Equivalente de ``tools.tool_call_max_iterations`` para el turno one-shot del
     sub-agente, y con default más generoso (10 vs 5): al sub se le delega una
-    tarea completa, no un intercambio conversacional."""
+    tarea completa, no un intercambio conversacional. Lo fija el agente que
+    delega: en ``global.yaml`` es el default, en ``agents/{id}.yaml`` lo pisa."""
 
     timeout_seconds: int = 60
     """Presupuesto de reloj de una llamada delegada, en segundos.
@@ -25,11 +32,13 @@ class DelegationConfig(_ConfigBaseModel):
     Se aplica como ``asyncio.wait_for`` sobre el turno del sub-agente: al
     vencerse, la delegación se corta y el caller recibe el timeout como
     resultado. Es un techo de tiempo real, independiente de
-    ``max_iterations_per_sub``, que cuenta vueltas."""
+    ``max_iterations_per_sub``, que cuenta vueltas. Vale igual para
+    ``wait=true`` y para la delegación en background. Lo fija el agente que
+    delega: en ``global.yaml`` es el default, en ``agents/{id}.yaml`` lo pisa."""
 
 
-class AgentDelegationConfig(_ConfigBaseModel):
-    """Config de delegación por agente."""
+class AgentDelegationConfig(DelegationConfig):
+    """Config de delegación por agente: si delega, a quién, y con qué presupuesto."""
 
     enabled: bool = False
     """Habilita la tool ``delegate`` para ESTE agente. Opt-in.

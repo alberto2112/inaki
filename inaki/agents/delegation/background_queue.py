@@ -57,15 +57,11 @@ class BackgroundDelegationQueueAdapter:
         *,
         dispatcher: "ILLMDispatcher",
         one_shot_resolver: Callable[[str, str], "RunAgentOneShotUseCase | None"],
-        max_iterations_per_sub: int,
-        timeout_seconds: int,
         max_concurrent: int = 3,
         result_sender: "IChannelSender | None" = None,
     ) -> None:
         self._dispatcher = dispatcher
         self._one_shot_resolver = one_shot_resolver
-        self._max_iter = max_iterations_per_sub
-        self._timeout = timeout_seconds
         # Sin sender no hay entrega al canal (modo headless: tests / instancias
         # sin canales conversacionales). Producción siempre inyecta el router.
         self._result_sender = result_sender
@@ -84,6 +80,8 @@ class BackgroundDelegationQueueAdapter:
         system_prompt: str | None,
         channel: str,
         chat_id: str,
+        max_iterations: int,
+        timeout_seconds: int,
     ) -> str:
         """Registra una nueva delegación y devuelve su ``task_id`` (REQ-BGD-2)."""
         self._id_counter += 1
@@ -96,6 +94,8 @@ class BackgroundDelegationQueueAdapter:
             system_prompt=system_prompt,
             channel=channel,
             chat_id=chat_id,
+            max_iterations=max_iterations,
+            timeout_seconds=timeout_seconds,
             started_at=datetime.now(timezone.utc),
             status="queued",
         )
@@ -166,8 +166,8 @@ class BackgroundDelegationQueueAdapter:
                     raw = await one_shot.execute(
                         task=task.prompt,
                         system_prompt=task.system_prompt,
-                        max_iterations=self._max_iter,
-                        timeout_seconds=self._timeout,
+                        max_iterations=task.max_iterations,
+                        timeout_seconds=task.timeout_seconds,
                     )
                     content = f"[{task.id}] {raw}"
             except Exception as exc:  # noqa: BLE001

@@ -58,8 +58,6 @@ async def test_end_to_end_async_delegation() -> None:
     queue = BackgroundDelegationQueueAdapter(
         dispatcher=dispatcher,
         one_shot_resolver=_resolve_one_shot,
-        max_iterations_per_sub=5,
-        timeout_seconds=10,
         max_concurrent=3,
     )
 
@@ -73,6 +71,8 @@ async def test_end_to_end_async_delegation() -> None:
             system_prompt=None,
             channel="telegram",
             chat_id="42",
+            max_iterations=5,
+            timeout_seconds=10,
         )
 
         assert task_id == "bg-1"
@@ -130,8 +130,6 @@ async def test_end_to_end_dispatch_uses_lock_per_scope() -> None:
     queue = BackgroundDelegationQueueAdapter(
         dispatcher=dispatcher,
         one_shot_resolver=lambda _c, _t: target_one_shot,
-        max_iterations_per_sub=5,
-        timeout_seconds=10,
         max_concurrent=3,
     )
 
@@ -145,6 +143,8 @@ async def test_end_to_end_dispatch_uses_lock_per_scope() -> None:
             system_prompt=None,
             channel="telegram",
             chat_id="42",
+            max_iterations=5,
+            timeout_seconds=10,
         )
         await queue.enqueue(
             caller_agent_id="inaki",
@@ -153,6 +153,8 @@ async def test_end_to_end_dispatch_uses_lock_per_scope() -> None:
             system_prompt=None,
             channel="telegram",
             chat_id="42",
+            max_iterations=5,
+            timeout_seconds=10,
         )
         await asyncio.wait_for(
             _wait_until(lambda: len(historial_persistido) == 4, timeout=5.0),

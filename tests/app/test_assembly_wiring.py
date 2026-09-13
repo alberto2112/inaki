@@ -22,7 +22,7 @@ from inaki.app.assembly import (
     contexto_del_turno,
 )
 from inaki.channels.telegram.files.downloader import TelegramFileDownloader
-from inaki.config import AgentConfig
+from inaki.config import AgentConfig, AgentDelegationConfig
 from inaki.kernel.ports.turn_tracer_port import NullTurnTracer
 from inaki.kernel.conversation_history import ConversationHistory
 from inaki.kernel.run_agent import RunAgentUseCase
@@ -104,13 +104,24 @@ def test_delegacion_deshabilitada_no_registra_delegate_ni_seccion() -> None:
     assert isinstance(b.run_agent_one_shot, RunAgentOneShotUseCase)
 
 
-def test_delegacion_habilitada_registra_delegate_con_la_config_global() -> None:
-    b = borrador(agent_cfg("coordinator", delegation_enabled=True, allowed_targets=["specialist"]))
+def test_delegacion_habilitada_registra_delegate_con_los_presupuestos_del_caller() -> None:
+    b = borrador(
+        agent_cfg(
+            "coordinator",
+            delegation=AgentDelegationConfig(
+                enabled=True,
+                allowed_targets=["specialist"],
+                max_iterations_per_sub=7,
+                timeout_seconds=30,
+            ),
+        )
+    )
     registry: Any = RegistryFalso([b.cfg], [agent_cfg("specialist")])
     harness = _harness()
 
+    # El global dice otra cosa: manda el ``delegation`` del agente que delega.
     _wire_delegation(
-        b, global_cfg(max_iterations_per_sub=7, timeout_seconds=30), registry, {}, harness
+        b, global_cfg(max_iterations_per_sub=99, timeout_seconds=999), registry, {}, harness
     )
 
     tool = cast(DelegateTool, b.tools._tools["delegate"])

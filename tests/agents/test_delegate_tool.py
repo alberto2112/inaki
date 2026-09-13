@@ -847,6 +847,9 @@ async def test_default_async_invoca_queue_enqueue() -> None:
     assert kwargs["target_agent_id"] == "researcher"
     assert kwargs["prompt"] == "investigá X"
     assert kwargs["system_prompt"] is None
+    # La cola es una sola para el arnés: el presupuesto del caller viaja con la task.
+    assert kwargs["max_iterations"] == _MAX_ITERATIONS
+    assert kwargs["timeout_seconds"] == _TIMEOUT_SECONDS
 
 
 async def test_default_async_devuelve_queued_tool_result() -> None:

@@ -67,6 +67,7 @@ SUBAGENT_DEFAULTS: dict = {
     "memories": {
         "consolidation": {"enabled": False},
         "reconciliation": {"enabled": False},
+        "capture": {"enabled": False},
     },
     "channels": {},
 }
@@ -75,8 +76,10 @@ Defaults de rol para sub-agentes (one-shot, sin canales propios).
 
 - `llm.inherit: True` — único bloque heredado por default; se resuelve contra el padre
   (registry build time: contra `global_raw`; flujo delegate: contra el caller, vía T4).
-- `memories.consolidation/reconciliation.enabled = False` — los sub-agentes no corren jobs
-  que persistan/muten memoria por su cuenta.
+- `memories.consolidation/reconciliation/capture.enabled = False` — los sub-agentes no corren jobs
+  que persistan/muten memoria por su cuenta, ni capturan recuerdos en vivo (`memory create`):
+  el sub-agente extractor, sin `tools.allowed`, ve todas sus tools y no debe tener un `create`
+  a mano cuando se le pide JSON (guardaría bajo su propio `agent_id`).
 - `channels = {}` — sin canales propios (solo invocables por delegación).
 
 Resto de bloques: SIN `inherit` — el YAML del sub-agente opta in por bloque con `inherit: true`.

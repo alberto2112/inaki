@@ -207,6 +207,9 @@ Cada una salió de un fallo en producción. El caso completo está en
   existe. → `tool-config-protocol`
 - **NUNCA** pinnear builtins en bloque: ~25 schemas por turno degradan la selección del
   LLM y el presupuesto de tokens. → `docs/semantic-routing.md`
+- **NUNCA** fusionar o deduplicar recuerdos contra `search_with_scores` sin filtrar por
+  `agent_id`: el fichero de memoria es compartido entre agentes y el vecino mejor
+  rankeado puede ser de otro. → `memory-tool-unificada`
 
 **Datos y dominio**
 

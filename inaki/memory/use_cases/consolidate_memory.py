@@ -13,7 +13,9 @@ Flujo:
        b. Filtrar hechos por min_relevance_score
        c. Para cada hecho: generar embedding + construir MemoryEntry
           (con ``channel``/``chat_id`` del grupo) + persistir
-       d. Regenerar digest markdown del scope ``(channel, chat_id)``
+       d. Regenerar digest markdown del scope ``(channel, chat_id)`` — vía
+          ``DigestWriter`` (`inaki/memory/use_cases/digest.py`), compartido con
+          la tool `memory`
        e. Marcar los mensajes de ESE scope como ``infused=1`` — DENTRO
           del loop, justo después de procesar el scope exitosamente.
           Razón: si un scope posterior falla, los scopes ya procesados
@@ -51,6 +53,8 @@ from inaki.kernel.ports.llm_port import ILLMProvider
 from inaki.kernel.ports.memory_port import IMemoryRepository
 from inaki.kernel._json_extract import extract_json_array
 from inaki.kernel.run_agent_one_shot import RunAgentOneShotUseCase
+from inaki.memory.policy import MEMORY_POLICY
+from inaki.memory.use_cases.digest import DigestWriter
 from inaki.shared.errors import ConsolidationError
 from inaki.shared.message import Message, Role
 
@@ -61,34 +65,26 @@ logger = logging.getLogger(__name__)
 # modo directo (LLM sin sub-agente) concatenando la conversación al final.
 # NO lleva placeholders: el historial se concatena aparte (modo directo) o
 # viaja como `task` (modo sub-agente). Por eso las llaves del JSON van simples.
-_EXTRACTOR_INSTRUCTIONS = """\
+#
+# El bloque SAVE/NEVER/formato de contenido vive en ``inaki.memory.policy``
+# (``MEMORY_POLICY``) — única fuente de verdad, compartida con la ``description``
+# de la operación ``create`` de la tool ``memory``. El texto RESULTANTE de esta
+# composición es idéntico al que tenía esta constante antes de extraer la
+# política (ver ``tests/memory/test_policy.py``).
+_EXTRACTOR_INSTRUCTIONS = (
+    """\
 ## Instructions
 
 You are a long-term memory extractor for a personal AI assistant.
-Your role is CONSERVATIVE: only save what has real and lasting value about the user.
-When in doubt, do NOT save. It is better to miss a minor detail than to pollute long-term memory with noise.
-
-**SAVE** only when the conversation reveals:
-- Personal preferences of the user (food, health, work, family, technology, habits)
-- Health information: about the user or their loved ones (diagnoses, reactions to medications or food, allergies, recurring symptoms)
-- Significant events: accidents, unusual episodes, emergencies
-- Important decisions made when facing a problem that worried the user
-- Relevant facts about their personal life, family, work, or surroundings
-
-**NEVER save**:
-- Command outputs or technical query results
-- Calendar, agenda, or reminder lookups
-- Note-taking or dictation
-- Trivial questions ("what time is it?", "how much is X?")
-- Superficial conversation with no informational value about the user
-- Ephemeral information with no value beyond the current conversation
-
-**Memory content format**: include rich context. Not just "<User or User's name> prefers X" but "<User or User's name> prefers X because Y happened in such situation". Context is what makes a memory useful in the future.
-
+"""
+    + MEMORY_POLICY
+    + """
 **The `relevance` field encodes your confidence that this memory is worth keeping**:
 - Close to 1.0 → you are certain this is important and should be preserved
 - Close to 0.0 → you are unsure, it might be noise
 - Only include memories you feel confident about. If you are genuinely unsure, omit the entry entirely rather than assigning a low relevance score.
+
+If the conversation shows facts that were ALREADY saved through the `memory` tool (visible as `memory` tool calls with `operation: "create"` and their results), do NOT extract those again — they are already in long-term memory. Only extract what was not captured live.
 
 Return ONLY valid JSON with the following schema, no additional text:
 [
@@ -103,6 +99,7 @@ Return ONLY valid JSON with the following schema, no additional text:
 The "timestamp" field is optional. If included, use the timestamp of the most relevant message (ISO8601 UTC).
 If there is NOTHING worth remembering long-term, return an empty array: []
 """
+)
 
 
 @dataclass
@@ -121,6 +118,7 @@ class ConsolidateMemoryUseCase:
         agent_id: str,
         memory_config: MemorySettings,
         delay_seconds: int = 0,
+        digest: DigestWriter | None = None,
     ) -> None:
         self._llm = llm
         self._memory = memory
@@ -132,6 +130,10 @@ class ConsolidateMemoryUseCase:
         # dentro del mismo agente. Misma intención que el delay entre agentes
         # del ``ConsolidateAllAgentsUseCase``: respetar rate limits del LLM remoto.
         self._delay_seconds = max(0, int(delay_seconds))
+        # Escritor del digest markdown — compartido con la tool `memory` (create
+        # en vivo). Si no se inyecta uno (wiring futuro), se construye acá mismo
+        # para no romper ninguna construcción existente del use case.
+        self._digest = digest or DigestWriter(memory, agent_id=agent_id, settings=memory_config)
 
         # Extractor sub-agente — wired post-construcción por el ensamblador (pasada 3)
         # cuando memory.llm.agent_id apunta a un sub-agente válido. Si está
@@ -383,53 +385,9 @@ class ConsolidateMemoryUseCase:
                 ) from exc
 
         # Regenerar el digest del scope (best-effort, no aborta).
-        await self._write_digest(channel, chat_id)
+        await self._digest.write(channel, chat_id)
 
         return stored
-
-    def _render_digest(self, memories: list[MemoryEntry]) -> str:
-        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
-        lines = [
-            "# Recuerdos sobre el usuario",
-            f"<!-- Generado por /consolidate — {now_iso} -->",
-            "",
-        ]
-        for m in memories:
-            date_str = (m.created_at or datetime.now(timezone.utc)).strftime("%Y-%m-%d")
-            tag_suffix = f" ({', '.join(m.tags)})" if m.tags else ""
-            lines.append(f"- [{date_str}] {m.content}{tag_suffix}")
-        return "\n".join(lines) + "\n"
-
-    async def _write_digest(self, channel: str | None, chat_id: str | None) -> None:
-        """
-        Regenera el digest markdown del scope ``(channel, chat_id)``.
-        Nunca propaga excepciones — un fallo no aborta la consolidación.
-        """
-        try:
-            latest = await self._memory.get_recent(
-                self._memory_cfg.digest_size,
-                agent_id=self._agent_id,
-                channel=channel,
-                chat_id=chat_id,
-            )
-            markdown = self._render_digest(latest)
-            path = self._memory_cfg.resolved_digest_path(channel, chat_id)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(markdown, encoding="utf-8")
-            logger.info(
-                "Digest scope=(%r, %r) regenerado: %s (%d recuerdos)",
-                channel,
-                chat_id,
-                path,
-                len(latest),
-            )
-        except Exception as exc:  # noqa: BLE001 — best-effort
-            logger.error(
-                "No se pudo regenerar el digest scope=(%r, %r): %s",
-                channel,
-                chat_id,
-                exc,
-            )
 
     def _parse_facts(self, raw: str) -> list[dict]:
         """Extrae y valida el JSON de recuerdos del LLM."""

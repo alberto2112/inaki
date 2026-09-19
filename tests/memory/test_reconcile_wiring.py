@@ -29,6 +29,7 @@ from inaki.kernel.domain.agent_settings import MemorySettings
 from inaki.config import (
     AgentConfig,
     AgentDelegationConfig,
+    CaptureConfig,
     ChatHistoryConfig,
     ConsolidationConfig,
     DelegationConfig,
@@ -39,12 +40,16 @@ from inaki.config import (
     ProviderConfig,
     ReconciliationConfig,
 )
+from inaki.memory.tools.memory_tool import MemoryTool
+from inaki.memory.tools.search_history_tool import SearchHistoryTool
+from inaki.memory.use_cases.digest import DigestWriter
 from inaki.memory.use_cases.reconcile_memory import ReconcileMemoryUseCase
 from inaki.memory.wiring import (
     MemoryJobs,
     SubAgenteDeMemoria,
     build_memory_jobs,
     build_memory_settings,
+    build_memory_tools,
     wire_sub_agentes_de_memoria,
 )
 
@@ -165,6 +170,29 @@ def test_build_memory_settings_defaults_reconcile() -> None:
     assert settings.reconciliation.top_k == 10
 
 
+def test_build_memory_settings_propaga_campos_capture() -> None:
+    """Los campos de ``memories.capture`` deben aparecer en ``MemorySettings.capture``."""
+    mem_cfg = MemoriesConfig(
+        db_filename=":memory:",
+        capture=CaptureConfig(enabled=False, dedup_similarity=0.65),
+    )
+
+    settings = build_memory_settings(mem_cfg)
+
+    assert settings.capture.enabled is False
+    assert settings.capture.dedup_similarity == 0.65
+
+
+def test_build_memory_settings_defaults_capture() -> None:
+    """Con MemoriesConfig defaults, MemorySettings usa los valores por defecto de capture."""
+    mem_cfg = MemoriesConfig(db_filename=":memory:")
+
+    settings = build_memory_settings(mem_cfg)
+
+    assert settings.capture.enabled is True
+    assert settings.capture.dedup_similarity == 0.80
+
+
 # ---------------------------------------------------------------------------
 # 2. AgentContainer construye ReconcileMemoryUseCase cuando habilitado
 # ---------------------------------------------------------------------------
@@ -265,12 +293,15 @@ async def test_reconcile_dispatch_adapter_lanza_por_agent_id_inexistente() -> No
 
 
 def _jobs(mem_cfg: MemoriesConfig) -> MemoryJobs:
+    memory = MagicMock()
+    digest = DigestWriter(memory, agent_id="test-agent", settings=build_memory_settings(mem_cfg))
     return build_memory_jobs(
         _make_agent_config(memory_cfg=mem_cfg),
         base_llm=AsyncMock(),
-        memory=MagicMock(),
+        memory=memory,
         embedder=FakeEmbedder(),
         history=AsyncMock(),
+        digest=digest,
     )
 
 
@@ -341,3 +372,58 @@ def test_wire_sub_agentes_loguea_error_si_el_id_no_es_un_sub_agente(caplog) -> N
 
     mock_uc.set_reconciler.assert_not_called()
     assert "debe apuntar a un sub-agente" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# build_memory_tools — tool única `memory` + `search_history` (fase 4)
+# ---------------------------------------------------------------------------
+
+
+def test_build_memory_tools_devuelve_memory_y_search_history() -> None:
+    """La tríada vieja (search_memory/delete_memory/update_memory) desapareció:
+    ``build_memory_tools`` devuelve exactamente ``memory`` (tool única) y
+    ``search_history`` (sin cambios)."""
+    memory = MagicMock()
+    digest = DigestWriter(
+        memory, agent_id="test-agent", settings=build_memory_settings(_make_memory_config())
+    )
+
+    tools = build_memory_tools(
+        _make_agent_config(),
+        memory=memory,
+        embedder=FakeEmbedder(),
+        history=AsyncMock(),
+        get_channel_context=lambda: None,
+        digest=digest,
+    )
+
+    assert [t.name for t in tools] == ["memory", "search_history"]
+    assert isinstance(tools[0], MemoryTool)
+    assert isinstance(tools[1], SearchHistoryTool)
+
+
+# ---------------------------------------------------------------------------
+# build_memory_jobs — el DigestWriter que recibe es el MISMO que consume el
+# consolidador (compartido con la tool `memory`)
+# ---------------------------------------------------------------------------
+
+
+def test_build_memory_jobs_comparte_la_instancia_de_digest_con_el_caller() -> None:
+    """El ``digest`` pasado a ``build_memory_jobs`` debe ser el que usa
+    ``ConsolidateMemoryUseCase`` internamente — identidad, no una copia — para
+    que consolidación y captura en vivo rendericen siempre el mismo archivo."""
+    memory = MagicMock()
+    mem_cfg = _make_memory_config(enabled=True)
+    digest = DigestWriter(memory, agent_id="test-agent", settings=build_memory_settings(mem_cfg))
+
+    jobs = build_memory_jobs(
+        _make_agent_config(memory_cfg=mem_cfg),
+        base_llm=AsyncMock(),
+        memory=memory,
+        embedder=FakeEmbedder(),
+        history=AsyncMock(),
+        digest=digest,
+    )
+
+    assert jobs.consolidate is not None
+    assert jobs.consolidate._digest is digest

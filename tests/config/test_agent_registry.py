@@ -243,6 +243,52 @@ def test_sub_agent_memory_enabled_explicit_true_is_respected(tmp_path: Path) -> 
     )
 
 
+def test_sub_agent_capture_default_false_when_not_specified(tmp_path: Path) -> None:
+    """Sub-agente sin bloque memories: → capture.enabled debe ser false (default de rol).
+
+    Un one-shot no persiste memoria por su cuenta; en particular el sub-agente
+    extractor, sin ``tools.allowed``, vería un ``memory create`` cuando se le pide JSON.
+    """
+    agents_dir = tmp_path / "agents"
+    sub_dir = agents_dir / "sub-agents"
+    global_raw = {
+        **_GLOBAL_RAW,
+        "memories": {"db_filename": "data/inaki.db", "capture": {"enabled": True}},
+    }
+
+    _write_sub_agent_with_memory(sub_dir, "worker", memory_block=None)
+
+    registry = AgentRegistry(agents_dir, global_raw)
+
+    worker = registry.get("worker")
+    assert worker.memories.capture.enabled is False, (
+        "capture.enabled debe forzarse a false cuando el sub-agente no lo especifica"
+    )
+
+
+def test_sub_agent_capture_enabled_explicit_true_is_respected(tmp_path: Path) -> None:
+    """Sub-agente con capture.enabled: true explícito → se respeta, no se pisa."""
+    agents_dir = tmp_path / "agents"
+    sub_dir = agents_dir / "sub-agents"
+    global_raw = {
+        **_GLOBAL_RAW,
+        "memories": {"db_filename": "data/inaki.db", "capture": {"enabled": False}},
+    }
+
+    _write_sub_agent_with_memory(
+        sub_dir,
+        "capturing_worker",
+        memory_block="memories:\n  capture:\n    enabled: true\n",
+    )
+
+    registry = AgentRegistry(agents_dir, global_raw)
+
+    worker = registry.get("capturing_worker")
+    assert worker.memories.capture.enabled is True, (
+        "capture.enabled: true explícito en el sub-agente debe respetarse"
+    )
+
+
 def test_sub_agent_memory_enabled_explicit_false_is_respected(tmp_path: Path) -> None:
     """Sub-agente con consolidation.enabled: false explícito → se respeta (no es no-op)."""
     agents_dir = tmp_path / "agents"

@@ -424,7 +424,7 @@ async def test_digest_file_written_with_correct_format(
     assert digest_file.exists()
     content = digest_file.read_text(encoding="utf-8")
     assert content.startswith("# Recuerdos sobre el usuario")
-    assert "<!-- Generado por /consolidate —" in content
+    assert "<!-- Generado por inaki —" in content
     assert "- [2026-04-09] Le gusta Python (tech, python)" in content
     assert "- [2026-04-08] Usa LazyVim" in content
     # No parenthetical for entry without tags

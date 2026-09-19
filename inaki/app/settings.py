@@ -44,7 +44,17 @@ def build_run_agent_settings(
         tools_top_k=cfg.tools.semantic_routing_top_k,
         tools_min_score=cfg.tools.semantic_routing_min_score,
         tools_sticky_ttl=cfg.tools.sticky_ttl,
-        tools_pinned=frozenset(cfg.tools.pinned),
+        # `memory` se pinnea cuando `memories.capture.enabled` (default `true`):
+        # es una tool que el LLM elige por RAZONAMIENTO ("esto vale la pena
+        # guardarlo"), no por el wording del usuario — mismo argumento que sostiene
+        # a `delegate` en el default de `tools.pinned`. El default de
+        # `tools.pinned` NO cambia (sigue siendo `["delegate"]`): un override
+        # explícito del usuario no debe perder su pin por accidente con un upgrade
+        # de esta versión, y apagar `capture` ya la saca del set sin tocar YAML.
+        tools_pinned=(
+            frozenset(cfg.tools.pinned)
+            | ({"memory"} if cfg.memories.capture.enabled else frozenset())
+        ),
         tool_call_max_iterations=cfg.tools.tool_call_max_iterations,
         circuit_breaker_threshold=cfg.tools.circuit_breaker_threshold,
         request_delay_seconds=cfg.llm.request_delay_seconds,

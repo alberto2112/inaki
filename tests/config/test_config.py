@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from inaki.config import (
     AppConfig,
+    CaptureConfig,
     ChatHistoryConfig,
     EmbeddingConfig,
     LLMConfig,
@@ -30,6 +34,35 @@ def test_default_digest_size() -> None:
 def test_explicit_digest_size() -> None:
     cfg = MemoriesConfig(digest_size=20)
     assert cfg.digest_size == 20
+
+
+# ---------------------------------------------------------------------------
+# CaptureConfig — captura de recuerdos en vivo (memories.capture)
+# ---------------------------------------------------------------------------
+
+
+def test_capture_config_defaults() -> None:
+    cfg = CaptureConfig()
+    assert cfg.enabled is True
+    assert cfg.dedup_similarity == 0.80
+
+
+def test_memories_config_capture_default_es_capture_config() -> None:
+    cfg = MemoriesConfig()
+    assert isinstance(cfg.capture, CaptureConfig)
+    assert cfg.capture.enabled is True
+    assert cfg.capture.dedup_similarity == 0.80
+
+
+def test_capture_config_dedup_similarity_acepta_los_extremos_del_rango() -> None:
+    assert CaptureConfig(dedup_similarity=0.0).dedup_similarity == 0.0
+    assert CaptureConfig(dedup_similarity=1.0).dedup_similarity == 1.0
+
+
+@pytest.mark.parametrize("valor", [1.5, -0.1])
+def test_capture_config_dedup_similarity_rechaza_fuera_de_rango(valor: float) -> None:
+    with pytest.raises(ValidationError, match="dedup_similarity"):
+        CaptureConfig(dedup_similarity=valor)
 
 
 # ---------------------------------------------------------------------------

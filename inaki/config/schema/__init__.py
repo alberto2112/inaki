@@ -20,6 +20,7 @@ from inaki.config.schema.embedding import EmbeddingConfig
 from inaki.config.schema.knowledge import KnowledgeConfig, KnowledgeSourceConfig
 from inaki.config.schema.llm import LLMConfig
 from inaki.config.schema.memories import (
+    CaptureConfig,
     ConsolidationConfig,
     MemoriesConfig,
     MemoryLLMConfig,
@@ -40,6 +41,7 @@ __all__ = [
     "AgentConfig",
     "AgentDelegationConfig",
     "AppConfig",
+    "CaptureConfig",
     "ChannelFallbackConfig",
     "ChannelsGlobalConfig",
     "ChatHistoryConfig",

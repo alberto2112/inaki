@@ -21,9 +21,7 @@ from tests.app.conftest import RegistryFalso, agent_cfg, global_cfg
 _BUILTINS = {
     "knowledge_search",
     "knowledge_admin",
-    "search_memory",
-    "delete_memory",
-    "update_memory",
+    "memory",
     "search_history",
     "web_search",
     "read_file",

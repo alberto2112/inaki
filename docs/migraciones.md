@@ -100,6 +100,7 @@ de `global.yaml`).
 | [`delegation-limites-per-agente`](#delegation-limites-per-agente) | `delegation.max_iterations_per_sub` y `delegation.timeout_seconds` en `global.yaml` dejan de abortar el arranque de TODOS los agentes; pasan a ser defaults que cada `agents/{id}.yaml` pisa, y valen también para la delegación en background |
 | [`rate-limit-por-intervenciones`](#rate-limit-por-intervenciones) | El rate limiter de grupos deja de contar mensajes ENTRANTES por ventana de pared y cuenta **respuestas propias seguidas sin humano**: `rate_limiter` es el máximo de intervenciones consecutivas y `rate_limiter_window` el cooldown que dispara la última, contado desde ella. Un turno `__SKIP__` ya no gasta presupuesto |
 | [`broadcast-human-reset`](#broadcast-human-reset) | Un `user_input_voice`/`user_input_photo` recibido por broadcast **resetea** el rate limiter del grupo, igual que un mensaje humano nativo |
+| [`memory-tool-unificada`](#memory-tool-unificada) | Las tools `search_memory`/`delete_memory`/`update_memory` desaparecen: la tool `memory` (con `operation`) las reemplaza y suma `create` (captura en vivo); `memories.capture.enabled` (default `true`) pinnea la tool |
 
 ## Índice por subsistema
 
@@ -118,7 +119,7 @@ de `global.yaml`).
 - **Contexto per-entidad**: `channel-contextid`, `group-context-by-chat-id`
   *(superseded)*, `per-user-context-files` *(superseded)*
 - **Memoria**: `memory-management-tools`, `memory-scoped-by-channel-chat`,
-  `agent-state-scoped-by-channel-chat`
+  `agent-state-scoped-by-channel-chat`, `memory-tool-unificada`
 - **Scheduler**: `modulos-scheduler-y-agents`, `scheduler-trigger-type-mutable`, `channel-send-history-persist`
 - **Refactor modular 2026-09 (índice)**: `refactor-modular`, `kernel-plano`
 - **Instalación y producto**: `instalacion-como-producto`, `config-web`, `agentes-y-providers-web`
@@ -129,6 +130,63 @@ de `global.yaml`).
 - **Delegación**: `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
 
 ---
+
+### `memory-tool-unificada`
+
+**Contexto (2026-09-19).** La memoria a largo plazo se gestionaba con tres tools separadas
+(`search_memory`, `delete_memory`, `update_memory`, nacidas de la nota
+`memory-management-tools`) y ninguna para CREAR: el único camino para agregar
+un recuerdo era el extractor nocturno (`ConsolidateMemoryUseCase`), que corría
+horas después de la conversación que lo originó. Las tres tools se registraban
+SIEMPRE, sin gate — la convención del repo para una capacidad con varias
+operaciones (una tool con discriminador `operation`, como `scheduler` o
+`knowledge_admin`) no se aplicaba a memoria. El digest markdown lo renderizaba
+una única función privada dentro del consolidador (`_render_digest`), así que
+un segundo escritor no tenía de dónde reusar el formato. La política de qué
+vale la pena guardar (bloque SAVE/NEVER) vivía hardcodeada dentro del prompt
+del extractor, sin otro consumidor.
+
+**Cambio.** Las tres tools se reemplazan por una única tool `memory`
+(`inaki/memory/tools/memory_tool.py`) con discriminador `operation`: `search`,
+`list` (recuerdos recientes del scope actual del turno, con ids), `update`,
+`delete` — siempre disponibles — y `create`, solo si
+`memories.capture.enabled` (nueva sub-sección, sibling de `consolidation` y
+`reconciliation`, default `true`). `create` permite guardar un recuerdo EN VIVO,
+en el momento en que la conversación lo revela, sin esperar al extractor
+nocturno. Para no duplicar contra el extractor, `create` deduplica por
+similitud (`search_with_scores` contra el embedding recién calculado,
+`capture.dedup_similarity` default `0.80`) y filtra el resultado a mano: el
+único candidato a fusión es el primer vecino cuyo `agent_id` coincide con el
+propio, porque `search_with_scores` no filtra por agente ni scope — el vecino
+mejor rankeado puede ser de OTRO agente o un recuerdo "global"
+(`agent_id=None`). El resultado siempre dice qué pasó (`created id=…` o
+`merged into id=…`), nunca en silencio. El digest markdown pasa a tener un solo
+renderer (`DigestWriter`, `inaki/memory/use_cases/digest.py`), compartido por
+`ConsolidateMemoryUseCase` y por `create`/`update`/`delete` de la tool. La
+política SAVE/NEVER pasa a `MEMORY_POLICY`
+(`inaki/memory/policy.py`), consumida por el extractor Y por la `description`
+de `create` — un solo lugar para cambiar el criterio. El extractor nocturno
+sigue como red de seguridad y ahora sabe no re-extraer lo que ya se guardó en
+vivo (visible en la conversación como tool calls `memory` con
+`operation: "create"`). `memory` se pinnea (`tools.pinned`) cuando
+`memories.capture.enabled` — mismo argumento que sostiene a `delegate` en el
+pin default: es una tool que el LLM elige por razonamiento ("esto vale la pena
+guardarlo"), no por el wording del usuario, así que el routing semántico solo
+la traería si el usuario habla explícitamente de guardar memoria. Los sub-agentes nacieron con `memories.capture.enabled: false` en `SUBAGENT_DEFAULTS`, por el mismo principio que ya apagaba sus jobs de memoria: un one-shot no persiste memoria por su cuenta. En particular el sub-agente extractor, que sin `tools.allowed` ve todas sus tools, no debía tener un `create` a mano cuando se le pide JSON — habría guardado bajo su propio `agent_id`, invisible para el agente dueño de la conversación.
+
+**Acción del operador.** Ninguna migración de DB ni de YAML: `memories.capture`
+nace con default `true` y no reescribe filas existentes. Si un YAML propio
+nombraba `search_memory`, `delete_memory` o `update_memory` en
+`tools.allowed`/`tools.pinned` (del agente o de un sub-agente), renombrar a
+`memory` — el nombre viejo se filtra en silencio como sticky de un nombre
+desconocido (`_turn_pipeline`), no rompe el arranque, pero la capacidad deja de
+estar donde se la busca. Un sub-agente con `tools.allowed` que quiera memoria
+debe listar `memory` (los nombres viejos ya no existen).
+
+**Invariante que dejó.** **NUNCA** fusionar o deduplicar recuerdos contra
+`search_with_scores` sin filtrar por `agent_id`: el fichero de memoria es
+COMPARTIDO entre agentes (aislamiento por columna, no por fichero) y el vecino
+mejor rankeado puede pertenecer a otro agente.
 
 ### `delegation-limites-per-agente`
 
@@ -2664,6 +2722,9 @@ SQL
 NO soporta `INSERT OR REPLACE` — el path REPLACE rompe con UNIQUE
 constraint. Se reemplaza por `DELETE` + `INSERT`. Esto siempre fue un latent
 bug en `store` cuando el mismo id se reescribía.
+
+*Cerrado después:* las tres tools se unificaron en `memory` →
+[`memory-tool-unificada`](#memory-tool-unificada).
 
 ### `memory-scoped-by-channel-chat`
 

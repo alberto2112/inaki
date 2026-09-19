@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 from inaki.config import AgentConfig, MemoriesConfig
 from inaki.kernel.domain.agent_settings import (
+    CaptureSettings,
     ConsolidationSettings,
     MemorySettings,
     ReconciliationSettings,
@@ -28,11 +29,13 @@ from inaki.kernel.run_agent_one_shot import RunAgentOneShotUseCase
 from inaki.llm.wiring import LLMProviderFactory
 from inaki.memory.adapters.sqlite_history_store import HistoryStoreSettings, SQLiteHistoryStore
 from inaki.memory.adapters.sqlite_memory_repo import SQLiteMemoryRepository
-from inaki.memory.tools.memory_tools import DeleteMemoryTool, SearchMemoryTool, UpdateMemoryTool
+from inaki.memory.tools.memory_tool import MemoryTool
 from inaki.memory.tools.search_history_tool import SearchHistoryTool
 from inaki.memory.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
 from inaki.memory.use_cases.consolidate_memory import ConsolidateMemoryUseCase
+from inaki.memory.use_cases.digest import DigestWriter
 from inaki.memory.use_cases.reconcile_memory import ReconcileMemoryUseCase
+from inaki.shared.channel_context import ChannelContext
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,7 @@ def build_memory_settings(memories_cfg: MemoriesConfig) -> MemorySettings:
     """Mapea el bloque ``memories`` → VO del kernel (lo consume el turno y la consolidación)."""
     cons = memories_cfg.consolidation
     rec = memories_cfg.reconciliation
+    cap = memories_cfg.capture
     return MemorySettings(
         digest_template=memories_cfg.digest_filename,
         digest_size=memories_cfg.digest_size,
@@ -52,6 +56,10 @@ def build_memory_settings(memories_cfg: MemoriesConfig) -> MemorySettings:
         reconciliation=ReconciliationSettings(
             similarity_threshold=rec.similarity_threshold,
             top_k=rec.top_k,
+        ),
+        capture=CaptureSettings(
+            enabled=cap.enabled,
+            dedup_similarity=cap.dedup_similarity,
         ),
     )
 
@@ -67,6 +75,13 @@ def build_history_store(cfg: AgentConfig) -> SQLiteHistoryStore:
             max_messages=cfg.chat_history.max_messages,
         )
     )
+
+
+def build_digest_writer(cfg: AgentConfig, memory: IMemoryRepository) -> DigestWriter:
+    """El renderer ÚNICO del digest markdown, compartido por la tool ``memory``
+    (``create``/``update``/``delete`` en vivo) y ``ConsolidateMemoryUseCase``
+    (extracción nocturna) — mismo formato, mismo fichero por scope."""
+    return DigestWriter(memory, agent_id=cfg.id, settings=build_memory_settings(cfg.memories))
 
 
 def resolver_llm_de_memorias(cfg: AgentConfig, base_llm: ILLMProvider) -> ILLMProvider:
@@ -111,7 +126,12 @@ def build_memory_jobs(
     memory: IMemoryRepository,
     embedder: IEmbeddingProvider,
     history: IHistoryStore,
+    digest: DigestWriter,
 ) -> MemoryJobs:
+    """``digest`` es la MISMA instancia que usa la tool ``memory`` (ver
+    :func:`build_digest_writer`): consolidación nocturna y captura en vivo
+    comparten un solo renderer, así el digest que ve el turno siempre refleja
+    ambas fuentes sin regenerarlo dos veces con formatos distintos."""
     cons_enabled = cfg.memories.consolidation.enabled
     rec_enabled = cfg.memories.reconciliation.enabled
     if not (cons_enabled or rec_enabled):
@@ -127,6 +147,7 @@ def build_memory_jobs(
             agent_id=cfg.id,
             memory_config=settings,
             delay_seconds=cfg.memories.consolidation.delay_seconds,
+            digest=digest,
         )
         if cons_enabled
         else None
@@ -146,19 +167,28 @@ def build_memory_jobs(
 
 
 def build_memory_tools(
+    cfg: AgentConfig,
     *,
     memory: IMemoryRepository,
     embedder: IEmbeddingProvider,
     history: IHistoryStore,
-    agent_id: str,
+    get_channel_context: Callable[[], ChannelContext | None],
+    digest: DigestWriter,
 ) -> list[ITool]:
-    """Gestión directa de recuerdos (buscar/borrar/editar, sin filtro de scope) y
-    búsqueda en el historial CRUDO scopeada al ``agent_id``."""
+    """Gestión de recuerdos (tool única ``memory``: search/list/update/delete, y
+    ``create`` si ``memories.capture.enabled``) y búsqueda en el historial CRUDO
+    scopeada al ``agent_id`` (``search_history``, sin cambios)."""
+    capture = build_memory_settings(cfg.memories).capture
     return [
-        SearchMemoryTool(memory=memory, embedder=embedder),
-        DeleteMemoryTool(memory=memory),
-        UpdateMemoryTool(memory=memory, embedder=embedder),
-        SearchHistoryTool(history=history, agent_id=agent_id),
+        MemoryTool(
+            memory=memory,
+            embedder=embedder,
+            agent_id=cfg.id,
+            get_channel_context=get_channel_context,
+            digest=digest,
+            capture=capture,
+        ),
+        SearchHistoryTool(history=history, agent_id=cfg.id),
     ]
 
 

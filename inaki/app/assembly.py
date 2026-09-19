@@ -87,6 +87,7 @@ from inaki.memory.wiring import (
     MemoryJobs,
     SubAgenteDeMemoria,
     build_consolidate_all,
+    build_digest_writer,
     build_history_store,
     build_memory_jobs,
     build_memory_repo,
@@ -297,6 +298,10 @@ def _construir_agente(
     llm = LLMProviderFactory.create(cfg.llm, cfg.providers)
     memory = build_memory_repo(cfg, embedder)
     history = build_history_store(cfg)
+    # Un solo DigestWriter por agente: lo comparten la tool `memory` (create/update/
+    # delete en vivo) y el job de consolidación nocturna — mismo renderer, mismo
+    # fichero por scope (ver docstring de build_memory_jobs).
+    digest = build_digest_writer(cfg, memory)
     skills = YamlSkillRepository(embedder=embedder, cache=cache, dimension=cfg.embedding.dimension)
     tools = ToolRegistry(embedder=embedder, cache=cache, dimension=cfg.embedding.dimension)
 
@@ -305,7 +310,14 @@ def _construir_agente(
     knowledge = build_knowledge(global_cfg, cfg, memory=memory, embedder=embedder)
     for tool in (
         *build_knowledge_tools(knowledge, embedder),
-        *build_memory_tools(memory=memory, embedder=embedder, history=history, agent_id=cfg.id),
+        *build_memory_tools(
+            cfg,
+            memory=memory,
+            embedder=embedder,
+            history=history,
+            get_channel_context=contexto_del_turno.get_channel_context,
+            digest=digest,
+        ),
         *build_builtin_tools(cfg, workspace=workspace, config_store=tool_config_store),
         build_config_tool(global_cfg, cfg),
     ):
@@ -345,7 +357,9 @@ def _construir_agente(
         settings=build_one_shot_settings(cfg),
         tracer=tracer,
     )
-    jobs = build_memory_jobs(cfg, base_llm=llm, memory=memory, embedder=embedder, history=history)
+    jobs = build_memory_jobs(
+        cfg, base_llm=llm, memory=memory, embedder=embedder, history=history, digest=digest
+    )
     return _Borrador(
         cfg=cfg,
         llm=llm,

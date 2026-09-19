@@ -228,8 +228,10 @@ Estructura:
   - Campos de nivel raíz: store + digest COMPARTIDOS por ambos jobs.
   - ``llm``: LLM base COMPARTIDO (provider/model/...) para los dos jobs en modo
     directo. Sin ``agent_id`` — la delegación a sub-agente es por job.
-  - ``consolidation`` / ``reconciliation``: secciones hermanas, cada una con su
-    ``enabled``, ``schedule``, parámetros propios y ``agent_id`` de sub-agente.
+  - ``consolidation`` / ``reconciliation`` / ``capture``: secciones hermanas,
+    cada una con su ``enabled`` propio y parámetros específicos (``schedule`` y
+    ``agent_id`` de sub-agente en las dos primeras; ``dedup_similarity`` en
+    ``capture``).
 
 | Field | Type | Default | Secret |
 |---|---|---|---|
@@ -239,6 +241,7 @@ Estructura:
 | `llm` | `MemoryLLMConfig \| None` | `null` |  |
 | `consolidation` | `ConsolidationConfig` | _(sub-config)_ |  |
 | `reconciliation` | `ReconciliationConfig` | _(sub-config)_ |  |
+| `capture` | `CaptureConfig` | _(sub-config)_ |  |
 
 **`db_filename`** — Fichero SQLite del store de recuerdos (tablas ``memories`` y ``memory_embeddings``).
 
@@ -259,6 +262,10 @@ Trae su propio ``enabled`` (per-agente), su cron y su ``agent_id`` de sub-agente
 **`reconciliation`** — Job de «reflection» que agrupa recuerdos similares y resuelve los contradictorios.
 
 Trae su propio ``enabled`` (per-agente, opt-in), su cron y su ``agent_id`` de sub-agente reconciliador. Corre aunque la consolidación esté apagada.
+
+**`capture`** — Captura de recuerdos EN VIVO, decidida por el LLM durante el turno.
+
+Trae su propio ``enabled`` (per-agente) y ``dedup_similarity``. Gatea la operación ``create`` de la tool ``memory`` y su pinning; es independiente de ``consolidation`` y ``reconciliation``.
 
 ### `MemoryLLMConfig`
 
@@ -364,6 +371,21 @@ Opt-in (default ``False``) por ser una operación más costosa que la consolidac
 **`agent_id`** — Sub-agente RECONCILIADOR opcional (debe existir en ``agents/sub-agents/``).
 
 Cuando se especifica, la reconciliación delega a ese sub-agente vía one-shot en lugar del prompt hardcodeado; el sub-agente usa su propia config LLM. Si no resuelve a un sub-agente válido, el arranque loggea ERROR y cae al prompt por defecto + LLM compartido (graceful).
+
+### `CaptureConfig`
+
+Configuración de la captura EN VIVO de recuerdos (operación ``create`` de la tool ``memory``).
+
+| Field | Type | Default | Secret |
+|---|---|---|---|
+| `enabled` | `bool` | `True` |  |
+| `dedup_similarity` | `float` | `0.8` |  |
+
+**`enabled`** — Habilita la operación ``create`` de la tool ``memory`` (captura de recuerdos en vivo, decidida por el LLM durante el turno) y el pinning de esa tool. Flag PER-AGENT.
+
+Es INDEPENDIENTE de ``consolidation.enabled``: el extractor nocturno sigue corriendo como red de seguridad aunque la captura en vivo esté apagada, y viceversa. Apagar ``capture`` quita ``create`` del enum de operaciones de la tool (y su pin), pero ``search``/``list``/``update``/``delete`` siguen disponibles — gestionan recuerdos existentes, no la captura.
+
+**`dedup_similarity`** — Umbral de similitud coseno (0.0-1.0) a partir del cual un ``create`` fusiona con el recuerdo existente más parecido en vez de insertar uno nuevo. Mismo default que ``reconciliation.similarity_threshold`` (``0.80``, conservador).
 
 ### `ChatHistoryConfig`
 

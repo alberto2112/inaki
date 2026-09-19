@@ -88,13 +88,20 @@ class ReconciliationSettings(BaseModel, frozen=True):
     top_k: int = 10
 
 
+class CaptureSettings(BaseModel, frozen=True):
+    """Parámetros que la tool ``memory`` consume de la captura de recuerdos en vivo."""
+
+    enabled: bool = True
+    dedup_similarity: float = 0.80
+
+
 class MemorySettings(BaseModel, frozen=True):
     """Parámetros de memoria que consumen ``ConsolidateMemoryUseCase``,
     ``ReconcileMemoryUseCase`` y ``RunAgentUseCase``.
 
     Estructura espejo del YAML ``memories``: campos de digest COMPARTIDOS en la
-    raíz, y dos sub-VOs hermanos (``consolidation`` / ``reconciliation``) con los
-    parámetros propios de cada job.
+    raíz, y tres sub-VOs hermanos (``consolidation`` / ``reconciliation`` /
+    ``capture``) con los parámetros propios de cada job.
 
     ``digest_template`` llega ya resuelto a ruta absoluta por el container
     (la expansión de ``~/.inaki/`` es responsabilidad del loader de config).
@@ -105,6 +112,7 @@ class MemorySettings(BaseModel, frozen=True):
     digest_size: int = 14
     consolidation: ConsolidationSettings = ConsolidationSettings()
     reconciliation: ReconciliationSettings = ReconciliationSettings()
+    capture: CaptureSettings = CaptureSettings()
 
     def resolved_digest_path(self, channel: str | None, chat_id: str | None) -> Path:
         """

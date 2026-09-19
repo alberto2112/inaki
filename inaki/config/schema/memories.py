@@ -6,7 +6,7 @@ Importá desde ``inaki.config.schema`` (o ``inaki.config``).
 
 from __future__ import annotations
 
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field
 
 from inaki.config.schema._base import RuntimePath, _ConfigBaseModel
 from inaki.config.schema.llm import LLMConfig
@@ -163,6 +163,30 @@ class ReconciliationConfig(_ConfigBaseModel):
     """
 
 
+class CaptureConfig(_ConfigBaseModel):
+    """Configuración de la captura EN VIVO de recuerdos (operación ``create`` de la tool ``memory``)."""
+
+    enabled: bool = True
+    """
+    Habilita la operación ``create`` de la tool ``memory`` (captura de recuerdos
+    en vivo, decidida por el LLM durante el turno) y el pinning de esa tool.
+    Flag PER-AGENT.
+
+    Es INDEPENDIENTE de ``consolidation.enabled``: el extractor nocturno sigue
+    corriendo como red de seguridad aunque la captura en vivo esté apagada, y
+    viceversa. Apagar ``capture`` quita ``create`` del enum de operaciones de la
+    tool (y su pin), pero ``search``/``list``/``update``/``delete`` siguen
+    disponibles — gestionan recuerdos existentes, no la captura.
+    """
+
+    dedup_similarity: float = Field(default=0.80, ge=0.0, le=1.0)
+    """
+    Umbral de similitud coseno (0.0-1.0) a partir del cual un ``create`` fusiona
+    con el recuerdo existente más parecido en vez de insertar uno nuevo. Mismo
+    default que ``reconciliation.similarity_threshold`` (``0.80``, conservador).
+    """
+
+
 class MemoriesConfig(_ConfigBaseModel):
     """
     Configuración del subsistema de memoria a largo plazo.
@@ -171,8 +195,10 @@ class MemoriesConfig(_ConfigBaseModel):
       - Campos de nivel raíz: store + digest COMPARTIDOS por ambos jobs.
       - ``llm``: LLM base COMPARTIDO (provider/model/...) para los dos jobs en modo
         directo. Sin ``agent_id`` — la delegación a sub-agente es por job.
-      - ``consolidation`` / ``reconciliation``: secciones hermanas, cada una con su
-        ``enabled``, ``schedule``, parámetros propios y ``agent_id`` de sub-agente.
+      - ``consolidation`` / ``reconciliation`` / ``capture``: secciones hermanas,
+        cada una con su ``enabled`` propio y parámetros específicos (``schedule`` y
+        ``agent_id`` de sub-agente en las dos primeras; ``dedup_similarity`` en
+        ``capture``).
     """
 
     model_config = ConfigDict(validate_default=True)  # RuntimePath en los defaults
@@ -216,6 +242,13 @@ class MemoriesConfig(_ConfigBaseModel):
 
     Trae su propio ``enabled`` (per-agente, opt-in), su cron y su ``agent_id`` de
     sub-agente reconciliador. Corre aunque la consolidación esté apagada."""
+
+    capture: CaptureConfig = CaptureConfig()
+    """Captura de recuerdos EN VIVO, decidida por el LLM durante el turno.
+
+    Trae su propio ``enabled`` (per-agente) y ``dedup_similarity``. Gatea la
+    operación ``create`` de la tool ``memory`` y su pinning; es independiente de
+    ``consolidation`` y ``reconciliation``."""
 
     # La resolución del digest path y de keep_last_messages (lógica de dominio
     # que solo core consume) vive en inaki/kernel/domain/agent_settings.py

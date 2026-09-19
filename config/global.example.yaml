@@ -112,8 +112,10 @@ embedding:
 #   - Campos de nivel raíz: store + digest COMPARTIDOS por ambos jobs.
 #   - ``llm``: LLM base COMPARTIDO (provider/model/...) para los dos jobs en modo
 #     directo. Sin ``agent_id`` — la delegación a sub-agente es por job.
-#   - ``consolidation`` / ``reconciliation``: secciones hermanas, cada una con su
-#     ``enabled``, ``schedule``, parámetros propios y ``agent_id`` de sub-agente.
+#   - ``consolidation`` / ``reconciliation`` / ``capture``: secciones hermanas,
+#     cada una con su ``enabled`` propio y parámetros específicos (``schedule`` y
+#     ``agent_id`` de sub-agente en las dos primeras; ``dedup_similarity`` en
+#     ``capture``).
 
 memories:
   # Fichero SQLite del store de recuerdos (tablas ``memories`` y ``memory_embeddings``).
@@ -175,6 +177,16 @@ memories:
     top_k: 10
     # Sub-agente RECONCILIADOR opcional (debe existir en ``agents/sub-agents/``).
     agent_id: null
+  # Captura de recuerdos EN VIVO, decidida por el LLM durante el turno.
+  capture:
+    # Habilita la operación ``create`` de la tool ``memory`` (captura de recuerdos en
+    # vivo, decidida por el LLM durante el turno) y el pinning de esa tool. Flag PER-
+    # AGENT.
+    enabled: true
+    # Umbral de similitud coseno (0.0-1.0) a partir del cual un ``create`` fusiona con
+    # el recuerdo existente más parecido en vez de insertar uno nuevo. Mismo default que
+    # ``reconciliation.similarity_threshold`` (``0.80``, conservador).
+    dedup_similarity: 0.8
 
 # -----------------------------------------------------------------------------
 # [chat_history]

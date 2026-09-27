@@ -25,6 +25,13 @@ class Message(BaseModel):
     # ``reasoning_content`` en el payload al provider, y se descarta al final
     # del tool loop. NUNCA se persiste.
     thinking: str | None = None
+    # Contenido crudo del assistant tal como lo devolvió el provider, OPACO para
+    # el kernel. Existe para providers que exigen recibir de vuelta, sin tocar,
+    # bloques que el dominio no modela (Anthropic: ``thinking`` con su
+    # ``signature``, obligatorio en el tool loop). Mismo ciclo de vida que
+    # ``thinking``: vive en working_messages del turno en vuelo y NUNCA se
+    # persiste. Los providers que no lo entienden lo ignoran.
+    provider_content: dict | None = None
     # Scope del mensaje cuando viene del historial. None en working_messages del
     # tool loop o en mensajes que aún no se persistieron. Permite agrupar por
     # conversación al consolidar memoria sin necesidad de un nuevo entity.

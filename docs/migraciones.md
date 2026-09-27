@@ -101,6 +101,7 @@ de `global.yaml`).
 | [`rate-limit-por-intervenciones`](#rate-limit-por-intervenciones) | El rate limiter de grupos deja de contar mensajes ENTRANTES por ventana de pared y cuenta **respuestas propias seguidas sin humano**: `rate_limiter` es el máximo de intervenciones consecutivas y `rate_limiter_window` el cooldown que dispara la última, contado desde ella. Un turno `__SKIP__` ya no gasta presupuesto |
 | [`broadcast-human-reset`](#broadcast-human-reset) | Un `user_input_voice`/`user_input_photo` recibido por broadcast **resetea** el rate limiter del grupo, igual que un mensaje humano nativo |
 | [`memory-tool-unificada`](#memory-tool-unificada) | Las tools `search_memory`/`delete_memory`/`update_memory` desaparecen: la tool `memory` (con `operation`) las reemplaza y suma `create` (captura en vivo); `memories.capture.enabled` (default `true`) pinnea la tool |
+| [`anthropic-api-actual`](#anthropic-api-actual) | El provider `anthropic` deja de mandar `temperature` (se ignora el valor de `llm.temperature`); `reasoning_effort` pasa a `output_config.effort` con thinking adaptive, y un valor fuera de `low`/`medium`/`high`/`xhigh`/`max` **aborta el arranque** |
 
 ## Índice por subsistema
 
@@ -127,7 +128,62 @@ de `global.yaml`).
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
+- **Providers LLM**: `anthropic-api-actual`
 - **Delegación**: `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
+
+---
+
+### `anthropic-api-actual`
+
+**Contexto (2026-09-27).** El provider `anthropic` (`inaki/llm/anthropic.py`) se
+había escrito contra el contrato de la Messages API de la generación Claude 4.x
+temprana, y los tests lo validaban con httpx mockeado. Al auditarlo antes de
+usarlo en serio aparecieron tres incompatibilidades con los modelos vigentes
+(Opus 4.7 en adelante, Sonnet 5, Opus 5, Opus 5.5, Fable), y los 28 tests seguían
+en verde porque afirmaban la forma del payload, no lo que la API acepta:
+
+1. Mandaba siempre `temperature` (default del schema: `0.7`). Esos modelos
+   devuelven 400 ante cualquier `temperature`/`top_p`/`top_k` que no sea el
+   default: fallaba **toda** request.
+2. El thinking iba como `{"type": "enabled", "budget_tokens": N}`, que esos
+   modelos también rechazan con 400.
+3. El diseño "thinking solo sin tools" asumía que omitir `thinking` apagaba el
+   razonamiento. En Sonnet 5 / Opus 5 / Opus 5.5 omitirlo corre *adaptive*
+   igual, y en Opus 5.5 / Fable ni siquiera se puede apagar. El adapter
+   descartaba los bloques `thinking` firmados, y la API exige recibirlos de
+   vuelta, sin cambios, en el assistant cuyo `tool_use` espera resultado.
+
+**Cambio.**
+
+- `temperature` no se manda nunca desde el provider `anthropic`. Se descartó
+  detectar la familia por el nombre del modelo: ese mapeo caduca con cada
+  lanzamiento.
+- `reasoning_effort` se manda como `output_config.effort`; salvo `low`, activa
+  `thinking: {"type": "adaptive", "display": "summarized"}`. Un valor fuera de
+  `low`/`medium`/`high`/`xhigh`/`max` aborta el arranque con `ConfigError`.
+- `Message` y `LLMResponse` sumaron `provider_content`: un blob **opaco** para el
+  kernel, con el mismo ciclo de vida que `thinking` (vive en los
+  `working_messages` del turno en vuelo, nunca se persiste). El adapter guarda
+  ahí el contenido saneado del assistant y lo reenvía literal en la siguiente
+  iteración del tool loop.
+- El blob lleva una huella de `system` + `tools`. Con *preserved thinking*
+  (Opus 5.5 / Fable 5.1, obligatorio para cuentas creadas desde el 2026-08-31),
+  un thinking reenviado tras un cambio de `tools` es un 400, y el page-in y el
+  re-routing in-flight agrandan `tools` a mitad de turno. Si la huella no
+  coincide, el assistant se reenvía sin sus bloques thinking.
+- Una request sin `tools` (wrap-up del kill-switch, fallback tras
+  `max_iterations`, turno sin tools ruteadas) aplana los `tool_use`/`tool_result`
+  del historial a texto.
+- Ya no se emiten bloques de texto vacíos, se antepone un `user` si la ventana
+  arranca en `assistant`, y `stop_reason` dejó de ignorarse: `refusal` y
+  `model_context_window_exceeded` levantan `LLMError`, y `max_tokens` también
+  cuando corta un `tool_use` (su input puede venir truncado); con texto solo, es
+  un WARNING.
+
+**Invariante.** NUNCA dar por bueno un adapter de provider remoto porque sus
+tests mockeados pasan: el mock valida la forma que el código arma, no la que el
+API acepta. Y NUNCA descartar en el adapter un bloque que el provider exige
+recibir de vuelta: si el dominio no lo modela, viaja opaco en `provider_content`.
 
 ---
 

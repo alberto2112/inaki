@@ -703,6 +703,36 @@ async def test_thinking_propagates_to_working_messages_during_tool_loop():
     assert asst_msg.thinking == "paso 1: necesito llamar la tool"
 
 
+async def test_provider_content_propagates_to_working_messages():
+    """El blob opaco del provider (thinking firmado de Anthropic) viaja al
+    Message del assistant para la próxima iteración, sin que el kernel lo
+    interprete."""
+    blob = {"content": [{"type": "thinking", "thinking": "", "signature": "s"}], "huella": "h"}
+    tool_call = LLMResponse(
+        text_blocks=[],
+        tool_calls=[{"id": "c1", "function": {"name": "mytool", "arguments": "{}"}}],
+        provider_content=blob,
+        raw="",
+    )
+    llm = _make_llm(tool_call, LLMResponse(text_blocks=["ok"], raw=""))
+    tools = _make_tools()
+
+    await run_tool_loop(
+        llm=llm,
+        tools=tools,
+        messages=_base_messages(),
+        system_prompt="Prompt",
+        tool_schemas=[{"name": "mytool"}],
+        max_iterations=5,
+        circuit_breaker_threshold=3,
+        agent_id="agent",
+    )
+
+    working_messages = llm.complete.await_args_list[1].args[0]
+    asst_msg = next(m for m in working_messages if m.role == Role.ASSISTANT and m.tool_calls)
+    assert asst_msg.provider_content == blob
+
+
 # ---------------------------------------------------------------------------
 # Throttle del provider (request_delay_seconds)
 # ---------------------------------------------------------------------------

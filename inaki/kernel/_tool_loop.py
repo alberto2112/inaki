@@ -488,6 +488,7 @@ async def run_tool_loop(
             content=response.text,
             tool_calls=response.tool_calls,
             thinking=response.thinking,
+            provider_content=response.provider_content,
         )
         working_messages.append(assistant_msg)
         if tool_trace is not None:

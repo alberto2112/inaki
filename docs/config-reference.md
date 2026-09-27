@@ -164,7 +164,7 @@ OpenRouter exige el prefijo del vendor (``anthropic/claude-3-5-haiku``); el adap
 
 **`temperature`** — Aleatoriedad del muestreo: ``0.0`` determinista, valores altos más creativo.
 
-Orientativo: 0.3-0.5 para tareas de código o extracción, 0.7-0.9 para conversación. El adapter ``openai_responses`` la OMITE cuando ``reasoning_effort`` está seteado (la API devuelve 400 si van juntas).
+Orientativo: 0.3-0.5 para tareas de código o extracción, 0.7-0.9 para conversación. El adapter ``openai_responses`` la OMITE cuando ``reasoning_effort`` está seteado (la API devuelve 400 si van juntas), y el adapter ``anthropic`` no la manda NUNCA: los modelos Claude actuales (Opus 4.7 en adelante, Sonnet 5) devuelven 400 ante una temperatura que no sea la default.
 
 **`max_tokens`** — Techo de tokens que el modelo puede GENERAR en una respuesta.
 
@@ -172,7 +172,9 @@ No acota el prompt de entrada. Subirlo para respuestas largas (código, análisi
 
 **`reasoning_effort`** — Intensidad del modo razonamiento (thinking). ``null`` = desactivado.
 
-Cada adapter lo traduce a su dialecto: Groq lo manda tal cual y cambia ``max_tokens`` por ``max_completion_tokens``; ``anthropic`` lo convierte en el ``budget_tokens`` del extended thinking; ``openai_responses`` lo manda como ``reasoning.effort`` y omite ``temperature``. Con thinking activo conviene subir ``timeout_seconds``, y es el flag del que depende ``channels.thinking_indicator``.
+Cada adapter lo traduce a su dialecto: Groq lo manda tal cual y cambia ``max_tokens`` por ``max_completion_tokens``; ``anthropic`` lo manda como ``output_config.effort`` (acepta ``low``, ``medium``, ``high``, ``xhigh``, ``max``; otro valor aborta el arranque) y, salvo con ``low``, activa el thinking adaptive; ``openai_responses`` lo manda como ``reasoning.effort`` y omite ``temperature``. Con thinking activo conviene subir ``timeout_seconds`` y ``max_tokens`` (en ``anthropic`` el razonamiento consume ese mismo techo), y es el flag del que depende ``channels.thinking_indicator``.
+
+Ojo con ``anthropic``: en Sonnet 5, Opus 5 y Opus 5.5 el modelo razona igual aunque este campo sea ``null`` (el API no deja apagarlo en Opus 5.5); acá solo se regula la profundidad.
 
 **`timeout_seconds`** — Timeout HTTP del request al provider, en segundos.
 

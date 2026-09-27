@@ -18,6 +18,10 @@ las tools de la misma iteración.
   vive solo durante el tool loop para re-inyectarse en turnos siguientes
   intra-loop, y se descarta al obtener la respuesta final. NUNCA se persiste
   en historial.
+- ``provider_content``: contenido crudo del assistant que el provider necesita
+  recibir de vuelta SIN cambios en la próxima iteración del tool loop (Anthropic:
+  bloques ``thinking`` firmados). Opaco para el kernel, que solo lo copia al
+  ``Message`` del assistant. Transitorio como ``thinking``: NUNCA se persiste.
 - ``raw``: string crudo de debug/logging — representación textual best-effort
   de la respuesta original del provider.
 """
@@ -32,6 +36,7 @@ class LLMResponse:
     text_blocks: list[str] = field(default_factory=list)
     tool_calls: list[dict] = field(default_factory=list)
     thinking: str | None = None
+    provider_content: dict | None = None
     raw: str = ""
 
     @property

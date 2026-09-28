@@ -43,6 +43,7 @@ from inaki.agents.dispatcher import LLMDispatcherAdapter
 from inaki.agents.scope_registry import InMemoryScopeRegistryAdapter
 from inaki.agents.wiring import (
     build_background_queue,
+    build_background_tasks_tool,
     build_delegate_tool,
     build_discovery_section,
     build_ephemeral_child,
@@ -523,8 +524,9 @@ def _wire_delegation(
     borradores: dict[str, _Borrador],
     harness: _Harness,
 ) -> None:
-    """Registra ``delegate`` y la sección de descubrimiento si la delegación está
-    habilitada y hay sub-agentes elegibles (REQ-DG-1: sin tool, nunca en los schemas)."""
+    """Registra ``delegate``, ``background_tasks`` y la sección de descubrimiento
+    si la delegación está habilitada y hay sub-agentes elegibles (REQ-DG-1: sin
+    tool, nunca en los schemas)."""
     if not b.cfg.delegation.enabled:
         return
     targets = [cfg.id for cfg in registry.list_sub_agents()]
@@ -544,6 +546,12 @@ def _wire_delegation(
                 caller_agent_id=b.cfg.id,
                 caller=contexto_del_turno,
                 queue=harness.background_queue,  # type: ignore[arg-type]
+            )
+        )
+        b.tools.register(
+            build_background_tasks_tool(
+                harness.background_queue,  # type: ignore[arg-type]
+                caller_agent_id=b.cfg.id,
             )
         )
         b.run_agent.set_background_queue(harness.background_queue)  # type: ignore[arg-type]

@@ -393,6 +393,32 @@ async def test_req_dg9_delegate_tool_excluded_from_child_schemas():
         )
 
 
+async def test_background_tasks_tool_excluida_del_hijo():
+    """bg-stuck-task: el hijo recibe las tools del caller, pero ``background_tasks``
+    opera sobre las delegaciones del PADRE — un hijo que la viera podría
+    cancelarse a sí mismo o a sus hermanos."""
+    schema_bg = {
+        "type": "function",
+        "function": {"name": "background_tasks", "description": "Lista/cancela bg-N"},
+    }
+    schema_other = {
+        "type": "function",
+        "function": {"name": "read_file", "description": "Lee archivo"},
+    }
+    tools = _make_tools(schemas=[schema_other, schema_bg])
+    uc = _make_use_case(tools=tools)
+
+    with patch(
+        "inaki.kernel.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
+        mock_loop.return_value = "ok"
+        await uc.execute(task="t", system_prompt="p", max_iterations=5, timeout_seconds=30)
+
+        _, kwargs = mock_loop.call_args
+        sent_names = [sch["function"]["name"] for sch in kwargs["tool_schemas"]]
+        assert sent_names == ["read_file"]
+
+
 async def test_req_dg9_non_delegate_tools_preserved():
     """
     REQ-DG-9 (corolario): Solo "delegate" se filtra; las demás tools llegan

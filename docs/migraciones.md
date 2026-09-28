@@ -69,6 +69,7 @@ de `global.yaml`).
 
 | Nota | Cambio observable |
 |---|---|
+| [`bg-stuck-task`](#bg-stuck-task) | Un `bg-N` cuya entrega falla pasa a `delivery_failed` (antes quedaba `running` para siempre); tool nueva `background_tasks` para listar y cancelar |
 | [`outbound-send-single-owner`](#outbound-send-single-owner) | `persist_tool_calls` pasa a `true` por default → `history.db` crece más rápido |
 | [`trim-cuenta-conversacion`](#trim-cuenta-conversacion) | `keep_last_messages` cuenta conversación, no filas → se retiene **más** historial |
 | [`search-history-retention-horizon`](#search-history-retention-horizon) | `search_history` declara hasta dónde llega el registro; un resultado vacío deja de leerse como "no ocurrió" |
@@ -127,7 +128,49 @@ de `global.yaml`).
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
-- **Delegación**: `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
+- **Delegación**: `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
+
+---
+
+### `bg-stuck-task`
+
+**El bug (2026-09-28)**: Iñaki delegó una tarea en background y seis horas
+después el `bg-2` seguía figurando como `running` en su system prompt, sin forma
+de cerrarlo. El hijo no estaba colgado: había terminado. Lo que falló fueron los
+tres intentos de `dispatch()` del resultado al padre. El FIX silent-death de
+`background-delegation` dejaba la task viva a propósito para no perderla, pero
+con el mismo `status: running` que una task trabajando. El padre veía una
+delegación "en curso" que jamás iba a terminar, y el resultado del hijo vivía en
+una variable local de `_run_task` que se perdió con el fallo. El log de producción
+solo tenía la línea ERROR final: el motivo de cada intento se había logueado como
+WARNING sin el tipo de excepción y sin traceback.
+
+**El cambio**:
+
+- `BackgroundTask.status` sumó `delivering` (el hijo terminó y su resultado se
+  está entregando) y `delivery_failed` (la entrega agotó los reintentos). En
+  `delivery_failed` la task guarda `result` (el `[bg-N] ...` completo) y `error`
+  (tipo y mensaje del último intento). El snapshot muestra el error y la
+  sección in-flight del prompt explica cómo recuperarlo.
+- El port `IBackgroundDelegationQueue` sumó `cancel(task_id, caller_agent_id)`.
+  Con `queued`/`running` corta la task: el adapter guarda el `asyncio.Task` de
+  cada delegación, que antes se descartaba. Con `delivery_failed` la descarta y
+  devuelve el resultado guardado. Con `delivering` se niega, porque cortaría el
+  turno del padre a mitad. Una task de otro caller responde `not_found`.
+- Tool nueva `background_tasks` (`list` / `cancel`), registrada junto a
+  `delegate`. Por el gateway admin también la usa el operador
+  (`inaki tool background_tasks`). El hijo efímero no la ve: el one-shot la
+  excluye igual que a `delegate`.
+- El log final de una entrega fallida pasó a incluir el error y el traceback.
+  Cada WARNING de intento nombra el tipo de la excepción.
+- `stop()` pasó a cancelar también las delegaciones lanzadas, no solo el consumer.
+
+**Sin migración de DB ni de config.** La cola sigue siendo 100% in-memory.
+
+**Invariante**: NUNCA presentar como "en curso" una task cuyo hijo ya terminó.
+Un estado que miente es peor que ninguno: el agente espera, no avisa y no puede
+actuar. Y NUNCA dejar el único ejemplar de un resultado en una variable local
+de un camino que puede fallar.
 
 ---
 

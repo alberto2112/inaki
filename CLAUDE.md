@@ -181,6 +181,9 @@ Cada una salió de un fallo en producción. El caso completo está en
   análisis — eso es `format_analysis_delta`. → `attachment-grammar`
 - **NUNCA** descartar el return del `dispatch()`: es la única vía por la que un resultado
   `bg-N` llega al usuario. → `background-delegation`
+- **NUNCA** presentar como `running` una delegación cuyo hijo ya terminó, ni dejar su
+  resultado solo en una variable local de un camino que puede fallar: una entrega fallida
+  es `delivery_failed`, con el resultado guardado y cancelable. → `bg-stuck-task`
 
 **Kernel y canales**
 

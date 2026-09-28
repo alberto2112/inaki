@@ -234,6 +234,10 @@ Cada una salió de un fallo en producción. El caso completo está en
 - **NUNCA** borrar ni renombrar un campo del schema sin migración: desde que las
   claves desconocidas abortan el arranque, quitar un campo que el bootstrap escribió
   alguna vez rompe TODAS las instalaciones existentes. → `config-limpieza-final`
+- **NUNCA** dejar que un agente tenga dos identidades: el registry indexa por nombre
+  de fichero y el wiring por `cfg.id`, así que si difieren cada lookup que cruza las
+  dos falla en silencio y lejos de la causa (la delegación anuncia un target que no
+  resuelve). La identidad se valida UNA vez, al cargar. → `agent-id-igual-al-fichero`
 - **NUNCA** documentar un parámetro de config fuera de su docstring en el schema: de
   ahí salen `config-reference.md`, `global.example.yaml` y la ayuda de cualquier UI de configuración
   (`inaki gen-docs` los regenera, y un drift test los guarda). Cualquier otra copia

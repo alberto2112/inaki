@@ -849,7 +849,7 @@ def load_agent_config(
     _check_legacy_shape(merged)
 
     try:
-        return assemble_agent_config(merged)
+        cfg = assemble_agent_config(merged)
     # Ambas ramas ABORTAN, no degradan. Antes esto era un WARNING y el agente
     # simplemente desaparecía del registry: el operador veía el daemon "sano", su
     # bot sin responder, y ninguna relación evidente entre las dos cosas. Un
@@ -870,6 +870,20 @@ def load_agent_config(
         raise ConfigError(
             f"Config inválida para el agente '{agent_id}' ({agent_yaml}): {exc}"
         ) from exc
+
+    # El registry indexa por nombre de fichero y todo lo demás (delegación, tool
+    # `config`, `agent_send`) por `cfg.id`: si difieren, el agente queda anunciado
+    # bajo un id que el registry no resuelve — la delegación falla recién en
+    # runtime, con el daemon "sano".
+    if cfg.id != agent_id:
+        from inaki.shared.errors import ConfigError
+
+        raise ConfigError(
+            f"El id del agente no coincide con el nombre de su fichero ({agent_yaml}): "
+            f"el YAML declara `id: {cfg.id}` pero el fichero se llama '{agent_id}.yaml'. "
+            f"Renombrá el fichero a '{cfg.id}.yaml' o cambiá el `id:` a '{agent_id}'."
+        )
+    return cfg
 
 
 # ---------------------------------------------------------------------------

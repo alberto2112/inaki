@@ -34,6 +34,7 @@ existe este documento— y la contradicción no queda flotando.
 
 | Nota | Acción |
 |---|---|
+| [`agent-id-igual-al-fichero`](#agent-id-igual-al-fichero) | **Puede impedir el arranque**: renombrar el YAML de cada agente/sub-agente cuyo `id:` no coincide con el nombre del fichero (o cambiar el `id:`) |
 | [`scheduler-trigger-type-mutable`](#scheduler-trigger-type-mutable) | **Chequeo previo al deploy**: query SQL sobre `scheduler.db` buscando filas incoherentes |
 | [`tool-config-protocol`](#tool-config-protocol) | Borrar YAMLs huérfanos per-tool + `~/.inaki/.env`; reconfigurar credenciales por chat |
 | [`multi-agent-telegram-broadcast`](#multi-agent-telegram-broadcast) | **Borrar** `history.db` e `inaki.db` |
@@ -128,9 +129,65 @@ de `global.yaml`).
 - **Tools y config**: `runtimes-tipados`, `wiring-por-modulo`, `kernel-y-fachada-de-tools`, `modulos-tools-llm-extensions`, `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
-  `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`
+  `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`,
+  `agent-id-igual-al-fichero`
 - **Providers LLM**: `anthropic-api-actual`
-- **Delegación**: `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
+- **Delegación**: `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
+
+---
+
+### `agent-id-igual-al-fichero`
+
+**El bug (2026-09-28)**: al arrancar en la Pi, el daemon logueó tres WARNING con
+traceback de `AgentNotFoundError` desde la tool `config` ("No existe
+agents/french_legal_advisor.yaml ni agents/sub-agents/french_legal_advisor.yaml"),
+y aun así arrancó. Los tres sub-agentes existían, pero con un `id:` distinto del
+nombre de su fichero:
+
+| Fichero | `id:` declarado |
+|---|---|
+| `sub-agents/consultant_proprete.yaml` | `french_cleaning_operations_consultant` |
+| `sub-agents/juriste_france_expert.yaml` | `french_legal_advisor` |
+| `sub-agents/expert_proprete_droit_social.yaml` | `cleaning_labor_law_expert` |
+
+El `AgentRegistry` indexaba por el nombre del fichero (`_agents`,
+`_sub_agent_ids`, `_sub_agent_raw`), y el resto del arranque identificaba al
+agente por `cfg.id`. El WARNING de la tool `config` era solo el síntoma visible.
+Lo grave estaba por detrás:
+
+- **La delegación a esos sub-agentes estaba rota.** La tool `delegate` anunciaba
+  `french_legal_advisor` como target (sale de `cfg.id`), pero
+  `get_sub_agent_raw("french_legal_advisor")` devolvía `None`. La delegación
+  fallaba recién cuando el modelo la intentaba.
+- **Se cableaban como agentes regulares.** Los borradores de `assembly.py` se
+  indexaban por `cfg.id`, así que `registry.is_sub_agent(cfg.id)` daba `False`.
+  Los tres recibían el wiring de delegación, scheduler, broadcast y tools de
+  Telegram como si fueran agentes principales.
+
+**El cambio**: `load_agent_config` pasó a abortar con `ConfigError` cuando el
+`id:` del YAML no coincide con el nombre del fichero. Vale para agentes y
+sub-agentes. El mensaje nombra el fichero y los dos ids, y dice las dos formas de
+arreglarlo. Es el mismo criterio que `config-falla-ruidoso`: el daemon arrancaba
+"sano" con la delegación rota.
+
+**Acción del operador**: antes de desplegar, alinear cada fichero con su `id:`.
+Lo más simple es renombrar el fichero, como en la instalación del bug:
+
+```bash
+cd ~/.inaki/agents/sub-agents && mv consultant_proprete.yaml french_cleaning_operations_consultant.yaml && mv juriste_france_expert.yaml french_legal_advisor.yaml && mv expert_proprete_droit_social.yaml cleaning_labor_law_expert.yaml
+```
+
+La otra opción es cambiar el `id:`. Conviene cambiarlo si algún
+`delegation.allowed_targets` o `memories.*.agent_id` ya referenciaba el nombre
+del fichero. Sin la corrección, el daemon no arranca y el error nombra el
+fichero.
+
+**Sin migración de DB.** Los recuerdos e historial de esos sub-agentes (si los
+hubiera) quedaron bajo `cfg.id`, que no cambia al renombrar el fichero.
+
+**Invariante**: NUNCA dejar que un agente tenga dos identidades. Si el registry
+indexa por una clave y el wiring por otra, cada lookup que cruza las dos falla en
+silencio y lejos de la causa. La identidad se valida UNA vez, al cargar.
 
 ---
 

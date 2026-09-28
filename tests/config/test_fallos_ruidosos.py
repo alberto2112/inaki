@@ -218,3 +218,26 @@ def test_el_wiring_de_fotos_degrada_y_dice_que_capacidad_queda_muda(
     )
     assert "inaki" in caplog.text, "y de qué agente"
     assert "falta el modelo ONNX" in caplog.text, "y la causa original"
+
+
+def test_un_id_distinto_del_nombre_del_fichero_aborta_nombrando_ambos(tmp_path: Path) -> None:
+    """El registry indexa por fichero y la delegación anuncia `cfg.id`.
+
+    Con `consultant_proprete.yaml` declarando `id: french_cleaning_...`, el
+    sub-agente se anunciaba bajo un id que `get_sub_agent_raw` no resolvía: la
+    delegación fallaba en runtime y el arranque solo dejaba un WARNING de la
+    tool `config`. Tiene que abortar en la carga, diciendo cómo arreglarlo.
+    """
+    cfg_dir, agents_dir = _home(tmp_path, "id: dev\nname: Dev\ndescription: d\n")
+    (agents_dir / "consultor.yaml").write_text(
+        "id: consultor_frances\nname: C\ndescription: d\n", encoding="utf-8"
+    )
+    _, global_raw = load_global_config(cfg_dir)
+
+    with pytest.raises(ConfigError) as exc:
+        load_agent_config("consultor", agents_dir, global_raw)
+
+    mensaje = str(exc.value)
+    assert "consultor.yaml" in mensaje
+    assert "consultor_frances" in mensaje, "hay que nombrar el id que declara el YAML"
+    assert "Renombrá" in mensaje, "el mensaje tiene que ser accionable"

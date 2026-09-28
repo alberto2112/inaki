@@ -126,7 +126,7 @@ class IIndexableKnowledgeSource(IKnowledgeSource):
 
 
 class IKnowledgeRetriever(Protocol):
-    """Lo que el TURNO necesita de knowledge: recuperar fragmentos y conocer su presupuesto.
+    """Lo que el TURNO necesita de knowledge: recuperar fragmentos y cómo pre-buscarlos.
 
     Lo implementa ``inaki.knowledge.orchestrator.KnowledgeOrchestrator`` (la
     recuperación paralela sobre N ``IKnowledgeSource``). El kernel depende de esta
@@ -136,9 +136,6 @@ class IKnowledgeRetriever(Protocol):
 
     @property
     def source_ids(self) -> list[str]: ...
-
-    @property
-    def token_budget_threshold(self) -> int: ...
 
     @property
     def pre_fetch_enabled(self) -> bool: ...

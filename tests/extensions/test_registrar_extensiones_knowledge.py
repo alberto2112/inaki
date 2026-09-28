@@ -146,7 +146,6 @@ def _make_container(tmp_path: Path) -> types.SimpleNamespace:
     container._knowledge_orchestrator = KnowledgeOrchestrator(
         sources=container._pending_knowledge_sources,
         max_total_chunks=10,
-        token_budget_threshold=4000,
     )
 
     return container
@@ -260,7 +259,6 @@ def test_orden_descubrimiento_memoria_config_ext(tmp_path: Path) -> None:
     container._knowledge_orchestrator = KnowledgeOrchestrator(
         sources=container._pending_knowledge_sources,
         max_total_chunks=10,
-        token_budget_threshold=4000,
     )
 
     _registrar(container, [str(ext_dir)])

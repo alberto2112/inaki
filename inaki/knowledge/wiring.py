@@ -51,7 +51,6 @@ def build_knowledge(
     include_memory = True
     params: dict[str, Any] = {
         "max_total_chunks": 10,
-        "token_budget_threshold": 4000,
         "pre_fetch_enabled": True,
         "default_top_k_per_source": 3,
         "default_min_score": 0.5,
@@ -59,9 +58,6 @@ def build_knowledge(
     if knowledge_cfg is not None:
         include_memory = getattr(knowledge_cfg, "include_memory", True)
         params["max_total_chunks"] = getattr(knowledge_cfg, "max_total_chunks", 10)
-        params["token_budget_threshold"] = getattr(
-            knowledge_cfg, "token_budget_warn_threshold", 4000
-        )
         params["pre_fetch_enabled"] = getattr(knowledge_cfg, "enabled", True)
         params["default_top_k_per_source"] = getattr(knowledge_cfg, "top_k_per_source", 3)
         params["default_min_score"] = getattr(knowledge_cfg, "min_score", 0.5)
@@ -92,7 +88,6 @@ def build_knowledge(
     orchestrator = KnowledgeOrchestrator(
         sources=fuentes,
         max_total_chunks=params["max_total_chunks"],
-        token_budget_threshold=params["token_budget_threshold"],
         pre_fetch_enabled=params["pre_fetch_enabled"],
         default_top_k_per_source=params["default_top_k_per_source"],
         default_min_score=params["default_min_score"],

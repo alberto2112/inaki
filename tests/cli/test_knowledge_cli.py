@@ -53,7 +53,6 @@ def _build_global_config_mock(docs_path: Path):
         top_k_per_source=3,
         min_score=0.5,
         max_total_chunks=10,
-        token_budget_warn_threshold=4000,
         sources=[source_cfg],
     )
 

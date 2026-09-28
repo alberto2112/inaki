@@ -454,9 +454,6 @@ knowledge:
   min_score: 0.5
   # Límite duro de chunks totales tras el fan-out (ordenados por score desc).
   max_total_chunks: 10
-  # Umbral estimado de tokens totales (chunks + digest + skills). Si se supera, se emite
-  # un WARNING con el desglose. 0 = deshabilita la advertencia.
-  token_budget_warn_threshold: 4000
   # Lista de fuentes de conocimiento externas configuradas.
   sources: []
   #   - forma de cada elemento:

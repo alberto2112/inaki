@@ -69,9 +69,5 @@ class KnowledgeConfig(_ConfigBaseModel):
     max_total_chunks: int = 10
     """Límite duro de chunks totales tras el fan-out (ordenados por score desc)."""
 
-    token_budget_warn_threshold: int = 4000
-    """Umbral estimado de tokens totales (chunks + digest + skills). Si se supera,
-    se emite un WARNING con el desglose. 0 = deshabilita la advertencia."""
-
     sources: list[KnowledgeSourceConfig] = []
     """Lista de fuentes de conocimiento externas configuradas."""

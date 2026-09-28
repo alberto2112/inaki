@@ -209,6 +209,7 @@ def ensure_user_config(config_dir: Path, agents_dir: Path) -> None:
             migracion(config_dir, agents_dir)
     migrate_secrets_into_main_layers(config_dir, agents_dir)
     migrate_photos_debug(config_dir)
+    migrate_knowledge_token_budget(config_dir)
 
 
 def migrate_photos_debug(config_dir: Path) -> None:
@@ -239,6 +240,38 @@ def migrate_photos_debug(config_dir: Path) -> None:
         "Migración photos.debug: la clave se eliminó de %s. El fichero /tmp/inaki.photo-debug "
         "ya no existe: el análisis de cada foto sale como traza `photo.analysis` en "
         "<home>/debug/turns/ con `inaki --debug daemon` o `app.debug: true`.",
+        global_yaml,
+    )
+
+
+def migrate_knowledge_token_budget(config_dir: Path) -> None:
+    """Migración one-shot: quita ``knowledge.token_budget_warn_threshold`` de ``global.yaml``.
+
+    El umbral solo logueaba un WARNING estimando con ``len/4`` una parte del
+    contexto (chunks + digest + skills, sin tools, historial ni system prompt), y
+    nunca recortaba nada: ruido que enseñaba a ignorar los WARNING. Se retiró
+    (2026-09, ``knowledge-token-budget-retirado``). Como una clave desconocida
+    aborta el arranque, se elimina del YAML en vez de dejar un knob muerto.
+    Idempotente: sin la clave, no hace nada.
+    """
+    from ruamel.yaml import YAML
+
+    global_yaml = config_dir / "global.yaml"
+    if not global_yaml.exists():
+        return
+    yaml_rt = YAML()
+    yaml_rt.preserve_quotes = True
+    yaml_rt.width = 4096
+    data = yaml_rt.load(global_yaml.read_text(encoding="utf-8")) or {}
+    knowledge = data.get("knowledge")
+    if not isinstance(knowledge, dict) or "token_budget_warn_threshold" not in knowledge:
+        return
+    del knowledge["token_budget_warn_threshold"]
+    with global_yaml.open("w", encoding="utf-8") as fh:
+        yaml_rt.dump(data, fh)
+    logger.warning(
+        "Migración knowledge.token_budget_warn_threshold: la clave se eliminó de %s. "
+        "El umbral solo avisaba (nunca recortaba) y estimaba una parte del contexto.",
         global_yaml,
     )
 

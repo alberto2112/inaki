@@ -734,7 +734,6 @@ Configuración global del pipeline de knowledge pre-fetch.
 | `top_k_per_source` | `int` | `3` |  |
 | `min_score` | `float` | `0.5` |  |
 | `max_total_chunks` | `int` | `10` |  |
-| `token_budget_warn_threshold` | `int` | `4000` |  |
 | `sources` | `list[KnowledgeSourceConfig]` | `[]` |  |
 
 **`enabled`** — Si False, el pre-fetch se saltea completamente en cada turno.
@@ -748,8 +747,6 @@ Configuración global del pipeline de knowledge pre-fetch.
 **`min_score`** — min_score global cuando no se override por fuente individual.
 
 **`max_total_chunks`** — Límite duro de chunks totales tras el fan-out (ordenados por score desc).
-
-**`token_budget_warn_threshold`** — Umbral estimado de tokens totales (chunks + digest + skills). Si se supera, se emite un WARNING con el desglose. 0 = deshabilita la advertencia.
 
 **`sources`** — Lista de fuentes de conocimiento externas configuradas.
 

@@ -26,7 +26,6 @@ class KnowledgeOrchestrator:
         self,
         sources: list[IKnowledgeSource],
         max_total_chunks: int = 10,
-        token_budget_threshold: int = 4000,
         pre_fetch_enabled: bool = True,
         default_top_k_per_source: int = 3,
         default_min_score: float = 0.5,
@@ -35,7 +34,6 @@ class KnowledgeOrchestrator:
         self._cap = max_total_chunks
         # Parámetros almacenados aquí para que RunAgentUseCase los lea sin necesitar
         # GlobalConfig (mantiene el kernel desacoplado de la config).
-        self._token_budget_threshold = token_budget_threshold
         self._pre_fetch_enabled = pre_fetch_enabled
         self._default_top_k_per_source = default_top_k_per_source
         self._default_min_score = default_min_score
@@ -44,11 +42,6 @@ class KnowledgeOrchestrator:
     def source_ids(self) -> list[str]:
         """IDs de las fuentes registradas, en orden de registro."""
         return [fuente.source_id for fuente in self._fuentes]
-
-    @property
-    def token_budget_threshold(self) -> int:
-        """Umbral de advertencia de tokens (0 = deshabilitado)."""
-        return self._token_budget_threshold
 
     @property
     def pre_fetch_enabled(self) -> bool:

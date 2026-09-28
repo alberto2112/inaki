@@ -64,7 +64,8 @@ existe este documento— y la contradicción no queda flotando.
 `persist-tool-calls`, `groups-vs-broadcast`, `tool-config-own-file`,
 `agent-state-scoped-by-channel-chat`, `secrets-layer-eradication`,
 `channels-validados-al-cargar`, `motor-de-merge-unico`, `kernel-limpio` (quita `photos.debug`
-de `global.yaml`).
+de `global.yaml`), `knowledge-token-budget-retirado` (quita
+`knowledge.token_budget_warn_threshold` de `global.yaml`).
 
 ### Sin migración — pero cambian comportamiento observable
 
@@ -130,9 +131,50 @@ de `global.yaml`).
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`,
-  `agent-id-igual-al-fichero`
+  `agent-id-igual-al-fichero`, `knowledge-token-budget-retirado`
 - **Providers LLM**: `anthropic-api-actual`
 - **Delegación**: `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
+
+---
+
+### `knowledge-token-budget-retirado`
+
+**El disparador (2026-09-28)**: tras arrancar, el daemon de la Pi logueó
+`[knowledge] presupuesto de tokens superado (total_estimado=6356 threshold=4000
+chunks_tokens=0 digest_tokens=255 skills_tokens=6101)`. Al investigarlo, el
+umbral resultó no servir para nada:
+
+- **Solo avisaba.** `warn_if_token_budget_exceeded` nunca recortaba nada (su
+  docstring lo declaraba: "decisión V1: visibilidad sin poda"). No había acción
+  asociada, ni para el sistema ni para el operador.
+- **Medía una parte del contexto.** Sumaba chunks + digest + instrucciones de
+  skills, con la heurística `len/4`. No contaba los schemas de tools, el
+  historial ni el system prompt, que en un turno normal pesaban más.
+- **Se etiquetaba mal.** El log decía `[knowledge]` y el campo vivía en
+  `knowledge:`, pero en el caso real el 96% eran skills (6101 de 6356).
+- **Se disparaba seguido.** Con `top_k: 3` más `sticky_ttl: 3`, varias skills de
+  1.2k–2k tokens bastaban para pasar el umbral casi en cada turno: un WARNING
+  recurrente que enseñaba a ignorar los WARNING.
+
+**El cambio**: se retiraron `warn_if_token_budget_exceeded` del kernel, la
+propiedad `token_budget_threshold` del port `IKnowledgeRetriever` y del
+`KnowledgeOrchestrator`, y el campo `knowledge.token_budget_warn_threshold` del
+schema. Como el bootstrap renderiza `global.yaml` desde los defaults del schema,
+la clave podía estar en cualquier instalación, y con `extra="forbid"` quitarla del
+schema sin más habría abortado el arranque (`config-limpieza-final`). La nueva
+migración `migrate_knowledge_token_budget` la quitó de `global.yaml` al arrancar,
+con el mismo patrón que `migrate_photos_debug`: idempotente, conservando el resto
+del bloque y los comentarios, y con un WARNING que nombra el fichero.
+
+En la misma sesión se borraron las skills de `treblo` y `fal_music` (las dos más
+grandes de la instalación, ~2k y ~1.5k tokens). Sus tools siguieron registradas.
+
+**Sin acción del operador.**
+
+**Invariante**: NUNCA dejar un WARNING que no tiene acción asociada. Si nadie
+puede hacer nada distinto al leerlo, no es un aviso: es ruido que entrena a
+ignorar los avisos de verdad. Y una métrica que mide una parte del todo con el
+nombre del todo miente dos veces.
 
 ---
 

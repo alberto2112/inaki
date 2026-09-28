@@ -55,7 +55,6 @@ from inaki.kernel._turn_pipeline import (
     render_in_flight_section,
     run_semantic_routing,
     should_bypass_routing_for_short_input,
-    warn_if_token_budget_exceeded,
 )
 from inaki.shared.channel_context import (
     ChannelContext,
@@ -418,13 +417,6 @@ class RunAgentUseCase:
             embedder=self._embedder,
             query=query,
             query_vec=routing.query_vec,
-            agent_id=agent_id,
-        )
-        warn_if_token_budget_exceeded(
-            orchestrator=self._knowledge_orchestrator,
-            knowledge_chunks=knowledge_chunks,
-            digest_text=digest_text,
-            retrieved_skills=routing.retrieved_skills,
             agent_id=agent_id,
         )
 

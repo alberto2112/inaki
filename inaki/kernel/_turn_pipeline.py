@@ -10,7 +10,6 @@ Fases:
     con bypass para inputs cortos que heredan la selección previa.
   - ``prefetch_knowledge`` — retrieval de knowledge chunks pre-turno
     (compartida por ``execute()`` e ``inspect()``).
-  - ``warn_if_token_budget_exceeded`` — heurística de presupuesto de tokens.
   - ``assemble_turn_messages`` — arma la lista de mensajes del LLM según el
     modo del turno (user_input directo vs history-derived coalesced).
 
@@ -461,43 +460,6 @@ async def prefetch_knowledge(
         len(chunks),
     )
     return chunks, query_vec
-
-
-def warn_if_token_budget_exceeded(
-    *,
-    orchestrator: IKnowledgeRetriever | None,
-    knowledge_chunks: list[KnowledgeChunk],
-    digest_text: str,
-    retrieved_skills: list[Skill],
-    agent_id: str,
-) -> None:
-    """Verificación de presupuesto de tokens (heurística: len(texto) / 4).
-
-    El threshold se almacena en el orquestrador para evitar pasar GlobalConfig.
-    Solo loguea WARNING — no recorta nada (decisión V1: visibilidad sin poda).
-    """
-    if orchestrator is None:
-        return
-    threshold = orchestrator.token_budget_threshold
-    if threshold <= 0:
-        return
-    chunks_tokens = sum(len(c.content) // 4 for c in knowledge_chunks)
-    digest_tokens = len(digest_text) // 4
-    skills_tokens = sum(len(getattr(s, "instructions", "") or "") // 4 for s in retrieved_skills)
-    total_estimado = chunks_tokens + digest_tokens + skills_tokens
-
-    if total_estimado > threshold:
-        logger.warning(
-            "[knowledge] presupuesto de tokens superado "
-            "(agent=%s total_estimado=%d threshold=%d "
-            "chunks_tokens=%d digest_tokens=%d skills_tokens=%d)",
-            agent_id,
-            total_estimado,
-            threshold,
-            chunks_tokens,
-            digest_tokens,
-            skills_tokens,
-        )
 
 
 def assemble_turn_messages(

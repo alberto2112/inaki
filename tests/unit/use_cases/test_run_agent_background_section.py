@@ -71,6 +71,29 @@ class TestRenderInFlightSection:
         assert "- bg-1 → researcher" in out
         assert "- bg-2 → coder" in out
 
+    def test_delivery_failed_muestra_el_error_y_como_cerrarla(self) -> None:
+        """bg-stuck-task: una entrega fallida no se disfraza de running; el LLM ve
+        el error y la tool con la que recupera el resultado."""
+        vista = BackgroundTaskView(
+            id="bg-2",
+            target_agent_id="researcher",
+            prompt_preview="investigá X",
+            elapsed_seconds=21600,
+            status="delivery_failed",
+            error="RuntimeError: boom",
+        )
+
+        out = render_in_flight_section([vista])
+
+        assert "status: delivery_failed" in out
+        assert "delivery error: RuntimeError: boom" in out
+        assert "background_tasks(action=cancel" in out
+
+    def test_bullet_sin_error_no_menciona_delivery_error(self) -> None:
+        out = render_in_flight_section([_view()])
+
+        assert "delivery error" not in out
+
     def test_instruccion_explica_el_marker(self) -> None:
         """El LLM debe entender qué significa recibir un mensaje `[bg-N] ...`."""
         out = render_in_flight_section([_view()])

@@ -15,7 +15,9 @@ Contratos clave:
              (intersección con el registry recibido). Usado por el sub-agente efímero
              del flujo delegate para acotar qué tools del caller ve el hijo.
 - REQ-DG-9: Filtra la tool "delegate" de los schemas antes de pasarlos al loop
-             (prevención de recursión por construcción).
+             (prevención de recursión por construcción). Filtra también
+             "background_tasks": las delegaciones en background son del padre, y
+             un hijo que la viera podría cancelarse a sí mismo o a sus hermanos.
 """
 
 from __future__ import annotations
@@ -33,7 +35,8 @@ from inaki.shared.message import Message, Role
 
 logger = logging.getLogger(__name__)
 
-_DELEGATE_TOOL_NAME = "delegate"
+# Tools del caller que el hijo NUNCA ve (REQ-DG-9 + bg-stuck-task).
+_TOOLS_EXCLUIDAS_DEL_HIJO = frozenset({"delegate", "background_tasks"})
 
 
 class RunAgentOneShotUseCase:
@@ -41,7 +44,7 @@ class RunAgentOneShotUseCase:
     Ejecuta un agente de forma stateless para una única tarea.
 
     No carga ni escribe historial. No lee digest. No aplica RAG sobre tools.
-    Excluye la tool "delegate" del schema del hijo (REQ-DG-9).
+    Excluye "delegate" y "background_tasks" del schema del hijo (REQ-DG-9).
     """
 
     def __init__(
@@ -97,7 +100,8 @@ class RunAgentOneShotUseCase:
         effective_prompt = system_prompt if system_prompt is not None else self._cfg.system_prompt
 
         # REQ-OS-4: toolkit completo sin RAG.
-        # REQ-DG-9: excluir "delegate" para prevenir recursión por construcción.
+        # REQ-DG-9: excluir "delegate" (recursión) y "background_tasks" (las
+        #           delegaciones del padre no son asunto del hijo).
         # REQ-OS-5: si hay allow-list, recortar al subset declarado por el sub-agente
         #           (intersección con el registry — un nombre inexistente se ignora).
         all_schemas = self._tools.get_schemas()
@@ -111,14 +115,14 @@ class RunAgentOneShotUseCase:
         tool_schemas = [
             s
             for s in all_schemas
-            if _tool_name(s) != _DELEGATE_TOOL_NAME
+            if _tool_name(s) not in _TOOLS_EXCLUIDAS_DEL_HIJO
             and (allowed is None or _tool_name(s) in allowed)
         ]
 
         if len(tool_schemas) < len(all_schemas):
             logger.debug(
                 "RunAgentOneShotUseCase: schema del hijo recortado a %d/%d tools "
-                "(delegate excluida; allow-list=%s)",
+                "(delegate/background_tasks excluidas; allow-list=%s)",
                 len(tool_schemas),
                 len(all_schemas),
                 "todas" if allowed is None else sorted(allowed),

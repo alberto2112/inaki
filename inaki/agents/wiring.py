@@ -12,6 +12,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 from inaki.agents.delegation.background_queue import BackgroundDelegationQueueAdapter
+from inaki.agents.delegation.background_tasks_tool import BackgroundTasksTool
 from inaki.agents.delegation.delegate_tool import DelegateTool, DelegationCaller
 from inaki.config import (
     SUBAGENT_DEFAULTS,
@@ -116,6 +117,12 @@ def build_delegate_tool(
         caller_container=caller,
         queue=queue,
     )
+
+
+def build_background_tasks_tool(
+    queue: IBackgroundDelegationQueue, *, caller_agent_id: str
+) -> BackgroundTasksTool:
+    return BackgroundTasksTool(queue=queue, caller_agent_id=caller_agent_id)
 
 
 class _DescripcionDeAgente(Protocol):

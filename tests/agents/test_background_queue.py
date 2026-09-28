@@ -531,10 +531,15 @@ class TestHappyPathDispatch:
         await asyncio.sleep(2.0)
         await adapter.stop()
 
-        # La task sigue viva y aparece en el snapshot del caller.
+        # La task sigue viva y aparece en el snapshot del caller — como
+        # delivery_failed (NO como running: el hijo ya terminó), con el error.
         assert task_id in adapter._tasks
         snap = adapter.snapshot_inflight("inaki")
-        assert any(v.id == task_id for v in snap)
+        vista = next(v for v in snap if v.id == task_id)
+        assert vista.status == "delivery_failed"
+        assert vista.error == "RuntimeError: dispatch boom"
+        # El resultado del hijo NO se pierde: queda guardado en la task.
+        assert adapter._tasks[task_id].result == f"[{task_id}] ok"
 
     async def test_dispatch_se_reintenta_y_eventualmente_entrega(self) -> None:
         """FIX silent-death: un fallo transitorio de dispatch se reintenta; si un
@@ -778,3 +783,126 @@ class TestResultDelivery:
 
         dispatcher.dispatch.assert_awaited_once()  # sin reintento del turno
         assert task_id not in adapter._tasks
+
+
+# ---------------------------------------------------------------------------
+# bg-stuck-task — cancel / dismiss
+# ---------------------------------------------------------------------------
+
+
+async def _enqueue(adapter: BackgroundDelegationQueueAdapter, caller: str = "inaki") -> str:
+    return await adapter.enqueue(
+        caller_agent_id=caller,
+        target_agent_id="r",
+        prompt="x",
+        system_prompt=None,
+        channel="",
+        chat_id="",
+        max_iterations=5,
+        timeout_seconds=30,
+    )
+
+
+class TestCancel:
+    async def test_cancela_task_running_sin_dispatchar(self) -> None:
+        adapter, dispatcher = _build_adapter(one_shot_for={"r": _one_shot_sleeping(10.0)})
+        await adapter.start()
+        task_id = await _enqueue(adapter)
+        await asyncio.sleep(0.05)
+        assert adapter.snapshot_inflight("inaki")[0].status == "running"
+
+        res = adapter.cancel(task_id, "inaki")
+        await asyncio.sleep(0.05)
+        await adapter.stop()
+
+        assert res.outcome == "cancelled"
+        assert adapter.snapshot_inflight("inaki") == []
+        assert task_id not in adapter._handles
+        dispatcher.dispatch.assert_not_called()
+
+    async def test_cancelar_running_libera_el_slot_del_semaforo(self) -> None:
+        """Con max_concurrent=1, cancelar la que corre deja pasar a la encolada."""
+        adapter, dispatcher = _build_adapter(
+            one_shot_for={"r": _one_shot_sleeping(10.0)}, max_concurrent=1
+        )
+        await adapter.start()
+        primera = await _enqueue(adapter)
+        segunda = await _enqueue(adapter)
+        await asyncio.sleep(0.05)
+        estados = {v.id: v.status for v in adapter.snapshot_inflight("inaki")}
+        assert estados == {primera: "running", segunda: "queued"}
+
+        adapter.cancel(primera, "inaki")
+        await asyncio.sleep(0.05)
+        estados = {v.id: v.status for v in adapter.snapshot_inflight("inaki")}
+        await adapter.stop()
+
+        assert estados == {segunda: "running"}
+
+    async def test_cancela_task_queued_antes_de_start(self) -> None:
+        """Una task que todavía no levantó el consumer tampoco debe correr."""
+        one_shot = _one_shot_returning("ok")
+        adapter, dispatcher = _build_adapter(one_shot_for={"r": one_shot})
+        task_id = await _enqueue(adapter)
+
+        res = adapter.cancel(task_id, "inaki")
+        await adapter.start()
+        await asyncio.sleep(0.05)
+        await adapter.stop()
+
+        assert res.outcome == "cancelled"
+        one_shot.execute.assert_not_called()
+        dispatcher.dispatch.assert_not_called()
+
+    async def test_descarta_delivery_failed_devolviendo_el_resultado(self) -> None:
+        adapter, dispatcher = _build_adapter(one_shot_for={"r": _one_shot_returning("informe")})
+        dispatcher.dispatch.side_effect = RuntimeError("provider caído")
+        await adapter.start()
+        task_id = await _enqueue(adapter)
+        await asyncio.sleep(2.0)  # agota los reintentos (0.5 + 1.0)
+
+        res = adapter.cancel(task_id, "inaki")
+        await adapter.stop()
+
+        assert res.outcome == "dismissed"
+        assert res.result == f"[{task_id}] informe"
+        assert res.error == "RuntimeError: provider caído"
+        assert adapter.snapshot_inflight("inaki") == []
+
+    async def test_no_cancela_mientras_se_entrega(self) -> None:
+        """``delivering`` corre un turno del padre: cortarlo lo dejaría a mitad."""
+        adapter, dispatcher = _build_adapter(one_shot_for={"r": _one_shot_returning("ok")})
+        liberar = asyncio.Event()
+
+        async def dispatch_lento(**_kw) -> str:
+            await liberar.wait()
+            return ""
+
+        dispatcher.dispatch.side_effect = dispatch_lento
+        await adapter.start()
+        task_id = await _enqueue(adapter)
+        await asyncio.sleep(0.05)
+
+        res = adapter.cancel(task_id, "inaki")
+        estado = adapter.snapshot_inflight("inaki")[0].status
+        liberar.set()
+        await asyncio.sleep(0.05)
+        await adapter.stop()
+
+        assert res.outcome == "delivering"
+        assert estado == "delivering"
+        assert task_id not in adapter._tasks  # la entrega terminó y se purgó
+
+    async def test_otro_caller_no_puede_cancelar(self) -> None:
+        adapter, _ = _build_adapter(one_shot_for={"r": _one_shot_sleeping(10.0)})
+        task_id = await _enqueue(adapter, caller="inaki")
+
+        res = adapter.cancel(task_id, "anacleto")
+
+        assert res.outcome == "not_found"
+        assert [v.id for v in adapter.snapshot_inflight("inaki")] == [task_id]
+
+    async def test_id_desconocido_es_not_found(self) -> None:
+        adapter, _ = _build_adapter()
+
+        assert adapter.cancel("bg-99", "inaki").outcome == "not_found"

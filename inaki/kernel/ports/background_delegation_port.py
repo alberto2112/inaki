@@ -6,8 +6,11 @@ expone cuatro operaciones:
 
 - ``enqueue`` — registra una task y devuelve un ``task_id`` (``bg-N``) en <50ms,
   sin esperar a que el hijo termine (REQ-BGD-2).
-- ``snapshot_inflight`` — devuelve la lista de tasks ``queued``/``running`` del
-  caller, para inyectar en el system prompt del próximo turno (REQ-BGD-4, 7).
+- ``snapshot_inflight`` — devuelve las tasks vivas del caller (incluidas las
+  que no se pudieron entregar), para el system prompt del próximo turno
+  (REQ-BGD-4, 7).
+- ``cancel`` — corta una task en cola o corriendo, o descarta una cuya entrega
+  falló devolviendo su resultado.
 - ``start`` / ``stop`` — ciclo de vida del consumer interno (REQ-BGD-1).
 
 La implementación viene en ``adapters/outbound/delegation/`` y es 100% in-memory
@@ -18,7 +21,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from inaki.kernel.domain.background_task import BackgroundTaskView
+from inaki.kernel.domain.background_task import BackgroundTaskView, CancelOutcome
 
 
 class IBackgroundDelegationQueue(Protocol):
@@ -51,10 +54,22 @@ class IBackgroundDelegationQueue(Protocol):
         ...
 
     def snapshot_inflight(self, caller_agent_id: str) -> list[BackgroundTaskView]:
-        """Devuelve las tasks ``queued``/``running`` del caller, ordenadas por start time.
+        """Devuelve las tasks vivas del caller, ordenadas por start time.
 
-        Tasks completadas ya fueron purgadas (REQ-BGD-4). Lista vacía si no hay
-        in-flight para ese caller.
+        Incluye ``delivery_failed``: una task cuya entrega falló sigue siendo
+        asunto pendiente del caller. Tasks entregadas o canceladas ya fueron
+        purgadas (REQ-BGD-4). Lista vacía si no hay ninguna para ese caller.
+        """
+        ...
+
+    def cancel(self, task_id: str, caller_agent_id: str) -> CancelOutcome:
+        """Cancela ``task_id`` si pertenece a ``caller_agent_id``.
+
+        ``queued``/``running`` → se corta (``cancelled``); ``delivery_failed`` →
+        se descarta devolviendo el resultado guardado (``dismissed``);
+        ``delivering`` → no se toca (cortaría el turno del padre a mitad). Una
+        task de OTRO caller responde ``not_found``: un agente no ve ni corta las
+        delegaciones de otro.
         """
         ...
 

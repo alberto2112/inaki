@@ -209,10 +209,17 @@ def render_in_flight_section(snap: list[BackgroundTaskView]) -> str:
 
     Pure function: no side effects, deterministic por input.
     """
-    bullets = "\n".join(
-        f'- {v.id} → {v.target_agent_id} | status: {v.status} | started {v.elapsed_seconds}s ago | "{v.prompt_preview}"'
-        for v in snap
-    )
+
+    def _bullet(v: BackgroundTaskView) -> str:
+        linea = (
+            f"- {v.id} → {v.target_agent_id} | status: {v.status} | "
+            f'started {v.elapsed_seconds}s ago | "{v.prompt_preview}"'
+        )
+        if v.error:
+            linea += f" | delivery error: {v.error}"
+        return linea
+
+    bullets = "\n".join(_bullet(v) for v in snap)
     return (
         "## In-flight background delegations\n\n"
         "You have one or more delegations launched via `delegate(... wait=false)` running in\n"
@@ -226,12 +233,18 @@ def render_in_flight_section(snap: list[BackgroundTaskView]) -> str:
         "notified) respond with exactly `__SKIP__` to stay silent.\n\n"
         "If the user asks how a delegation is going, ANSWER FROM THE LIST BELOW — it is your\n"
         "live source of truth. State the task_id, its status, and how long it has been running.\n"
-        "`queued` = waiting for a free slot, `running` = the child agent is working now. Never\n"
-        "say you don't know: the data is right here. A delegation that finished (success or\n"
-        "failure) is NOT in this list — its result already arrived as a `[bg-N] ...` message,\n"
-        "so check the conversation for it instead.\n\n"
+        "Never say you don't know: the data is right here. Statuses:\n"
+        "- `queued` = waiting for a free slot.\n"
+        "- `running` = the child agent is working now.\n"
+        "- `delivering` = the child finished and its result is being handed to you right now.\n"
+        "- `delivery_failed` = the child finished but its result could NOT be delivered to you\n"
+        "  (the error is shown). It will never arrive on its own: call\n"
+        "  `background_tasks(action=cancel, task_id=...)` to retrieve the result and clear it.\n"
+        "A delegation that was delivered is NOT in this list — its result already arrived as a\n"
+        "`[bg-N] ...` message, so check the conversation for it instead.\n\n"
         "Do NOT re-launch a task that is already `queued` or `running` below — that would\n"
-        "duplicate the work. Wait for its `[bg-N]` result first.\n\n"
+        "duplicate the work. Wait for its `[bg-N]` result first. If the user asks to stop one,\n"
+        "or it is no longer needed, cancel it with `background_tasks(action=cancel, task_id=...)`.\n\n"
         "Currently in flight:\n"
         f"{bullets}"
     )

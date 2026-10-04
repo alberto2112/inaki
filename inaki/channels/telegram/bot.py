@@ -28,6 +28,7 @@ from inaki.channels.telegram.group_flow import GroupFlow
 from inaki.channels.telegram.media import MediaHandlers
 from inaki.channels.telegram.message_mapper import (
     _TIPOS_GRUPO,
+    format_sender,
     send_caption_or_plain,
     send_html_or_plain,
     telegram_update_to_input,
@@ -235,7 +236,12 @@ class TelegramBot:
         await self._commands.setup_commands()
 
     async def verificar_bot_username(self) -> None:
-        await self._groups.resolve_bot_username(self._app.bot)
+        me = await self._groups.resolve_bot_username(self._app.bot)
+        if me is not None:
+            # Con el mismo ``get_me()``: el rótulo con el que este bot firma sus
+            # ``assistant_response`` en el broadcast (mismo formato que un humano).
+            rotulo = format_sender(me.username, me.first_name, me.last_name)
+            self._egress.fijar_identidad(rotulo or "")
 
     async def subscribe_broadcast_trigger(self) -> None:
         await self._ingress.subscribe()

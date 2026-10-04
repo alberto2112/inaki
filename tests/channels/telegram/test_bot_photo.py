@@ -554,7 +554,7 @@ async def test_privado_no_antepone_prefijo_sender(agent_cfg, mock_container) -> 
 
     enriched_content = mock_container.history.update_message_content.await_args.args[1]
     assert "(foto):" not in enriched_content
-    assert not enriched_content.startswith("alberto")
+    assert not enriched_content.startswith("@alberto")
 
 
 async def test_grupo_antepone_prefijo_sender_foto(agent_cfg, mock_container) -> None:
@@ -567,7 +567,7 @@ async def test_grupo_antepone_prefijo_sender_foto(agent_cfg, mock_container) -> 
     await bot._media.handle_photo(update, context)
 
     enriched_content = mock_container.history.update_message_content.await_args.args[1]
-    assert enriched_content.startswith("alberto (foto):")
+    assert enriched_content.startswith("@alberto (Alberto) (foto):")
     # El text_context del use case sigue formando el cuerpo (línea @analysis).
     assert "una foto de prueba" in enriched_content
 
@@ -582,7 +582,7 @@ async def test_grupo_con_caption_prefijo_envuelve_caption(agent_cfg, mock_contai
     await bot._media.handle_photo(update, context)
 
     enriched_content = mock_container.history.update_message_content.await_args.args[1]
-    assert enriched_content.startswith("alberto (foto):")
+    assert enriched_content.startswith("@alberto (Alberto) (foto):")
     assert "@caption: ese es mi gato" in enriched_content
 
 
@@ -777,11 +777,11 @@ async def test_handle_photo_grupo_dispara_emit_event_user_input_photo(mock_conta
     )
     photo_call = photo_calls[0]
     assert photo_call.kwargs["chat_id"] == "99"
-    assert photo_call.kwargs["sender"] == "alberto"
+    assert photo_call.kwargs["sender"] == "@alberto (Alberto)"
     # El content del broadcast es el text_context crudo (sin prefijo de sender):
     # los receptores aplican `_format_history_prefix` que antepone "{sender} (foto): ".
     assert "una foto de prueba" in photo_call.kwargs["content"]
-    assert not photo_call.kwargs["content"].startswith("alberto (foto):")
+    assert not photo_call.kwargs["content"].startswith("@alberto (Alberto) (foto):")
 
 
 async def test_handle_photo_modo_bang_emite_user_input_photo_sin_assistant_response():
@@ -841,4 +841,4 @@ async def test_handle_photo_modo_bang_emite_user_input_photo_sin_assistant_respo
     assert len(photo_calls) == 1
     assert len(assistant_calls) == 0
     assert photo_calls[0].kwargs["content"] == "texto extraído de la foto"
-    assert photo_calls[0].kwargs["sender"] == "alberto"
+    assert photo_calls[0].kwargs["sender"] == "@alberto (Alberto)"

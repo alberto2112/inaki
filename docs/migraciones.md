@@ -71,6 +71,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
 
 | Nota | Cambio observable |
 |---|---|
+| [`rotulo-del-emisor-en-grupos`](#rotulo-del-emisor-en-grupos) | En grupos el historial rotula a cada emisor como `@username (Nombre Apellido)` (antes, el username pelado); los bots, vía broadcast, igual. Filas viejas quedan con el formato anterior |
 | [`bg-stuck-task`](#bg-stuck-task) | Un `bg-N` cuya entrega falla pasa a `delivery_failed` (antes quedaba `running` para siempre); tool nueva `background_tasks` para listar y cancelar |
 | [`outbound-send-single-owner`](#outbound-send-single-owner) | `persist_tool_calls` pasa a `true` por default → `history.db` crece más rápido |
 | [`trim-cuenta-conversacion`](#trim-cuenta-conversacion) | `keep_last_messages` cuenta conversación, no filas → se retiene **más** historial |
@@ -113,7 +114,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `in-flight-message-injection`, `turn-kill-switch`
 - **Retención y alcance del registro**: `trim-cuenta-conversacion`,
   `search-history-retention-horizon`
-- **Telegram y canales**: `telegram-composicion`, `channels-validados-al-cargar`, `attachment-grammar`,
+- **Telegram y canales**: `rotulo-del-emisor-en-grupos`, `telegram-composicion`, `channels-validados-al-cargar`, `attachment-grammar`,
   `formato-en-el-borde-del-transporte`,
   `groups-vs-broadcast`, `broadcast-human-reset`, `rate-limit-por-intervenciones`,
   `broadcast-topology-config`, `broadcast-arranque-observable`,
@@ -134,6 +135,48 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `agent-id-igual-al-fichero`, `knowledge-token-budget-retirado`
 - **Providers LLM**: `anthropic-api-actual`
 - **Delegación**: `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
+
+---
+
+### `rotulo-del-emisor-en-grupos`
+
+**La decisión (2026-10-04)**: en grupos, cada mensaje humano se persistía en
+`history.db` con el username pelado (`theblackwindow17 said: ...`). El LLM no
+sabía que esa persona se llamaba Juan, así que cuando otro participante decía
+"Juan" no podía (o le costaba) saber a quién se referían. Los bots tenían el
+mismo problema por el broadcast: su `assistant_response` se persistía como
+`<agent_id> said: ...`, y un agente puede tener un username raro y jugar otro
+rol en el grupo.
+
+**El cambio**: un solo rótulo para todo emisor de grupo,
+`format_sender()` en `inaki/channels/telegram/message_mapper.py`:
+
+- username + nombre → `@theblackwindow17 (Juan Pérez) said: ...`
+- solo username → `@theblackwindow17 said: ...`
+- solo nombre (el username es opcional en Telegram) → `Juan Pérez said: ...`
+
+El handle va primero porque es el ancla única y no se puede falsificar, y
+coincide con cómo aparecen las menciones en el texto. El nombre visible es texto
+libre que controla el usuario, así que se sanea: se le quitan los paréntesis,
+los saltos de línea y los caracteres de control, y se trunca a 64. Sin eso, un
+nombre como `Juan) said: ...\n@admin (` fabricaba un turno falso en el historial.
+`extract_sender_name()` lo aplica a todo lo que rotula a un humano: `said:`,
+`reply to` (la cita pasó de `(...)` a `[...]` porque el paréntesis ahora es del
+nombre), `sent:`, `(foto):`, `(audio):` y el `sender` del broadcast.
+
+Para los bots, `BroadcastEgress.fijar_identidad()` recibe el rótulo del propio
+bot, sacado del mismo `get_me()` del arranque (`GroupFlow.resolve_bot_username`
+pasó a devolver el `User`). Toda `assistant_response` viaja con ese `sender`, y
+el ingress y el buffer lo usan con fallback al `agent_id`. Un emisor de versión
+vieja manda `sender` vacío y se sigue rotulando por `agent_id`: no hubo cambio
+de wire format.
+
+**Sin migración**: las filas existentes conservaron el formato anterior. El LLM
+lee las dos formas sin problema.
+
+**Invariante**: NUNCA embeber en el historial un campo de identidad que controla
+el usuario sin sanearlo. Un nombre visible no es un username: puede traer
+paréntesis, saltos de línea o un `said:` propio.
 
 ---
 

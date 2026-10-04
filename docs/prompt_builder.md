@@ -181,7 +181,7 @@ After concatenating all sections (base prompt, user context, memory digest, skil
 - **Telegram groups, autonomous flush** (text plain or buffered mentions) — populated from the *most recent human author* of the buffered batch. The bot snapshots `from_user` on every group message arrival (`self._last_group_sender[chat_id]`) and the flush reads that snapshot. If the buffer triggers without any prior human message (rare; only when a broadcast is the sole trigger), sender stays `None`.
 - **CLI / REST admin chat** — stay `None` (no human-identity binding implemented today).
 
-The sender identity also remains embedded in group message content via `format_group_message` (e.g., `"juan said: hola"`), independent of the variable resolution above. That embedded form lets the LLM disambiguate authorship turn-by-turn even when the canonical `{{CHANNEL.SENDER}}` resolves to "the most recent" author.
+The sender identity also remains embedded in group message content via `format_group_message` (e.g., `"@juan_dev (Juan Pérez) said: hola"` — handle first, sanitized display name in parentheses; see `format_sender`), independent of the variable resolution above. That embedded form lets the LLM disambiguate authorship turn-by-turn even when the canonical `{{CHANNEL.SENDER}}` resolves to "the most recent" author.
 
 Any variable whose value is `None` is left as-is in the prompt (same criterion as `{{WORKSPACE}}`).
 

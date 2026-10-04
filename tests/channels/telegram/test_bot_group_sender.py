@@ -240,7 +240,7 @@ async def test_handle_group_message_preformatted_persiste_el_bloque(
 
     mock_container.history.record_user_message.assert_awaited_once()
     persistido = mock_container.history.record_user_message.await_args.args[0]
-    assert persistido == f"juan sent:\n{bloque}"
+    assert persistido == f"@juan (Juan Pérez) sent:\n{bloque}"
 
 
 async def test_handle_group_message_texto_plano_sigue_usando_format_group_message(
@@ -258,4 +258,4 @@ async def test_handle_group_message_texto_plano_sigue_usando_format_group_messag
     await bot._groups.handle_message(update, "hola grupo", "supergroup")
 
     persistido = mock_container.history.record_user_message.await_args.args[0]
-    assert persistido == "juan said: hola grupo"
+    assert persistido == "@juan (Juan Pérez) said: hola grupo"

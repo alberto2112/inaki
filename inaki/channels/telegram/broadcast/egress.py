@@ -42,6 +42,14 @@ class BroadcastEgress:
         self._emitter = emitter
         self._agent_id = agent_id
         self._flags = flags
+        # Rótulo del propio bot en Telegram (``@username (Nombre)``). Lo fija el
+        # canal al arrancar, tras ``get_me()``; vacío si no se pudo resolver, y
+        # entonces los receptores caen al ``agent_id``.
+        self._identidad = ""
+
+    def fijar_identidad(self, rotulo: str) -> None:
+        """Fija el rótulo con el que este bot firma sus ``assistant_response``."""
+        self._identidad = rotulo
 
     @property
     def activo(self) -> bool:
@@ -58,9 +66,16 @@ class BroadcastEgress:
         content: str,
         sender: str = "",
     ) -> None:
-        """Construye y emite el ``BroadcastMessage``; silencioso si no aplica o falla."""
+        """Construye y emite el ``BroadcastMessage``; silencioso si no aplica o falla.
+
+        En ``assistant_response`` el emisor es el propio bot: si el caller no pasa
+        ``sender``, viaja su identidad de Telegram para que los demás agentes lo
+        rotulen igual que a un humano (``@username (Nombre) said: ...``).
+        """
         if self._emitter is None or not self.permite(event_type) or not content.strip():
             return
+        if event_type == "assistant_response" and not sender:
+            sender = self._identidad
         msg = BroadcastMessage(
             timestamp=time.time(),
             agent_id=self._agent_id,

@@ -95,7 +95,7 @@ class BroadcastBuffer:
 
         El formato de cada línea depende del ``event_type`` del mensaje:
 
-        - ``assistant_response``: ``"- [HH:MM:SS] {agent_id}: {content}"``
+        - ``assistant_response``: ``"- [HH:MM:SS] {sender|agent_id}: {content}"``
         - ``user_input_voice``:   ``"- [HH:MM:SS] {sender} (audio): {content}"``
         - ``user_input_photo``:   ``"- [HH:MM:SS] {sender} (foto): {content}"``
 
@@ -141,4 +141,4 @@ def _formatear_linea(m: BroadcastMessage, hora: str) -> str:
     if m.event_type == "user_input_photo":
         return f"- [{hora}] {m.sender} (foto): {m.content}"
     # assistant_response (default y backward-compat)
-    return f"- [{hora}] {m.agent_id}: {m.content}"
+    return f"- [{hora}] {m.sender or m.agent_id}: {m.content}"

@@ -42,8 +42,10 @@ class BroadcastMessage:
     Para ``user_input_photo`` es la descripción de escena."""
 
     sender: str = ""
-    """Nombre del humano emisor — solo poblado para eventos ``user_input_*``.
-    Para ``assistant_response`` queda vacío (el emisor humano no aplica)."""
+    """Rótulo del emisor (``@username (Nombre Apellido)``, ver ``format_sender``).
+    En ``user_input_*`` es el humano que habló; en ``assistant_response``, el
+    propio bot emisor. Vacío si el emisor no lo conoce (o es una versión vieja):
+    el receptor cae al ``agent_id``."""
 
 
 # Alias de tipo para callbacks de ingress. Recibe un BroadcastMessage y

@@ -12,7 +12,7 @@ import asyncio
 import logging
 import random
 
-from telegram import Bot, Update
+from telegram import Bot, Update, User
 
 from inaki.channels.telegram.message_mapper import (
     _safe_optional_str,
@@ -206,13 +206,16 @@ class GroupFlow:
         if respondio and self._behavior == "autonomous":
             self._rate_limit.record_response(chat_id_str)
 
-    async def resolve_bot_username(self, bot: Bot) -> None:
+    async def resolve_bot_username(self, bot: Bot) -> User | None:
         """Obtiene y valida el username del bot contra la API de Telegram.
 
         Llama a ``get_me()`` UNA SOLA VEZ al arranque. No bloquea ni falla el startup:
         - Si ``bot_username`` no está en config → se auto-detecta para que los filtros funcionen.
         - Si el username real difiere del configurado → WARNING (no bloquea).
         - Si ``get_me()`` falla → WARNING (no bloquea).
+
+        Devuelve el ``User`` del bot (o ``None`` si ``get_me()`` falló) para que el
+        canal derive de ahí su rótulo de broadcast sin un segundo ``get_me()``.
         """
         try:
             me = await bot.get_me()
@@ -222,7 +225,7 @@ class GroupFlow:
                 self._agent_id,
                 exc,
             )
-            return
+            return None
 
         real_username = me.username  # puede ser None si el bot no tiene username
 
@@ -232,7 +235,7 @@ class GroupFlow:
                 "Los filtros de reply y mención no funcionarán correctamente.",
                 self._agent_id,
             )
-            return
+            return me
 
         if self.bot_username is None:
             self.bot_username = real_username
@@ -241,7 +244,7 @@ class GroupFlow:
                 self._agent_id,
                 real_username,
             )
-            return
+            return me
 
         if real_username.lower() != self.bot_username.lower():
             logger.warning(
@@ -258,3 +261,4 @@ class GroupFlow:
                 self._agent_id,
                 real_username,
             )
+        return me

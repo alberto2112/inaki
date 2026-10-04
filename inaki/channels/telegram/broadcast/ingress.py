@@ -22,7 +22,9 @@ logger = logging.getLogger(__name__)
 def _format_history_prefix(msg: BroadcastMessage) -> str:
     """Construye el contenido a persistir en historial según el ``event_type``.
 
-    - ``assistant_response`` → ``"{agent_id} said: {content}"`` (backward-compat).
+    - ``assistant_response`` → ``"{sender} said: {content}"``, donde ``sender`` es el
+      rótulo de Telegram del bot emisor (``@username (Nombre)``). Un emisor viejo
+      lo manda vacío: se cae al ``agent_id``.
     - ``user_input_voice``   → ``"{sender} (audio): {content}"``.
     - ``user_input_photo``   → ``"{sender} (foto): {content}"``.
     """
@@ -31,7 +33,7 @@ def _format_history_prefix(msg: BroadcastMessage) -> str:
     if msg.event_type == "user_input_photo":
         return f"{msg.sender} (foto): {msg.content}"
     # assistant_response (default)
-    return f"{msg.agent_id} said: {msg.content}"
+    return f"{msg.sender or msg.agent_id} said: {msg.content}"
 
 
 class BroadcastIngress:
@@ -71,7 +73,7 @@ class BroadcastIngress:
     async def on_received(self, msg: BroadcastMessage) -> None:
         """Callback invocado por el adapter por cada ``BroadcastMessage`` válido.
 
-        Se persiste SIEMPRE con prefijo ``<agent_id> said: ...`` y luego se decide
+        Se persiste SIEMPRE con prefijo ``<sender|agent_id> said: ...`` y luego se decide
         si programar un flush task. Si el agente está en cooldown, el broadcast
         queda guardado en historial pero NO se programa respuesta — cuando el
         cooldown venza (o lo levante un humano), el batch acumulado va a ser

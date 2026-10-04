@@ -61,7 +61,7 @@ def _firmar(
         agent_id: Identificador del agente emisor.
         chat_id: Identificador del chat de origen.
         event_type: Tipo de evento (assistant_response | user_input_voice | user_input_photo).
-        sender: Nombre del humano emisor (vacío para assistant_response).
+        sender: Rótulo del emisor (humano en user_input_*, el bot en assistant_response).
         content: Texto del evento.
 
     Returns:

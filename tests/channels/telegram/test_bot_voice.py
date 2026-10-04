@@ -241,7 +241,7 @@ async def test_audio_en_grupo_se_prefija_con_sender(agent_cfg, mock_container) -
     await bot._media.handle_voice(update, context)
 
     user_input = mock_container.run_agent.execute.await_args.args[0]
-    assert user_input.startswith("alberto (audio):\n@audio")
+    assert user_input.startswith("@alberto (audio):\n@audio")
     assert "@transcription: cuánto es 5+5" in user_input
 
 

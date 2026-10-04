@@ -479,18 +479,23 @@ def assemble_turn_messages(
     ``user_msg`` es ``None`` (nada nuevo que persistir).
     """
     user_msg: Message | None = None
+    messages: list[Message] = history
     if user_input is not None:
         user_msg = Message(
             role=Role.USER,
             content=user_input,
             timestamp=datetime.now(timezone.utc),
         )
-        messages: list[Message] = history + [user_msg]
-    else:
-        messages = coalesce_consecutive_same_role(history)
+        messages = history + [user_msg]
 
+    # Timestamps ANTES de coalescer: un bloque de grupo junta mensajes de varios
+    # emisores en uno solo, y el coalescido conserva un único ``timestamp`` (el
+    # del primero). Prefijando después, solo la primera línea llevaba hora.
     if channel and channel in timestamp_channels:
         messages = prepend_timestamps(messages)
+
+    if user_input is None:
+        messages = coalesce_consecutive_same_role(messages)
 
     return user_msg, messages
 

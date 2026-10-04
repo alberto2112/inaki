@@ -71,6 +71,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
 
 | Nota | Cambio observable |
 |---|---|
+| [`timestamps-solo-en-user`](#timestamps-solo-en-user) | Con `add_llm_timestamp`, las respuestas del asistente dejaron de llevar `[ts]` en el prompt, y en un bloque de grupo cada mensaje lleva su propia hora (antes, solo el primero) |
 | [`rotulo-del-emisor-en-grupos`](#rotulo-del-emisor-en-grupos) | En grupos el historial rotula a cada emisor como `@username (Nombre Apellido)` (antes, el username pelado); los bots, vía broadcast, igual. Filas viejas quedan con el formato anterior |
 | [`bg-stuck-task`](#bg-stuck-task) | Un `bg-N` cuya entrega falla pasa a `delivery_failed` (antes quedaba `running` para siempre); tool nueva `background_tasks` para listar y cancelar |
 | [`outbound-send-single-owner`](#outbound-send-single-owner) | `persist_tool_calls` pasa a `true` por default → `history.db` crece más rápido |
@@ -114,7 +115,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `in-flight-message-injection`, `turn-kill-switch`
 - **Retención y alcance del registro**: `trim-cuenta-conversacion`,
   `search-history-retention-horizon`
-- **Telegram y canales**: `rotulo-del-emisor-en-grupos`, `telegram-composicion`, `channels-validados-al-cargar`, `attachment-grammar`,
+- **Telegram y canales**: `timestamps-solo-en-user`, `rotulo-del-emisor-en-grupos`, `telegram-composicion`, `channels-validados-al-cargar`, `attachment-grammar`,
   `formato-en-el-borde-del-transporte`,
   `groups-vs-broadcast`, `broadcast-human-reset`, `rate-limit-por-intervenciones`,
   `broadcast-topology-config`, `broadcast-arranque-observable`,
@@ -135,6 +136,37 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `agent-id-igual-al-fichero`, `knowledge-token-budget-retirado`
 - **Providers LLM**: `anthropic-api-actual`
 - **Delegación**: `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
+
+---
+
+### `timestamps-solo-en-user`
+
+**Los bugs (2026-10-04)**: con `channels.telegram.add_llm_timestamp` activo,
+pasaban dos cosas:
+
+1. **El modelo contestaba con un timestamp delante.** `prepend_timestamps`
+   prefijaba `[YYYY-MM-DD HH:MM:SS TZ]` también a los mensajes `ASSISTANT`.
+   El LLM veía sus propias respuestas anteriores empezando con fecha y lo
+   imitaba por aprendizaje en contexto. No era un capricho del modelo: el
+   prompt le enseñaba que así hablaba él.
+2. **En grupos, solo el primer mensaje del bloque llevaba hora.**
+   `assemble_turn_messages` coalescía los `USER` consecutivos (varios
+   emisores en un solo mensaje, con el `timestamp` del primero) y recién
+   DESPUÉS prefijaba. El resto de las líneas perdía su hora.
+
+**El cambio**: `prepend_timestamps` dejó de tocar `ASSISTANT`; la línea de
+tiempo ya la dan los turnos del usuario. En `assemble_turn_messages` el
+prefijo pasó a aplicarse ANTES de coalescer, así que cada línea del bloque
+conservó la suya:
+`[2026-10-04 10:00:00 CEST] @juan (Juan) said: hola`. El formato con
+corchetes no cambió: es la convención de los logs de chat y el modelo la
+reconoce como metadato. Nada de esto se persiste; el prefijo se arma al
+construir el prompt, desde `Message.timestamp`.
+
+**Invariante**: NUNCA mostrarle al modelo, en sus PROPIOS mensajes, un
+metadato que no querés que reproduzca. Lo que ve en su rol lo aprende como
+su forma de hablar. Y NUNCA aplicar una transformación por mensaje después
+de coalescer: el coalescido conserva un solo valor por bloque.
 
 ---
 

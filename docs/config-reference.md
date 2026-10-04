@@ -1046,7 +1046,7 @@ Tuvo ``extra="allow"`` mientras el bloque no se validaba al cargar: sin validaci
 
 **`voice_enabled`** — Si True, el bot acepta mensajes de voz y los transcribe.
 
-**`add_llm_timestamp`** — Si True, ``RunAgentUseCase`` antepone ``[YYYY-MM-DD HH:MM:SS TZ] `` al ``content`` de cada mensaje USER/ASSISTANT (privados y grupos) antes de armar el prompt para el LLM. Default ``False`` para mantener compatibilidad. El timestamp sale del ``Message.timestamp`` ya persistido en la DB; no se duplica en el ``content`` almacenado.
+**`add_llm_timestamp`** — Si True, ``RunAgentUseCase`` antepone ``[YYYY-MM-DD HH:MM:SS TZ] `` al ``content`` de cada mensaje USER (privados y grupos) antes de armar el prompt para el LLM; en un grupo, cada mensaje del bloque lleva su propia hora. Las respuestas del asistente NO lo llevan: el modelo las imitaría y contestaría con un timestamp delante. Default ``False`` para mantener compatibilidad. El timestamp sale del ``Message.timestamp`` ya persistido en la DB; no se duplica en el ``content`` almacenado.
 
 **`broadcast`** — Config del canal de broadcast entre instancias. None = broadcast inactivo.
 

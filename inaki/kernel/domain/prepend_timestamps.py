@@ -1,4 +1,4 @@
-"""Inyección de timestamps al ``content`` de mensajes USER/ASSISTANT.
+"""Inyección de timestamps al ``content`` de mensajes USER.
 
 El servicio devuelve una nueva lista de mensajes con prefijo ``[ts] `` en el
 ``content``. Pensado para llamarse desde el use case ``RunAgentUseCase`` justo
@@ -17,9 +17,11 @@ def prepend_timestamps(messages: list[Message]) -> list[Message]:
 
     Reglas:
 
-    - Solo aplica a roles ``USER`` y ``ASSISTANT``. ``TOOL``, ``TOOL_RESULT`` y
-      ``SYSTEM`` se devuelven intactos: el timestamp en esos roles es ruido para
-      el LLM.
+    - Solo aplica al rol ``USER``. ``ASSISTANT`` queda intacto a propósito: si
+      el modelo ve sus propias respuestas empezando con ``[ts]``, aprende del
+      contexto que así habla él y empieza a contestar con un timestamp delante.
+      La línea de tiempo ya la dan los turnos del usuario. ``TOOL``,
+      ``TOOL_RESULT`` y ``SYSTEM`` también quedan intactos: ahí es ruido.
     - Mensajes con ``timestamp is None`` quedan intactos. Es el caso de los
       working messages efímeros del tool loop (assistant intermedios, tool
       results) que aún no fueron persistidos.
@@ -34,7 +36,7 @@ def prepend_timestamps(messages: list[Message]) -> list[Message]:
     """
     out: list[Message] = []
     for m in messages:
-        if m.role in (Role.USER, Role.ASSISTANT) and m.timestamp is not None and m.content:
+        if m.role == Role.USER and m.timestamp is not None and m.content:
             ts = m.timestamp.astimezone().strftime(_FORMATO_TS)
             out.append(m.model_copy(update={"content": f"[{ts}] {m.content}"}))
         else:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from inaki.kernel.domain.prepend_timestamps import prepend_timestamps
@@ -33,10 +34,11 @@ def test_anteponer_a_user_con_timestamp():
     assert "] hola" in out[0].content
 
 
-def test_anteponer_a_assistant_con_timestamp():
+def test_assistant_queda_intacto_aunque_tenga_timestamp():
+    """Si el modelo ve sus respuestas con ``[ts]``, las imita y contesta con fecha."""
     ts = datetime(2026, 5, 1, 12, 30, 0, tzinfo=timezone.utc)
     out = prepend_timestamps([_msg(Role.ASSISTANT, "buenas", ts=ts)])
-    assert "] buenas" in out[0].content
+    assert out[0].content == "buenas"
 
 
 def test_no_muta_mensaje_original():
@@ -101,7 +103,7 @@ def test_mezcla_de_roles_y_estados():
     ]
     out = prepend_timestamps(msgs)
     assert "] hola" in out[0].content
-    assert "] buenas" in out[1].content
+    assert out[1].content == "buenas"
     assert out[2].content == "ahora"
 
 
@@ -109,6 +111,29 @@ def test_formato_incluye_fecha_y_hora_local():
     ts = datetime(2026, 5, 1, 12, 30, 45, tzinfo=timezone.utc)
     out = prepend_timestamps([_msg(Role.USER, "x", ts=ts)])
     # No asumimos la TZ local del runner — solo el shape.
-    import re
-
     assert re.match(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}.*\] x$", out[0].content)
+
+
+def test_bloque_de_grupo_lleva_un_timestamp_por_mensaje():
+    """El prefijo va ANTES de coalescer: cada mensaje del bloque conserva su hora."""
+    from inaki.kernel._turn_pipeline import assemble_turn_messages
+
+    ts1 = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+    ts2 = datetime(2026, 5, 1, 12, 0, 7, tzinfo=timezone.utc)
+    history = [
+        _msg(Role.USER, "@juan (Juan) said: hola", ts=ts1),
+        _msg(Role.USER, "@marta (Marta) said: buenas", ts=ts2),
+    ]
+    user_msg, messages = assemble_turn_messages(
+        history=history,
+        user_input=None,
+        channel="telegram",
+        timestamp_channels=frozenset({"telegram"}),
+    )
+
+    assert user_msg is None
+    assert len(messages) == 1
+    lineas = messages[0].content.split("\n")
+    assert len(lineas) == 2
+    assert re.match(r"^\[.+\] @juan \(Juan\) said: hola$", lineas[0])
+    assert re.match(r"^\[.+\] @marta \(Marta\) said: buenas$", lineas[1])

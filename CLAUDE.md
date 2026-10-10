@@ -231,6 +231,12 @@ Cada una salió de un fallo en producción. El caso completo está en
   `inaki/config/merge.py` (dict⊕dict funde, lista reemplaza, `null` pisa,
   sentinel borra, cambiar de forma entre capas es error). Si no alcanza para un caso
   nuevo, **extendé el motor**; no nazca otro al lado. → `motor-de-merge-unico`
+- **NUNCA** dos caminos para construir el mismo puerto desde la config: el LLM
+  del agente, los sub-agentes y `memories.llm` pasan TODOS por
+  `LLMProviderFactory.create`. El camino que no usa el arranque principal es el
+  que nadie prueba con la config real, y diverge en silencio (el retirado perdía
+  el `type` de `providers:`). Si un consumidor necesita algo distinto, extendé la
+  factory única. → `llm-un-solo-camino-de-construccion`
 - **NUNCA** borrar ni renombrar un campo del schema sin migración: desde que las
   claves desconocidas abortan el arranque, quitar un campo que el bootstrap escribió
   alguna vez rompe TODAS las instalaciones existentes. → `config-limpieza-final`

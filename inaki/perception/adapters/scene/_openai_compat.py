@@ -12,6 +12,7 @@ import logging
 
 import httpx
 
+from inaki.perception.adapters.scene._media_type import detectar_media_type
 from inaki.shared.errors import SceneDescriptionError
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ async def describir_imagen_openai_compat(
     """Llama a un endpoint compatible con OpenAI Chat Completions (visión multimodal).
 
     Args:
-        image_bytes: Bytes de la imagen JPEG.
+        image_bytes: Bytes de la imagen (JPEG, PNG, GIF o WebP).
         prompt: Texto del prompt (ya resuelto por el adaptador).
         modelo: Nombre del modelo a usar.
         base_url: URL del endpoint (chat/completions).
@@ -59,8 +60,9 @@ async def describir_imagen_openai_compat(
         Texto de descripción de la escena.
 
     Raises:
-        SceneDescriptionError: Si el proveedor falla.
+        SceneDescriptionError: Si el formato no es soportado o el proveedor falla.
     """
+    media_type = detectar_media_type(image_bytes)
     datos_b64 = base64.b64encode(image_bytes).decode()
 
     payload = {
@@ -76,7 +78,7 @@ async def describir_imagen_openai_compat(
                     {
                         "type": "image_url",
                         "image_url": {
-                            "url": f"data:image/jpeg;base64,{datos_b64}",
+                            "url": f"data:{media_type};base64,{datos_b64}",
                         },
                     },
                 ],

@@ -122,6 +122,30 @@ async def test_describe_image_envia_payload_correcto() -> None:
 
 
 @respx.mock
+async def test_media_type_sale_de_los_bytes_no_fijo() -> None:
+    """Un PNG se declara como image/png: Anthropic rechaza un tipo que no coincide."""
+    import json
+
+    route = respx.post(ENDPOINT).mock(return_value=httpx.Response(200, json=_fake_response()))
+    png = b"\x89PNG\r\n\x1a\nfake-png-bytes"
+
+    await _adapter().describe_image(png)
+
+    body = json.loads(route.calls.last.request.content)
+    assert body["messages"][0]["content"][0]["source"]["media_type"] == "image/png"
+
+
+@respx.mock
+async def test_formato_no_soportado_no_llama_a_la_api() -> None:
+    route = respx.post(ENDPOINT).mock(return_value=httpx.Response(200, json=_fake_response()))
+
+    with pytest.raises(SceneDescriptionError, match="no soportado"):
+        await _adapter().describe_image(b"BM-un-bitmap")
+
+    assert not route.called
+
+
+@respx.mock
 async def test_describe_image_headers_correctos() -> None:
     """Valida headers: x-api-key, anthropic-version, content-type."""
     respx.post(ENDPOINT).mock(return_value=httpx.Response(200, json=_fake_response("escena")))

@@ -16,6 +16,7 @@ import logging
 
 import httpx
 
+from inaki.perception.adapters.scene._media_type import detectar_media_type
 from inaki.perception.ports.scene import ISceneDescriberPort
 from inaki.shared.errors import SceneDescriptionError
 
@@ -67,16 +68,18 @@ class AnthropicSceneDescriberAdapter(ISceneDescriberPort):
         """Describe the scene of an image using Claude multimodal.
 
         Args:
-            image_bytes: Bytes de la imagen (JPEG o PNG).
+            image_bytes: Bytes de la imagen (JPEG, PNG, GIF o WebP).
             prompt: Prompt personalizado. Si es None, usa prompt_template o el default.
 
         Returns:
             Description of the scene.
 
         Raises:
-            SceneDescriptionError: Si Anthropic falla, timeout o error HTTP.
+            SceneDescriptionError: Si el formato no es soportado, o si Anthropic
+                falla, timeout o error HTTP.
         """
         texto_prompt = self._resolver_prompt(prompt)
+        media_type = detectar_media_type(image_bytes)
         datos_b64 = base64.b64encode(image_bytes).decode()
 
         payload = {
@@ -91,7 +94,7 @@ class AnthropicSceneDescriberAdapter(ISceneDescriberPort):
                             "type": "image",
                             "source": {
                                 "type": "base64",
-                                "media_type": "image/jpeg",
+                                "media_type": media_type,
                                 "data": datos_b64,
                             },
                         },

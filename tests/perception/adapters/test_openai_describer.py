@@ -122,6 +122,21 @@ async def test_describe_image_envia_payload_correcto() -> None:
 
 
 @respx.mock
+async def test_data_url_usa_el_media_type_de_los_bytes() -> None:
+    """Un PNG viaja como data:image/png — el helper compat también lo usa Groq."""
+    import json
+
+    route = respx.post(ENDPOINT).mock(return_value=httpx.Response(200, json=_fake_response()))
+    png = b"\x89PNG\r\n\x1a\nfake-png-bytes"
+
+    await _adapter().describe_image(png)
+
+    body = json.loads(route.calls.last.request.content)
+    url = body["messages"][1]["content"][0]["image_url"]["url"]
+    assert url.startswith("data:image/png;base64,")
+
+
+@respx.mock
 async def test_describe_image_headers_correctos() -> None:
     """Valida headers: Authorization Bearer y Content-Type."""
     respx.post(ENDPOINT).mock(return_value=httpx.Response(200, json=_fake_response("escena")))

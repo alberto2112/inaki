@@ -1,10 +1,11 @@
-"""Tests para OpenAIResponsesProvider — adapter de la Responses API.
+"""Tests para OpenAIProvider — el adapter ``openai`` (Responses API).
 
 Cobertura:
 - Input mapping (USER, ASSISTANT, ASSISTANT+tool_calls, TOOL).
 - Tool schema conversion (chat-completions → responses, forma plana).
 - Output parsing (text blocks, function_calls).
-- Errores HTTP envueltos en LLMError.
+- Errores HTTP envueltos en LLMError (con tipo de excepción y timeout).
+- Respeta ``timeout_seconds`` de la config.
 - reasoning_effort y temperature en el payload.
 - stream() lanza LLMError (no implementado intencionalmente).
 """
@@ -15,7 +16,7 @@ import httpx
 import pytest
 
 from inaki.llm.base import ResolvedLLMConfig
-from inaki.llm.openai_responses import OpenAIResponsesProvider
+from inaki.llm.openai import OpenAIProvider
 from inaki.shared.errors import LLMError
 from inaki.shared.message import Message, Role
 
@@ -24,7 +25,7 @@ def _cfg(**overrides) -> ResolvedLLMConfig:
     from typing import Any
 
     base: dict[str, Any] = dict(
-        provider="openai_responses",
+        provider="openai",
         model="gpt-5.3-codex",
         temperature=0.2,
         max_tokens=2048,
@@ -41,7 +42,7 @@ def _cfg(**overrides) -> ResolvedLLMConfig:
 
 def test_build_input_user_message() -> None:
     messages = [Message(role=Role.USER, content="hola")]
-    result = OpenAIResponsesProvider._build_input(messages)
+    result = OpenAIProvider._build_input(messages)
     assert result == [
         {
             "type": "message",
@@ -53,7 +54,7 @@ def test_build_input_user_message() -> None:
 
 def test_build_input_assistant_text_only() -> None:
     messages = [Message(role=Role.ASSISTANT, content="respuesta")]
-    result = OpenAIResponsesProvider._build_input(messages)
+    result = OpenAIProvider._build_input(messages)
     assert result == [
         {
             "type": "message",
@@ -74,7 +75,7 @@ def test_build_input_assistant_with_tool_calls_no_text() -> None:
     ]
     messages = [Message(role=Role.ASSISTANT, content="", tool_calls=tc)]
 
-    result = OpenAIResponsesProvider._build_input(messages)
+    result = OpenAIProvider._build_input(messages)
 
     assert result == [
         {
@@ -102,7 +103,7 @@ def test_build_input_assistant_with_tool_calls_and_text() -> None:
     ]
     messages = [Message(role=Role.ASSISTANT, content="voy a buscar", tool_calls=tc)]
 
-    result = OpenAIResponsesProvider._build_input(messages)
+    result = OpenAIProvider._build_input(messages)
 
     assert len(result) == 3
     assert result[0]["type"] == "message"
@@ -123,7 +124,7 @@ def test_build_input_assistant_with_tool_calls_and_text() -> None:
 
 def test_build_input_tool_message() -> None:
     messages = [Message(role=Role.TOOL, content='{"result": 42}', tool_call_id="call_xyz")]
-    result = OpenAIResponsesProvider._build_input(messages)
+    result = OpenAIProvider._build_input(messages)
     assert result == [
         {
             "type": "function_call_output",
@@ -149,7 +150,7 @@ def test_build_input_full_conversation() -> None:
         Message(role=Role.ASSISTANT, content="listo"),
     ]
 
-    result = OpenAIResponsesProvider._build_input(messages)
+    result = OpenAIProvider._build_input(messages)
 
     types = [item["type"] for item in result]
     assert types == ["message", "function_call", "function_call_output", "message"]
@@ -176,7 +177,7 @@ def test_convert_tools_flattens_function_block() -> None:
         }
     ]
 
-    converted = OpenAIResponsesProvider._convert_tools(tools_chat)
+    converted = OpenAIProvider._convert_tools(tools_chat)
 
     assert converted == [
         {
@@ -194,7 +195,7 @@ def test_convert_tools_flattens_function_block() -> None:
 def test_convert_tools_passes_through_non_function_types() -> None:
     """Items que no son type=function se conservan tal cual (futuro-proof)."""
     tools = [{"type": "web_search_preview"}]
-    assert OpenAIResponsesProvider._convert_tools(tools) == tools
+    assert OpenAIProvider._convert_tools(tools) == tools
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +211,7 @@ def test_parse_output_text_only_message() -> None:
             "content": [{"type": "output_text", "text": "respuesta final"}],
         }
     ]
-    text_blocks, tool_calls = OpenAIResponsesProvider._parse_output(output)
+    text_blocks, tool_calls = OpenAIProvider._parse_output(output)
     assert text_blocks == ["respuesta final"]
     assert tool_calls == []
 
@@ -226,7 +227,7 @@ def test_parse_output_function_call_remapped_to_chat_format() -> None:
             "arguments": '{"q":"X"}',
         }
     ]
-    text_blocks, tool_calls = OpenAIResponsesProvider._parse_output(output)
+    text_blocks, tool_calls = OpenAIProvider._parse_output(output)
 
     assert text_blocks == []
     assert tool_calls == [
@@ -251,7 +252,7 @@ def test_parse_output_text_and_function_calls_mixed() -> None:
             "arguments": "{}",
         },
     ]
-    text_blocks, tool_calls = OpenAIResponsesProvider._parse_output(output)
+    text_blocks, tool_calls = OpenAIProvider._parse_output(output)
 
     assert text_blocks == ["voy a buscar"]
     assert len(tool_calls) == 1
@@ -268,7 +269,7 @@ def test_parse_output_ignores_unknown_item_types() -> None:
             "content": [{"type": "output_text", "text": "ok"}],
         },
     ]
-    text_blocks, tool_calls = OpenAIResponsesProvider._parse_output(output)
+    text_blocks, tool_calls = OpenAIProvider._parse_output(output)
     assert text_blocks == ["ok"]
     assert tool_calls == []
 
@@ -322,7 +323,7 @@ async def test_complete_posts_to_responses_endpoint(monkeypatch, fake_response_p
 
     monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
 
-    provider = OpenAIResponsesProvider(_cfg())
+    provider = OpenAIProvider(_cfg())
     messages = [Message(role=Role.USER, content="hola")]
     tools = [
         {
@@ -373,7 +374,7 @@ async def test_complete_includes_reasoning_effort_and_omits_temperature(
 
     # temperature=0.2 explícito en el config, pero como reasoning_effort está seteado,
     # debe NO viajar en el payload (la API rechaza temperature en esos modelos).
-    provider = OpenAIResponsesProvider(_cfg(temperature=0.2, reasoning_effort="high"))
+    provider = OpenAIProvider(_cfg(temperature=0.2, reasoning_effort="high"))
     await provider.complete([Message(role=Role.USER, content="hi")], "sys")
 
     assert captured["json"]["reasoning"] == {"effort": "high"}
@@ -403,7 +404,7 @@ async def test_complete_omits_tools_when_none(monkeypatch, fake_response_payload
 
     monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **kw: FakeClient())
 
-    provider = OpenAIResponsesProvider(_cfg())
+    provider = OpenAIProvider(_cfg())
     await provider.complete([Message(role=Role.USER, content="hi")], "sys")
 
     assert "tools" not in captured["json"]
@@ -437,12 +438,73 @@ async def test_complete_wraps_http_error_as_llm_error(monkeypatch):
 
     monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **kw: FakeClient())
 
-    provider = OpenAIResponsesProvider(_cfg())
+    provider = OpenAIProvider(_cfg())
     with pytest.raises(LLMError) as exc_info:
         await provider.complete([Message(role=Role.USER, content="hi")], "sys")
 
     assert "404" in str(exc_info.value)
     assert "model not found" in str(exc_info.value)
+
+
+async def test_complete_respeta_timeout_seconds_de_la_config(monkeypatch, fake_response_payload):
+    """El timeout del cliente HTTP sale de ``cfg.timeout_seconds``, no de un literal."""
+    captured: dict = {}
+
+    class FakeResponse:
+        def raise_for_status(self): ...
+        def json(self):
+            return fake_response_payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            captured["timeout"] = kwargs.get("timeout")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+
+    provider = OpenAIProvider(_cfg(timeout_seconds=300))
+    await provider.complete([Message(role=Role.USER, content="hi")], "sys")
+
+    assert captured["timeout"] == 300
+
+
+async def test_error_de_transporte_nombra_tipo_y_timeout(monkeypatch):
+    """``ReadTimeout`` puede venir con ``__str__`` vacío: el mensaje igual tiene
+    que decir QUÉ falló y con qué timeout, o el operador no puede diagnosticar."""
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def post(self, *args, **kwargs):
+            raise httpx.ReadTimeout("")
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **kw: FakeClient())
+
+    provider = OpenAIProvider(_cfg(timeout_seconds=45))
+    with pytest.raises(LLMError) as exc_info:
+        await provider.complete([Message(role=Role.USER, content="hi")], "sys")
+
+    assert "ReadTimeout" in str(exc_info.value)
+    assert "timeout=45s" in str(exc_info.value)
+
+
+def test_error_sin_api_key_nombra_la_entrada_del_registry() -> None:
+    """El mensaje apunta a la entrada que el operador tiene que completar
+    (``providers.{key}``), que puede no llamarse ``openai``."""
+    with pytest.raises(LLMError, match=r"providers\.openai-work\.api_key"):
+        OpenAIProvider(_cfg(provider="openai-work", api_key=None))
 
 
 # ---------------------------------------------------------------------------
@@ -452,11 +514,11 @@ async def test_complete_wraps_http_error_as_llm_error(monkeypatch):
 
 def test_init_raises_without_api_key() -> None:
     with pytest.raises(LLMError, match="api_key"):
-        OpenAIResponsesProvider(_cfg(api_key=None))
+        OpenAIProvider(_cfg(api_key=None))
 
 
 async def test_stream_raises_not_implemented() -> None:
-    provider = OpenAIResponsesProvider(_cfg())
+    provider = OpenAIProvider(_cfg())
     with pytest.raises(LLMError, match="no está implementado"):
         async for _ in provider.stream([Message(role=Role.USER, content="x")], "sys"):
             pass
@@ -467,12 +529,12 @@ async def test_stream_raises_not_implemented() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_provider_name_and_factory_discovery() -> None:
-    """El factory debe descubrir 'openai_responses' como provider disponible."""
+def test_provider_name_and_factory_discovery(monkeypatch) -> None:
+    """``openai`` resuelve al adapter de Responses; ``openai_responses`` ya no existe."""
     from inaki.llm.wiring import LLMProviderFactory
 
-    LLMProviderFactory._registry.clear()  # forzar reload
+    monkeypatch.setattr(LLMProviderFactory, "_registry", {})  # forzar re-scan real
     LLMProviderFactory._load()
 
-    assert "openai_responses" in LLMProviderFactory._registry
-    assert LLMProviderFactory._registry["openai_responses"].__name__ == "OpenAIResponsesProvider"
+    assert LLMProviderFactory._registry["openai"] is OpenAIProvider
+    assert "openai_responses" not in LLMProviderFactory._registry

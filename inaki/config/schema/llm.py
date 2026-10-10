@@ -28,10 +28,15 @@ class LLMConfig(_ConfigBaseModel):
     provider: str = "openrouter"
     """KEY del registry ``providers:`` que aporta las credenciales y el endpoint.
 
-    Adapters incluidos: ``openrouter``, ``openai``, ``openai_responses``,
-    ``anthropic``, ``deepseek``, ``groq``, ``ollama``, ``custom``. Se
-    auto-descubren por la constante ``PROVIDER_NAME`` del módulo, así que agregar
-    uno nuevo es crear ``inaki/llm/{name}.py`` y declarar ``providers.{name}``."""
+    Adapters incluidos: ``openrouter``, ``openai``, ``anthropic``, ``deepseek``,
+    ``groq``, ``ollama``, ``custom``. Se auto-descubren por la constante
+    ``PROVIDER_NAME`` del módulo, así que agregar uno nuevo es crear
+    ``inaki/llm/{name}.py`` y declarar ``providers.{name}``.
+
+    ``openai`` habla la Responses API (``/responses``), no ``/chat/completions``.
+    La misma entrada ``providers.openai`` alimenta también al embedding, a la
+    transcripción y a la descripción de fotos ``openai``: cada feature busca el
+    adapter en su propio registry, así que la ``api_key`` se escribe UNA vez."""
 
     model: str = "anthropic/claude-3-5-haiku"
     """Identificador del modelo, en el formato que espera el provider elegido.
@@ -44,7 +49,7 @@ class LLMConfig(_ConfigBaseModel):
     """Aleatoriedad del muestreo: ``0.0`` determinista, valores altos más creativo.
 
     Orientativo: 0.3-0.5 para tareas de código o extracción, 0.7-0.9 para
-    conversación. El adapter ``openai_responses`` la OMITE cuando
+    conversación. El adapter ``openai`` la OMITE cuando
     ``reasoning_effort`` está seteado (la API devuelve 400 si van juntas), y el
     adapter ``anthropic`` no la manda NUNCA: los modelos Claude actuales (Opus
     4.7 en adelante, Sonnet 5) devuelven 400 ante una temperatura que no sea la
@@ -66,7 +71,7 @@ class LLMConfig(_ConfigBaseModel):
     ``max_tokens`` por ``max_completion_tokens``; ``anthropic`` lo manda como
     ``output_config.effort`` (acepta ``low``, ``medium``, ``high``, ``xhigh``,
     ``max``; otro valor aborta el arranque) y, salvo con ``low``, activa el
-    thinking adaptive; ``openai_responses`` lo manda como ``reasoning.effort`` y
+    thinking adaptive; ``openai`` lo manda como ``reasoning.effort`` y
     omite ``temperature``. Con thinking activo conviene subir ``timeout_seconds``
     y ``max_tokens`` (en ``anthropic`` el razonamiento consume ese mismo techo),
     y es el flag del que depende ``channels.thinking_indicator``.

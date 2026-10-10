@@ -1,6 +1,6 @@
 """Base compartida para proveedores que hablan el dialecto OpenAI ``/chat/completions``.
 
-``openai``, ``groq``, ``openrouter`` y ``deepseek`` difieren únicamente en:
+``groq``, ``openrouter``, ``deepseek`` y ``custom`` difieren únicamente en:
   - la URL por defecto y, a veces, headers extra (OpenRouter manda ``HTTP-Referer``);
   - los parámetros de *sampling* del payload (qué clave de ``max_tokens``, si va
     ``temperature``, ``reasoning_effort``, ``thinking``…).
@@ -12,8 +12,8 @@ Method**). Cada provider concreto solo declara ``_provider_label`` /
 extra, override ``_build_headers``.
 
 Los providers con contrato propio NO heredan de acá —no comparten este dialecto—:
-cuelgan directo de ``BaseLLMProvider`` (Anthropic ``/messages``, OpenAI Responses
-``/responses``, Ollama ``/api/chat``). Meterlos bajo esta base los obligaría a
+cuelgan directo de ``BaseLLMProvider`` (Anthropic ``/messages``, ``openai`` con la
+Responses API ``/responses``, Ollama ``/api/chat``). Meterlos bajo esta base los obligaría a
 pisar casi todo: sería herencia que miente.
 
 Sin SDK ``openai`` — httpx puro, como el resto de providers del repo.

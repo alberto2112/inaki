@@ -16,7 +16,6 @@ import pytest
 from inaki.llm.base import ResolvedLLMConfig
 from inaki.llm.groq import GroqProvider
 from inaki.llm.ollama import OllamaProvider
-from inaki.llm.openai import OpenAIProvider
 from inaki.llm.openrouter import OpenRouterProvider
 from inaki.shared.message import Message, Role
 
@@ -52,7 +51,6 @@ def _make_cfg() -> ResolvedLLMConfig:
 
 
 PROVIDERS_OPENAI_COMPAT = [
-    ("openai", OpenAIProvider),
     ("openrouter", OpenRouterProvider),
     ("groq", GroqProvider),
 ]
@@ -60,7 +58,7 @@ PROVIDERS_OPENAI_COMPAT = [
 
 @pytest.mark.parametrize("name,provider_cls", PROVIDERS_OPENAI_COMPAT)
 def test_openai_compat_preserves_tool_protocol(name: str, provider_cls: type) -> None:
-    """openai/openrouter/groq producen formato OpenAI idéntico: arguments = string JSON."""
+    """openrouter/groq producen formato OpenAI idéntico: arguments = string JSON."""
     provider = provider_cls(_make_cfg())
 
     result = provider._build_messages(CONVERSATION, SYSTEM_PROMPT)

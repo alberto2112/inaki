@@ -115,7 +115,10 @@ constant. The three registries are **independent** — being available as an LLM
 vendor available for transcription.
 
 - **LLM** (`inaki/llm/`): `anthropic`, `custom`, `deepseek`, `groq`, `ollama`, `openai`,
-  `openai_responses`, `openrouter`. The OpenAI-dialect ones share `OpenAICompatibleProvider`.
+  `openrouter`. `openai` speaks the Responses API (`/responses`), not `/chat/completions`; the
+  `/chat/completions`-dialect ones (`custom`, `deepseek`, `groq`, `openrouter`) share
+  `OpenAICompatibleProvider`. One `providers.openai` entry feeds the LLM, embedding,
+  transcription and photo-scene `openai` adapters alike.
 - **Embedding** (`inaki/embedding/`): `e5_onnx` (local ONNX, downloaded by `inaki init`) and
   `openai`. Dimension is 384 — changing it requires dropping and recreating the memory DB.
 - **Transcription** (`inaki/perception/adapters/transcription/`): `groq`, `openai`.

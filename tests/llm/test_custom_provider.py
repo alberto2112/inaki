@@ -1,7 +1,7 @@
 """Tests para CustomProvider — endpoint propio con dialecto OpenAI clásico.
 
-Cobertura de lo que DISTINGUE a este adapter de ``openai`` (si no, no valdría la
-pena que exista):
+Cobertura de lo que DISTINGUE a este adapter de los cloud de la familia
+OpenAI-compat (si no, no valdría la pena que exista):
 - ``base_url`` obligatorio → ``ConfigError`` que nombra el campo.
 - Construye sin ``api_key`` (``REQUIRES_CREDENTIALS = False``).
 - Sin key → NO manda ``Authorization`` (nada de ``Bearer None``).
@@ -97,7 +97,7 @@ def test_con_api_key_manda_authorization() -> None:
 
 
 def test_usa_max_tokens_y_no_max_completion_tokens() -> None:
-    """La diferencia con ``openai``. Un server que no entiende la clave moderna
+    """La clave moderna es de OpenAI. Un server que no la entiende
     o tira 400, o la ignora en silencio y genera hasta agotar el contexto."""
     provider = CustomProvider(_cfg(max_tokens=1234))
 

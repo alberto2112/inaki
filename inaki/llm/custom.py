@@ -6,17 +6,18 @@ que no tenga adapter nativo—. El nombre describe la RELACIÓN (lo configurás 
 entero) y no un vendor ni una topología: si el server se muda de tu LAN a un VPS,
 el nombre sigue siendo verdad.
 
-Se diferencia de ``openai`` en tres cosas, y cada una es un bug real si usás el
+Se diferencia de los adapters cloud de la familia OpenAI-compat (``groq``,
+``openrouter``, ``deepseek``) en tres cosas, y cada una es un bug real si usás el
 adapter equivocado:
 
 1. **Credenciales opcionales** (``REQUIRES_CREDENTIALS = False``). Un server propio
-   normalmente entra pelado. Con ``openai`` la factory te exige una ``api_key`` y
-   te obliga a inventar un secreto que no existe.
+   normalmente entra pelado. Con un adapter cloud la factory te exige una
+   ``api_key`` y te obliga a inventar un secreto que no existe.
 2. **Sin ``Authorization`` fantasma**. La base manda ``Bearer {api_key}`` siempre;
    sin key eso viaja como el string ``"Bearer None"``. Acá el header se omite
    cuando no hay credencial, y se manda cuando sí la hay (hay servers con auth).
-3. **``max_tokens``, no ``max_completion_tokens``**. ``openai`` usa la clave
-   moderna; los servers OpenAI-compat hablan el dialecto clásico. Un server que no
+3. **``max_tokens``, no ``max_completion_tokens``**. La clave moderna es de
+   OpenAI; los servers OpenAI-compat hablan el dialecto clásico. Un server que no
    entiende la clave moderna, o te tira 400, o —peor— la IGNORA en silencio y
    genera hasta agotar el contexto.
 

@@ -13,7 +13,6 @@ import pytest
 
 from inaki.llm.deepseek import DeepSeekProvider
 from inaki.llm.groq import GroqProvider
-from inaki.llm.openai import OpenAIProvider
 from inaki.llm.openai_compatible import OpenAICompatibleProvider
 from inaki.llm.openrouter import OpenRouterProvider
 from inaki.llm.wiring import LLMProviderFactory
@@ -30,7 +29,6 @@ def test_discovery_registra_la_clase_concreta_de_cada_modulo(_fresh_registry: No
     LLMProviderFactory._load()
 
     registry = LLMProviderFactory._registry
-    assert registry["openai"] is OpenAIProvider
     assert registry["groq"] is GroqProvider
     assert registry["openrouter"] is OpenRouterProvider
     assert registry["deepseek"] is DeepSeekProvider
@@ -48,9 +46,10 @@ def test_discovery_nunca_registra_la_base_de_familia(_fresh_registry: None) -> N
 
 
 def test_discovery_incluye_providers_de_contrato_propio(_fresh_registry: None) -> None:
-    """anthropic, ollama y openai_responses NO son OpenAI-compat (cuelgan directo
-    de ``BaseLLMProvider``) pero deben seguir descubriéndose igual."""
+    """anthropic, ollama y openai (Responses API) NO son OpenAI-compat (cuelgan
+    directo de ``BaseLLMProvider``) pero deben seguir descubriéndose igual."""
     LLMProviderFactory._load()
 
-    for name in ("anthropic", "ollama", "openai_responses"):
+    for name in ("anthropic", "ollama", "openai"):
         assert name in LLMProviderFactory._registry
+        assert not issubclass(LLMProviderFactory._registry[name], OpenAICompatibleProvider)

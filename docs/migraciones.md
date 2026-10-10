@@ -34,6 +34,7 @@ existe este documento— y la contradicción no queda flotando.
 
 | Nota | Acción |
 |---|---|
+| [`openai-habla-responses`](#openai-habla-responses) | **Puede impedir el arranque**: cambiar `provider: openai_responses` por `provider: openai` en `llm`/`memories.llm` y borrar la entrada `providers.openai_responses` (su `api_key` ya está en `providers.openai`). Con modelos de razonamiento, subir `llm.timeout_seconds` (el adapter pasó a respetarlo; antes usaba 120 fijos) |
 | [`agent-id-igual-al-fichero`](#agent-id-igual-al-fichero) | **Puede impedir el arranque**: renombrar el YAML de cada agente/sub-agente cuyo `id:` no coincide con el nombre del fichero (o cambiar el `id:`) |
 | [`scheduler-trigger-type-mutable`](#scheduler-trigger-type-mutable) | **Chequeo previo al deploy**: query SQL sobre `scheduler.db` buscando filas incoherentes |
 | [`tool-config-protocol`](#tool-config-protocol) | Borrar YAMLs huérfanos per-tool + `~/.inaki/.env`; reconfigurar credenciales por chat |
@@ -134,8 +135,56 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`,
   `agent-id-igual-al-fichero`, `knowledge-token-budget-retirado`
-- **Providers LLM**: `anthropic-api-actual`
+- **Providers LLM**: `openai-habla-responses`, `anthropic-api-actual`
 - **Delegación**: `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
+
+---
+
+### `openai-habla-responses`
+
+**La decisión (2026-10-10)**: había dos adapters LLM de OpenAI. `openai`
+hablaba `/chat/completions` (heredaba de `OpenAICompatibleProvider`) y
+`openai_responses` hablaba `/responses`. Para usar Responses en el chat y
+OpenAI para el embedding había que declarar dos entradas en `providers:` con
+la MISMA `api_key`: `providers.openai` para el embedding y
+`providers.openai_responses` para el LLM. La duplicación no venía de los
+adapters sino del nombre: los cuatro registries (LLM, embedding,
+transcripción, escena) son independientes y en los otros tres el adapter ya
+se llamaba `openai`, así que la entrada que los alimentaba a todos no podía
+alimentar también a Responses.
+
+Se evaluó y se descartó renombrar el embedding a `openai_embeddings`. Habría
+roto exactamente lo que se buscaba, porque el embedding habría necesitado su
+propia entrada con la key duplicada.
+
+**El cambio**: se borró el adapter `/chat/completions` de OpenAI y el de
+Responses pasó a ser `openai` (`inaki/llm/openai.py`, clase `OpenAIProvider`).
+Todos los modelos vigentes de OpenAI estaban en Responses, y el dialecto
+`/chat/completions` siguió vivo en `groq`, `openrouter`, `deepseek` y
+`custom`, que nunca dependieron del adapter borrado. Se perdió el `stream()`
+de OpenAI, que nadie llamaba: el turno consume el LLM vía `complete()`. Una
+sola entrada `providers.openai` pasó a alimentar al LLM, al embedding, a la
+transcripción y a la descripción de fotos.
+
+En el mismo cambio se saldaron dos deudas del adapter de Responses. Pasó a
+respetar `llm.timeout_seconds`: antes usaba 120 segundos fijos, así que con
+el default de 60 un modelo de razonamiento puede cortar antes que en la
+versión anterior. Además, el error de transporte pasó a nombrar el tipo de
+excepción y el timeout, porque un `ReadTimeout` salía con el mensaje vacío.
+
+**Acción del operador**: una config con `provider: openai_responses` en
+`llm` o en `memories.llm` aborta al arrancar con
+`Proveedor LLM 'openai_responses' no encontrado`. Se arregla cambiándolo por
+`provider: openai` y borrando `providers.openai_responses`. Una entrada
+`providers.openai_responses` que ninguna feature referencie no rompe nada,
+porque la factory resuelve el adapter solo cuando alguien la usa, pero es
+peso muerto. Una config que usaba `llm.provider: openai` siguió arrancando,
+ahora contra `/responses`.
+
+**Invariante**: NUNCA bautizar un adapter por su endpoint cuando el vendor
+tiene uno solo vigente. El nombre del adapter es lo que la factory busca en
+`providers:`, y si no coincide con el de las otras features del mismo vendor,
+la credencial compartida se parte en dos.
 
 ---
 

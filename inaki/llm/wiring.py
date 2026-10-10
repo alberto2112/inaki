@@ -84,8 +84,8 @@ class LLMProviderFactory:
         """
         Compone el ``ResolvedLLMConfig`` (feature + creds del registry) que
         recibe el adapter. NO valida credenciales — el check de
-        ``REQUIRES_CREDENTIALS`` vive en ``create``/``create_from_resolved``,
-        que conocen el adapter concreto.
+        ``REQUIRES_CREDENTIALS`` vive en ``create``, que conoce el adapter
+        concreto.
         """
         provider_cfg = providers.get(llm_cfg.provider) or ProviderConfig()
         return ResolvedLLMConfig(
@@ -112,8 +112,16 @@ class LLMProviderFactory:
         Flujo:
           1. Resuelve la entrada del registry bajo la key ``llm_cfg.provider``.
           2. Deriva el ``type`` (explícito o igual a la key).
-          3. Si el adapter requiere creds y no hay entrada, levanta ``ConfigError``.
+          3. Si el adapter requiere creds y falta la entrada o su ``api_key``,
+             levanta ``ConfigError``.
           4. Compone ``ResolvedLLMConfig`` (feature + provider) y lo inyecta.
+
+        Es el ÚNICO camino de construcción: el LLM del agente, el de los
+        sub-agentes y el de ``memories.llm`` pasan todos por acá. Hubo un
+        segundo (``create_from_resolved``, que recibía el resolved ya
+        compuesto) y perdía el ``type`` por el camino — ``ResolvedLLMConfig``
+        no lo lleva —, así que una entrada ``groq-work: {type: groq}`` andaba
+        en ``llm`` y abortaba en ``memories.llm``.
         """
         provider_key = llm_cfg.provider
         provider_cfg = providers.get(provider_key)
@@ -121,27 +129,16 @@ class LLMProviderFactory:
             provider_key, provider_cfg.type if provider_cfg else None
         )
 
-        if provider_cfg is None and adapter_type.REQUIRES_CREDENTIALS:
-            raise ConfigError(
-                f"Provider '{provider_key}' requiere credenciales pero no existe la "
-                f"entrada 'providers.{provider_key}' en la configuración."
-            )
+        if adapter_type.REQUIRES_CREDENTIALS:
+            if provider_cfg is None:
+                raise ConfigError(
+                    f"Provider '{provider_key}' requiere credenciales pero no existe la "
+                    f"entrada 'providers.{provider_key}' en la configuración."
+                )
+            if not provider_cfg.api_key:
+                raise ConfigError(
+                    f"Provider '{provider_key}' requiere credenciales pero la entrada "
+                    f"'providers.{provider_key}' no tiene api_key."
+                )
 
         return adapter_type(cls.resolve(llm_cfg, providers))
-
-    @classmethod
-    def create_from_resolved(cls, resolved: ResolvedLLMConfig) -> ILLMProvider:
-        """
-        Instancia un ``ILLMProvider`` a partir de un ``ResolvedLLMConfig`` ya
-        compuesto (p. ej. por ``inaki.memory.wiring.resolver_llm_de_memorias``).
-
-        Valida ``REQUIRES_CREDENTIALS`` contra el adapter para fail-fast cuando
-        el provider referenciado por un override no existe en el registry.
-        """
-        adapter_type = cls._resolve_adapter(resolved.provider, None)
-        if adapter_type.REQUIRES_CREDENTIALS and not resolved.api_key:
-            raise ConfigError(
-                f"Provider '{resolved.provider}' requiere credenciales pero no "
-                f"existe la entrada 'providers.{resolved.provider}' con api_key."
-            )
-        return adapter_type(resolved)

@@ -275,9 +275,10 @@ class MemoriesConfig(_ConfigBaseModel):
         escribe) con el que se edita ``memories.llm.*`` por capa. No vale el cambio: cualquier ajuste a la semántica de
         merge se hace en el motor y se replica acá.
 
-        Las credenciales se resuelven aparte contra el registry ``providers``
-        — la composición del ``ResolvedLLMConfig`` (DTO de adapters) vive en
-        ``inaki.memory.wiring.resolver_llm_de_memorias``.
+        Las credenciales y el adapter se resuelven aparte contra el registry
+        ``providers``: ``inaki.memory.wiring.resolver_llm_de_memorias`` le pasa
+        el resultado a ``LLMProviderFactory.create``, la misma factory del LLM
+        del agente.
         """
         if self.llm is None:
             return base

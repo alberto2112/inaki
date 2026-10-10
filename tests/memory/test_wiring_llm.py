@@ -12,7 +12,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from inaki.llm.base import ResolvedLLMConfig
 from inaki.config import (
     AgentConfig,
     ChatHistoryConfig,
@@ -101,37 +100,34 @@ def test_resolve_memories_llm_override_distinto_instancia_provider_nuevo(
     base_llm = MagicMock(name="base_llm")
     instancia_dedicada = MagicMock(name="dedicada")
 
-    resolved_pasado_a_factory: list[ResolvedLLMConfig] = []
+    llamadas_a_factory: list[tuple[LLMConfig, dict[str, ProviderConfig]]] = []
 
-    def fake_create_from_resolved(cls, resolved: ResolvedLLMConfig):
-        resolved_pasado_a_factory.append(resolved)
+    def fake_create(cls, llm_cfg: LLMConfig, providers: dict[str, ProviderConfig]):
+        llamadas_a_factory.append((llm_cfg, providers))
         return instancia_dedicada
 
-    monkeypatch.setattr(
-        LLMProviderFactory,
-        "create_from_resolved",
-        classmethod(fake_create_from_resolved),
-    )
+    monkeypatch.setattr(LLMProviderFactory, "create", classmethod(fake_create))
 
     resultado = resolver_llm_de_memorias(cfg, base_llm)
 
     assert resultado is instancia_dedicada
     assert resultado is not base_llm
-    # La factory recibió el ResolvedLLMConfig ya mergeado (override aplicado)
-    # + las creds resueltas desde el registry de providers.
-    assert len(resolved_pasado_a_factory) == 1
-    efectiva = resolved_pasado_a_factory[0]
+    # La factory recibió la LLMConfig ya mergeada (override aplicado) y el
+    # registry entero: las creds y el ``type`` los resuelve ella, igual que
+    # para el LLM del agente.
+    assert len(llamadas_a_factory) == 1
+    efectiva, providers = llamadas_a_factory[0]
     assert efectiva.model == "llama-3.3-70b-versatile"
     assert efectiva.reasoning_effort is None
     assert efectiva.max_tokens == 8192
     assert efectiva.provider == "groq"  # heredado
-    assert efectiva.api_key == "KEY_BASE"  # desde providers["groq"]
+    assert providers is cfg.providers
 
 
 def test_resolve_memories_llm_propaga_config_error_de_validacion() -> None:
     """
     Si el override cambia a un provider que requiere creds y no hay entry en
-    el registry, la factory (``create_from_resolved``) levanta ``ConfigError``
+    el registry, la factory (``create``) levanta ``ConfigError``
     al instanciar el adapter.
     """
     from inaki.shared.errors import ConfigError
@@ -143,3 +139,25 @@ def test_resolve_memories_llm_propaga_config_error_de_validacion() -> None:
 
     with pytest.raises(ConfigError):
         resolver_llm_de_memorias(cfg, base_llm)
+
+
+def test_resolve_memories_llm_respeta_el_type_de_la_entrada_del_registry() -> None:
+    """Una entrada con ``type`` explícito (``groq-work: {type: groq}``) sirve
+    para ``memories.llm`` igual que para ``llm``: la key elige las credenciales
+    y el ``type`` elige el adapter. Regresión: el camino de memoria resolvía el
+    adapter por la KEY y abortaba con "Proveedor LLM 'groq-work' no encontrado"."""
+    from inaki.llm.groq import GroqProvider
+
+    cfg = _mk_cfg(
+        memory_llm=MemoryLLMConfig(provider="groq-work", model="llama-3.3-70b-versatile"),
+        providers={
+            "groq": ProviderConfig(api_key="KEY_BASE"),
+            "groq-work": ProviderConfig(type="groq", api_key="KEY_WORK"),
+        },
+    )
+
+    resultado = resolver_llm_de_memorias(cfg, MagicMock(name="base_llm"))
+
+    assert isinstance(resultado, GroqProvider)
+    assert resultado._cfg.api_key == "KEY_WORK"
+    assert resultado._cfg.model == "llama-3.3-70b-versatile"

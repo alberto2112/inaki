@@ -302,7 +302,7 @@ def test_resolved_llm_config_provider_distinto_sin_entry_en_registry_devuelve_ap
 ):
     """
     Tras el refactor a providers top-level, ``LLMProviderFactory.resolve`` no valida
-    credenciales — delega en la factory (``LLMProviderFactory.create_from_resolved``).
+    credenciales — delega en la factory (``LLMProviderFactory.create``).
     Si el provider cambió y no hay entry en el registry, devuelve ``api_key=None``
     y la factory es quien levanta ``ConfigError`` al instanciar el adapter.
     """

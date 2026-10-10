@@ -1,10 +1,10 @@
-"""Tests de LLMProviderFactory — APIs `create` y `create_from_resolved`.
+"""Tests de LLMProviderFactory — ``create(llm_cfg, providers)``.
 
-Tras el refactor a providers top-level:
-- ``create(llm_cfg, providers)`` resuelve creds desde el registry según
-  ``llm_cfg.provider``.
-- ``create_from_resolved(resolved)`` instancia el adapter a partir de un
-  ``ResolvedLLMConfig`` ya compuesto (p. ej. por ``MemoriesConfig.merged_llm_config``).
+``create`` es el ÚNICO camino de construcción: resuelve el adapter por el
+``type`` de la entrada (o la key) y las creds desde el registry según
+``llm_cfg.provider``. Lo usan el LLM del agente, los sub-agentes y
+``memories.llm``. El segundo camino (``create_from_resolved``) se retiró
+porque perdía el ``type``.
 
 La API vieja ``create_from_llm_config(cfg)`` fue removida — las creds ya no
 viven en ``LLMConfig``.
@@ -131,67 +131,26 @@ def test_create_resuelve_type_override_desde_provider_config() -> None:
     assert provider.cfg.provider == "fake-work"
 
 
-# ---------------------------------------------------------------------------
-# create_from_resolved(resolved)
-# ---------------------------------------------------------------------------
-
-
-def test_create_from_resolved_instancia_adapter() -> None:
-    resolved = ResolvedLLMConfig(
-        provider="fake",
-        model="m",
-        temperature=0.7,
-        max_tokens=1024,
-        api_key="K",
-    )
-
-    provider = LLMProviderFactory.create_from_resolved(resolved)
-
-    assert isinstance(provider, _FakeProvider)
-    assert provider.cfg is resolved
-
-
-def test_create_from_resolved_sin_api_key_para_provider_que_exige_falla() -> None:
-    resolved = ResolvedLLMConfig(
-        provider="fake",
-        model="m",
-        temperature=0.7,
-        max_tokens=1024,
-        api_key=None,
-    )
+def test_create_entry_sin_api_key_y_provider_exige_creds_falla() -> None:
+    """La entrada existe pero sin ``api_key`` → ``ConfigError`` que nombra la
+    entrada, no un error del adapter: así lo ataja el borde de config."""
+    cfg = LLMConfig(provider="fake-work", model="m")
+    providers = {"fake-work": ProviderConfig(type="fake", base_url="https://x.y")}
 
     with pytest.raises(ConfigError) as exc_info:
-        LLMProviderFactory.create_from_resolved(resolved)
+        LLMProviderFactory.create(cfg, providers)
 
-    mensaje = str(exc_info.value)
-    assert "fake" in mensaje
+    assert "providers.fake-work" in str(exc_info.value)
+    assert "api_key" in str(exc_info.value)
 
 
-def test_create_from_resolved_provider_local_sin_api_key_es_ok() -> None:
-    resolved = ResolvedLLMConfig(
-        provider="fake-local",
-        model="m",
-        temperature=0.7,
-        max_tokens=1024,
-        api_key=None,
-    )
+def test_create_entry_sin_api_key_para_provider_local_es_ok() -> None:
+    """Un adapter local (``REQUIRES_CREDENTIALS=False``) acepta una entrada que
+    solo aporta ``base_url``."""
+    cfg = LLMConfig(provider="fake-local", model="m")
+    providers = {"fake-local": ProviderConfig(base_url="http://lan:8080/v1")}
 
-    provider = LLMProviderFactory.create_from_resolved(resolved)
+    provider = LLMProviderFactory.create(cfg, providers)
 
     assert isinstance(provider, _FakeLocalProvider)
-    assert provider.cfg.api_key is None
-
-
-def test_create_from_resolved_provider_desconocido_falla() -> None:
-    resolved = ResolvedLLMConfig(
-        provider="ghost",
-        model="m",
-        temperature=0.7,
-        max_tokens=1024,
-        api_key="K",
-    )
-
-    with pytest.raises(ValueError) as exc_info:
-        LLMProviderFactory.create_from_resolved(resolved)
-
-    assert "ghost" in str(exc_info.value)
+    assert provider.cfg.base_url == "http://lan:8080/v1"

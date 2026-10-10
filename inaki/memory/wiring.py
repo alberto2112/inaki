@@ -89,7 +89,9 @@ def resolver_llm_de_memorias(cfg: AgentConfig, base_llm: ILLMProvider) -> ILLMPr
 
     Si ``memories.llm`` no existe o su config efectiva es idéntica a ``cfg.llm``,
     REUSA ``base_llm`` (no duplica clientes HTTP). Si difiere, instancia un
-    provider nuevo desde el ``ResolvedLLMConfig`` compuesto contra el registry.
+    provider nuevo por la MISMA factory que el LLM del agente
+    (``LLMProviderFactory.create``), así que una entrada con ``type`` explícito
+    sirve igual acá que en ``llm``.
     La customización POR JOB no pasa por acá: la aporta el sub-agente de cada
     sección (``consolidation.agent_id`` / ``reconciliation.agent_id``) vía
     :func:`wire_sub_agentes_de_memoria`. Puede lanzar ``ConfigError`` si el
@@ -98,17 +100,16 @@ def resolver_llm_de_memorias(cfg: AgentConfig, base_llm: ILLMProvider) -> ILLMPr
     merged = cfg.memories.merged_llm_config(cfg.llm)
     if merged == cfg.llm:
         return base_llm
-    resolved = LLMProviderFactory.resolve(merged, cfg.providers)
     logger.info(
         "Agente '%s': LLM de memoria dedicado (compartido por ambos jobs) — "
         "provider=%s, model=%s, reasoning_effort=%s, max_tokens=%d",
         cfg.id,
-        resolved.provider,
-        resolved.model,
-        resolved.reasoning_effort,
-        resolved.max_tokens,
+        merged.provider,
+        merged.model,
+        merged.reasoning_effort,
+        merged.max_tokens,
     )
-    return LLMProviderFactory.create_from_resolved(resolved)
+    return LLMProviderFactory.create(merged, cfg.providers)
 
 
 @dataclass(frozen=True)

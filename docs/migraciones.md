@@ -72,6 +72,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
 
 | Nota | Cambio observable |
 |---|---|
+| [`llm-un-solo-camino-de-construccion`](#llm-un-solo-camino-de-construccion) | `memories.llm.provider` acepta una entrada con `type` explícito (antes abortaba con `Proveedor LLM '<key>' no encontrado`); una entrada sin `api_key` para un adapter que la exige aborta con `ConfigError` que la nombra, también en `llm` (antes, un `LLMError` del adapter) |
 | [`timestamps-solo-en-user`](#timestamps-solo-en-user) | Con `add_llm_timestamp`, las respuestas del asistente dejaron de llevar `[ts]` en el prompt, y en un bloque de grupo cada mensaje lleva su propia hora (antes, solo el primero) |
 | [`rotulo-del-emisor-en-grupos`](#rotulo-del-emisor-en-grupos) | En grupos el historial rotula a cada emisor como `@username (Nombre Apellido)` (antes, el username pelado); los bots, vía broadcast, igual. Filas viejas quedan con el formato anterior |
 | [`bg-stuck-task`](#bg-stuck-task) | Un `bg-N` cuya entrega falla pasa a `delivery_failed` (antes quedaba `running` para siempre); tool nueva `background_tasks` para listar y cancelar |
@@ -135,8 +136,34 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`,
   `agent-id-igual-al-fichero`, `knowledge-token-budget-retirado`
-- **Providers LLM**: `openai-habla-responses`, `anthropic-api-actual`
+- **Providers LLM**: `llm-un-solo-camino-de-construccion`, `openai-habla-responses`, `anthropic-api-actual`
 - **Delegación**: `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
+
+---
+
+### `llm-un-solo-camino-de-construccion`
+
+**El bug (2026-10-10)**: `ProviderConfig.type` prometía que una entrada como
+`providers.groq-work: {type: groq, api_key: K2}` servía para apuntar cualquier
+feature al adapter `groq` con otra cuenta. En `llm` andaba; en `memories.llm`
+abortaba con `Proveedor LLM 'groq-work' no encontrado`. Había dos caminos para
+construir un LLM: `LLMProviderFactory.create(llm_cfg, providers)`, que usaban
+el agente y los sub-agentes, y `resolve()` + `create_from_resolved(resolved)`,
+que usaba solo `resolver_llm_de_memorias`. El segundo resolvía el adapter por
+la KEY del registry, porque `ResolvedLLMConfig` no lleva el `type`: se perdía
+entre la composición y la instanciación.
+
+**El cambio**: se retiró `create_from_resolved` y la memoria pasó a construir
+su LLM con `create`, igual que el agente. El chequeo más estricto del camino
+retirado (entrada presente pero sin `api_key` → `ConfigError`) se mudó a
+`create`, así que el LLM del agente también lo ganó: antes ese caso llegaba al
+`__init__` del adapter y salía como `LLMError`, sin pasar por el borde de
+config.
+
+**Invariante**: NUNCA dos caminos para construir el mismo puerto desde la
+config. El que no se usa en el arranque principal es el que nadie prueba con
+la config real, y diverge en silencio. Si un consumidor necesita algo
+distinto, se extiende la factory única.
 
 ---
 

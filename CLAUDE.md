@@ -165,7 +165,9 @@ Cada una salió de un fallo en producción. El caso completo está en
   Una tool que no puede decir *no sé* fuerza al modelo a inventar certeza — y una confesión
   fantasma es tan grave como una acción fantasma. → `search-history-retention-horizon`
 - **NUNCA** expresar una política de retención en FILAS cuando lo que querés acotar es
-  conversación: el rastro de tools se come el presupuesto. → `trim-cuenta-conversacion`
+  conversación: el rastro de tools se come el presupuesto. Vale para los dos lados del
+  store: lo que se borra (`trim`) y lo que se lee (`max_messages`).
+  → `trim-cuenta-conversacion`, `ventana-cuenta-conversacion`
 - **NUNCA** persistir un grupo protocolar confiando en que "el load lo arregla". → `incremental-persist`
 - **NUNCA** volver a un drain por conteo sobre una vista ventaneada — el cursor es por
   rowid monotónico. → `in-flight-message-injection`

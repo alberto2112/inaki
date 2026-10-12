@@ -33,7 +33,13 @@ class ChatHistoryConfig(_ConfigBaseModel):
     ``db_filename``."""
 
     max_messages: int = 0
-    """Últimos N mensajes del scope que se inyectan al LLM. ``0`` = sin límite.
+    """Últimos N mensajes de CONVERSACIÓN del scope que se inyectan al LLM. ``0`` = sin límite.
+
+    Cuenta mensajes ``user`` y ``assistant`` de texto, no filas: el rastro de
+    tools (``persist_tool_calls``) que cae dentro de la ventana viaja entero y
+    no consume presupuesto — mismo criterio que ``memories.keep_last_messages``.
+    Un turno con muchas tools hace crecer el prompt; el tope de cada result lo
+    pone ``persist_tool_result_max_chars``.
 
     Es una ventana deslizante sobre la lectura, no una política de borrado: los
     mensajes viejos siguen en la DB. Bajarlo es la palanca directa para recortar

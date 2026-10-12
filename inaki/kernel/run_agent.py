@@ -13,9 +13,9 @@ Flujo completo:
      ``chat_history.persist_tool_calls``, también el rastro de tool calls)
   9. Devolver respuesta final
 
-Por default el historial persistido NO incluye mensajes de tipo tool: solo se
-guardan con ``persist_tool_calls`` activo (ver nota de migración
-``persist-tool-calls`` en CLAUDE.md), y solo para el agente principal.
+Los mensajes de tipo tool se persisten con ``persist_tool_calls`` activo (el
+default, desde la nota de migración ``outbound-send-single-owner``), y solo para
+el agente principal.
 """
 
 from __future__ import annotations

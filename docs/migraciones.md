@@ -72,6 +72,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
 
 | Nota | Cambio observable |
 |---|---|
+| [`ventana-cuenta-conversacion`](#ventana-cuenta-conversacion) | `chat_history.max_messages` cuenta conversación, no filas → con `persist_tool_calls` el LLM ve **más** historial (el rastro de tools que cae en la ventana viaja gratis) |
 | [`llm-un-solo-camino-de-construccion`](#llm-un-solo-camino-de-construccion) | `memories.llm.provider` acepta una entrada con `type` explícito (antes abortaba con `Proveedor LLM '<key>' no encontrado`); una entrada sin `api_key` para un adapter que la exige aborta con `ConfigError` que la nombra, también en `llm` (antes, un `LLMError` del adapter) |
 | [`timestamps-solo-en-user`](#timestamps-solo-en-user) | Con `add_llm_timestamp`, las respuestas del asistente dejaron de llevar `[ts]` en el prompt, y en un bloque de grupo cada mensaje lleva su propia hora (antes, solo el primero) |
 | [`rotulo-del-emisor-en-grupos`](#rotulo-del-emisor-en-grupos) | En grupos el historial rotula a cada emisor como `@username (Nombre Apellido)` (antes, el username pelado); los bots, vía broadcast, igual. Filas viejas quedan con el formato anterior |
@@ -115,7 +116,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
 - **Historial y persistencia del turno**: `kernel-limpio`, `outbound-send-single-owner`,
   `persist-tool-calls`, `incremental-persist`, `intermediate-persist`,
   `in-flight-message-injection`, `turn-kill-switch`
-- **Retención y alcance del registro**: `trim-cuenta-conversacion`,
+- **Retención y alcance del registro**: `ventana-cuenta-conversacion`, `trim-cuenta-conversacion`,
   `search-history-retention-horizon`
 - **Telegram y canales**: `timestamps-solo-en-user`, `rotulo-del-emisor-en-grupos`, `telegram-composicion`, `channels-validados-al-cargar`, `attachment-grammar`,
   `formato-en-el-borde-del-transporte`,
@@ -138,6 +139,41 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `agent-id-igual-al-fichero`, `knowledge-token-budget-retirado`
 - **Providers LLM**: `llm-un-solo-camino-de-construccion`, `openai-habla-responses`, `anthropic-api-actual`
 - **Delegación**: `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
+
+---
+
+### `ventana-cuenta-conversacion`
+
+**El bug (2026-10-12)**: `trim-cuenta-conversacion` había corregido el lado del
+BORRADO (`trim`), pero la LECTURA seguía contando filas: `SQLiteHistoryStore.load()`
+cortaba con `ORDER BY id DESC LIMIT max_messages` sobre todas las filas del
+scope, rastro protocolar incluido (`tool` results y el `assistant` con
+`tool_calls`). Con `persist_tool_calls` en `true` por default, un turno con
+cinco tools consumía once filas de la ventana.
+
+Medido con `max_messages: 64`: en la DB local, un grupo tenía 12 de sus 64
+filas en rastro de tools; en producción se habían medido 19 de 59. El síntoma
+era el mismo que el de `trim`, ahora en el prompt: **el agente que más usaba
+tools era el que menos conversación veía**. Y si el corte caía dentro de un
+grupo protocolar, `_drop_orphan_tool_messages` descartaba los results
+huérfanos y el prompt quedaba todavía más corto.
+
+**Cambio**: `load()` corta en el id del `max_messages`-ésimo mensaje
+**conversacional** más reciente del scope (`role IN ('user','assistant')` con
+`tool_calls IS NULL`, el mismo criterio que `trim`) y trae todo desde ahí,
+rastro incluido. Con menos conversación que la ventana, no hay corte. El corte
+solo puede caer dentro de un grupo si hay un mensaje intercalado (in-flight);
+ese caso lo sigue normalizando `_drop_orphan_tool_messages`.
+
+**Sin migración de DB ni cambios de config**, pero el **valor configurado cambia
+de significado**: `max_messages: 64` pasaron a ser 64 mensajes de conversación
+reales. Con `persist_tool_calls` activo el prompt **crece** en los scopes con
+mucho uso de tools; el tamaño de cada result ya lo acotaba
+`persist_tool_result_max_chars`. Si hace falta recortar tokens, bajar el número.
+
+NUNCA expresar una ventana de lectura en filas cuando lo que se quiere acotar
+es conversación: es el mismo invariante de `trim-cuenta-conversacion`, y vale
+para los dos lados del store.
 
 ---
 

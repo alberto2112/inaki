@@ -43,7 +43,7 @@ class HistoryStoreSettings:
     """
 
     db_filename: str
-    max_messages: int = 0  # 0 = sin límite; N = últimos N mensajes al LLM
+    max_messages: int = 0  # 0 = sin límite; N = últimos N mensajes conversacionales al LLM
 
 
 _CREATE_TABLE = """
@@ -336,13 +336,28 @@ class SQLiteHistoryStore(IHistoryStore):
         async with self._conn() as conn:
             await self._ensure_schema(conn)
             if self._max_n > 0:
+                # La ventana cuenta mensajes CONVERSACIONALES (user + assistant de
+                # texto), NO filas — mismo criterio que `trim`. Contando filas, el
+                # rastro protocolar (`tool` results y el `assistant` con
+                # `tool_calls`) se comía la ventana: el agente que más usaba tools
+                # era el que menos conversación veía (ver nota de migración
+                # `ventana-cuenta-conversacion`).
+                #
+                # El corte es el id del `max_n`-ésimo conversacional más reciente
+                # del scope; se trae todo desde ahí, rastro incluido. Con menos
+                # conversación que la ventana, la subconsulta da NULL → sin corte.
+                # Si el corte cae dentro de un grupo protocolar (un mensaje
+                # intercalado), `_drop_orphan_tool_messages` lo normaliza abajo.
                 rows = list(
                     await conn.execute_fetchall(
-                        f"SELECT {_COLS} FROM history WHERE {filtros} ORDER BY id DESC LIMIT ?",
-                        (*params, self._max_n),
+                        f"SELECT {_COLS} FROM history WHERE {filtros} AND id >= COALESCE(("
+                        f"  SELECT id FROM history WHERE {filtros}"
+                        "   AND role IN ('user', 'assistant') AND tool_calls IS NULL"
+                        "   ORDER BY id DESC LIMIT 1 OFFSET ?"
+                        "), 0) ORDER BY id ASC",
+                        (*params, *params, self._max_n - 1),
                     )
                 )
-                msgs = [self._row_to_message(r) for r in reversed(rows)]
             else:
                 rows = list(
                     await conn.execute_fetchall(
@@ -350,7 +365,7 @@ class SQLiteHistoryStore(IHistoryStore):
                         params,
                     )
                 )
-                msgs = [self._row_to_message(r) for r in rows]
+            msgs = [self._row_to_message(r) for r in rows]
         return _drop_orphan_tool_messages(msgs)
 
     async def load_full(self, agent_id: str) -> list[Message]:

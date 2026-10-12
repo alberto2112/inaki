@@ -203,7 +203,8 @@ memories:
 
 chat_history:
   db_filename: data/history.db   # Fichero SQLite del historial de conversación.
-  # Últimos N mensajes del scope que se inyectan al LLM. ``0`` = sin límite.
+  # Últimos N mensajes de CONVERSACIÓN del scope que se inyectan al LLM. ``0`` = sin
+  # límite.
   max_messages: 0
   # Política de aislamiento del historial. ``False`` = un hilo por ``(channel,
   # chat_id)``.

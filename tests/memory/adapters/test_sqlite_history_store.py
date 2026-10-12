@@ -696,17 +696,73 @@ async def test_tool_group_persiste_y_reconstruye(history_store):
 
 
 async def test_load_descarta_tool_huerfano_al_recortar_ventana(tmp_path):
-    """Con max_messages chico, un tool result cuyo assistant quedó fuera de la
-    ventana se descarta (previene el 400 por pairing roto)."""
+    """Si el corte de la ventana cae DENTRO de un grupo protocolar (sobre un
+    mensaje intercalado), el tool result cuyo assistant quedó fuera se descarta
+    (previene el 400 por pairing roto)."""
     cfg = HistoryStoreSettings(db_filename=str(tmp_path / "h.db"), max_messages=2)
     store = SQLiteHistoryStore(cfg)
-    await _seed_tool_group(store)  # user(1), assistant+tc(2), tool(3)
-    await store.append("agent1", Message(role=Role.ASSISTANT, content="final"))  # (4)
+    await store.append("agent1", Message(role=Role.USER, content="guardá esto"))  # (1)
+    await store.append(
+        "agent1", Message(role=Role.ASSISTANT, content="ok, escribo", tool_calls=_TC)
+    )  # (2)
+    # In-flight: el usuario escribió mientras la tool corría.
+    await store.append("agent1", Message(role=Role.USER, content="y avisame"))  # (3)
+    await store.append(
+        "agent1", Message(role=Role.TOOL, content="ok", tool_call_id="call_1")
+    )  # (4)
+    await store.append("agent1", Message(role=Role.ASSISTANT, content="final"))  # (5)
 
-    # Ventana = últimos 2 por id → [tool(3), assistant_final(4)]; el tool es huérfano.
+    # Conversacionales: 1, 3, 5 → el 2º más reciente es (3): ventana = [3, 4, 5],
+    # y el tool(4) quedó sin su assistant(2).
     msgs = await store.load("agent1")
-    assert [m.role for m in msgs] == [Role.ASSISTANT]
-    assert msgs[0].content == "final"
+    assert [m.content for m in msgs] == ["y avisame", "final"]
+
+
+async def test_load_ventana_no_cuenta_el_rastro_de_tools(tmp_path):
+    """`max_messages` cuenta CONVERSACIÓN, no filas.
+
+    Regresión de `ventana-cuenta-conversacion`: contando filas crudas, el rastro
+    de una sola tool expulsaba de la ventana turnos de conversación reales —
+    mismo bug que `trim-cuenta-conversacion` arregló del lado del borrado.
+    """
+    cfg = HistoryStoreSettings(db_filename=str(tmp_path / "h.db"), max_messages=3)
+    store = SQLiteHistoryStore(cfg)
+    await store.append("agent1", Message(role=Role.USER, content="u1"))
+    await store.append("agent1", Message(role=Role.ASSISTANT, content="a1"))
+    await _seed_tool_group(store)  # u2 ("guardá esto") + assistant+tc + tool
+    await store.append("agent1", Message(role=Role.ASSISTANT, content="a2"))
+
+    # Conversacionales: u1, a1, u2, a2 → con 3 cae solo u1; el grupo viaja gratis.
+    contenidos = [m.content for m in await store.load("agent1")]
+    assert contenidos == ["a1", "guardá esto", "ok, escribo", '{"path": "/x/research.md"}', "a2"]
+    # Contando FILAS, la ventana de 3 habría sido [assistant+tc, tool, a2]:
+    # sin el pedido del usuario que originó la acción.
+
+
+async def test_load_ventana_con_menos_conversacion_que_el_limite_trae_todo(tmp_path):
+    cfg = HistoryStoreSettings(db_filename=str(tmp_path / "h.db"), max_messages=10)
+    store = SQLiteHistoryStore(cfg)
+    await _seed_tool_group(store)
+    await store.append("agent1", Message(role=Role.ASSISTANT, content="final"))
+
+    msgs = await store.load("agent1")
+    assert [m.role for m in msgs] == [Role.USER, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT]
+
+
+async def test_load_ventana_cuenta_por_scope(tmp_path):
+    """La ventana se calcula sobre el scope pedido: la conversación de otro chat
+    no corre el corte."""
+    cfg = HistoryStoreSettings(db_filename=str(tmp_path / "h.db"), max_messages=2)
+    store = SQLiteHistoryStore(cfg)
+    a = {"channel": "telegram", "chat_id": "A"}
+    b = {"channel": "telegram", "chat_id": "B"}
+    await store.append("agent1", Message(role=Role.USER, content="a1"), **a)
+    await store.append("agent1", Message(role=Role.USER, content="a2"), **a)
+    for i in range(5):
+        await store.append("agent1", Message(role=Role.USER, content=f"b{i}"), **b)
+
+    msgs = await store.load("agent1", channel="telegram", chat_id="A")
+    assert [m.content for m in msgs] == ["a1", "a2"]
 
 
 async def test_search_oculta_tool_por_default_pero_lo_incluye_con_rol(history_store):

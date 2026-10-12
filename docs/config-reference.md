@@ -411,7 +411,9 @@ Los dos knobs de acá gobiernan el costo de contexto de cada turno: cuánto hist
 
 Relativo al home de instancia; se reancla con ``--home`` / ``INAKI_HOME``. Un path absoluto se usa tal cual. Los agentes que comparten fichero se aíslan por ``agent_id``; para aislamiento FÍSICO, dale a cada agente su propio ``db_filename``.
 
-**`max_messages`** — Últimos N mensajes del scope que se inyectan al LLM. ``0`` = sin límite.
+**`max_messages`** — Últimos N mensajes de CONVERSACIÓN del scope que se inyectan al LLM. ``0`` = sin límite.
+
+Cuenta mensajes ``user`` y ``assistant`` de texto, no filas: el rastro de tools (``persist_tool_calls``) que cae dentro de la ventana viaja entero y no consume presupuesto — mismo criterio que ``memories.keep_last_messages``. Un turno con muchas tools hace crecer el prompt; el tope de cada result lo pone ``persist_tool_result_max_chars``.
 
 Es una ventana deslizante sobre la lectura, no una política de borrado: los mensajes viejos siguen en la DB. Bajarlo es la palanca directa para recortar tokens de prompt contra modelos con ventana chica. OJO: el conteo dentro de una ventana llena no sirve para detectar mensajes nuevos — el drain in-flight cursa por rowid monotónico justamente por eso.
 

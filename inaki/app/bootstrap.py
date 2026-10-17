@@ -56,11 +56,17 @@ def run_daemon_mode(config_dir: Path, agents_dir: Path, global_config, registry)
 
     from inaki.app.runner import run_daemon
     from inaki.app.assembly import ensamblar
+    from inaki.config.boundary import borde_de_config
 
     logger = logging.getLogger(__name__)
     logger.info("Iniciando Inaki en modo daemon")
 
-    initial = ensamblar(global_config, registry, config_dir=config_dir)
+    # ``ensamblar`` también rechaza config (provider inexistente, credencial
+    # faltante): lo que el loader no puede saber lo sabe la factory. Va dentro del
+    # MISMO borde que la carga, en el arranque y en cada reload — si no, ese
+    # ``ConfigError`` sale enterrado bajo el traceback.
+    with borde_de_config(str(config_dir)):
+        initial = ensamblar(global_config, registry, config_dir=config_dir)
 
     # Crea ~/.inaki/users/{channel}/ por cada canal configurado en cualquier agente.
     # Lazy + idempotente: cero costo si ya existen. Habilita la convención de
@@ -72,6 +78,7 @@ def run_daemon_mode(config_dir: Path, agents_dir: Path, global_config, registry)
     def bootstrap_fn():
         gc, reg = bootstrap(config_dir, agents_dir)
         ensure_user_channel_dirs(get_inaki_home(), reg.list_all())
-        return ensamblar(gc, reg, config_dir=config_dir), reg
+        with borde_de_config(str(config_dir)):
+            return ensamblar(gc, reg, config_dir=config_dir), reg
 
     asyncio.run(run_daemon(bootstrap_fn, initial=(initial, registry)))

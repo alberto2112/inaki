@@ -72,6 +72,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
 
 | Nota | Cambio observable |
 |---|---|
+| [`reload-fallido-reinicia`](#reload-fallido-reinicia) | Un `/reload` cuyo ensamblado falla termina con **exit 1** y systemd reinicia el servicio desde disco (antes, exit 0: daemon muerto en silencio). Un `llm.provider`/`embedding.provider` inexistente sale como `Error de configuración` limpio, al arrancar y al recargar (antes, traceback de `ValueError`) |
 | [`ventana-cuenta-conversacion`](#ventana-cuenta-conversacion) | `chat_history.max_messages` cuenta conversación, no filas → con `persist_tool_calls` el LLM ve **más** historial (el rastro de tools que cae en la ventana viaja gratis) |
 | [`llm-un-solo-camino-de-construccion`](#llm-un-solo-camino-de-construccion) | `memories.llm.provider` acepta una entrada con `type` explícito (antes abortaba con `Proveedor LLM '<key>' no encontrado`); una entrada sin `api_key` para un adapter que la exige aborta con `ConfigError` que la nombra, también en `llm` (antes, un `LLMError` del adapter) |
 | [`timestamps-solo-en-user`](#timestamps-solo-en-user) | Con `add_llm_timestamp`, las respuestas del asistente dejaron de llevar `[ts]` en el prompt, y en un bloque de grupo cada mensaje lleva su propia hora (antes, solo el primero) |
@@ -135,10 +136,53 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
 - **Tools y config**: `runtimes-tipados`, `wiring-por-modulo`, `kernel-y-fachada-de-tools`, `modulos-tools-llm-extensions`, `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
-  `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`,
+  `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`, `reload-fallido-reinicia`,
   `agent-id-igual-al-fichero`, `knowledge-token-budget-retirado`
 - **Providers LLM**: `llm-un-solo-camino-de-construccion`, `openai-habla-responses`, `anthropic-api-actual`
 - **Delegación**: `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
+
+---
+
+### `reload-fallido-reinicia`
+
+**El bug (2026-10-17)**: si el re-bootstrap de un reload fallaba en el
+ensamblado, `run_daemon` hacía `logger.exception(...)` y `return`. El proceso
+terminaba con **exit 0**, y como la unidad generada usa `Restart=on-failure`,
+systemd no lo reiniciaba: el daemon quedaba muerto en silencio después de un
+`/reload`. Solo los rechazos del LOADER reiniciaban, porque `borde_de_config`
+sale con `sys.exit(1)`; lo que solo sabe el ensamblado (un `llm.provider` que
+no existe, una credencial que falta) pasaba por el `return`. El caso se cayó
+mientras se diseñaba `config_set`, que depende de que el reload sea confiable.
+
+Había un agujero más en el mismo camino: `ensamblar` no estaba dentro del
+borde, ni al arrancar ni al recargar, así que su `ConfigError` salía enterrado
+bajo un traceback. Y el provider inexistente, el caso más típico, ni siquiera
+era `ConfigError`: `LLMProviderFactory` y `EmbeddingProviderFactory` levantaban
+`ValueError`, que el borde no reconoce como error del operador.
+
+**El cambio**:
+- `run_daemon` sale con `SystemExit(1)` (más un `startup_event` `reload` con
+  `status=error` y el traceback) cuando el re-bootstrap falla. systemd
+  reinicia leyendo disco.
+- `ensamblar` va dentro de `borde_de_config`, en el arranque y en cada
+  reload: el error del operador sale como mensaje limpio y exit 1. Al runner
+  solo llegan los bugs, y para esos el traceback es la pista.
+- El provider inexistente (LLM y embedding) pasó a ser `ConfigError`.
+
+Se descartó hacer rollback a la última config que arrancó. Sin overrides en
+memoria, eso habría significado seguir corriendo con la config vieja mientras
+el disco decía otra cosa (`inaki config show` mentiría), y el próximo reinicio
+igual habría fallado. El rollback quedó para `config_set`, donde sí hay una capa
+efímera que revertir.
+
+**Sin migración.** Con una config que el ensamblado rechaza, el servicio entra
+en un ciclo de reinicios (`RestartSec=5s`) con el error en
+`journalctl -u inaki`, en vez de quedar parado sin decir nada.
+
+**Invariante**: NUNCA terminar el daemon con exit 0 por un fallo. Para
+systemd, exit 0 significa "terminé bien", y un daemon que muere así no se
+reinicia ni deja rastro de por qué. Es el mismo principio que
+`broadcast-arranque-observable` aplicado al reload.
 
 ---
 

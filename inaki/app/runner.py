@@ -165,7 +165,8 @@ async def run_daemon(
     """
     Arranca todos los canales de todos los agentes en paralelo. Loop de reload-aware:
     cuando ``app_container.reloader`` se dispara, cierra todo, re-bootstrappea config y
-    vuelve a levantar el ciclo. Termina solo ante SIGTERM/SIGINT o si no hay canales.
+    vuelve a levantar el ciclo. Termina ante SIGTERM/SIGINT, o con ``SystemExit(1)`` si
+    un re-bootstrap falla (exit != 0 para que systemd reinicie; nunca muere con exit 0).
 
     Args:
         bootstrap_fn: factory que produce ``(HarnessRuntime, AgentRegistry)``. Se invoca en
@@ -195,8 +196,18 @@ async def run_daemon(
             try:
                 app_container, registry = bootstrap_fn()
             except Exception as exc:
-                logger.exception("Bootstrap falló en iter %d: %s", iteration, exc)
-                return
+                # Exit 1, NUNCA un ``return``: el ``return`` terminaba el proceso con
+                # exit 0 y la unidad (``Restart=on-failure``) no lo reiniciaba — el
+                # daemon quedaba muerto en silencio después de un ``/reload``. Los
+                # errores del operador no llegan acá: ``borde_de_config`` ya salió con
+                # su mensaje limpio. Lo que llega es un bug, y su traceback ES la pista.
+                startup_event(logger, "reload", status="error", reason=str(exc))
+                logger.exception(
+                    "Bootstrap falló en iter %d — saliendo con exit 1 para que systemd "
+                    "reinicie desde disco",
+                    iteration,
+                )
+                raise SystemExit(1) from exc
 
         await app_container.startup()
         canales = await _start_channels(app_container)

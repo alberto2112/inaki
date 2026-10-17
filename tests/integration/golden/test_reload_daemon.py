@@ -67,3 +67,41 @@ async def test_reload_rebootstrappea_y_sigterm_apaga(monkeypatch: pytest.MonkeyP
     inicial.shutdown.assert_awaited_once()
     recargado.startup.assert_awaited_once()
     recargado.shutdown.assert_awaited_once()
+
+
+async def test_reload_con_bootstrap_roto_sale_con_exit_distinto_de_cero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Un reload cuyo ensamblado falla NO puede terminar con exit 0.
+
+    La unidad systemd usa ``Restart=on-failure``: con exit 0 el daemon queda
+    muerto en silencio después de un ``/reload``. El caso real: una config que
+    pasa el loader pero que ``ensamblar`` rechaza (``llm.provider`` apuntando a
+    un adapter inexistente).
+    """
+    from inaki.app import runner as daemon_runner
+
+    inicial = _container_falso("inicial")
+    registry = MagicMock()
+    bootstrap_fn = MagicMock(side_effect=ValueError("Proveedor LLM 'nope' no encontrado"))
+
+    def _tareas_falsas(app_container, _registry):
+        tarea = asyncio.create_task(_canal_eterno(), name=f"canal:{app_container._mock_name}")
+        return [tarea], []
+
+    monkeypatch.setattr(daemon_runner, "_build_channel_tasks", _tareas_falsas)
+
+    async def _operador() -> None:
+        while inicial.startup.await_count == 0:
+            await asyncio.sleep(0.01)
+        inicial.reloader.request_reload()
+
+    operador = asyncio.create_task(_operador())
+    with pytest.raises(SystemExit) as salida:
+        await asyncio.wait_for(
+            daemon_runner.run_daemon(bootstrap_fn, initial=(inicial, registry)), timeout=5
+        )
+    await operador
+
+    assert salida.value.code not in (0, None)
+    inicial.shutdown.assert_awaited_once()

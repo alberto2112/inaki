@@ -72,7 +72,7 @@ class LLMProviderFactory:
         type_key = type_override or provider_key
         if type_key not in cls._registry:
             available = list(cls._registry.keys())
-            raise ValueError(f"Proveedor LLM '{type_key}' no encontrado. Disponibles: {available}")
+            raise ConfigError(f"Proveedor LLM '{type_key}' no encontrado. Disponibles: {available}")
         return cls._registry[type_key]
 
     @classmethod

@@ -73,7 +73,7 @@ class EmbeddingProviderFactory:
         type_key = type_override or provider_key
         if type_key not in cls._registry:
             available = list(cls._registry.keys())
-            raise ValueError(
+            raise ConfigError(
                 f"Proveedor embedding '{type_key}' no encontrado. Disponibles: {available}"
             )
         return cls._registry[type_key]

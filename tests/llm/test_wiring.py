@@ -107,9 +107,11 @@ def test_create_sin_entry_en_registry_para_provider_local_es_ok() -> None:
 
 
 def test_create_provider_desconocido_falla() -> None:
+    """Es un error del operador (``ConfigError``): así ``borde_de_config`` lo
+    imprime como mensaje accionable en vez de un traceback."""
     cfg = LLMConfig(provider="no-existe", model="m")
 
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(ConfigError) as exc_info:
         LLMProviderFactory.create(cfg, providers={})
 
     mensaje = str(exc_info.value)

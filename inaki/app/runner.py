@@ -181,7 +181,7 @@ async def run_daemon(
             primera iter. Permite que el caller valide config antes de entrar al runner
             sin pagar el costo del bootstrap dos veces.
         al_arrancar: hook opcional que corre tras ``_start_channels`` en cada iteración
-            (hoy: entregar los avisos que ``config_set`` dejó pendientes). NUNCA corta el
+            (hoy: entregar los avisos que ``config set`` dejó pendientes). NUNCA corta el
             arranque: si levanta, se loguea con traceback y el daemon sigue.
     """
     shutdown_event = asyncio.Event()

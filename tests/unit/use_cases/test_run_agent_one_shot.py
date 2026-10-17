@@ -740,20 +740,30 @@ async def test_one_shot_no_pasa_turno_de_operador_al_loop():
     assert "turno_de_operador" not in mock_loop.call_args.kwargs
 
 
-async def test_one_shot_no_ejecuta_una_tool_privilegiada():
-    """Comportamiento de punta a punta: el LLM del hijo pide una privilegiada y el
-    loop real la rechaza sin ejecutarla."""
+async def test_one_shot_no_ejecuta_una_operacion_privilegiada():
+    """Comportamiento de punta a punta: el LLM del hijo pide `config` con `set` y el
+    loop real la rechaza sin ejecutarla (el hijo nunca es turno de operador)."""
     llm = AsyncMock()
     llm.thinking_active = False
     llm.complete.side_effect = [
         LLMResponse(
             text_blocks=[],
-            tool_calls=[{"id": "c1", "function": {"name": "config_set", "arguments": "{}"}}],
+            tool_calls=[
+                {
+                    "id": "c1",
+                    "function": {
+                        "name": "config",
+                        "arguments": '{"operation": "set", "path": "llm.model", "value": "x"}',
+                    },
+                }
+            ],
         ),
         LLMResponse.of_text("no pude"),
     ]
     tools = _make_tools()
-    tools.requires_operator.side_effect = lambda nombre: nombre == "config_set"
+    tools.requires_operator.side_effect = lambda nombre, kwargs: (
+        nombre == "config" and kwargs.get("operation") == "set"
+    )
     uc = RunAgentOneShotUseCase(llm=llm, tools=tools, settings=_make_settings())
 
     respuesta = await uc.execute(
@@ -764,18 +774,54 @@ async def test_one_shot_no_ejecuta_una_tool_privilegiada():
     tools.execute.assert_not_called()
 
 
-async def test_config_set_excluida_del_hijo():
-    """config-set-efimero: la tool privilegiada no figura en el schema del hijo, así ni
-    la ve (la regla vale igual en la ejecución, esto es solo visibilidad)."""
-    schema_cs = {
+async def test_one_shot_ejecuta_la_lectura_de_config():
+    """La misma tool `config`, con una operación desbloqueada, SÍ corre en el hijo."""
+    llm = AsyncMock()
+    llm.thinking_active = False
+    llm.complete.side_effect = [
+        LLMResponse(
+            text_blocks=[],
+            tool_calls=[
+                {
+                    "id": "c1",
+                    "function": {
+                        "name": "config",
+                        "arguments": '{"operation": "get", "path": "llm.model"}',
+                    },
+                }
+            ],
+        ),
+        LLMResponse.of_text("uso tal modelo"),
+    ]
+    tools = _make_tools()
+    tools.requires_operator.side_effect = lambda nombre, kwargs: (
+        nombre == "config" and kwargs.get("operation") == "set"
+    )
+    tools.execute.return_value = ToolResult(
+        tool_name="config", output="llm.model = 'm'", success=True
+    )
+    uc = RunAgentOneShotUseCase(llm=llm, tools=tools, settings=_make_settings())
+
+    respuesta = await uc.execute(
+        task="qué modelo usás", system_prompt=None, max_iterations=4, timeout_seconds=10
+    )
+
+    assert respuesta == "uso tal modelo"
+    tools.execute.assert_awaited_once_with("config", operation="get", path="llm.model")
+
+
+async def test_config_ya_no_se_excluye_del_hijo():
+    """El hijo ve `config`: el kernel le rechaza `set` en la ejecución (nunca es turno de
+    operador), así que esconder la tool entera le quitaría también la lectura."""
+    schema_config = {
         "type": "function",
-        "function": {"name": "config_set", "description": "Cambia la config"},
+        "function": {"name": "config", "description": "Lee y cambia la config"},
     }
     schema_other = {
         "type": "function",
         "function": {"name": "read_file", "description": "Lee archivo"},
     }
-    tools = _make_tools(schemas=[schema_other, schema_cs])
+    tools = _make_tools(schemas=[schema_other, schema_config])
     uc = _make_use_case(tools=tools)
 
     with patch(
@@ -786,4 +832,4 @@ async def test_config_set_excluida_del_hijo():
 
         _, kwargs = mock_loop.call_args
         sent_names = [sch["function"]["name"] for sch in kwargs["tool_schemas"]]
-        assert sent_names == ["read_file"]
+        assert sent_names == ["read_file", "config"]

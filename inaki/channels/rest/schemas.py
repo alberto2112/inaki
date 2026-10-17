@@ -46,7 +46,7 @@ class DaemonReloadResponse(BaseModel):
     overrides_descartados: list[str] = Field(
         default_factory=list,
         description=(
-            "Una línea por cada cambio de runtime (``config_set``) que este reload descarta. "
+            "Una línea por cada cambio de runtime (``config set``) que este reload descarta. "
             "Vacía si no había ninguno."
         ),
     )

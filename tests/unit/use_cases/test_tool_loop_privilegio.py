@@ -12,19 +12,27 @@ import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-from inaki.kernel._tool_loop import _RECHAZO_PRIVILEGIO, run_tool_loop
+from inaki.kernel._tool_loop import _RECHAZO_PRIVILEGIO, _rechazo_privilegio, run_tool_loop
 from inaki.kernel.domain.llm_response import LLMResponse
 from inaki.kernel.ports.tool_port import ToolResult
 from inaki.shared.message import Message, Role
 
 
-def _llamada(nombre: str, call_id: str = "c1") -> dict:
-    return {"id": call_id, "function": {"name": nombre, "arguments": json.dumps({})}}
+def _llamada(nombre: str, call_id: str = "c1", **args: Any) -> dict:
+    return {"id": call_id, "function": {"name": nombre, "arguments": json.dumps(args)}}
 
 
-def _executor(privilegiadas: set[str]) -> MagicMock:
+def _executor(
+    privilegiadas: set[str], *, protegidas: dict[str, set[str]] | None = None
+) -> MagicMock:
+    """``privilegiadas``: tools enteras. ``protegidas``: ``{tool: {operaciones}}`` — el
+    veredicto depende de la operación que viaja en los kwargs de la llamada."""
+    protegidas = protegidas or {}
     tools = MagicMock()
-    tools.requires_operator.side_effect = lambda nombre: nombre in privilegiadas
+    tools.requires_operator.side_effect = lambda nombre, kwargs: (
+        nombre in privilegiadas or kwargs.get("operation") in protegidas.get(nombre, set())
+    )
+    tools.operation_of.side_effect = lambda nombre, kwargs: kwargs.get("operation")
     tools.execute = AsyncMock(
         side_effect=lambda nombre, **kw: ToolResult(tool_name=nombre, output="hecho", success=True)
     )
@@ -69,7 +77,7 @@ async def test_privilegiada_sin_operador_no_ejecuta_y_rechaza():
     assert respuesta == "eso lo pide el operador"
     tools.execute.assert_not_called()
     resultados = [m for m in tool_trace if m.role == Role.TOOL]
-    assert [m.content for m in resultados] == [_RECHAZO_PRIVILEGIO]
+    assert [m.content for m in resultados] == [_rechazo_privilegio("config_set", None)]
     assert "NO la vuelvas a llamar" in _RECHAZO_PRIVILEGIO
 
 
@@ -135,7 +143,7 @@ async def test_rechazo_es_no_retryable_y_abre_el_circuit_breaker():
 
     tools.execute.assert_not_called()
     contenidos = [m.content for m in tool_trace if m.role == Role.TOOL]
-    assert contenidos[:3] == [_RECHAZO_PRIVILEGIO] * 3
+    assert contenidos[:3] == [_rechazo_privilegio("config_set", None)] * 3
     assert contenidos[3].startswith("CIRCUIT OPEN")
 
 
@@ -153,7 +161,7 @@ async def test_rechazo_se_persiste_por_persist_message():
     await _correr(llm, tools, turno_de_operador=False, persist_message=persist)
 
     tool_msgs = [m for m in persistidos if m.role == Role.TOOL]
-    assert [m.content for m in tool_msgs] == [_RECHAZO_PRIVILEGIO]
+    assert [m.content for m in tool_msgs] == [_rechazo_privilegio("config_set", None)]
     assert tool_msgs[0].tool_call_id == "c1"
 
 
@@ -198,14 +206,89 @@ async def test_trazas_del_rechazo():
     assert len(resultado) == 1
     assert resultado[0]["tool"] == "config_set"
     assert resultado[0]["success"] is False
-    assert resultado[0]["output"] == _RECHAZO_PRIVILEGIO
+    assert resultado[0]["output"] == _rechazo_privilegio("config_set", None)
 
 
 def test_el_mensaje_de_rechazo_no_conoce_conceptos_de_canal():
     """``kernel-limpio``: "privado" es un concepto del canal (en REST el operador no está en
     un chat privado). El kernel solo sabe que el turno no es de operador."""
-    texto = _RECHAZO_PRIVILEGIO.lower()
-
-    assert "privad" not in texto and "private" not in texto
-    assert "operador" in texto
+    for texto in (
+        _RECHAZO_PRIVILEGIO.lower(),
+        _rechazo_privilegio("config", "set").lower(),
+        _rechazo_privilegio("config_set", None).lower(),
+    ):
+        assert "privad" not in texto and "private" not in texto
+        assert "operador" in texto
     assert "NO la vuelvas a llamar" in _RECHAZO_PRIVILEGIO
+
+
+# -- privilegio por operación ----------------------------------------------------------
+
+
+def test_el_rechazo_nombra_la_operacion_si_la_hay():
+    con_operacion = _rechazo_privilegio("config", "set")
+    sin_operacion = _rechazo_privilegio("config", None)
+
+    assert "'set'" in con_operacion and "'config'" in con_operacion
+    assert "'config'" in sin_operacion and "'set'" not in sin_operacion
+    assert "NO la vuelvas a llamar" in con_operacion and "NO la vuelvas a llamar" in sin_operacion
+
+
+async def test_el_kernel_le_pasa_los_kwargs_al_veredicto():
+    tools = _executor(set(), protegidas={"config": {"set"}})
+    llm = _llm(
+        LLMResponse(text_blocks=[], tool_calls=[_llamada("config", operation="get")]),
+        LLMResponse.of_text("fin"),
+    )
+
+    await _correr(llm, tools, turno_de_operador=False, tool_schemas=[])
+
+    tools.requires_operator.assert_called_once_with("config", {"operation": "get"})
+
+
+async def test_operacion_protegida_sin_operador_se_rechaza_nombrandola():
+    tools = _executor(set(), protegidas={"config": {"set"}})
+    llm = _llm(
+        LLMResponse(
+            text_blocks=[], tool_calls=[_llamada("config", operation="set", path="llm.model")]
+        ),
+        LLMResponse.of_text("eso lo pide el operador"),
+    )
+    tool_trace: list[Message] = []
+
+    await _correr(llm, tools, turno_de_operador=False, tool_schemas=[], tool_trace=tool_trace)
+
+    tools.execute.assert_not_called()
+    resultados = [m.content for m in tool_trace if m.role == Role.TOOL]
+    assert resultados == [_rechazo_privilegio("config", "set")]
+    assert "'set'" in resultados[0]
+
+
+async def test_operacion_desbloqueada_se_ejecuta_sin_operador():
+    tools = _executor(set(), protegidas={"config": {"set"}})
+    llm = _llm(
+        LLMResponse(
+            text_blocks=[], tool_calls=[_llamada("config", operation="list", prefix="llm")]
+        ),
+        LLMResponse.of_text("listo"),
+    )
+
+    respuesta = await _correr(llm, tools, turno_de_operador=False, tool_schemas=[])
+
+    assert respuesta == "listo"
+    tools.execute.assert_awaited_once_with("config", operation="list", prefix="llm")
+
+
+async def test_operacion_protegida_con_operador_se_ejecuta():
+    tools = _executor(set(), protegidas={"config": {"set"}})
+    llm = _llm(
+        LLMResponse(
+            text_blocks=[],
+            tool_calls=[_llamada("config", operation="set", path="llm.model", value="x")],
+        ),
+        LLMResponse.of_text("listo"),
+    )
+
+    await _correr(llm, tools, turno_de_operador=True, tool_schemas=[])
+
+    tools.execute.assert_awaited_once_with("config", operation="set", path="llm.model", value="x")

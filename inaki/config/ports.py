@@ -121,7 +121,7 @@ class IConfigRepository(Protocol):
 
 ModoReload = Literal["aplicar", "descartar"]
 """Qué hace el reload pedido: ``aplicar`` conserva los overrides de runtime (lo pidió
-``config_set``); ``descartar`` los tira (reload manual: gana siempre)."""
+``config set``); ``descartar`` los tira (reload manual: gana siempre)."""
 
 
 @runtime_checkable

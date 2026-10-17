@@ -1,8 +1,9 @@
-"""``ensamblar(overrides=)``: dónde vive ``config_set`` y con qué reloader.
+"""``ensamblar(overrides=)``: dónde vive ``config`` con ``set`` y con qué reloader.
 
-Con el store del proceso, cada agente REGULAR recibe la tool ``config_set`` y el
-``DaemonReloader`` descarta ese mismo store en un reload manual. Sin store (``inaki
-chat``, tests) no hay reload que aplique el cambio, así que la tool ni se registra.
+Con el store del proceso, cada agente REGULAR recibe la tool ``config`` con la operación
+``set`` (privilegiada) y el ``DaemonReloader`` descarta ese mismo store en un reload manual.
+Sin store (``inaki chat``, tests) o en un sub-agente no hay reload que aplique el cambio, así
+que la tool ``config`` se construye de solo lectura.
 """
 
 from __future__ import annotations
@@ -25,34 +26,42 @@ def _ensamblar(home: Path, store: OverridesDeRuntime | None, *agentes, subs=None
     )
 
 
-def test_con_overrides_cada_agente_regular_tiene_config_set_privilegiada(
+def test_con_overrides_cada_agente_regular_tiene_set_privilegiado(
     home: Path, bordes_falsos: AsyncMock
 ) -> None:
     harness = _ensamblar(home, OverridesDeRuntime(), agent_cfg("a"), agent_cfg("b"))
 
     for agente in ("a", "b"):
         tools = harness.agents[agente].tools
-        assert "config_set" in tools._tools
-        assert tools.requires_operator("config_set") is True
-        assert tools.requires_operator("config") is False
+        assert "config_set" not in tools._tools  # fusionada en `config`
+        assert tools.requires_operator("config", {"operation": "set"}) is True
+        assert tools.requires_operator("config", {"operation": "get"}) is False
+        assert tools.requires_operator("config", {"operation": "list"}) is False
 
 
-def test_sin_overrides_no_hay_config_set_pero_si_config(
-    home: Path, bordes_falsos: AsyncMock
-) -> None:
+def test_sin_overrides_config_es_solo_lectura(home: Path, bordes_falsos: AsyncMock) -> None:
     harness = _ensamblar(home, None, agent_cfg("a"))
 
-    assert "config_set" not in harness.agents["a"].tools._tools
-    assert "config" in harness.agents["a"].tools._tools
+    tools = harness.agents["a"].tools
+    assert "config_set" not in tools._tools
+    assert "config" in tools._tools
+    assert tools.requires_operator("config", {"operation": "set"}) is False
+    assert tools._tools["config"].parameters_schema["properties"]["operation"]["enum"] == [
+        "get",
+        "list",
+    ]
 
 
-def test_un_sub_agente_no_tiene_config_set(home: Path, bordes_falsos: AsyncMock) -> None:
+def test_un_sub_agente_tiene_config_de_solo_lectura(home: Path, bordes_falsos: AsyncMock) -> None:
     # El store solo se aplica a agentes regulares (`runtime_por_agente`): una tool
     # que aceptara cambios para un sub-agente los guardaría sin que nada los aplique.
     harness = _ensamblar(home, OverridesDeRuntime(), agent_cfg("a"), subs=[agent_cfg("worker")])
 
-    assert "config_set" in harness.agents["a"].tools._tools
-    assert "config_set" not in harness.agents["worker"].tools._tools
+    regular = harness.agents["a"].tools._tools["config"]
+    sub = harness.agents["worker"].tools._tools["config"]
+    assert regular.parameters_schema["properties"]["operation"]["enum"] == ["get", "list", "set"]
+    assert sub.parameters_schema["properties"]["operation"]["enum"] == ["get", "list"]
+    assert harness.agents["worker"].tools.requires_operator("config", {"operation": "set"}) is False
 
 
 def test_el_reloader_del_harness_descarta_el_store_del_proceso(

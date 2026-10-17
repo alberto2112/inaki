@@ -284,6 +284,53 @@ def test_name_collision_warning(tmp_path: Path, caplog) -> None:
     del sys.modules["_test_fake_tool_mod3"]
 
 
+class MalDeclaradaTool(ITool):
+    """Desbloquea una operación sin ser privilegiada: el registry la rechaza."""
+
+    name = "mal_declarada"
+    description = "Declares unlocked operations without requires_operator"
+    parameters_schema = {
+        "type": "object",
+        "properties": {"operation": {"type": "string", "enum": ["get", "set"]}},
+    }
+    operation_param = "operation"
+    unlocked_operations = frozenset({"get"})
+
+    async def execute(self, **kwargs) -> ToolResult:  # pragma: no cover
+        return ToolResult(tool_name=self.name, output="", success=True)
+
+
+def test_privilegio_mal_declarado_skipped(tmp_path: Path, caplog) -> None:
+    """Declaración de privilegio incoherente → WARNING y la tool no existe; el resto sigue."""
+    import logging
+
+    ext_dir = tmp_path / "ext"
+    ext_dir.mkdir()
+
+    mod = types.ModuleType("_test_mal_declarada_mod")
+    setattr(mod, "MalDeclaradaTool", MalDeclaradaTool)
+    setattr(mod, "FakeTool", FakeTool)
+    sys.modules["_test_mal_declarada_mod"] = mod
+
+    _write_manifest(
+        ext_dir,
+        "mal_privilegio",
+        "from _test_mal_declarada_mod import MalDeclaradaTool, FakeTool\n"
+        "TOOLS = [MalDeclaradaTool, FakeTool]\nSKILLS = []\n",
+    )
+
+    container = _make_container(tmp_path)
+    with caplog.at_level(logging.WARNING):
+        _registrar(container, [str(ext_dir)])
+
+    # Saltearla falla cerrado: una tool que no existe no se puede ejecutar.
+    assert "mal_declarada" not in container._tools
+    assert "fake_tool" in container._tools
+    assert "mal_declarada" in caplog.text
+
+    del sys.modules["_test_mal_declarada_mod"]
+
+
 def test_multiple_dirs_order(tmp_path: Path) -> None:
     """Dos dirs, extensiones en cada uno → ambas registradas en orden."""
     dir1 = tmp_path / "ext1"

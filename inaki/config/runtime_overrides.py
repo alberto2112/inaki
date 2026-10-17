@@ -1,4 +1,4 @@
-"""Overrides de config EN MEMORIA — la capa que ``config_set`` apila sobre los YAML.
+"""Overrides de config EN MEMORIA — la capa que ``config set`` apila sobre los YAML.
 
 Dominio puro del módulo config: sin I/O. El store es una lista ORDENADA de
 entradas; cada una es una mini-capa que se materializa con el motor único de
@@ -12,7 +12,7 @@ daemon (que reconstruye todo lo demás). Un ``/reload`` manual lo vacía
 Persistir es editar la capa YAML (``inaki config web``).
 
 Concurrencia: todas las operaciones son síncronas. Sin ``await`` entre ``con`` y
-``agregar``, dos ``config_set`` concurrentes se serializan solos en el event loop.
+``agregar``, dos ``config set`` concurrentes se serializan solos en el event loop.
 """
 
 from __future__ import annotations

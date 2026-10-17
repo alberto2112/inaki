@@ -43,7 +43,7 @@ class WorkspaceConfig(_ConfigBaseModel):
     - ``off`` → sin chequeo; las tools pueden leer y escribir en cualquier lado
       al que llegue el proceso.
 
-    No se cambia en runtime con ``config_set``: aflojar la contención desde un chat
+    No se cambia en runtime con ``config set``: aflojar la contención desde un chat
     le abriría todo el filesystem a una inyección, hasta el próximo ``/reload``."""
 
     def model_post_init(self, __context: object) -> None:

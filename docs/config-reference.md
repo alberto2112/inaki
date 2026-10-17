@@ -55,7 +55,7 @@ Las credenciales viven en este mismo fichero (registry ``providers``, ``admin.au
 
 **`embedding`** — Vectorizador por DEFECTO para routing, memoria y knowledge. Heredable por agente.
 
-No se cambia en runtime con ``config_set``: cambiar el modelo obliga a recrear la DB de memoria (la dimensión de los vectores es parte de su esquema).
+No se cambia en runtime con ``config set``: cambiar el modelo obliga a recrear la DB de memoria (la dimensión de los vectores es parte de su esquema).
 
 **`memories`** — Defaults de la memoria a largo plazo: store, digest y los dos jobs nocturnos.
 
@@ -65,7 +65,7 @@ Los flags ``enabled`` de consolidación y reconciliación son PER-AGENTE: declar
 
 **`channels`** — Flags de presentación transversales a todos los canales. Solo global.
 
-No se cambia en runtime con ``config_set``: es la misma superficie de canales que el bloque del agente, y esa decide quién puede hablarle al bot.
+No se cambia en runtime con ``config set``: es la misma superficie de canales que el bloque del agente, y esa decide quién puede hablarle al bot.
 
 **`skills`** — Defaults de la selección RAG de skills. Heredable por agente.
 
@@ -87,7 +87,7 @@ Cada agente los hereda y los pisa en su ``AgentConfig.delegation``. QUIÉN puede
 
 Es la puerta por la que la CLI habla con el daemon y por la que se expone el gateway ``POST /admin/tool/invoke``.
 
-No se cambia en runtime con ``config_set``: de su host y su puerto depende que la CLI siga alcanzando al daemon, y ``auth_key`` es una credencial.
+No se cambia en runtime con ``config set``: de su host y su puerto depende que la CLI siga alcanzando al daemon, y ``auth_key`` es una credencial.
 
 **`user`** — Preferencias del dueño de la instancia (hoy: la timezone del cron y los timestamps).
 
@@ -103,7 +103,7 @@ Recurso HARNESS-GLOBAL: se declara SOLO acá — no existe ``knowledge`` en ``Ag
 
 **`providers`** — Registry top-level de proveedores — credenciales compartidas por vendor.
 
-No se cambia en runtime con ``config_set``: un ``base_url`` pisado mandaría la ``api_key`` a otro host.
+No se cambia en runtime con ``config set``: un ``base_url`` pisado mandaría la ``api_key`` a otro host.
 
 ### `AppConfig`
 
@@ -650,7 +650,7 @@ Es también la frontera que aplica ``containment``. ``~`` se expande al cargar l
 - ``off`` → sin chequeo; las tools pueden leer y escribir en cualquier lado
   al que llegue el proceso.
 
-No se cambia en runtime con ``config_set``: aflojar la contención desde un chat le abriría todo el filesystem a una inyección, hasta el próximo ``/reload``.
+No se cambia en runtime con ``config set``: aflojar la contención desde un chat le abriría todo el filesystem a una inyección, hasta el próximo ``/reload``.
 
 ### `DelegationConfig`
 
@@ -948,7 +948,7 @@ Los use cases NO reciben este objeto: el composition root lo traduce a Settings 
 
 El registry indexa por el NOMBRE DEL FICHERO (``agents/general.yaml`` → ``general``), pero este campo es el que viaja como ``agent_id`` a todo el runtime: scoping del historial y la memoria, ``created_by`` de las tareas del scheduler y target de las delegaciones. Si difiere del nombre del fichero, la config se carga por un id y los datos se guardan bajo otro.
 
-No se cambia en runtime con ``config_set``: una identidad que cambia a mitad de la vida del proceso deja la delegación y los datos apuntando a otro agente.
+No se cambia en runtime con ``config set``: una identidad que cambia a mitad de la vida del proceso deja la delegación y los datos apuntando a otro agente.
 
 **`name`** — Nombre visible del agente, para humanos.
 
@@ -960,13 +960,13 @@ NO es un comentario: se INYECTA en el system prompt de los OTROS agentes, en el 
 
 **`system_prompt`** — Prompt de sistema del agente. Opcional: si se omite, los sub-agentes de memoria (extractor/reconciliador) heredan el prompt hardcodeado por defecto del use case correspondiente. Un agente regular sin prompt corre con base vacía (responde sin instrucciones de sistema).
 
-No se cambia en runtime con ``config_set``: una inyección de prompt lograda en un turno quedaría activa hasta el próximo ``/reload``.
+No se cambia en runtime con ``config set``: una inyección de prompt lograda en un turno quedaría activa hasta el próximo ``/reload``.
 
 **`llm`** — Modelo conversacional de este agente. Hereda del ``llm`` global campo a campo.
 
 **`embedding`** — Vectorizador de este agente (routing, memoria, knowledge). Hereda del global campo a campo.
 
-No se cambia en runtime con ``config_set``: cambiar el modelo obliga a recrear la DB de memoria (la dimensión de los vectores es parte de su esquema).
+No se cambia en runtime con ``config set``: cambiar el modelo obliga a recrear la DB de memoria (la dimensión de los vectores es parte de su esquema).
 
 **`memories`** — Memoria a largo plazo de este agente: store, digest y los dos jobs nocturnos.
 
@@ -996,11 +996,11 @@ Si un canal del agente tiene ``voice_enabled: true`` y no hay bloque ni acá ni 
 
 Los bloques de los canales REGISTRADOS (``inaki.config.channels``) llegan acá **ya validados y coercionados a su modelo Pydantic** por ``_validar_channels``. Para acceso tipado usá ``canal(nombre, Modelo)``; el dict directo sirve para iterar o preguntar qué canales declaró el agente.
 
-No se cambia en runtime con ``config_set``: acá viven el token y ``allowed_user_ids``, y cambiarlos desde un chat sería escalar privilegios.
+No se cambia en runtime con ``config set``: acá viven el token y ``allowed_user_ids``, y cambiarlos desde un chat sería escalar privilegios.
 
 **`providers`** — Registry de proveedores post-merge. Heredado del global + overrides del agente.
 
-No se cambia en runtime con ``config_set``: un ``base_url`` pisado mandaría la ``api_key`` a otro host.
+No se cambia en runtime con ``config set``: un ``base_url`` pisado mandaría la ``api_key`` a otro host.
 
 ### `AgentDelegationConfig`
 

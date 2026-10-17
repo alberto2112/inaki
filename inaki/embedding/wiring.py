@@ -93,7 +93,7 @@ class EmbeddingProviderFactory:
 
         No es un segundo camino de construcción: ``create`` la llama y después
         instancia, así que lo que verifica quien valida una config antes de
-        aceptarla (``config_set``) es exactamente lo que el arranque va a exigir.
+        aceptarla (``config set``) es exactamente lo que el arranque va a exigir.
         """
         provider_key = embedding_cfg.provider
         provider_cfg = providers.get(provider_key)

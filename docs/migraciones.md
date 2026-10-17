@@ -72,6 +72,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
 
 | Nota | Cambio observable |
 |---|---|
+| [`privilegio-por-operacion`](#privilegio-por-operacion) | `config_set` dejó de existir: es la operación `set` de la tool `config`, que ahora es privilegiada POR OPERACIÓN (`get`/`list` libres para cualquier turno, `set` solo del operador). Un historial viejo puede mencionar `config_set`. En un sub-agente o fuera del daemon `config` sigue siendo solo lectura. El hijo de una delegación ve `config` y el kernel le rechaza `set` |
 | [`config-set-efimero`](#config-set-efimero) | Tool nueva `config_set` (solo a pedido del operador): el agente cambia un parámetro de su config EN MEMORIA y el daemon se reconstruye con él. El `/reload` manual (REST, CLI y Telegram) **descarta** esos cambios y avisa cuáles (`POST /admin/reload` suma `overrides_descartados`); un reinicio o un reload fallido los pierde todos. Con `allowed_user_ids` vacía nadie es operador. El `/reload` de Telegram pide el reload antes de responder |
 | [`reload-fallido-reinicia`](#reload-fallido-reinicia) | Un `/reload` cuyo ensamblado falla termina con **exit 1** y systemd reinicia el servicio desde disco (antes, exit 0: daemon muerto en silencio). Un `llm.provider`/`embedding.provider` inexistente sale como `Error de configuración` limpio, al arrancar y al recargar (antes, traceback de `ValueError`) |
 | [`ventana-cuenta-conversacion`](#ventana-cuenta-conversacion) | `chat_history.max_messages` cuenta conversación, no filas → con `persist_tool_calls` el LLM ve **más** historial (el rastro de tools que cae en la ventana viaja gratis) |
@@ -138,10 +139,59 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`, `reload-fallido-reinicia`,
-  `config-set-efimero`,
+  `config-set-efimero`, `privilegio-por-operacion`,
   `agent-id-igual-al-fichero`, `knowledge-token-budget-retirado`
 - **Providers LLM**: `llm-un-solo-camino-de-construccion`, `openai-habla-responses`, `anthropic-api-actual`
 - **Delegación**: `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
+
+---
+
+### `privilegio-por-operacion`
+
+**La decisión (2026-10-17)**: el privilegio de operador (`ITool.requires_operator`)
+era de la tool ENTERA. Eso obligó a que cambiar la config fuera una tool aparte,
+`config_set`, al lado de `config` (solo lectura): dos tools, dos descripciones, dos
+entradas en el semantic routing y un nombre más que el LLM tenía que elegir para una
+sola capacidad. El privilegio pasó a poder declararse por operación, de modo que
+una tool multi-operación pueda dejar libre la lectura y proteger la escritura.
+
+**El cambio**:
+- `ITool` ganó `unlocked_operations` (operaciones que corren sin operador aunque
+  la tool sea `requires_operator`), `operation_param` (el parámetro que despacha, casi
+  siempre `operation`) y `operation_of(kwargs)`. Una tool que declara
+  `unlocked_operations` despacha con esa MISMA función: despacho y autorización no
+  pueden divergir. Una operación ausente o vacía nunca está desbloqueada (falla
+  cerrado). `unlocked_operations` vacía con `requires_operator=True` sigue siendo la
+  tool entera protegida, como antes.
+- `IToolExecutor.requires_operator` pasó a recibir los kwargs de la llamada
+  (`requires_operator(tool_name, kwargs)`) y siguió siendo abstracto. El rechazo de
+  `run_tool_loop` nombra la operación cuando la hay y sigue sin nombrar ningún canal.
+- `ToolRegistry.register` valida la declaración al registrar y falla con `ValueError`
+  que nombra la tool: `unlocked_operations` sin `requires_operator`, sin
+  `operation_param`, o con una operación que no está en el `enum` de ese parámetro. El
+  WARNING de pisado por nombre pasó a cubrir también perder privilegio por operación
+  (la tool nueva desbloquea operaciones que la anterior protegía).
+- `config_set` se fusionó en `config`: una sola tool con `operation` en `get`, `list` y
+  `set`; `get` y `list` corren en cualquier turno y `set` (`path`, `value`, con la
+  misma semántica de `null` y los mismos mensajes que tenía `config_set`) solo en un
+  turno del operador. `set` existe únicamente en agentes regulares del daemon; en un
+  sub-agente o sin store de overrides la tool `config` se construye de solo lectura
+  (enum `get`/`list`, sin privilegio), con el mismo criterio que antes tenía el registro
+  de `config_set`. Un wiring de escritura incompleto falla ruidoso.
+- `config_set` salió de `_TOOLS_EXCLUIDAS_DEL_HIJO`: el hijo de una delegación ve
+  `config` y el kernel le rechaza `set`, porque un hijo nunca es turno de operador.
+
+**Cambios observables**: el LLM ya no ve una tool `config_set`; para cambiar un
+parámetro llama a `config` con `operation: set`. Un historial persistido antes de este
+cambio puede traer llamadas y resultados de `config_set` que ya no existen como tool.
+El hijo de una delegación sigue leyendo la config como antes y ahora ve también el
+schema de `set` (que el kernel le rechaza). `inaki gen-docs` regeneró `config-reference.md`: los docstrings
+del schema dicen `config set` en vez de `config_set`.
+
+**Sin migración.**
+
+**Invariante**: NUNCA proteger una tool entera cuando solo una de sus operaciones
+escribe, ni despachar la operación con una función distinta de la que la autoriza.
 
 ---
 
@@ -219,6 +269,10 @@ reconstruir.
   y el `verificar()` de las factories, ni persistirlo en disco.
 - NUNCA expresar qué no se cambia en runtime como lista de strings: es una
   marca del schema.
+
+*Cerrado después:* la tool `config_set` se fusionó en `config` (`operation: set`)
+y el privilegio pasó a ser por operación; ver
+[`privilegio-por-operacion`](#privilegio-por-operacion).
 
 ---
 

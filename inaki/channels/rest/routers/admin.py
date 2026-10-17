@@ -114,7 +114,7 @@ async def daemon_reload(request: Request) -> DaemonReloadResponse:
     El cliente HTTP que llama (CLI, Telegram bot) puede perder la conexión cuando el
     admin server se reinicie; eso es esperado.
 
-    Es el reload MANUAL: descarta los overrides de runtime (``config_set``) y los
+    Es el reload MANUAL: descarta los overrides de runtime (``config set``) y los
     devuelve en ``overrides_descartados``. La UI web de config usa este mismo
     endpoint (botón "Recargar daemon") y descarta igual, aunque no muestre el campo.
     """

@@ -38,7 +38,8 @@ def registrar_extensiones(
     ``knowledge_sources`` es la lista VIVA que ya tiene el orquestador: las
     fuentes de extensiones entran detrás de (1) memoria y (2) config sin
     reconstruirlo. Una tool que colisiona con una ya registrada se saltea con
-    ``WARNING``: los builtins ganan.
+    ``WARNING``: los builtins ganan. Lo mismo una que el registry rechaza por una
+    declaración de privilegio incoherente (``unlocked_operations``).
     """
     for ext in descubrir_extensiones(ext_dirs):
         for tool_cls in ext.tools:
@@ -59,7 +60,18 @@ def registrar_extensiones(
                     tool.name,
                 )
                 continue
-            tools.register(tool)
+            try:
+                tools.register(tool)
+            except ValueError as exc:
+                # Declaración de privilegio incoherente (`unlocked_operations`): saltearla
+                # falla cerrado — una tool que no existe no se ejecuta — y el daemon arranca.
+                logger.warning(
+                    "Extensión '%s': tool '%s' rechazada al registrar (%s) — skipping tool",
+                    ext.nombre,
+                    tool.name,
+                    exc,
+                )
+                continue
             logger.info("Extensión '%s': tool '%s' registrada", ext.nombre, tool.name)
         for skill_path in ext.skills:
             skills.add_file(skill_path)

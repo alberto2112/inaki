@@ -166,7 +166,8 @@ async def test_get_de_un_valor_runtime_lo_marca_y_explica_como_se_pierde() -> No
     assert res.success
     assert "gpt-5-mini" in res.output
     assert "[runtime]" in res.output
-    assert "config_set" in res.output
+    assert "operation 'set'" in res.output
+    assert "config_set" not in res.output
     assert "reload" in res.output.lower()
 
 
@@ -175,7 +176,7 @@ async def test_get_de_un_valor_de_disco_no_agrega_la_linea_de_runtime() -> None:
 
     assert res.success
     assert "[global]" in res.output
-    assert "config_set" not in res.output
+    assert "changed at runtime" not in res.output
 
 
 async def test_list_marca_el_origen_runtime_solo_donde_corresponde() -> None:
@@ -186,11 +187,11 @@ async def test_list_marca_el_origen_runtime_solo_donde_corresponde() -> None:
     assert lineas["llm.temperature"].endswith("[global]")
 
 
-def test_la_description_declara_la_tool_de_solo_lectura_y_remite_a_config_set() -> None:
-    desc = ConfigTool.description
+def test_la_description_de_la_tool_sin_escritura_es_de_solo_lectura() -> None:
+    desc = _tool_con_runtime().description
 
     assert "read-only" in desc
     assert "[runtime]" in desc
-    assert "config_set" in desc
+    assert "config_set" not in desc
     # La frase vieja negaba el cambio en caliente: ya no es cierta.
     assert "cannot be changed from here" not in desc

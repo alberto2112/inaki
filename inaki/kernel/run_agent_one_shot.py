@@ -35,10 +35,10 @@ from inaki.shared.message import Message, Role
 
 logger = logging.getLogger(__name__)
 
-# Tools del caller que el hijo NUNCA ve (REQ-DG-9 + bg-stuck-task + config-set-efimero:
-# `config_set` es privilegiada y el hijo nunca es turno de operador; excluirla solo ahorra
-# que la vea, la regla de verdad vale en la ejecución — `run_tool_loop`).
-_TOOLS_EXCLUIDAS_DEL_HIJO = frozenset({"delegate", "background_tasks", "config_set"})
+# Tools del caller que el hijo NUNCA ve (REQ-DG-9 + bg-stuck-task). `config` NO está acá a
+# propósito: el hijo ve la tool y el kernel le rechaza `set` en la ejecución, porque nunca es
+# turno de operador (`run_tool_loop`); esconderla entera le quitaría también la lectura.
+_TOOLS_EXCLUIDAS_DEL_HIJO = frozenset({"delegate", "background_tasks"})
 
 
 class RunAgentOneShotUseCase:

@@ -206,6 +206,11 @@ Cada una salió de un fallo en producción. El caso completo está en
 - **NUNCA** decidir un privilegio dentro de una tool ni por `ContextVar`: la tool declara
   `requires_operator`, el canal decide `es_operador` y el kernel lo hace cumplir en
   `run_tool_loop`. Una delegación o un one-shot nunca hereda el privilegio. → `config-set-efimero`
+- **NUNCA** proteger una tool entera cuando solo una operación escribe (declará
+  `unlocked_operations` + `operation_param`; `config`: `get`/`list` libres, `set` del operador),
+  ni despachar la operación con una función distinta de la que la autoriza: se despacha con
+  `ITool.operation_of(kwargs)`. Una operación ausente falla cerrado y `ToolRegistry.register`
+  valida la declaración. → `privilegio-por-operacion`
 - **NUNCA** aceptar un override de runtime sin validarlo con el loader del arranque y el
   `verificar()` de las factories, ni persistirlo en disco: vive en el proceso y se pierde
   en `/reload` manual (que avisa cuáles descartó), reinicio o reload fallido. → `config-set-efimero`
@@ -246,7 +251,7 @@ Cada una salió de un fallo en producción. El caso completo está en
   `LLMProviderFactory.create`. El camino que no usa el arranque principal es el
   que nadie prueba con la config real, y diverge en silencio (el retirado perdía
   el `type` de `providers:`). Si un consumidor necesita algo distinto, extendé la
-  factory única. La prevalidación de `config_set` usa `verificar()`, la primera mitad de
+  factory única. La prevalidación de `config` (`set`) usa `verificar()`, la primera mitad de
   `create`: verificar no es construir. → `llm-un-solo-camino-de-construccion`
 - **NUNCA** borrar ni renombrar un campo del schema sin migración: desde que las
   claves desconocidas abortan el arranque, quitar un campo que el bootstrap escribió

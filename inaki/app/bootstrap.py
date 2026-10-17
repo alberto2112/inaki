@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 def bootstrap(config_dir: Path, agents_dir: Path, overrides: OverridesDeRuntime | None = None):
     """Carga config, logging y registry. Retorna (global_config, registry).
 
-    ``overrides`` es la capa de overrides en memoria (``config_set``): el loader la apila
+    ``overrides`` es la capa de overrides en memoria (``config set``): el loader la apila
     después de los YAML. ``None`` (o un store vacío) deja el comportamiento de siempre.
     """
     from inaki.config import AgentRegistry, load_global_config
@@ -65,7 +65,7 @@ def bootstrap(config_dir: Path, agents_dir: Path, overrides: OverridesDeRuntime 
 def avisos_post_arranque(
     overrides: OverridesDeRuntime,
 ) -> Callable[[HarnessRuntime], Awaitable[None]]:
-    """Hook ``al_arrancar``: entrega al chat de origen los avisos que ``config_set`` dejó.
+    """Hook ``al_arrancar``: entrega al chat de origen los avisos que ``config set`` dejó.
 
     Corre tras ``_start_channels``, con el runtime NUEVO: manda por el outbound del
     agente (el mismo egress único que usa ``POST /admin/send``). Un fallo de envío —o un
@@ -87,7 +87,7 @@ def avisos_post_arranque(
                 await outbound.send(chat_id=aviso.chat_id, kind=OutboundKind.TEXT, text=aviso.texto)
             except Exception as exc:  # noqa: BLE001 — cortesía: nunca corta el arranque
                 log.warning(
-                    "No se pudo entregar el aviso de config_set a %s: %s",
+                    "No se pudo entregar el aviso de config (set) a %s: %s",
                     destino,
                     exc,
                     exc_info=True,
@@ -117,7 +117,7 @@ def run_daemon_mode(config_dir: Path, agents_dir: Path, global_config, registry)
     # faltante): lo que el loader no puede saber lo sabe la factory. Va dentro del
     # MISMO borde que la carga, en el arranque y en cada reload — si no, ese
     # ``ConfigError`` sale enterrado bajo el traceback.
-    # El store de ``config_set`` es estado del PROCESO: nace acá, UNA vez, y sobrevive al
+    # El store de ``config set`` es estado del PROCESO: nace acá, UNA vez, y sobrevive al
     # loop de reload (que reconstruye todo lo demás). El arranque y cada re-bootstrap
     # reciben este mismo objeto; si el proceso muere, muere con él (nada va a disco).
     overrides = OverridesDeRuntime()

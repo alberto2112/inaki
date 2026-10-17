@@ -264,7 +264,7 @@ class SlashCommands:
         Equivalente a ``inaki reload`` o ``POST /admin/reload``. El bot que recibió el
         comando se va a apagar como parte del reload.
 
-        Es el reload MANUAL: descarta los overrides de runtime (``config_set``) y el
+        Es el reload MANUAL: descarta los overrides de runtime (``config set``) y el
         reply dice cuáles. Pide el reload ANTES de responder porque necesita la lista
         de descartados; la entrega la garantiza el drenaje del runner (``IChannel.stop``
         espera a los handlers en vuelo antes de cerrar el bot). Extiende un slash

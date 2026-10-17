@@ -26,9 +26,9 @@ class DaemonReloader:
     - ``request_reload()`` — MANUAL (las tres puertas: ``POST /admin/reload``,
       ``inaki reload`` y ``/reload`` de Telegram): descarta los overrides de runtime
       EN EL MOMENTO del pedido y devuelve una línea por cada uno descartado. Descartar
-      acá hace imposible que un ``config_set`` posterior sobreviva: el use case ve
+      acá hace imposible que un ``config set`` posterior sobreviva: el use case ve
       ``modo == "descartar"`` y rechaza.
-    - ``request_reload_para_aplicar()`` — solo ``config_set``: el store se conserva y
+    - ``request_reload_para_aplicar()`` — solo ``config set``: el store se conserva y
       el bootstrap lo lee. Si ya hay un manual pendiente no lo pisa (gana el manual).
 
     ``overrides`` es opcional para que quien construye el reloader pelado (tests) no

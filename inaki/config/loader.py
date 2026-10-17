@@ -697,7 +697,7 @@ def load_global_config(config_dir: Path, runtime: dict | None = None) -> tuple[G
     Carga global.yaml (capa base, credenciales incluidas).
     Retorna (GlobalConfig, raw_dict) — el dict raw se usa para merge con agentes.
 
-    ``runtime`` es la capa de overrides en memoria (``config_set``): se apila DESPUÉS
+    ``runtime`` es la capa de overrides en memoria (``config set``): se apila DESPUÉS
     del YAML y antes de validar, así que el ``raw_dict`` devuelto —la base de los
     agentes— ya la incluye. Ver ``inaki/config/runtime_overrides.py``.
     """
@@ -879,7 +879,7 @@ def load_agent_config(
     ``extra_base`` son los defaults de rol (ej. sub-agentes, ver ``SUBAGENT_DEFAULTS``):
     pisan a ``global_raw`` pero el YAML explícito del agente sigue pisando por encima.
 
-    ``runtime`` es la capa de overrides en memoria de ESTE agente (``config_set``):
+    ``runtime`` es la capa de overrides en memoria de ESTE agente (``config set``):
     gana sobre todo lo demás. La capa runtime-global ya viene dentro de ``global_raw``.
 
     Retorna ``None`` solo si el fichero NO EXISTE (caso legítimo: el caller

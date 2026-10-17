@@ -20,7 +20,7 @@ mismo.
 El origen de cada valor (``default`` / ``global`` / ``agent``) sí viene de la
 vista de disco, capturado en el MISMO instante del arranque en que se construyó
 el snapshot — momento en el que disco y memoria coinciden por construcción.
-Los valores pisados por ``config_set`` (la capa de overrides en memoria) llevan
+Los valores pisados por ``config set`` (la capa de overrides en memoria) llevan
 el origen ``runtime``, que gana sobre el de disco: es un overlay de una línea
 sobre ese mapa, no un segundo merge.
 
@@ -45,7 +45,7 @@ from inaki.config.use_cases.show_effective import (
 )
 
 ORIGEN_RUNTIME = "runtime"
-"""Origen de un valor pisado en memoria por ``config_set``. Se pierde en un
+"""Origen de un valor pisado en memoria por ``config set``. Se pierde en un
 ``/reload`` manual, un reinicio del servicio o un reload fallido."""
 
 ORIGEN_DESCONOCIDO = "desconocido"
@@ -84,7 +84,7 @@ class RuntimeConfigUseCase:
             paths ausentes quedan en ``ORIGEN_DESCONOCIDO``.
         paths_secretos: Rutas marcadas como credenciales en el schema, con
             comodín ``*`` por segmento (``providers.*.api_key``).
-        paths_runtime: Hojas pisadas por ``config_set`` (la capa de overrides en
+        paths_runtime: Hojas pisadas por ``config set`` (la capa de overrides en
             memoria). Un path igual a uno de ellos, o debajo de uno, lleva
             ``origen="runtime"``, que pisa el de disco. El VALOR no cambia de
             fuente: ``config_en_memoria`` ya trae los overrides aplicados.

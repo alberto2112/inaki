@@ -69,7 +69,7 @@ class AgentConfig(_ConfigBaseModel):
     scheduler y target de las delegaciones. Si difiere del nombre del fichero,
     la config se carga por un id y los datos se guardan bajo otro.
 
-    No se cambia en runtime con ``config_set``: una identidad que cambia a mitad
+    No se cambia en runtime con ``config set``: una identidad que cambia a mitad
     de la vida del proceso deja la delegación y los datos apuntando a otro agente."""
 
     name: str
@@ -93,7 +93,7 @@ class AgentConfig(_ConfigBaseModel):
     del use case correspondiente. Un agente regular sin prompt corre con base
     vacía (responde sin instrucciones de sistema).
 
-    No se cambia en runtime con ``config_set``: una inyección de prompt lograda en
+    No se cambia en runtime con ``config set``: una inyección de prompt lograda en
     un turno quedaría activa hasta el próximo ``/reload``."""
     llm: LLMConfig
     """Modelo conversacional de este agente. Hereda del ``llm`` global campo a campo."""
@@ -101,7 +101,7 @@ class AgentConfig(_ConfigBaseModel):
     embedding: EmbeddingConfig = Field(json_schema_extra={"fijo_en_runtime": True})
     """Vectorizador de este agente (routing, memoria, knowledge). Hereda del global campo a campo.
 
-    No se cambia en runtime con ``config_set``: cambiar el modelo obliga a recrear
+    No se cambia en runtime con ``config set``: cambiar el modelo obliga a recrear
     la DB de memoria (la dimensión de los vectores es parte de su esquema)."""
 
     memories: MemoriesConfig
@@ -150,7 +150,7 @@ class AgentConfig(_ConfigBaseModel):
     Para acceso tipado usá ``canal(nombre, Modelo)``; el dict directo sirve para
     iterar o preguntar qué canales declaró el agente.
 
-    No se cambia en runtime con ``config_set``: acá viven el token y
+    No se cambia en runtime con ``config set``: acá viven el token y
     ``allowed_user_ids``, y cambiarlos desde un chat sería escalar privilegios.
     """
     providers: dict[str, ProviderConfig] = Field(
@@ -158,7 +158,7 @@ class AgentConfig(_ConfigBaseModel):
     )
     """Registry de proveedores post-merge. Heredado del global + overrides del agente.
 
-    No se cambia en runtime con ``config_set``: un ``base_url`` pisado mandaría la
+    No se cambia en runtime con ``config set``: un ``base_url`` pisado mandaría la
     ``api_key`` a otro host."""
 
     @field_validator("channels", mode="before")
@@ -247,7 +247,7 @@ class GlobalConfig(_ConfigBaseModel):
     embedding: EmbeddingConfig = Field(json_schema_extra={"fijo_en_runtime": True})
     """Vectorizador por DEFECTO para routing, memoria y knowledge. Heredable por agente.
 
-    No se cambia en runtime con ``config_set``: cambiar el modelo obliga a recrear
+    No se cambia en runtime con ``config set``: cambiar el modelo obliga a recrear
     la DB de memoria (la dimensión de los vectores es parte de su esquema)."""
 
     memories: MemoriesConfig
@@ -264,7 +264,7 @@ class GlobalConfig(_ConfigBaseModel):
     )
     """Flags de presentación transversales a todos los canales. Solo global.
 
-    No se cambia en runtime con ``config_set``: es la misma superficie de canales
+    No se cambia en runtime con ``config set``: es la misma superficie de canales
     que el bloque del agente, y esa decide quién puede hablarle al bot."""
     skills: SkillsConfig = SkillsConfig()
     """Defaults de la selección RAG de skills. Heredable por agente."""
@@ -302,7 +302,7 @@ class GlobalConfig(_ConfigBaseModel):
     Es la puerta por la que la CLI habla con el daemon y por la que se expone el
     gateway ``POST /admin/tool/invoke``.
 
-    No se cambia en runtime con ``config_set``: de su host y su puerto depende que
+    No se cambia en runtime con ``config set``: de su host y su puerto depende que
     la CLI siga alcanzando al daemon, y ``auth_key`` es una credencial."""
 
     user: UserConfig = UserConfig()
@@ -332,5 +332,5 @@ class GlobalConfig(_ConfigBaseModel):
     )
     """Registry top-level de proveedores — credenciales compartidas por vendor.
 
-    No se cambia en runtime con ``config_set``: un ``base_url`` pisado mandaría la
+    No se cambia en runtime con ``config set``: un ``base_url`` pisado mandaría la
     ``api_key`` a otro host."""

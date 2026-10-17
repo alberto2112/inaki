@@ -30,6 +30,8 @@ class ITool(ABC):
     parameters_schema: dict  # JSON Schema (OpenAI function calling format)
     routing_keywords: str = ""  # Multilingual triggers — ONLY for routing embedding, never sent to the LLM
     requires_operator: bool = False  # True → solo se ejecuta en un turno del operador (ver abajo)
+    unlocked_operations: frozenset[str] = frozenset()  # operaciones que corren SIN operador aunque la tool sea requires_operator
+    operation_param: str | None = None  # parámetro que despacha la operación (casi siempre "operation")
 
     async def execute(self, **kwargs) -> ToolResult: ...
 
@@ -44,7 +46,7 @@ class ToolResult(BaseModel):
 ### Privileged tools (`requires_operator`)
 
 Una tool que cambia el estado del sistema y solo debe correr cuando la pide el operador
-(el caso real es `config_set`) declara `requires_operator = True` en la clase:
+(el caso real es la operación `set` de `config`) declara `requires_operator = True` en la clase:
 
 ```python
 class MiToolDeOperador(ITool):
@@ -71,7 +73,53 @@ eso:
   `requires_operator`, `ToolRegistry` la pisa y loguea un WARNING: el privilegio se
   pierde, y el log lo dice.
 - Una tool privilegiada que además no debe verla un hijo de delegación va en
-  `_TOOLS_EXCLUIDAS_DEL_HIJO` (`inaki/kernel/run_agent_one_shot.py`).
+  `_TOOLS_EXCLUIDAS_DEL_HIJO` (`inaki/kernel/run_agent_one_shot.py`). No hace falta si el hijo
+  puede ver la tool y alcanza con que el kernel le rechace la operación protegida (el caso de
+  `config`: el hijo nunca es turno de operador, así que `set` no corre, pero `get`/`list` sí).
+
+#### Privilegio por operación (`unlocked_operations`)
+
+Una tool multi-operación suele tener operaciones de lectura inocuas y otras que escriben.
+Protegerla entera obliga a partirla en dos tools; en cambio se declara cuáles operaciones
+corren SIN operador y el resto queda protegido. El ejemplo real es `config`
+(`inaki/config/tools/config_tool.py`): `get` y `list` son libres para cualquier turno,
+`set` solo del operador.
+
+```python
+class ConfigTool(ITool):
+    name = "config"
+    requires_operator = True
+    operation_param = "operation"            # el parámetro del schema que despacha
+    unlocked_operations = frozenset({"get", "list"})   # `set` queda protegida
+    parameters_schema = {
+        "type": "object",
+        "properties": {"operation": {"type": "string", "enum": ["get", "list", "set"]}, ...},
+        "required": ["operation"],
+    }
+
+    async def execute(self, **kwargs) -> ToolResult:
+        # Despacho y autorización salen de la MISMA función: no pueden divergir.
+        operation = self.operation_of(kwargs)
+        ...
+```
+
+Reglas:
+
+- **Despachá con `self.operation_of(kwargs)`**, no con tu propio `kwargs.get("operation")`.
+  `ToolRegistry.requires_operator(tool_name, kwargs)` autoriza con esa función (`strip` +
+  `lower`); si despachás con otra, una variante que una ve distinto de la otra es un hueco.
+- `None` (parámetro ausente o vacío) **nunca** está desbloqueado: falla cerrado.
+  `unlocked_operations` vacía con `requires_operator = True` es la tool entera protegida.
+- `ToolRegistry.register` valida la declaración y lanza `ValueError` (con el nombre de la tool)
+  si `unlocked_operations` no es vacía y: `requires_operator` es `False`, `operation_param`
+  es `None`, o alguna operación no está en el `enum` de `parameters_schema["properties"][operation_param]`.
+- Los tres atributos pueden fijarse por INSTANCIA en `__init__`. `config` lo hace: sin las
+  dependencias de escritura (sub-agentes, `inaki chat`) se construye solo lectura (enum
+  `get`/`list`, `requires_operator = False`, sin `unlocked_operations`), y el registry la valida igual.
+- El rechazo del kernel nombra la operación (`la operación 'set' de la tool 'config'`), así que el
+  LLM sabe qué parte de la tool no puede pedir.
+- El WARNING de pisado por nombre cubre también perder privilegio por operación: una tool que
+  pisa a una privilegiada desbloqueando operaciones que la anterior protegía se loguea.
 
 ### Naming Conventions
 

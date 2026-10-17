@@ -1,4 +1,6 @@
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -45,6 +47,29 @@ class ITool(ABC):
     # Default False → el resto de las tools no cambia.
     requires_operator: bool = False
 
+    # Privilegio POR OPERACIÓN: operaciones que corren sin operador aunque la tool sea
+    # `requires_operator`. Vacía + `requires_operator=True` = la tool entera protegida
+    # (el comportamiento histórico). Una tool que la declara TIENE que despachar con
+    # `self.operation_of(kwargs)`: despacho y autorización salen de la MISMA función, así
+    # no pueden divergir. `ToolRegistry.register` valida la declaración (no vacía exige
+    # `requires_operator`, `operation_param` y que cada operación esté en el `enum` del
+    # parámetro). Puede fijarse por instancia en `__init__` (una tool que solo expone
+    # lectura cuando le faltan las dependencias de escritura).
+    unlocked_operations: frozenset[str] = frozenset()
+
+    # Nombre del parámetro que despacha la operación (casi siempre "operation").
+    operation_param: str | None = None
+
+    def operation_of(self, kwargs: Mapping[str, Any]) -> str | None:
+        """La operación que piden estos kwargs, normalizada; ``None`` si no hay.
+
+        ``None`` (parámetro ausente, vacío o tool sin ``operation_param``) NUNCA está
+        desbloqueado: falla cerrado.
+        """
+        if self.operation_param is None:
+            return None
+        return str(kwargs.get(self.operation_param) or "").strip().lower() or None
+
     @abstractmethod
     async def execute(self, **kwargs) -> ToolResult: ...
 
@@ -57,14 +82,25 @@ class IToolExecutor(ABC):
     async def execute(self, tool_name: str, **kwargs) -> ToolResult: ...
 
     @abstractmethod
-    def requires_operator(self, tool_name: str) -> bool:
-        """True si la tool es privilegiada (solo corre a pedido del operador).
+    def requires_operator(self, tool_name: str, kwargs: Mapping[str, Any]) -> bool:
+        """True si ESTA llamada es privilegiada (solo corre a pedido del operador).
+
+        Es privilegiada si la tool es ``requires_operator`` y su operación (según
+        ``kwargs``) no está en ``unlocked_operations``. Una operación ausente cuenta
+        como protegida.
 
         ABSTRACTO a propósito: un default ``False`` haría que un executor que no
         lo implemente ejecute privilegiadas sin chequeo (falla abierto). Una tool
         inexistente devuelve ``False``: el rechazo de "no encontrada" ya la corta.
         """
         ...
+
+    def operation_of(self, tool_name: str, kwargs: Mapping[str, Any]) -> str | None:
+        """La operación que piden estos kwargs, o ``None``. SOLO para redactar el rechazo.
+
+        No autoriza nada (eso es ``requires_operator``, abstracto), por eso tiene default.
+        """
+        return None
 
     @abstractmethod
     def get_schemas(self) -> list[dict]:

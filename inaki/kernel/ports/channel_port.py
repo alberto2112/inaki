@@ -65,7 +65,7 @@ class IChannel(ABC):
     Contrato de drenaje de ``stop()``: deja de aceptar entrada NUEVA y espera a que
     terminen los turnos en vuelo y su entrega (la respuesta que el canal le debe al
     usuario) antes de volver. El runner detiene los canales PRIMERO y recién después
-    apaga el container y re-bootstrappea (``/reload``, ``config_set``): un ``stop()`` que
+    apaga el container y re-bootstrappea (``/reload``, ``config set``): un ``stop()`` que
     vuelve con un turno a medio entregar le corta la respuesta al usuario justo cuando
     el reload se pidió desde ese mismo turno. Lo fija ``tests/app/test_runner_drenaje.py``.
     """

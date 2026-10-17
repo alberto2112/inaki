@@ -11,7 +11,7 @@ que cualquier vista de config necesita y que ``core/`` no puede conocer:
    por el fichero donde está escrito.
 3. **Qué campos no se cambian en runtime** — secretos, campos de ruta y los
    marcados con ``fijo_en_runtime`` (``paths_fijos_en_runtime``), para que
-   ``config_set`` los rechace sin una lista de strings aparte.
+   ``config set`` los rechace sin una lista de strings aparte.
 
 Vive en ``inaki/config`` porque acá el schema es conocido de primera mano y
 porque tiene DOS consumidores, ambos composition roots: la CLI
@@ -203,7 +203,7 @@ def _recolectar_secretos_anidados(
 
 
 def paths_fijos_en_runtime() -> frozenset[str]:
-    """Rutas punteadas que ``config_set`` NO puede cambiar en runtime.
+    """Rutas punteadas que ``config set`` NO puede cambiar en runtime.
 
     La respuesta sale del SCHEMA, no de una lista de strings. Un path es fijo por
     tres vías, todas declarativas:

@@ -1,4 +1,4 @@
-"""Camino dorado 4: ``config_set`` de punta a punta, con las piezas REALES.
+"""Camino dorado 4: ``config`` con ``operation: set`` de punta a punta, con las piezas REALES.
 
 Un turno de operador le pide al agente cambiar su modelo; el cambio se valida con el
 loader y las factories reales, queda en el store EN MEMORIA, pide un reload que lo
@@ -42,8 +42,8 @@ def pedir_config_set(path: str, value: object) -> LLMResponse:
                 "id": "call_1",
                 "type": "function",
                 "function": {
-                    "name": "config_set",
-                    "arguments": json.dumps({"path": path, "value": value}),
+                    "name": "config",
+                    "arguments": json.dumps({"operation": "set", "path": path, "value": value}),
                 },
             }
         ]
@@ -243,5 +243,40 @@ async def test_un_secreto_no_se_cambia_ni_en_un_turno_de_operador(
 
     visto_por_el_llm = " ".join(str(m.content) for m in fake_llm.llamadas[1]["messages"])
     assert "cannot be changed at runtime" in visto_por_el_llm
+    assert store.paths_runtime(AGENT_ID) == frozenset()
+    assert not harness.reloader.was_triggered()
+
+
+async def test_en_un_grupo_la_lectura_de_config_corre_y_set_no(
+    harness, store, fake_llm: GuionLLM
+) -> None:
+    """Privilegio por operación con las piezas reales: la MISMA tool, dos veredictos."""
+    lectura = LLMResponse(
+        tool_calls=[
+            {
+                "id": "call_get",
+                "type": "function",
+                "function": {
+                    "name": "config",
+                    "arguments": json.dumps({"operation": "get", "path": "llm.model"}),
+                },
+            }
+        ]
+    )
+    fake_llm.guion = [
+        lectura,
+        pedir_config_set("llm.model", "modelo-nuevo"),
+        LLMResponse.of_text("fin"),
+    ]
+    grupo = ChannelContext(channel_type="telegram", user_id=AGENT_ID, chat_id="-1001")
+
+    await harness.get_agent(AGENT_ID).run_agent.execute(
+        "qué modelo usás y cambialo", ctx=grupo, es_operador=False
+    )
+
+    tras_get = " ".join(str(m.content) for m in fake_llm.llamadas[1]["messages"])
+    assert "llm.model = 'modelo-falso'" in tras_get
+    tras_set = " ".join(str(m.content) for m in fake_llm.llamadas[2]["messages"])
+    assert "la operación 'set' de la tool 'config'" in tras_set
     assert store.paths_runtime(AGENT_ID) == frozenset()
     assert not harness.reloader.was_triggered()

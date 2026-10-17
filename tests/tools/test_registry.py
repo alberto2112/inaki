@@ -45,15 +45,15 @@ def test_itool_no_es_privilegiada_por_defecto():
 
 
 def test_registry_reporta_privilegiada():
-    assert _registry().requires_operator("privilegiada") is True
+    assert _registry().requires_operator("privilegiada", {}) is True
 
 
 def test_registry_reporta_tool_comun_como_no_privilegiada():
-    assert _registry().requires_operator("comun") is False
+    assert _registry().requires_operator("comun", {}) is False
 
 
 def test_registry_tool_inexistente_no_es_privilegiada():
-    assert _registry().requires_operator("no_existe") is False
+    assert _registry().requires_operator("no_existe", {}) is False
 
 
 def test_executor_exige_implementar_requires_operator():
@@ -95,7 +95,9 @@ def test_pisar_una_privilegiada_con_una_comun_loguea_warning(caplog):
 
     warnings = [r for r in caplog.records if r.levelname == "WARNING"]
     assert len(warnings) == 1 and "config_set" in warnings[0].getMessage()
-    assert registry.requires_operator("config_set") is False  # el privilegio se perdió: está dicho
+    assert (
+        registry.requires_operator("config_set", {}) is False
+    )  # el privilegio se perdió: está dicho
 
 
 @pytest.mark.parametrize(

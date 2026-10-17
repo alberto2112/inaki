@@ -1,6 +1,6 @@
-"""GestionarOverridesUseCase — aceptar un override de runtime (``config_set``) o rechazarlo.
+"""GestionarOverridesUseCase — aceptar un override de runtime (``config set``) o rechazarlo.
 
-Es el cerebro de la tool ``config_set``: decide si un cambio se acepta, se compromete
+Es el cerebro de la tool ``config set``: decide si un cambio se acepta, se compromete
 en el store EN MEMORIA y pide el reload que lo aplica. No toca disco, no muta ningún
 objeto de config (los providers y los Settings VO reciben sus valores al construirse):
 el cambio vive en ``OverridesDeRuntime`` y lo aplica el re-bootstrap del daemon.
@@ -115,7 +115,7 @@ class GestionarOverridesUseCase:
         validar: ``(candidato) -> config efectiva del agente (dict anidado)``. Corre el
             MISMO loader del arranque y la verificación de adapters; levanta
             ``ConfigError``/``ValidationError`` si algo no carga.
-        paths_fijos: Patrones que ``config_set`` no puede tocar (``paths_fijos_en_runtime()``).
+        paths_fijos: Patrones que ``config set`` no puede tocar (``paths_fijos_en_runtime()``).
     """
 
     def __init__(

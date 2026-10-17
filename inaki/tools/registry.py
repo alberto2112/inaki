@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Mapping
+from typing import Any
 
 from inaki.kernel.ports.embedding_cache_port import IEmbeddingCache
 from inaki.kernel.ports.embedding_port import IEmbeddingProvider
@@ -31,15 +33,27 @@ class ToolRegistry(IToolExecutor):
         self._embeddings_ready = False
 
     def register(self, tool: ITool) -> None:
+        # Ruidoso y al registrar: una declaración incoherente no puede llegar a ejecutarse.
+        _validar_privilegio(tool)
         previa = self._tools.get(tool.name)
-        if previa is not None and previa.requires_operator and not tool.requires_operator:
+        if previa is not None and previa.requires_operator:
             # Una extensión (se registran DESPUÉS de los builtins) puede pisar por nombre.
             # Perder el privilegio en silencio es justo lo que las invariantes prohíben.
-            logger.warning(
-                "Tool '%s' pisada por otra que NO declara requires_operator: se pierde "
-                "el privilegio de operador que tenía la anterior",
-                tool.name,
-            )
+            if not tool.requires_operator:
+                logger.warning(
+                    "Tool '%s' pisada por otra que NO declara requires_operator: se pierde "
+                    "el privilegio de operador que tenía la anterior",
+                    tool.name,
+                )
+            else:
+                desbloqueadas = tool.unlocked_operations - previa.unlocked_operations
+                if desbloqueadas:
+                    logger.warning(
+                        "Tool '%s' pisada por otra que desbloquea operaciones que la anterior "
+                        "protegía (%s): se pierde ese privilegio de operador",
+                        tool.name,
+                        ", ".join(sorted(desbloqueadas)),
+                    )
         self._tools[tool.name] = tool
         self._embeddings_ready = False  # invalidar cache si se registran más tools
         logger.debug("Tool registrada: '%s'", tool.name)
@@ -47,9 +61,16 @@ class ToolRegistry(IToolExecutor):
     def __contains__(self, name: object) -> bool:
         return name in self._tools
 
-    def requires_operator(self, tool_name: str) -> bool:
+    def requires_operator(self, tool_name: str, kwargs: Mapping[str, Any]) -> bool:
         tool = self._tools.get(tool_name)
-        return bool(tool and getattr(tool, "requires_operator", False))
+        if tool is None or not getattr(tool, "requires_operator", False):
+            return False
+        # `None` (operación ausente) no está en el set: falla cerrado.
+        return tool.operation_of(kwargs) not in tool.unlocked_operations
+
+    def operation_of(self, tool_name: str, kwargs: Mapping[str, Any]) -> str | None:
+        tool = self._tools.get(tool_name)
+        return tool.operation_of(kwargs) if tool is not None else None
 
     async def _ensure_embeddings(self) -> None:
         if self._embeddings_ready:
@@ -195,6 +216,41 @@ class ToolRegistry(IToolExecutor):
         ranked = await self._rank_tools_by_query(query_embedding, top_k, min_score)
         top_names = {name for name, _ in ranked}
         return [self._schema_dict(tool) for tool in self._tools.values() if tool.name in top_names]
+
+
+def _validar_privilegio(tool: ITool) -> None:
+    """Rechaza al REGISTRAR una declaración de ``unlocked_operations`` incoherente.
+
+    Una operación desbloqueada que no se puede despachar (o una tool no privilegiada con
+    desbloqueos) es un error de quien escribió la tool; fallar acá, con el nombre de la
+    tool, evita descubrirlo en un turno.
+    """
+    desbloqueadas = tool.unlocked_operations
+    if not desbloqueadas:
+        return
+    nombradas = ", ".join(sorted(desbloqueadas))
+    if not tool.requires_operator:
+        raise ValueError(
+            f"Tool '{tool.name}': declara unlocked_operations ({nombradas}) pero "
+            "requires_operator es False. Las operaciones desbloqueadas solo tienen sentido "
+            "sobre una tool privilegiada."
+        )
+    param = tool.operation_param
+    if param is None:
+        raise ValueError(
+            f"Tool '{tool.name}': declara unlocked_operations ({nombradas}) pero "
+            "operation_param es None. Sin el nombre del parámetro que despacha no hay "
+            "operación que desbloquear."
+        )
+    propiedades = (tool.parameters_schema or {}).get("properties", {})
+    declaradas = (propiedades.get(param) or {}).get("enum") or []
+    sobrantes = sorted(desbloqueadas - set(declaradas))
+    if sobrantes:
+        raise ValueError(
+            f"Tool '{tool.name}': unlocked_operations incluye {', '.join(sobrantes)}, que no "
+            f"está en el enum del parámetro '{param}' de parameters_schema "
+            f"({', '.join(map(str, declaradas)) or 'sin enum'})."
+        )
 
 
 def _missing_required_args(tool: ITool, kwargs: dict) -> list[str]:

@@ -50,7 +50,7 @@ def reload(
     _common.require_daemon(client)
 
     respuesta = _common.handle_daemon_errors(lambda: client.daemon_reload())
-    # El reload manual descarta los cambios de runtime (``config_set``): se avisa cuáles
+    # El reload manual descarta los cambios de runtime (``config set``): se avisa cuáles
     # antes de reiniciar. Un daemon anterior a la feature no trae el campo.
     descartados = (respuesta or {}).get("overrides_descartados") or []
     if descartados:

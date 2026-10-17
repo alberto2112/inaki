@@ -58,10 +58,21 @@ _CANCELLED_TOOL_RESULT = "NOT EXECUTED — the user cancelled the task (kill-swi
 # vuelvas a llamar" evita que insista (el rechazo es no-retryable, así que al tercer
 # intento el circuit breaker abre igual).
 _RECHAZO_PRIVILEGIO = (
-    "PRIVILEGIO — esta tool solo se ejecuta en un turno del operador. Este turno no "
+    "PRIVILEGIO — {objetivo} solo se ejecuta en un turno del operador. Este turno no "
     "es de operador: NO la vuelvas a llamar. Decile al usuario que ese cambio lo "
     "tiene que pedir el operador."
 )
+
+
+def _rechazo_privilegio(tool_name: str, operacion: str | None) -> str:
+    """El rechazo de UNA llamada: nombra la operación si la hay (la tool puede estar
+    parcialmente desbloqueada y el LLM tiene que saber qué parte no puede pedir)."""
+    objetivo = (
+        f"la operación '{operacion}' de la tool '{tool_name}'"
+        if operacion
+        else f"la tool '{tool_name}'"
+    )
+    return _RECHAZO_PRIVILEGIO.format(objetivo=objetivo)
 
 
 # Tope de veces que un drain in-flight puede resetear el contador de iteraciones
@@ -590,17 +601,20 @@ async def run_tool_loop(
             # ejecución (el page-in de arriba deja llamar cualquier tool del registry
             # aunque el routing no la muestre). El resultado sintético sigue el camino
             # normal de abajo: traza, historial, circuit breaker.
-            if not turno_de_operador and tools.requires_operator(tool_name):
+            if not turno_de_operador and tools.requires_operator(tool_name, kwargs):
+                operacion = tools.operation_of(tool_name, kwargs)
+                rechazo = _rechazo_privilegio(tool_name, operacion)
                 result = ToolResult(
                     tool_name=tool_name,
-                    output=_RECHAZO_PRIVILEGIO,
+                    output=rechazo,
                     success=False,
-                    error=_RECHAZO_PRIVILEGIO,
+                    error=rechazo,
                     retryable=False,
                 )
                 logger.warning(
-                    "[privilegio] '%s' rechazada: turno sin operador (agent=%s)",
+                    "[privilegio] '%s'%s rechazada: turno sin operador (agent=%s)",
                     tool_name,
+                    f" (operación '{operacion}')" if operacion else "",
                     agent_id,
                 )
             else:

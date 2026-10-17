@@ -84,8 +84,8 @@ class LLMProviderFactory:
         """
         Compone el ``ResolvedLLMConfig`` (feature + creds del registry) que
         recibe el adapter. NO valida credenciales — el check de
-        ``REQUIRES_CREDENTIALS`` vive en ``create``, que conoce el adapter
-        concreto.
+        ``REQUIRES_CREDENTIALS`` vive en ``verificar`` (que ``create`` llama), que
+        conoce el adapter concreto.
         """
         provider_cfg = providers.get(llm_cfg.provider) or ProviderConfig()
         return ResolvedLLMConfig(
@@ -100,28 +100,21 @@ class LLMProviderFactory:
         )
 
     @classmethod
-    def create(
+    def verificar(
         cls,
         llm_cfg: LLMConfig,
         providers: dict[str, ProviderConfig],
-    ) -> ILLMProvider:
+    ) -> type[BaseLLMProvider]:
         """
-        Construye un ``ILLMProvider`` a partir de la ``LLMConfig`` del agente y
-        el registry top-level de proveedores.
+        Primera mitad de ``create``: resuelve el adapter y chequea sus credenciales,
+        SIN instanciarlo. Devuelve la clase del adapter.
 
-        Flujo:
-          1. Resuelve la entrada del registry bajo la key ``llm_cfg.provider``.
-          2. Deriva el ``type`` (explícito o igual a la key).
-          3. Si el adapter requiere creds y falta la entrada o su ``api_key``,
-             levanta ``ConfigError``.
-          4. Compone ``ResolvedLLMConfig`` (feature + provider) y lo inyecta.
+        Levanta ``ConfigError`` si el provider no existe o si el adapter exige
+        credenciales y falta la entrada ``providers.<key>`` o su ``api_key``.
 
-        Es el ÚNICO camino de construcción: el LLM del agente, el de los
-        sub-agentes y el de ``memories.llm`` pasan todos por acá. Hubo un
-        segundo (``create_from_resolved``, que recibía el resolved ya
-        compuesto) y perdía el ``type`` por el camino — ``ResolvedLLMConfig``
-        no lo lleva —, así que una entrada ``groq-work: {type: groq}`` andaba
-        en ``llm`` y abortaba en ``memories.llm``.
+        NO es un segundo camino de construcción: ``create`` la llama y después
+        instancia, así que lo que verifica quien valida una config antes de
+        aceptarla (``config_set``) es exactamente lo que el arranque va a exigir.
         """
         provider_key = llm_cfg.provider
         provider_cfg = providers.get(provider_key)
@@ -141,4 +134,31 @@ class LLMProviderFactory:
                     f"'providers.{provider_key}' no tiene api_key."
                 )
 
+        return adapter_type
+
+    @classmethod
+    def create(
+        cls,
+        llm_cfg: LLMConfig,
+        providers: dict[str, ProviderConfig],
+    ) -> ILLMProvider:
+        """
+        Construye un ``ILLMProvider`` a partir de la ``LLMConfig`` del agente y
+        el registry top-level de proveedores.
+
+        Flujo:
+          1. ``verificar``: resuelve la entrada del registry bajo la key
+             ``llm_cfg.provider``, deriva el ``type`` (explícito o igual a la key)
+             y, si el adapter requiere creds y falta la entrada o su ``api_key``,
+             levanta ``ConfigError``.
+          2. Compone ``ResolvedLLMConfig`` (feature + provider) y lo inyecta.
+
+        Es el ÚNICO camino de construcción: el LLM del agente, el de los
+        sub-agentes y el de ``memories.llm`` pasan todos por acá. Hubo un
+        segundo (``create_from_resolved``, que recibía el resolved ya
+        compuesto) y perdía el ``type`` por el camino — ``ResolvedLLMConfig``
+        no lo lleva —, así que una entrada ``groq-work: {type: groq}`` andaba
+        en ``llm`` y abortaba en ``memories.llm``.
+        """
+        adapter_type = cls.verificar(llm_cfg, providers)
         return adapter_type(cls.resolve(llm_cfg, providers))

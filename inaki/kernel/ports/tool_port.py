@@ -37,6 +37,14 @@ class ITool(ABC):
     # Default "" → la tool no usa el protocolo y se instancia sin args.
     config_namespace: str = ""
 
+    # Tool privilegiada: solo se ejecuta cuando la pide el operador. La tool
+    # DECLARA, el canal DECIDE (`es_operador` por `execute()`) y el kernel HACE
+    # CUMPLIR (`run_tool_loop`, justo antes de ejecutar). NUNCA una tool decide
+    # su propio privilegio leyendo `ChannelContext` o un ContextVar: la delegación
+    # sync corre dentro del turno del padre y lo heredaría.
+    # Default False → el resto de las tools no cambia.
+    requires_operator: bool = False
+
     @abstractmethod
     async def execute(self, **kwargs) -> ToolResult: ...
 
@@ -47,6 +55,16 @@ class IToolExecutor(ABC):
 
     @abstractmethod
     async def execute(self, tool_name: str, **kwargs) -> ToolResult: ...
+
+    @abstractmethod
+    def requires_operator(self, tool_name: str) -> bool:
+        """True si la tool es privilegiada (solo corre a pedido del operador).
+
+        ABSTRACTO a propósito: un default ``False`` haría que un executor que no
+        lo implemente ejecute privilegiadas sin chequeo (falla abierto). Una tool
+        inexistente devuelve ``False``: el rechazo de "no encontrada" ya la corta.
+        """
+        ...
 
     @abstractmethod
     def get_schemas(self) -> list[dict]:

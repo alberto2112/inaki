@@ -19,6 +19,7 @@ from telegram import Update
 from telegram.error import BadRequest, NetworkError
 from telegram.ext import Application
 
+from inaki.channels.telegram.auth import TelegramAuth
 from inaki.channels.telegram.broadcast.egress import BroadcastEgress
 from inaki.channels.telegram.broadcast.port import BroadcastReceiver
 from inaki.channels.telegram.message_mapper import (
@@ -51,6 +52,7 @@ class TurnRunner:
         *,
         ports: TelegramBotPorts,
         app: Application,
+        auth: TelegramAuth,
         agent_id: str,
         behavior: str,
         broadcast_receiver: BroadcastReceiver | None,
@@ -59,6 +61,7 @@ class TurnRunner:
     ) -> None:
         self._ports = ports
         self._app = app
+        self._auth = auth
         self._agent_id = agent_id
         self._behavior = behavior
         self._receiver = broadcast_receiver
@@ -99,6 +102,9 @@ class TurnRunner:
             return
         chat_id = chat.id
         es_grupo = chat_type in _TIPOS_GRUPO
+        # Veredicto de privilegio: el canal DECIDE, el kernel hace cumplir. Entra por
+        # ``execute()`` (no por ``ChannelContext``) para que un hijo delegado no lo herede.
+        es_operador = self._auth.is_operator(user.id, chat_type)
         secciones: list[str] = list(extra_sections or [])
 
         # Inyectar contexto de broadcast si hay receiver y es un grupo.
@@ -167,6 +173,7 @@ class TurnRunner:
                 intermediate_sink=live_sink,
                 ctx=turn_ctx,
                 skip_marker=skip_marker_value,
+                es_operador=es_operador,
             )
 
         try:

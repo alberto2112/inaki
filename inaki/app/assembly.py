@@ -66,11 +66,13 @@ from inaki.channels.telegram.wiring import (
 )
 from inaki.config import AgentConfig, AgentRegistry, GlobalConfig, migrate_tool_config_to_own_file
 from inaki.config.home import get_inaki_home
-from inaki.config.wiring import build_config_tool
+from inaki.config.runtime_overrides import OverridesDeRuntime
+from inaki.config.wiring import build_config_set_tool, build_config_tool
 from inaki.embedding.cache import SqliteEmbeddingCache
 from inaki.embedding.wiring import EmbeddingProviderFactory
 from inaki.kernel.domain.channel_outbound_registry import ChannelOutboundRegistry
 from inaki.kernel.domain.channel_router import ChannelFallbackSettings, ChannelRouter
+from inaki.kernel.domain.outbound_kind import OutboundKind
 from inaki.kernel.ports.channel_port import IChannel
 from inaki.kernel.ports.embedding_port import IEmbeddingProvider
 from inaki.kernel.ports.llm_port import ILLMProvider
@@ -208,9 +210,19 @@ class _Harness:
 
 
 def ensamblar(
-    global_config: GlobalConfig, registry: AgentRegistry, config_dir: Path | None = None
+    global_config: GlobalConfig,
+    registry: AgentRegistry,
+    config_dir: Path | None = None,
+    overrides: OverridesDeRuntime | None = None,
 ) -> HarnessRuntime:
-    """Construye el proceso entero a partir de la config validada. Ver el módulo."""
+    """Construye el proceso entero a partir de la config validada. Ver el módulo.
+
+    ``overrides`` es el store de ``config_set`` (estado del PROCESO, no del runtime: lo
+    crea ``run_daemon_mode`` y sobrevive al reload). Con store, los agentes regulares
+    reciben la tool ``config_set`` y el ``DaemonReloader`` descarta ese store en un
+    reload manual. Sin store (``inaki chat``, tests) no hay reload que aplique un
+    cambio, así que la tool ni se registra.
+    """
     # 0. Estado compartido
     resolved_config_dir = config_dir or get_inaki_home() / "config"
     migrate_tool_config_to_own_file(resolved_config_dir)
@@ -221,7 +233,7 @@ def ensamblar(
         if is_debug_enabled(global_config.app.debug)
         else NullTurnTracer()
     )
-    reloader = DaemonReloader()
+    reloader = DaemonReloader(overrides)
     registros = _Registros()
 
     # 1. Por agente
@@ -234,6 +246,9 @@ def ensamblar(
                 tool_config_store=tool_config_store,
                 scope_registry=scope_registry,
                 tracer=tracer,
+                overrides=overrides,
+                reloader=reloader,
+                con_config_set=not registry.is_sub_agent(agent_cfg.id),
             )
             logger.info("Agente '%s' construido", agent_cfg.id)
         except Exception as exc:
@@ -286,6 +301,26 @@ def ensamblar(
 # ---------------------------------------------------------------------------
 
 
+def verificar_construccion(global_cfg: GlobalConfig, agentes: list[AgentConfig]) -> None:
+    """Etapa 2 de la validación de ``config_set``: ¿se podrían construir los adapters?
+
+    Para CADA agente (el mismo conjunto que construye la pasada 1) resuelve adapter y
+    credenciales de su LLM, del LLM de memoria cuando es distinto y del embedding, con
+    ``verificar()`` de las factories: la primera mitad de ``create``, SIN instanciar
+    nada (``verificar`` no es construir). Lo compone el composition root porque
+    ``config`` no puede importar ``llm`` ni ``embedding``.
+
+    Raises:
+        ConfigError: el adapter no existe o falta una credencial.
+    """
+    for cfg in agentes:
+        LLMProviderFactory.verificar(cfg.llm, cfg.providers)
+        llm_de_memoria = cfg.memories.merged_llm_config(cfg.llm)
+        if llm_de_memoria != cfg.llm:
+            LLMProviderFactory.verificar(llm_de_memoria, cfg.providers)
+        EmbeddingProviderFactory.verificar(cfg.embedding, cfg.providers)
+
+
 def _construir_agente(
     cfg: AgentConfig,
     global_cfg: GlobalConfig,
@@ -293,6 +328,9 @@ def _construir_agente(
     tool_config_store: IToolConfigStore,
     scope_registry: IScopeRegistry,
     tracer: ITurnTracer,
+    overrides: OverridesDeRuntime | None = None,
+    reloader: DaemonReloader | None = None,
+    con_config_set: bool = False,
 ) -> _Borrador:
     embedder = EmbeddingProviderFactory.create(cfg.embedding, cfg.providers)
     cache = SqliteEmbeddingCache(cfg.embedding.cache_filename)
@@ -309,6 +347,26 @@ def _construir_agente(
     # Tools built-in: cada módulo arma las suyas; acá solo se registran.
     workspace = resolver_workspace(cfg)
     knowledge = build_knowledge(global_cfg, cfg, memory=memory, embedder=embedder)
+    # El outbound se crea ANTES que las tools: `config_set` lo consulta (perezosamente,
+    # al aceptar un cambio) para saber si el chat de origen puede recibir el aviso.
+    outbounds = ChannelOutboundRegistry()
+    # Solo los agentes REGULARES: el store se aplica a `runtime_por_agente`, que no
+    # llega a los sub-agentes; una tool que aceptara un cambio para ellos lo guardaría
+    # sin que nada lo aplique.
+    tools_config_set = (
+        (
+            build_config_set_tool(
+                cfg.id,
+                overrides,
+                reloader,
+                verificar_construccion,
+                contexto_del_turno.get_channel_context,
+                lambda canal: outbounds.supports(canal, OutboundKind.TEXT),
+            ),
+        )
+        if overrides is not None and reloader is not None and con_config_set
+        else ()
+    )
     for tool in (
         *build_knowledge_tools(knowledge, embedder),
         *build_memory_tools(
@@ -320,7 +378,8 @@ def _construir_agente(
             digest=digest,
         ),
         *build_builtin_tools(cfg, workspace=workspace, config_store=tool_config_store),
-        build_config_tool(global_cfg, cfg),
+        build_config_tool(global_cfg, cfg, overrides),
+        *tools_config_set,
     ):
         tools.register(tool)
     registrar_extensiones(
@@ -377,6 +436,7 @@ def _construir_agente(
         jobs=jobs,
         scope_registry=scope_registry,
         tracer=tracer,
+        outbounds=outbounds,
     )
 
 

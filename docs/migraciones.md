@@ -72,6 +72,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
 
 | Nota | Cambio observable |
 |---|---|
+| [`config-set-efimero`](#config-set-efimero) | Tool nueva `config_set` (solo a pedido del operador): el agente cambia un parámetro de su config EN MEMORIA y el daemon se reconstruye con él. El `/reload` manual (REST, CLI y Telegram) **descarta** esos cambios y avisa cuáles (`POST /admin/reload` suma `overrides_descartados`); un reinicio o un reload fallido los pierde todos. Con `allowed_user_ids` vacía nadie es operador. El `/reload` de Telegram pide el reload antes de responder |
 | [`reload-fallido-reinicia`](#reload-fallido-reinicia) | Un `/reload` cuyo ensamblado falla termina con **exit 1** y systemd reinicia el servicio desde disco (antes, exit 0: daemon muerto en silencio). Un `llm.provider`/`embedding.provider` inexistente sale como `Error de configuración` limpio, al arrancar y al recargar (antes, traceback de `ValueError`) |
 | [`ventana-cuenta-conversacion`](#ventana-cuenta-conversacion) | `chat_history.max_messages` cuenta conversación, no filas → con `persist_tool_calls` el LLM ve **más** historial (el rastro de tools que cae en la ventana viaja gratis) |
 | [`llm-un-solo-camino-de-construccion`](#llm-un-solo-camino-de-construccion) | `memories.llm.provider` acepta una entrada con `type` explícito (antes abortaba con `Proveedor LLM '<key>' no encontrado`); una entrada sin `api_key` para un adapter que la exige aborta con `ConfigError` que la nombra, también en `llm` (antes, un `LLMError` del adapter) |
@@ -137,9 +138,87 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`, `reload-fallido-reinicia`,
+  `config-set-efimero`,
   `agent-id-igual-al-fichero`, `knowledge-token-budget-retirado`
 - **Providers LLM**: `llm-un-solo-camino-de-construccion`, `openai-habla-responses`, `anthropic-api-actual`
 - **Delegación**: `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
+
+---
+
+### `config-set-efimero`
+
+**La decisión (2026-10-17)**: el agente no tenía forma de cambiar su propia
+config. La tool `config` era de solo lectura a propósito: los providers
+reciben sus valores al construirse (`ResolvedLLMConfig`) y los Settings VO son
+`frozen=True`, así que mutar el árbol de config habría hecho que la tool
+informara un valor que el runtime no usaba. Lo que se necesitaba era "decile a
+tu agente que baje la temperatura" sin que el operador abra un YAML. Se
+resolvió sin mutar nada: un cambio se guarda en una capa de overrides **en
+memoria** y se aplica **reconstruyendo el daemon**.
+
+**El cambio**:
+- Tool nueva `config_set` (`path`, `value`), privilegiada. Valida el candidato
+  con el mismo loader del arranque (global + todos los agentes) y con
+  `LLMProviderFactory.verificar` / `EmbeddingProviderFactory.verificar` (la
+  primera mitad de `create`, que pasó a llamarla: verificar no es construir).
+  Si lo acepta, lo guarda en `OverridesDeRuntime` y pide un reload que lo
+  conserva. Un valor que ya es el efectivo es un no-op sin reload.
+- Los overrides se apilan DESPUÉS de los YAML con el motor único de merge
+  (`global.yaml → runtime-global → agents/{id}.yaml → runtime-agente`). El store
+  lo crea `run_daemon_mode` una vez por proceso y sobrevive al loop de reload;
+  nunca toca disco.
+- Qué no se cambia lo dice el schema: secretos, tipos de ruta
+  (`RuntimePath`/`ExpandedPath*`, marca `FIJO_EN_RUNTIME`) y los campos con
+  `json_schema_extra={"fijo_en_runtime": True}` (`id`, `system_prompt`,
+  `embedding`, `providers`, `channels`, `admin`, `workspace.containment`).
+- Privilegio: `ITool.requires_operator`, `es_operador` por `execute()` y el
+  rechazo en `run_tool_loop`, antes de ejecutar. Telegram decide con
+  `TelegramAuth.is_operator` (privado, `allowed_user_ids` no vacía y usuario
+  listado); REST y `inaki chat` son operador por la admin key; scheduler,
+  `agent_send`, delegación y one-shot nunca. `config_set` además quedó fuera
+  del schema del hijo one-shot.
+- `DaemonReloader` pasó a tener dos modos. El manual (las tres puertas del
+  `/reload`) descarta el store en el momento del pedido y devuelve qué
+  descartó; el de `config_set` lo conserva. Gana el manual.
+- `config` marca con el origen `runtime` lo que pisó un override.
+- Tras el reinicio, el hook `al_arrancar` de `run_daemon` avisa por el outbound
+  del agente al chat que pidió el cambio.
+- El diferimiento no usa timers: `IChannel.stop()` quedó documentado como
+  contrato de drenaje (espera turnos en vuelo y su entrega) y el runner lo
+  fija con test. La respuesta del turno que pidió el cambio sale antes del
+  corte.
+
+**Cambios observables**: `POST /admin/reload` responde `overrides_descartados`;
+`inaki reload` imprime qué descarta; el `/reload` de Telegram pide el reload
+ANTES de responder (necesita la lista) y su respuesta depende del drenaje. Con
+`allowed_user_ids` vacía, los slash commands siguen abiertos por privado pero
+nadie es operador para `config_set` (falla cerrado). Un reload fallido
+(`reload-fallido-reinicia`) pierde TODOS los overrides, también los que ya
+andaban, y el aviso al chat tampoco se envía: solo queda el journal.
+`IToolExecutor.requires_operator` es abstracto: un executor propio tiene que
+implementarlo. `ToolRegistry.register` loguea WARNING si una tool pisa por
+nombre a una privilegiada sin declararlo. La UI web de config no cambió: sigue
+siendo la vista de disco y no muestra los overrides.
+
+**Se descartó**: persistir overrides (persistir es editar la capa YAML);
+`unset`/`reset`/`list` (deshacer todo es el `/reload` manual, ver lo pisado es
+`config`); rollback si el reload falla, porque exigía re-ensamblar en el mismo
+proceso sobre un `ensamblar` a medio hacer (SQLite y modelos huérfanos) y un
+segundo camino de arranque; acotar `python-telegram-bot` en `pyproject.toml`
+(si una versión nueva deja de esperar las tasks de los handlers, avisa el test
+del drenaje, no un pin). Lo que ni el loader ni `verificar` ven
+(transcripción, fuentes de knowledge, el arranque de un canal) falla recién al
+reconstruir.
+
+**Sin migración.** Los campos nuevos del schema son marcas, no claves de config.
+
+**Invariantes**:
+- NUNCA decidir un privilegio dentro de una tool ni por `ContextVar`: la tool
+  declara, el canal decide y el kernel hace cumplir.
+- NUNCA aceptar un override de runtime sin validarlo con el loader del arranque
+  y el `verificar()` de las factories, ni persistirlo en disco.
+- NUNCA expresar qué no se cambia en runtime como lista de strings: es una
+  marca del schema.
 
 ---
 
@@ -183,6 +262,10 @@ en un ciclo de reinicios (`RestartSec=5s`) con el error en
 systemd, exit 0 significa "terminé bien", y un daemon que muere así no se
 reinicia ni deja rastro de por qué. Es el mismo principio que
 `broadcast-arranque-observable` aplicado al reload.
+
+*Cerrado después:* el rollback que esta nota dejó para `config_set` se descartó
+en [`config-set-efimero`](#config-set-efimero): un reload fallido sale con
+exit 1 y se pierden todos los overrides.
 
 ---
 

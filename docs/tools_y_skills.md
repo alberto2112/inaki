@@ -29,6 +29,7 @@ class ITool(ABC):
     description: str       # What it does — read by the LLM
     parameters_schema: dict  # JSON Schema (OpenAI function calling format)
     routing_keywords: str = ""  # Multilingual triggers — ONLY for routing embedding, never sent to the LLM
+    requires_operator: bool = False  # True → solo se ejecuta en un turno del operador (ver abajo)
 
     async def execute(self, **kwargs) -> ToolResult: ...
 
@@ -39,6 +40,38 @@ class ToolResult(BaseModel):
     success: bool
     error: str | None = None
 ```
+
+### Privileged tools (`requires_operator`)
+
+Una tool que cambia el estado del sistema y solo debe correr cuando la pide el operador
+(el caso real es `config_set`) declara `requires_operator = True` en la clase:
+
+```python
+class MiToolDeOperador(ITool):
+    name = "mi_tool"
+    requires_operator = True
+    ...
+```
+
+La tool solo DECLARA. El canal decide si el turno es de operador (`es_operador`, un bit
+que pasa por `RunAgentUseCase.execute`) y `run_tool_loop` rechaza con un
+`ToolResult(success=False, retryable=False)` antes de ejecutar la tool si no lo es. Por
+eso:
+
+- **No leas `ChannelContext` ni un `ContextVar` para decidir si ejecutás.** La delegación
+  sync corre dentro del turno del padre y heredaría ese contexto; el kernel ya cubre el
+  caso, y el scheduler, `agent_send`, la delegación y los one-shot nunca son turno de
+  operador. Podés leer el contexto para otra cosa (a qué chat avisar), nunca para
+  autorizarte.
+- Telegram: operador = privado ∧ `allowed_user_ids` no vacía ∧ usuario listado (lista
+  vacía = nadie). REST/CLI: operador por la admin key. Grupos: nunca.
+- `POST /admin/tool/invoke` no pasa por el tool loop (no hay turno): su auth es la admin
+  key y no aplica este chequeo.
+- Si una extensión registra una tool con el nombre de una privilegiada sin declarar
+  `requires_operator`, `ToolRegistry` la pisa y loguea un WARNING: el privilegio se
+  pierde, y el log lo dice.
+- Una tool privilegiada que además no debe verla un hijo de delegación va en
+  `_TOOLS_EXCLUIDAS_DEL_HIJO` (`inaki/kernel/run_agent_one_shot.py`).
 
 ### Naming Conventions
 

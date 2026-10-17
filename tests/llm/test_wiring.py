@@ -156,3 +156,118 @@ def test_create_entry_sin_api_key_para_provider_local_es_ok() -> None:
 
     assert isinstance(provider, _FakeLocalProvider)
     assert provider.cfg.base_url == "http://lan:8080/v1"
+
+
+# ---------------------------------------------------------------------------
+# verificar(llm_cfg, providers) — la primera mitad de create, sin construir
+# ---------------------------------------------------------------------------
+
+
+class _ProviderQueCuentaConstrucciones(_FakeProvider):
+    """Fake que cuenta cuántas veces se lo instancia: ``verificar`` no debe construir."""
+
+    construcciones = 0
+
+    def __init__(self, cfg: ResolvedLLMConfig) -> None:
+        type(self).construcciones += 1
+        super().__init__(cfg)
+
+
+@pytest.fixture
+def _contador(monkeypatch: pytest.MonkeyPatch) -> type[_ProviderQueCuentaConstrucciones]:
+    _ProviderQueCuentaConstrucciones.construcciones = 0
+    monkeypatch.setattr(
+        LLMProviderFactory,
+        "_registry",
+        {"cuenta": _ProviderQueCuentaConstrucciones, "fake-local": _FakeLocalProvider},
+    )
+    return _ProviderQueCuentaConstrucciones
+
+
+def test_verificar_acepta_una_config_completa_y_devuelve_el_adapter_sin_instanciarlo(
+    _contador: type[_ProviderQueCuentaConstrucciones],
+) -> None:
+    cfg = LLMConfig(provider="cuenta", model="m")
+
+    adapter = LLMProviderFactory.verificar(cfg, {"cuenta": ProviderConfig(api_key="K")})
+
+    assert adapter is _ProviderQueCuentaConstrucciones
+    assert _contador.construcciones == 0
+
+
+def test_verificar_acepta_un_adapter_local_sin_entrada_en_providers() -> None:
+    cfg = LLMConfig(provider="fake-local", model="m")
+
+    assert LLMProviderFactory.verificar(cfg, providers={}) is _FakeLocalProvider
+
+
+def test_verificar_provider_desconocido_es_config_error_con_los_disponibles() -> None:
+    cfg = LLMConfig(provider="no-existe", model="m")
+
+    with pytest.raises(ConfigError, match=r"'no-existe' no encontrado.*Disponibles.*fake"):
+        LLMProviderFactory.verificar(cfg, providers={})
+
+
+def test_verificar_sin_entrada_y_el_adapter_exige_creds_falla(
+    _contador: type[_ProviderQueCuentaConstrucciones],
+) -> None:
+    cfg = LLMConfig(provider="cuenta", model="m")
+
+    with pytest.raises(ConfigError, match="providers.cuenta"):
+        LLMProviderFactory.verificar(cfg, providers={})
+
+    assert _contador.construcciones == 0
+
+
+def test_verificar_entrada_sin_api_key_y_el_adapter_exige_creds_falla(
+    _contador: type[_ProviderQueCuentaConstrucciones],
+) -> None:
+    cfg = LLMConfig(provider="cuenta-work", model="m")
+    providers = {"cuenta-work": ProviderConfig(type="cuenta", base_url="https://x.y")}
+
+    with pytest.raises(ConfigError, match=r"providers.cuenta-work.*api_key"):
+        LLMProviderFactory.verificar(cfg, providers)
+
+    assert _contador.construcciones == 0
+
+
+def test_verificar_resuelve_el_type_override_como_lo_hace_create(
+    _contador: type[_ProviderQueCuentaConstrucciones],
+) -> None:
+    cfg = LLMConfig(provider="cuenta-work", model="m")
+    providers = {"cuenta-work": ProviderConfig(type="cuenta", api_key="K2")}
+
+    assert LLMProviderFactory.verificar(cfg, providers) is _ProviderQueCuentaConstrucciones
+
+
+def test_create_pasa_por_verificar_y_despues_instancia(
+    _contador: type[_ProviderQueCuentaConstrucciones], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un solo camino: lo que ``config_set`` verifica es lo que el arranque va a exigir."""
+    llamadas: list[tuple[LLMConfig, dict]] = []
+    original = LLMProviderFactory.verificar
+
+    def espia(llm_cfg: LLMConfig, providers: dict[str, ProviderConfig]):
+        llamadas.append((llm_cfg, providers))
+        return original(llm_cfg, providers)
+
+    monkeypatch.setattr(LLMProviderFactory, "verificar", staticmethod(espia))
+    cfg = LLMConfig(provider="cuenta", model="m")
+    providers = {"cuenta": ProviderConfig(api_key="K")}
+
+    provider = LLMProviderFactory.create(cfg, providers)
+
+    assert llamadas == [(cfg, providers)]
+    assert isinstance(provider, _ProviderQueCuentaConstrucciones)
+    assert _contador.construcciones == 1
+
+
+def test_create_con_config_invalida_falla_en_verificar_antes_de_instanciar(
+    _contador: type[_ProviderQueCuentaConstrucciones],
+) -> None:
+    cfg = LLMConfig(provider="cuenta", model="m")
+
+    with pytest.raises(ConfigError, match="providers.cuenta"):
+        LLMProviderFactory.create(cfg, providers={})
+
+    assert _contador.construcciones == 0

@@ -6,12 +6,16 @@ escrito y lo cargado hay un reinicio de por medio, y además el schema coerce
 valores al validar. Un agente que leyera los ficheros contestaría con
 seguridad algo que no es lo que está ejecutando.
 
-Es de SOLO LECTURA por diseño. Escribir un parámetro en caliente no existe como
+Es de SOLO LECTURA por diseño. MUTAR un parámetro en caliente no existe como
 concepto en este sistema: los providers y los use cases reciben sus valores al
 construirse (``ResolvedLLMConfig``, los Settings VO ``frozen=True``), así que
 mutar el objeto de config no cambiaría el comportamiento de la siguiente
-llamada — solo haría que la tool y el runtime discrepen. Cambiar config de
-verdad es escribir la capa y recargar el daemon (``inaki reload``).
+llamada — solo haría que la tool y el runtime discrepen. Lo que sí existe es
+CAMBIAR la config reconstruyendo el daemon: ``config_set`` (privilegiada, solo a
+pedido del operador) agrega un override en memoria y el daemon se reinicia con
+él. Esta tool lo ve: los valores pisados así llevan el origen ``runtime`` y se
+pierden en un ``/reload`` manual o un reinicio. Persistir un cambio es escribir
+la capa YAML y recargar el daemon (``inaki reload``).
 
 Las credenciales NO salen de acá con ningún parámetro: el snapshot que recibe
 esta tool ya viene redactado desde ``RuntimeConfigUseCase``. De un secreto se
@@ -21,7 +25,11 @@ puede saber si está puesto o si falta, nunca su valor.
 from __future__ import annotations
 
 from inaki.kernel.ports.tool_port import ITool, ToolResult
-from inaki.config.use_cases.runtime_config import CampoRuntime, RuntimeConfigUseCase
+from inaki.config.use_cases.runtime_config import (
+    ORIGEN_RUNTIME,
+    CampoRuntime,
+    RuntimeConfigUseCase,
+)
 
 _MAX_CAMPOS = 120
 """Techo de campos por ``list``. La config entera son ~90 campos y las
@@ -41,9 +49,8 @@ class ConfigTool(ITool):
         "'tools.semantic_routing_top_k'. There is no 'global.' or 'agent.' prefix: "
         "those are the config LAYER a value comes from, which is reported as its origin. "
         "Use 'list' without a prefix to discover the top-level sections. "
-        "This tool is read-only: configuration cannot be changed from here, because "
-        "values are bound when the process starts. Changing config means editing the "
-        "YAML layer and restarting the daemon. "
+        "This tool is read-only. Values marked [runtime] were changed at runtime with "
+        "'config_set' and are lost on a manual reload or a restart. "
         "Credentials (API keys, tokens, passwords) are always redacted: you can report "
         "whether one is set or missing, never its value."
     )
@@ -133,6 +140,11 @@ class ConfigTool(ITool):
             return self._fail(f"No configuration parameter at '{path}'.{pista}")
 
         lineas = [self._formatear(campo)]
+        if campo.origen == ORIGEN_RUNTIME:
+            lineas.append(
+                "This value was changed at runtime with 'config_set'. It is kept in memory "
+                "only: a manual /reload, a service restart or a failed restart discards it."
+            )
         if campo.es_secreto:
             lineas.append(
                 "This is a credential: its value is never exposed. Report only whether it is set."

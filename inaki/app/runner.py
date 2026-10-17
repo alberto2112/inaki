@@ -20,6 +20,7 @@ import asyncio
 import logging
 import signal
 from contextlib import nullcontext
+from collections.abc import Awaitable
 from typing import TYPE_CHECKING, Callable
 
 from inaki.observability import startup_event
@@ -34,6 +35,10 @@ logger = logging.getLogger(__name__)
 # Tipo del factory que produce un (HarnessRuntime, AgentRegistry) en cada iteración
 # del loop de reload. Se invoca al primer arranque y otra vez por cada reload.
 BootstrapFn = Callable[[], tuple["HarnessRuntime", "AgentRegistry"]]
+
+# Hook que corre en CADA iteración, justo después de arrancar los canales (cuando los
+# bots ya están inicializados). Recibe el runtime de esa iteración.
+AlArrancarFn = Callable[["HarnessRuntime"], Awaitable[None]]
 
 
 async def _run_admin_server(app_container, admin_cfg, servers: list) -> None:
@@ -161,6 +166,7 @@ async def _shutdown_iteration(
 async def run_daemon(
     bootstrap_fn: BootstrapFn,
     initial: tuple["HarnessRuntime", "AgentRegistry"] | None = None,
+    al_arrancar: AlArrancarFn | None = None,
 ) -> None:
     """
     Arranca todos los canales de todos los agentes en paralelo. Loop de reload-aware:
@@ -174,6 +180,9 @@ async def run_daemon(
         initial: tupla pre-construida ``(HarnessRuntime, AgentRegistry)`` para usar en la
             primera iter. Permite que el caller valide config antes de entrar al runner
             sin pagar el costo del bootstrap dos veces.
+        al_arrancar: hook opcional que corre tras ``_start_channels`` en cada iteración
+            (hoy: entregar los avisos que ``config_set`` dejó pendientes). NUNCA corta el
+            arranque: si levanta, se loguea con traceback y el daemon sigue.
     """
     shutdown_event = asyncio.Event()
 
@@ -211,6 +220,11 @@ async def run_daemon(
 
         await app_container.startup()
         canales = await _start_channels(app_container)
+        if al_arrancar is not None:
+            try:
+                await al_arrancar(app_container)
+            except Exception:  # noqa: BLE001 — un aviso fallido no tumba un daemon sano
+                logger.exception("El hook al_arrancar falló — el daemon sigue")
         tasks, uvicorn_servers = _build_channel_tasks(app_container, registry)
 
         logger.info(

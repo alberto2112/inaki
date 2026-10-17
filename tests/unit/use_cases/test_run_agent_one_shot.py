@@ -716,3 +716,74 @@ async def test_agent_id_passed_to_loop():
 
         _, kwargs = mock_loop.call_args
         assert kwargs["agent_id"] == "child-specialist"
+
+
+# ---------------------------------------------------------------------------
+# config-set-efimero — el hijo NUNCA hereda el privilegio de operador
+# ---------------------------------------------------------------------------
+
+
+async def test_one_shot_no_pasa_turno_de_operador_al_loop():
+    """
+    El one-shot (delegación sync/async) llama a ``run_tool_loop`` sin la señal de
+    operador: el hijo queda en el default ``False`` aunque el padre sea un turno
+    de operador. Si alguien la agregara acá, un hijo heredaría el privilegio.
+    """
+    uc = _make_use_case()
+
+    with patch(
+        "inaki.kernel.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
+        mock_loop.return_value = "ok"
+        await uc.execute(task="x", system_prompt=None, max_iterations=3, timeout_seconds=10)
+
+    assert "turno_de_operador" not in mock_loop.call_args.kwargs
+
+
+async def test_one_shot_no_ejecuta_una_tool_privilegiada():
+    """Comportamiento de punta a punta: el LLM del hijo pide una privilegiada y el
+    loop real la rechaza sin ejecutarla."""
+    llm = AsyncMock()
+    llm.thinking_active = False
+    llm.complete.side_effect = [
+        LLMResponse(
+            text_blocks=[],
+            tool_calls=[{"id": "c1", "function": {"name": "config_set", "arguments": "{}"}}],
+        ),
+        LLMResponse.of_text("no pude"),
+    ]
+    tools = _make_tools()
+    tools.requires_operator.side_effect = lambda nombre: nombre == "config_set"
+    uc = RunAgentOneShotUseCase(llm=llm, tools=tools, settings=_make_settings())
+
+    respuesta = await uc.execute(
+        task="cambiá tu modelo", system_prompt=None, max_iterations=4, timeout_seconds=10
+    )
+
+    assert respuesta == "no pude"
+    tools.execute.assert_not_called()
+
+
+async def test_config_set_excluida_del_hijo():
+    """config-set-efimero: la tool privilegiada no figura en el schema del hijo, así ni
+    la ve (la regla vale igual en la ejecución, esto es solo visibilidad)."""
+    schema_cs = {
+        "type": "function",
+        "function": {"name": "config_set", "description": "Cambia la config"},
+    }
+    schema_other = {
+        "type": "function",
+        "function": {"name": "read_file", "description": "Lee archivo"},
+    }
+    tools = _make_tools(schemas=[schema_other, schema_cs])
+    uc = _make_use_case(tools=tools)
+
+    with patch(
+        "inaki.kernel.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
+        mock_loop.return_value = "ok"
+        await uc.execute(task="t", system_prompt="p", max_iterations=5, timeout_seconds=30)
+
+        _, kwargs = mock_loop.call_args
+        sent_names = [sch["function"]["name"] for sch in kwargs["tool_schemas"]]
+        assert sent_names == ["read_file"]

@@ -142,3 +142,55 @@ async def test_la_tool_no_ofrece_ninguna_operacion_de_escritura(tool: ConfigTool
     la tool y el proceso empiezan a discrepar en silencio.
     """
     assert tool.parameters_schema["properties"]["operation"]["enum"] == ["get", "list"]
+
+
+# ---------------------------------------------------------------------------
+# Origen ``runtime`` (config-set-efimero)
+# ---------------------------------------------------------------------------
+
+
+def _tool_con_runtime() -> ConfigTool:
+    return ConfigTool(
+        runtime_config=RuntimeConfigUseCase(
+            config_en_memoria={"llm": {"model": "gpt-5-mini", "temperature": 0.3}},
+            origenes={"llm.model": "agent", "llm.temperature": "global"},
+            paths_secretos=_SECRETOS,
+            paths_runtime=frozenset({"llm.model"}),
+        )
+    )
+
+
+async def test_get_de_un_valor_runtime_lo_marca_y_explica_como_se_pierde() -> None:
+    res = await _tool_con_runtime().execute(operation="get", path="llm.model")
+
+    assert res.success
+    assert "gpt-5-mini" in res.output
+    assert "[runtime]" in res.output
+    assert "config_set" in res.output
+    assert "reload" in res.output.lower()
+
+
+async def test_get_de_un_valor_de_disco_no_agrega_la_linea_de_runtime() -> None:
+    res = await _tool_con_runtime().execute(operation="get", path="llm.temperature")
+
+    assert res.success
+    assert "[global]" in res.output
+    assert "config_set" not in res.output
+
+
+async def test_list_marca_el_origen_runtime_solo_donde_corresponde() -> None:
+    res = await _tool_con_runtime().execute(operation="list", prefix="llm")
+
+    lineas = {linea.split(" = ")[0]: linea for linea in res.output.splitlines() if " = " in linea}
+    assert lineas["llm.model"].endswith("[runtime]")
+    assert lineas["llm.temperature"].endswith("[global]")
+
+
+def test_la_description_declara_la_tool_de_solo_lectura_y_remite_a_config_set() -> None:
+    desc = ConfigTool.description
+
+    assert "read-only" in desc
+    assert "[runtime]" in desc
+    assert "config_set" in desc
+    # La frase vieja negaba el cambio en caliente: ya no es cierta.
+    assert "cannot be changed from here" not in desc

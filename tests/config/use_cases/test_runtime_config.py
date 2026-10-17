@@ -157,3 +157,91 @@ def test_un_dict_vacio_es_una_hoja_y_se_reporta() -> None:
 
     assert campo is not None
     assert campo.valor == {}
+
+
+# ---------------------------------------------------------------------------
+# Origen ``runtime`` (config-set-efimero)
+# ---------------------------------------------------------------------------
+
+
+def _uc_runtime(
+    memoria: dict, paths_runtime: frozenset[str], origenes: dict[str, str] | None = None
+) -> RuntimeConfigUseCase:
+    return RuntimeConfigUseCase(
+        config_en_memoria=memoria,
+        origenes=origenes,
+        paths_secretos=_SECRETOS,
+        paths_runtime=paths_runtime,
+    )
+
+
+def test_un_path_pisado_en_runtime_reporta_origen_runtime_y_pisa_el_de_disco() -> None:
+    uc = _uc_runtime(
+        {"llm": {"model": "gpt-5-mini", "temperature": 0.7}},
+        frozenset({"llm.model"}),
+        {"llm.model": "agent", "llm.temperature": "global"},
+    )
+
+    pisado = uc.get("llm.model")
+    intacto = uc.get("llm.temperature")
+
+    assert pisado is not None and intacto is not None
+    assert pisado.valor == "gpt-5-mini"  # el valor sigue saliendo del snapshot
+    assert pisado.origen == "runtime"
+    assert intacto.origen == "global"  # lo que no se pisó conserva el origen de disco
+
+
+def test_los_descendientes_de_un_path_runtime_tambien_son_runtime() -> None:
+    uc = _uc_runtime(
+        {"memories": {"consolidation": {"enabled": False, "schedule": "0 4 * * *"}}},
+        frozenset({"memories.consolidation"}),
+        {
+            "memories.consolidation.enabled": "agent",
+            "memories.consolidation.schedule": "agent",
+        },
+    )
+
+    campos = uc.listar("memories.consolidation")
+
+    assert [c.path for c in campos] == [
+        "memories.consolidation.enabled",
+        "memories.consolidation.schedule",
+    ]
+    assert [c.origen for c in campos] == ["runtime", "runtime"]
+
+
+def test_un_prefijo_de_texto_no_es_un_descendiente() -> None:
+    """``llm.model_extra`` no está DEBAJO de ``llm.model``: solo comparte letras."""
+    uc = _uc_runtime(
+        {"llm": {"model": "a", "model_extra": "b"}},
+        frozenset({"llm.model"}),
+        {"llm.model": "agent", "llm.model_extra": "agent"},
+    )
+
+    assert uc.get("llm.model").origen == "runtime"  # type: ignore[union-attr]
+    assert uc.get("llm.model_extra").origen == "agent"  # type: ignore[union-attr]
+
+
+def test_sin_paths_runtime_el_comportamiento_es_el_de_siempre() -> None:
+    memoria = {"llm": {"model": "gpt-4o"}}
+    origenes = {"llm.model": "agent"}
+
+    con = _uc_runtime(memoria, frozenset(), origenes).get("llm.model")
+    sin = _uc(memoria, origenes).get("llm.model")
+
+    assert con == sin
+    assert sin is not None and sin.origen == "agent"
+
+
+def test_el_origen_runtime_no_destapa_un_secreto() -> None:
+    """Por más que un path secreto figure como pisado, el valor sigue redactado."""
+    uc = _uc_runtime(
+        {"providers": {"openai": {"api_key": "sk-real"}}},
+        frozenset({"providers.openai.api_key"}),
+    )
+
+    campo = uc.get("providers.openai.api_key")
+
+    assert campo is not None
+    assert campo.valor == REDACTADO
+    assert campo.origen == "runtime"

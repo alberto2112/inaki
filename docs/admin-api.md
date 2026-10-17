@@ -17,7 +17,7 @@ servidor REST por agente.
 | POST | `/consolidate` | Consolida memoria — body `{"agent_id": "X"}` para uno, vacío para todos |
 | POST | `/scheduler/reload` | Recarga el scheduler |
 | POST | `/scheduler/run` | Dispara una tarea ahora — body `{"task_id": N}`. Corrida de prueba no destructiva: dispara el trigger una vez sin tocar `status`/`next_run`/`executions_remaining`. `404` si la tarea no existe. Cliente: `inaki scheduler run <ID>` |
-| POST | `/admin/reload` | Hot-reload del daemon (cierra canales, recarga config, reinicia) |
+| POST | `/admin/reload` | Hot-reload del daemon (cierra canales, recarga config, reinicia). Es el reload MANUAL: descarta los cambios de runtime de `config_set` y los lista en `overrides_descartados` |
 | GET | `/admin/agents` | Lista los ids de agente registrados |
 | GET | `/admin/agent/info` | Metadata del agente (`?agent_id=X` → id, name, description) |
 | POST | `/admin/chat/turn` | Manda un turno de chat a un agente |
@@ -40,6 +40,27 @@ servidor REST por agente.
 > `POST /admin/tool/invoke` es el **gateway admin único** de la regla del canal
 > THIN: una capacidad se implementa una vez y se expone por use case, tool del
 > LLM y este gateway. Ver [`arquitectura.md`](arquitectura.md).
+
+## POST `/admin/reload`
+
+```json
+// Response 200
+{
+  "reloading": true,
+  "overrides_descartados": ["asistente: llm.model = 'gpt-5-mini'", "global: user.timezone = 'America/Montevideo'"]
+}
+```
+
+Reinicia el daemon in-place y vuelve a cargar los ficheros de config. Es el reload
+**manual**: descarta TODOS los cambios de runtime que la tool `config_set` guardó en
+memoria, en el momento del pedido (un `config_set` posterior se rechaza hasta el
+reinicio). `overrides_descartados` trae una línea por cada cambio descartado
+(`<agente|global>: <path> = <valor>`), o `[]` si no había ninguno. Lo imprime
+`inaki reload` y lo usa el `/reload` de Telegram; la UI web de config (botón
+"Recargar daemon") llama a este mismo endpoint y descarta igual, pero no muestra el
+campo. El reload que dispara `config_set` NO pasa por acá: conserva los cambios.
+
+El cliente puede perder la conexión cuando el admin server se reinicia; es esperado.
 
 ## POST `/admin/chat/turn`
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Iterable, Protocol
+from typing import Any, Iterable, Mapping, Protocol
 
 import yaml
 
@@ -354,7 +354,7 @@ def migrate_secrets_into_main_layers(config_dir: Path, agents_dir: Path) -> None
 
     Tras esta migración las capas son dos: ``config/global.yaml`` y
     ``agents/{id}.yaml`` (más ``agents/sub-agents/{id}.yaml``). La marca de
-    "esto es secreto" NO desaparece: vive en el schema (``kind == "secret"``),
+    "esto es secreto" NO desaparece: vive en el schema (``json_schema_extra={"secret": True}``),
     que es lo que usa ``inaki config show`` para redactar el valor al mostrarlo.
 
     El contenido del secrets PISA al de la capa principal — mismo orden de
@@ -666,17 +666,42 @@ def _parse_providers(merged: dict) -> dict[str, ProviderConfig]:
     return {key: ProviderConfig(**(entry or {})) for key, entry in providers_raw.items()}
 
 
+def _aplicar_runtime(
+    base: dict, runtime: dict | None, modelo: type[AgentConfig] | type[GlobalConfig]
+) -> dict:
+    """Apila la capa de overrides de runtime sobre ``base`` (la última, la que gana).
+
+    Misma validación que un YAML: las claves top-level se chequean contra el
+    schema de ``modelo`` y el resto lo valida el modelo al construirse. Mismo
+    motor de merge que las capas de disco (``deep_merge``): no hay un segundo.
+    Sin ``runtime`` (``None`` o vacío) devuelve ``base`` sin tocar.
+    """
+    if not runtime:
+        return base
+    from inaki.shared.errors import ConfigError
+
+    _check_top_level(runtime, modelo, "override de runtime")
+    try:
+        return _deep_merge(base, runtime)
+    except ConfigError as exc:
+        raise ConfigError(f"{exc} (al aplicar los overrides de runtime)") from exc
+
+
 # ---------------------------------------------------------------------------
 # Carga de configuración
 # ---------------------------------------------------------------------------
 
 
-def load_global_config(config_dir: Path) -> tuple[GlobalConfig, dict]:
+def load_global_config(config_dir: Path, runtime: dict | None = None) -> tuple[GlobalConfig, dict]:
     """
     Carga global.yaml (capa base, credenciales incluidas).
     Retorna (GlobalConfig, raw_dict) — el dict raw se usa para merge con agentes.
+
+    ``runtime`` es la capa de overrides en memoria (``config_set``): se apila DESPUÉS
+    del YAML y antes de validar, así que el ``raw_dict`` devuelto —la base de los
+    agentes— ya la incluye. Ver ``inaki/config/runtime_overrides.py``.
     """
-    merged = _load_yaml_safe(config_dir / "global.yaml")
+    merged = _aplicar_runtime(_load_yaml_safe(config_dir / "global.yaml"), runtime, GlobalConfig)
 
     _check_legacy_shape(merged)
     _check_top_level(merged, GlobalConfig, "config/global.yaml")
@@ -845,13 +870,17 @@ def load_agent_config(
     agents_dir: Path,
     global_raw: dict,
     extra_base: dict | None = None,
+    runtime: dict | None = None,
 ) -> AgentConfig | None:
     """
     Carga y mergea la config de un agente:
-      global_raw → extra_base → agents/{id}.yaml
+      global_raw → extra_base → agents/{id}.yaml → runtime
 
     ``extra_base`` son los defaults de rol (ej. sub-agentes, ver ``SUBAGENT_DEFAULTS``):
     pisan a ``global_raw`` pero el YAML explícito del agente sigue pisando por encima.
+
+    ``runtime`` es la capa de overrides en memoria de ESTE agente (``config_set``):
+    gana sobre todo lo demás. La capa runtime-global ya viene dentro de ``global_raw``.
 
     Retorna ``None`` solo si el fichero NO EXISTE (caso legítimo: el caller
     pregunta por un agente que no está). Una config presente pero inválida
@@ -877,7 +906,7 @@ def load_agent_config(
         global_raw = _deep_merge(global_raw, extra_base)
 
     # Merge: global como base, agente como override
-    merged = _deep_merge(global_raw, agent_raw)
+    merged = _aplicar_runtime(_deep_merge(global_raw, agent_raw), runtime, AgentConfig)
 
     _check_legacy_shape(merged)
 
@@ -937,7 +966,16 @@ class AgentRegistry:
     NO EXISTE es otra cosa y sigue devolviendo ``None``.
     """
 
-    def __init__(self, agents_dir: Path, global_raw: dict) -> None:
+    def __init__(
+        self,
+        agents_dir: Path,
+        global_raw: dict,
+        runtime_por_agente: Mapping[str, dict] | None = None,
+    ) -> None:
+        # `runtime_por_agente`: capa de overrides en memoria por id, SOLO para los agentes
+        # regulares. Los sub-agentes no la reciben: heredan el LLM ya pisado del caller en
+        # la delegación (`build_ephemeral_child`).
+        runtime_por_agente = runtime_por_agente or {}
         self._agents: dict[str, AgentConfig] = {}
         self._sub_agent_ids: set[str] = set()
         self._sub_agent_raw: dict[str, dict] = {}
@@ -950,7 +988,9 @@ class AgentRegistry:
             if ".secrets" in yaml_file.name or ".example" in yaml_file.name:
                 continue
             agent_id = yaml_file.stem
-            cfg = load_agent_config(agent_id, agents_dir, global_raw)
+            cfg = load_agent_config(
+                agent_id, agents_dir, global_raw, runtime=runtime_por_agente.get(agent_id)
+            )
             if cfg is not None:
                 self._agents[agent_id] = cfg
                 logger.debug("Agente '%s' cargado: %s", agent_id, cfg.name)

@@ -48,3 +48,35 @@ def test_update_sin_chat_o_sin_user_se_rechaza() -> None:
     sin_user.effective_user = None
     assert not auth.is_authorized(sin_chat)
     assert not auth.is_authorized(sin_user)
+
+
+# ---------------------------------------------------------------------------
+# is_operator — el veredicto de privilegio para tools `requires_operator`
+# (feature config-set-efimero). Más estricto que is_allowed: falla cerrado.
+# ---------------------------------------------------------------------------
+
+
+def test_is_operator_privado_con_usuario_listado() -> None:
+    auth = TelegramAuth(("123",), ())
+    assert auth.is_operator(123, "private") is True
+
+
+def test_is_operator_lista_vacia_es_nadie() -> None:
+    """Con la lista vacía ``is_allowed`` deja pasar a todos, pero nadie es operador."""
+    auth = TelegramAuth((), ())
+    assert auth.is_allowed(123) is True
+    assert auth.is_operator(123, "private") is False
+
+
+def test_is_operator_usuario_no_listado() -> None:
+    auth = TelegramAuth(("123",), ())
+    assert auth.is_operator(456, "private") is False
+
+
+def test_is_operator_nunca_en_grupos() -> None:
+    """Ni un usuario listado es operador en un grupo: en grupos no se atribuye un
+    turno a una persona."""
+    auth = TelegramAuth(("123",), ("-100",))
+    assert auth.is_operator(123, "group") is False
+    assert auth.is_operator(123, "supergroup") is False
+    assert auth.is_operator(123, "channel") is False

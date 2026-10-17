@@ -65,6 +65,10 @@ async def chat_turn(body: ChatTurnRequest, request: Request) -> ChatTurnResponse
 
     agent_container = resolver_agente(request, body.agent_id)
 
+    # ``es_operador=True`` (D3 de config-set-efimero): este router exige la admin key
+    # (``check_admin_auth``), y quien la tiene ya puede invocar cualquier tool por el
+    # gateway, editar todas las capas de config y recargar el daemon. El veredicto es
+    # de ESTE canal (REST/CLI), no del contenido del turno.
     # Si el cliente declara channel/chat_id, el turno opera sobre ese scope real.
     # Sin ellos, channel_type="cli" + scope legacy ("", "") — backward-compatible.
     channel = body.channel if body.channel is not None else ""
@@ -100,6 +104,7 @@ async def chat_turn(body: ChatTurnRequest, request: Request) -> ChatTurnResponse
                 ctx=ctx,
                 channel=channel,
                 chat_id=chat_id,
+                es_operador=True,
             ),
         )
         reply = result.reply
@@ -172,6 +177,7 @@ async def chat_task(body: TaskTurnRequest, request: Request) -> TaskTurnResponse
             ephemeral=True,
             channel=channel,
             chat_id=chat_id,
+            es_operador=True,  # admin key: ver chat_turn
         )
     except Exception as exc:
         duration_ms = int((time.monotonic() - t0) * 1000)

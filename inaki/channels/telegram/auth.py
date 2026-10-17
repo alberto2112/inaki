@@ -18,6 +18,8 @@ class TelegramAuth:
     - Privado: el ``user_id`` debe estar en ``allowed_user_ids`` (lista vacía = todos).
     - Grupo: el ``chat_id`` debe estar en ``allowed_chat_ids`` (lista vacía = el bot
       NO responde en grupos); ``allowed_user_ids`` NO aplica en grupos.
+    - Operador (``is_operator``): el veredicto de privilegio para las tools que
+      declaran ``requires_operator``. Más estricto que ``is_allowed``: falla cerrado.
     """
 
     def __init__(
@@ -31,6 +33,21 @@ class TelegramAuth:
         if not self.allowed_user_ids:
             return True
         return str(user_id) in self.allowed_user_ids
+
+    def is_operator(self, user_id: int, chat_type: str) -> bool:
+        """¿Este turno lo pidió el operador? Habilita las tools ``requires_operator``.
+
+        Privado ∧ ``allowed_user_ids`` NO vacía ∧ el usuario está listado. Falla
+        cerrado a propósito, a diferencia de ``is_allowed`` (lista vacía = todos):
+        con la lista vacía cualquiera puede escribirle al bot por privado, y eso no
+        lo vuelve operador. En grupos nunca: no hay forma de atribuir un turno a una
+        persona (``sender_name`` es el último humano del lote).
+        """
+        return (
+            chat_type not in _TIPOS_GRUPO
+            and bool(self.allowed_user_ids)
+            and str(user_id) in self.allowed_user_ids
+        )
 
     def is_allowed_chat(self, chat_id: int | str) -> bool:
         """Solo grupos: ``allowed_chat_ids`` es la única fuente de "dónde vive el bot"."""

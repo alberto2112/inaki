@@ -110,6 +110,9 @@ def mock_history() -> AsyncMock:
 def mock_tools() -> MagicMock:
     tools = MagicMock()
     tools.get_schemas.return_value = []
+    # Sin esto `tools.requires_operator(x)` devuelve un MagicMock (truthy) y el
+    # tool loop rechazaría TODAS las tools en turnos sin operador.
+    tools.requires_operator.return_value = False
     tools.get_schemas_relevant = AsyncMock(return_value=[])
     tools.get_schemas_relevant_with_scores = AsyncMock(return_value=[])
     return tools

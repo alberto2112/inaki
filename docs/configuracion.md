@@ -118,8 +118,8 @@ borra, cambiar de forma entre capas es error) vive **una sola vez**, en
 edición de capas, `get_effective_config` y sub-agentes efímeros.
 
 **Secreto es una marca del schema, no un fichero.** Un campo es secreto porque el
-schema Pydantic lo dice (`kind == "secret"`) — eso es lo que lo enmascara en el
-TUI. No tiene nada que ver con en qué fichero vive. El layout viejo de 4 capas
+schema Pydantic lo dice (`json_schema_extra={"secret": True}`) — eso es lo que lo enmascara en la
+UI. No tiene nada que ver con en qué fichero vive. El layout viejo de 4 capas
 (`*.secrets.yaml`) se plegó a 2; el daemon lo migra solo al arrancar y el
 operador no tiene nada que hacer. → `secrets-layer-eradication` en
 [`migraciones.md`](migraciones.md).

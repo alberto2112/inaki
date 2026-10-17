@@ -79,28 +79,48 @@ class EmbeddingProviderFactory:
         return cls._registry[type_key]
 
     @classmethod
-    def create(
+    def verificar(
         cls,
         embedding_cfg: EmbeddingConfig,
         providers: dict[str, ProviderConfig],
-    ) -> IEmbeddingProvider:
-        """Construye un ``IEmbeddingProvider`` resolviendo creds desde el registry."""
+    ) -> type[BaseEmbeddingProvider]:
+        """Primera mitad de ``create``: resuelve el adapter y chequea sus credenciales.
+
+        NO lo instancia (cargar un modelo ONNX no es algo que una validación deba
+        hacer). Devuelve la clase del adapter; levanta ``ConfigError`` si el
+        provider no existe o si exige credenciales y falta la entrada
+        ``providers.<key>``.
+
+        No es un segundo camino de construcción: ``create`` la llama y después
+        instancia, así que lo que verifica quien valida una config antes de
+        aceptarla (``config_set``) es exactamente lo que el arranque va a exigir.
+        """
         provider_key = embedding_cfg.provider
         provider_cfg = providers.get(provider_key)
         adapter_type = cls._resolve_adapter(
             provider_key, provider_cfg.type if provider_cfg else None
         )
 
-        if provider_cfg is None:
-            if adapter_type.REQUIRES_CREDENTIALS:
-                raise ConfigError(
-                    f"Provider embedding '{provider_key}' requiere credenciales "
-                    f"pero no existe la entrada 'providers.{provider_key}'."
-                )
-            provider_cfg = ProviderConfig()
+        if provider_cfg is None and adapter_type.REQUIRES_CREDENTIALS:
+            raise ConfigError(
+                f"Provider embedding '{provider_key}' requiere credenciales "
+                f"pero no existe la entrada 'providers.{provider_key}'."
+            )
+
+        return adapter_type
+
+    @classmethod
+    def create(
+        cls,
+        embedding_cfg: EmbeddingConfig,
+        providers: dict[str, ProviderConfig],
+    ) -> IEmbeddingProvider:
+        """Construye un ``IEmbeddingProvider`` resolviendo creds desde el registry."""
+        adapter_type = cls.verificar(embedding_cfg, providers)
+        provider_cfg = providers.get(embedding_cfg.provider) or ProviderConfig()
 
         resolved = ResolvedEmbeddingConfig(
-            provider=provider_key,
+            provider=embedding_cfg.provider,
             model_dirname=embedding_cfg.model_dirname,
             model=embedding_cfg.model,
             dimension=embedding_cfg.dimension,

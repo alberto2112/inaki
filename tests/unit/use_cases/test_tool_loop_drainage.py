@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -135,6 +135,7 @@ def _tool_call_response(tool_name: str = "search") -> LLMResponse:
 
 def _make_tools(success: bool = True) -> AsyncMock:
     tools = AsyncMock()
+    tools.requires_operator = MagicMock(return_value=False)  # sin tools privilegiadas
     tools.execute = AsyncMock(
         return_value=ToolResult(tool_name="search", output="resultado", success=success)
     )
@@ -569,6 +570,7 @@ async def test_drain_at_checkpoint_b_after_tools():
 
     # Tools mock con side_effect que simula el push DURANTE la ejecución de la tool.
     tools = AsyncMock()
+    tools.requires_operator = MagicMock(return_value=False)  # sin tools privilegiadas
 
     async def tools_exec(tool_name, **kwargs):  # noqa: ARG001
         # Simula que mientras la tool corre (segundos), el inbound persistió un msg.

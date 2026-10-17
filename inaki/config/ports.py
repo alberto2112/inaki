@@ -9,7 +9,7 @@ Los cambios toman efecto al próximo reinicio del daemon.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 
 class LayerName(str, Enum):
@@ -21,7 +21,7 @@ class LayerName(str, Enum):
 
     No hay capas de secrets: las credenciales viven en estas mismas capas
     (ficheros con permisos 600). Un campo es secreto por su marca en el schema
-    (``kind == "secret"``), no por el archivo donde está escrito.
+    (``json_schema_extra={"secret": True}``), no por el archivo donde está escrito.
     """
 
     GLOBAL = "global"
@@ -116,4 +116,30 @@ class IConfigRepository(Protocol):
 
         Útil para generar el diff preview antes de confirmar un guardado.
         """
+        ...
+
+
+ModoReload = Literal["aplicar", "descartar"]
+"""Qué hace el reload pedido: ``aplicar`` conserva los overrides de runtime (lo pidió
+``config_set``); ``descartar`` los tira (reload manual: gana siempre)."""
+
+
+@runtime_checkable
+class ISolicitanteDeReload(Protocol):
+    """Lo que el use case de overrides necesita del reloader del daemon.
+
+    Lo implementa ``DaemonReloader`` (composition root) sin que ``config`` importe
+    ``app``. El use case LEE el estado (para rechazar un ``set`` cuando ya hay un
+    reload manual pendiente, que descarta todo) y pide el reload que aplica.
+    """
+
+    @property
+    def modo(self) -> ModoReload | None:
+        """``None`` mientras nadie pidió un reload."""
+        ...
+
+    def was_triggered(self) -> bool: ...
+
+    def request_reload_para_aplicar(self) -> None:
+        """Pide el reload que CONSERVA los overrides. Idempotente; no pisa un manual."""
         ...

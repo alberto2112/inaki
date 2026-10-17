@@ -4,7 +4,7 @@ UpsertProviderUseCase — crea o actualiza un provider en el registry.
 Todos los campos (``type``, ``base_url``, ``api_key``) van a ``global.yaml``:
 la capa ya es privada (permisos 600) desde que los ``*.secrets.yaml`` dejaron
 de existir. Lo que marca a ``api_key`` como credencial es el schema
-(``kind == "secret"``), que enmascara su valor en la UI.
+(``json_schema_extra={"secret": True}``), que enmascara su valor en la UI.
 
 Si el provider ya existe, solo se actualizan los campos provistos.
 """

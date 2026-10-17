@@ -9,7 +9,7 @@ produce el resumen de cierre.
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from inaki.agents.scope_registry import InMemoryScopeRegistryAdapter
 from inaki.kernel.domain.llm_response import LLMResponse
@@ -90,6 +90,7 @@ async def test_cancel_mid_batch_sintetiza_resultados_y_preserva_pairing():
         return ToolResult(tool_name=tool_name, output="resultado", success=True)
 
     tools = AsyncMock()
+    tools.requires_operator = MagicMock(return_value=False)  # sin tools privilegiadas
     tools.execute = AsyncMock(side_effect=exec_tool)
 
     trace: list[Message] = []

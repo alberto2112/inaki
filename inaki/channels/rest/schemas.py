@@ -43,6 +43,13 @@ class DaemonReloadResponse(BaseModel):
     """Respuesta de POST /admin/reload — el daemon va a cerrar canales y volver a levantar."""
 
     reloading: bool = True
+    overrides_descartados: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Una línea por cada cambio de runtime (``config_set``) que este reload descarta. "
+            "Vacía si no había ninguno."
+        ),
+    )
 
 
 class InspectRequest(BaseModel):

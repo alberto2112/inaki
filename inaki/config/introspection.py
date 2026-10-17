@@ -1,6 +1,6 @@
 """Introspección del schema de configuración — lo que el schema SABE de sí mismo.
 
-Deriva del schema Pydantic (``GlobalConfig`` / ``AgentConfig``) las dos cosas
+Deriva del schema Pydantic (``GlobalConfig`` / ``AgentConfig``) las tres cosas
 que cualquier vista de config necesita y que ``core/`` no puede conocer:
 
 1. **Los defaults** — lo que el runtime aplica cuando nadie declara nada. Sin
@@ -9,6 +9,9 @@ que cualquier vista de config necesita y que ``core/`` no puede conocer:
 2. **Qué campos son credenciales** — las rutas marcadas con ``secret`` en el
    schema, para redactarlas. Un campo es secreto por su marca en el schema, no
    por el fichero donde está escrito.
+3. **Qué campos no se cambian en runtime** — secretos, campos de ruta y los
+   marcados con ``fijo_en_runtime`` (``paths_fijos_en_runtime``), para que
+   ``config_set`` los rechace sin una lista de strings aparte.
 
 Vive en ``inaki/config`` porque acá el schema es conocido de primera mano y
 porque tiene DOS consumidores, ambos composition roots: la CLI
@@ -197,3 +200,103 @@ def _recolectar_secretos_anidados(
         for candidato in (field.annotation, *get_args(field.annotation)):
             if inspect.isclass(candidato) and issubclass(candidato, BaseModel):
                 _recolectar_secretos_anidados(candidato, f"{prefijo}{nombre}.", destino, vistos)
+
+
+def paths_fijos_en_runtime() -> frozenset[str]:
+    """Rutas punteadas que ``config_set`` NO puede cambiar en runtime.
+
+    La respuesta sale del SCHEMA, no de una lista de strings. Un path es fijo por
+    tres vías, todas declarativas:
+
+    1. **Secretos** — la marca ``secret`` (ver ``paths_secretos``).
+    2. **Tipos de ruta** — ``RuntimePath``/``ExpandedPath``/``ExpandedPathList``
+       llevan ``FIJO_EN_RUNTIME`` en su ``Annotated``. Un campo de ruta nuevo
+       queda cubierto con solo usar el tipo.
+    3. **Campos marcados** — ``Field(json_schema_extra={"fijo_en_runtime": True})``,
+       con el porqué en su docstring.
+
+    Un campo marcado arrastra a TODOS sus descendientes (``embedding`` ⇒
+    ``embedding.model``): quien consulta el conjunto no tiene que razonar sobre
+    ancestros. Usa ``*`` para las claves que pone el operador
+    (``providers.*.base_url``) y los nombres de canal registrados, como
+    ``paths_secretos``.
+    """
+    from inaki.config import AgentConfig, GlobalConfig
+    from inaki.config.channels import canales_registrados
+
+    encontrados: set[str] = set(paths_secretos())
+
+    def _recorrer(
+        modelo: type[BaseModel], prefijo: str, vistos: tuple[type, ...], heredado: bool
+    ) -> None:
+        if modelo in vistos:
+            return
+        for nombre, field in modelo.model_fields.items():
+            path = f"{prefijo}{nombre}"
+            fijo = heredado or _campo_fijo_en_runtime(field)
+            if fijo:
+                encontrados.add(path)
+            for sub in _modelos_anidados(field.annotation):
+                _recorrer(sub, f"{path}.", vistos + (modelo,), fijo)
+            # ``dict[str, X]``: la clave la pone el operador, así que va con comodín.
+            for valor in _valores_de_dicts(field.annotation):
+                if fijo:
+                    encontrados.add(f"{path}.*")
+                for sub in _modelos_anidados(valor):
+                    _recorrer(sub, f"{path}.*.", vistos + (modelo,), fijo)
+
+    for raiz in (GlobalConfig, AgentConfig):
+        _recorrer(raiz, "", (), False)
+
+    # ``AgentConfig.channels`` es un ``dict[str, Any]``: el schema raíz no nombra los
+    # modelos de cada canal, los registra el canal. Si el bloque es fijo, sus campos también.
+    if "channels" in encontrados:
+        for canal, registrado in canales_registrados().items():
+            encontrados.add(f"channels.{canal}")
+            _recorrer(registrado.modelo, f"channels.{canal}.", (), True)
+
+    return frozenset(encontrados)
+
+
+def _campo_fijo_en_runtime(field: Any) -> bool:
+    """El campo está marcado por su ``json_schema_extra`` o por la marca de su tipo."""
+    from inaki.config.schema._base import FIJO_EN_RUNTIME
+
+    extra = field.json_schema_extra or {}
+    if isinstance(extra, dict) and extra.get("fijo_en_runtime"):
+        return True
+    return FIJO_EN_RUNTIME in field.metadata or _contiene_marca(field.annotation, FIJO_EN_RUNTIME)
+
+
+def _contiene_marca(annotation: Any, marca: object) -> bool:
+    """La marca aparece en el ``Annotated`` del tipo o de cualquiera de sus argumentos.
+
+    ``list[RuntimePath]`` y ``ExpandedPath | None`` no suben la metadata a
+    ``FieldInfo.metadata``: queda en el ``Annotated`` del ítem.
+    """
+    from typing import get_args
+
+    return any(a is marca or _contiene_marca(a, marca) for a in get_args(annotation))
+
+
+def _valores_de_dicts(annotation: Any) -> list[Any]:
+    """Tipos de los VALORES de cada ``dict[str, V]`` que aparece en la anotación."""
+    from typing import get_args, get_origin
+
+    if get_origin(annotation) is dict:
+        return [get_args(annotation)[1]]
+    return [v for a in get_args(annotation) for v in _valores_de_dicts(a)]
+
+
+def _modelos_anidados(annotation: Any) -> list[type[BaseModel]]:
+    """Modelos que cuelgan de la anotación SIN pasar por un dict (``list[M]``, ``M | None``).
+
+    Los ``dict[str, M]`` se descienden aparte, con comodín en la clave.
+    """
+    from typing import get_args, get_origin
+
+    if get_origin(annotation) is dict:
+        return []
+    if inspect.isclass(annotation) and issubclass(annotation, BaseModel):
+        return [annotation]
+    return [m for a in get_args(annotation) for m in _modelos_anidados(a)]

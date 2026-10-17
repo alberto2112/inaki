@@ -58,7 +58,7 @@ class CampoEfectivo:
     """Capa que aportó el valor: ``default`` | ``global`` | ``agent``."""
 
     es_secreto: bool = False
-    """Si el schema lo marca como credencial (``kind == "secret"``)."""
+    """Si el schema lo marca como credencial (``json_schema_extra={"secret": True}``)."""
 
     configurado: bool = True
     """Solo informativo para secretos: ``False`` si no tiene valor todavía."""

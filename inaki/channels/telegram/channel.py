@@ -84,6 +84,12 @@ class TelegramChannel(IChannel):
         startup_event(logger, "telegram_bot", status="ok", agent=self._agent_id, mode="polling")
 
     async def stop(self) -> None:
+        """Detiene el bot cumpliendo el contrato de drenaje de ``IChannel.stop``.
+
+        ``updater.stop()`` deja de pedir updates y ``app.stop()`` espera las tasks de
+        los handlers en vuelo (con ``concurrent_updates`` cada update ES una de ellas),
+        así que la respuesta de un turno que pidió el reload llega antes del corte.
+        """
         if self._bot_started:
             app = self._bot.application
             updater = app.updater

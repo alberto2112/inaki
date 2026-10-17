@@ -31,12 +31,25 @@ class ToolRegistry(IToolExecutor):
         self._embeddings_ready = False
 
     def register(self, tool: ITool) -> None:
+        previa = self._tools.get(tool.name)
+        if previa is not None and previa.requires_operator and not tool.requires_operator:
+            # Una extensión (se registran DESPUÉS de los builtins) puede pisar por nombre.
+            # Perder el privilegio en silencio es justo lo que las invariantes prohíben.
+            logger.warning(
+                "Tool '%s' pisada por otra que NO declara requires_operator: se pierde "
+                "el privilegio de operador que tenía la anterior",
+                tool.name,
+            )
         self._tools[tool.name] = tool
         self._embeddings_ready = False  # invalidar cache si se registran más tools
         logger.debug("Tool registrada: '%s'", tool.name)
 
     def __contains__(self, name: object) -> bool:
         return name in self._tools
+
+    def requires_operator(self, tool_name: str) -> bool:
+        tool = self._tools.get(tool_name)
+        return bool(tool and getattr(tool, "requires_operator", False))
 
     async def _ensure_embeddings(self) -> None:
         if self._embeddings_ready:

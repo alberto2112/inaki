@@ -128,8 +128,28 @@ async def test_post_turn_happy_path(chat_app, mock_run_agent) -> None:
     assert data["agent_id"] == "dev"
     assert data["session_id"] == TURN_BODY["session_id"]
     mock_run_agent.execute.assert_awaited_once_with(
-        "hola", intermediate_sink=ANY, ctx=ANY, channel="", chat_id=""
+        "hola", intermediate_sink=ANY, ctx=ANY, channel="", chat_id="", es_operador=True
     )
+
+
+async def test_post_turn_es_turno_de_operador(chat_app, mock_run_agent) -> None:
+    """D3 (config-set-efimero): quien tiene la admin key ya puede editar la config y
+    recargar el daemon, así que el turno de REST/CLI es de operador."""
+    async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as ac:
+        resp = await ac.post(
+            "/admin/chat/turn",
+            json={**TURN_BODY, "channel": "telegram", "chat_id": "-100"},
+            headers=VALID_KEY,
+        )
+    assert resp.status_code == 200
+    assert mock_run_agent.execute.await_args.kwargs["es_operador"] is True
+
+
+async def test_post_task_es_turno_de_operador(chat_app, mock_run_agent) -> None:
+    async with AsyncClient(transport=ASGITransport(app=chat_app), base_url="http://test") as ac:
+        resp = await ac.post("/admin/chat/task", json=TASK_BODY, headers=VALID_KEY)
+    assert resp.status_code == 200
+    assert mock_run_agent.execute.await_args.kwargs["es_operador"] is True
 
 
 async def test_post_turn_scope_busy_persists_and_returns_ack(

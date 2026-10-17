@@ -113,11 +113,18 @@ async def daemon_reload(request: Request) -> DaemonReloadResponse:
     Endpoint asíncrono — devuelve 200 inmediatamente y el reload ocurre en background.
     El cliente HTTP que llama (CLI, Telegram bot) puede perder la conexión cuando el
     admin server se reinicie; eso es esperado.
+
+    Es el reload MANUAL: descarta los overrides de runtime (``config_set``) y los
+    devuelve en ``overrides_descartados``. La UI web de config usa este mismo
+    endpoint (botón "Recargar daemon") y descarta igual, aunque no muestre el campo.
     """
     reloader = request.app.state.app_container.reloader
-    reloader.request_reload()
-    logger.info("Reload solicitado vía POST /admin/reload")
-    return DaemonReloadResponse()
+    descartados = reloader.request_reload()
+    logger.info(
+        "Reload solicitado vía POST /admin/reload (overrides de runtime descartados: %d)",
+        len(descartados),
+    )
+    return DaemonReloadResponse(overrides_descartados=descartados)
 
 
 @router.post("/inspect", dependencies=[Depends(check_admin_auth)])

@@ -60,14 +60,17 @@ class AgentConfig(_ConfigBaseModel):
     dependa del schema de infraestructura.
     """
 
-    id: str
+    id: str = Field(json_schema_extra={"fijo_en_runtime": True})
     """Identificador técnico del agente. Debe coincidir con el nombre del fichero YAML.
 
     El registry indexa por el NOMBRE DEL FICHERO (``agents/general.yaml`` →
     ``general``), pero este campo es el que viaja como ``agent_id`` a todo el
     runtime: scoping del historial y la memoria, ``created_by`` de las tareas del
     scheduler y target de las delegaciones. Si difiere del nombre del fichero,
-    la config se carga por un id y los datos se guardan bajo otro."""
+    la config se carga por un id y los datos se guardan bajo otro.
+
+    No se cambia en runtime con ``config_set``: una identidad que cambia a mitad
+    de la vida del proceso deja la delegación y los datos apuntando a otro agente."""
 
     name: str
     """Nombre visible del agente, para humanos.
@@ -84,16 +87,22 @@ class AgentConfig(_ConfigBaseModel):
     delegaciones al agente equivocado. Se colapsa a una sola línea, así que un
     bloque multilínea (``|``) igual termina plano."""
 
-    system_prompt: str = ""
+    system_prompt: str = Field(default="", json_schema_extra={"fijo_en_runtime": True})
     """Prompt de sistema del agente. Opcional: si se omite, los sub-agentes de
     memoria (extractor/reconciliador) heredan el prompt hardcodeado por defecto
     del use case correspondiente. Un agente regular sin prompt corre con base
-    vacía (responde sin instrucciones de sistema)."""
+    vacía (responde sin instrucciones de sistema).
+
+    No se cambia en runtime con ``config_set``: una inyección de prompt lograda en
+    un turno quedaría activa hasta el próximo ``/reload``."""
     llm: LLMConfig
     """Modelo conversacional de este agente. Hereda del ``llm`` global campo a campo."""
 
-    embedding: EmbeddingConfig
-    """Vectorizador de este agente (routing, memoria, knowledge). Hereda del global campo a campo."""
+    embedding: EmbeddingConfig = Field(json_schema_extra={"fijo_en_runtime": True})
+    """Vectorizador de este agente (routing, memoria, knowledge). Hereda del global campo a campo.
+
+    No se cambia en runtime con ``config_set``: cambiar el modelo obliga a recrear
+    la DB de memoria (la dimensión de los vectores es parte de su esquema)."""
 
     memories: MemoriesConfig
     """Memoria a largo plazo de este agente: store, digest y los dos jobs nocturnos.
@@ -133,16 +142,24 @@ class AgentConfig(_ConfigBaseModel):
     Si un canal del agente tiene ``voice_enabled: true`` y no hay bloque ni acá
     ni en el global, el agente falla al construirse en vez de ignorar los audios."""
 
-    channels: dict[str, Any] = {}
+    channels: dict[str, Any] = Field(default={}, json_schema_extra={"fijo_en_runtime": True})
     """Adapters de canal del agente, indexados por su clave en ``channels:``.
 
     Los bloques de los canales REGISTRADOS (``inaki.config.channels``) llegan acá
     **ya validados y coercionados a su modelo Pydantic** por ``_validar_channels``.
     Para acceso tipado usá ``canal(nombre, Modelo)``; el dict directo sirve para
     iterar o preguntar qué canales declaró el agente.
+
+    No se cambia en runtime con ``config_set``: acá viven el token y
+    ``allowed_user_ids``, y cambiarlos desde un chat sería escalar privilegios.
     """
-    providers: dict[str, ProviderConfig] = {}
-    """Registry de proveedores post-merge. Heredado del global + overrides del agente."""
+    providers: dict[str, ProviderConfig] = Field(
+        default={}, json_schema_extra={"fijo_en_runtime": True}
+    )
+    """Registry de proveedores post-merge. Heredado del global + overrides del agente.
+
+    No se cambia en runtime con ``config_set``: un ``base_url`` pisado mandaría la
+    ``api_key`` a otro host."""
 
     @field_validator("channels", mode="before")
     @classmethod
@@ -227,8 +244,11 @@ class GlobalConfig(_ConfigBaseModel):
     llm: LLMConfig
     """Modelo conversacional por DEFECTO. Cada agente lo hereda y lo pisa campo a campo."""
 
-    embedding: EmbeddingConfig
-    """Vectorizador por DEFECTO para routing, memoria y knowledge. Heredable por agente."""
+    embedding: EmbeddingConfig = Field(json_schema_extra={"fijo_en_runtime": True})
+    """Vectorizador por DEFECTO para routing, memoria y knowledge. Heredable por agente.
+
+    No se cambia en runtime con ``config_set``: cambiar el modelo obliga a recrear
+    la DB de memoria (la dimensión de los vectores es parte de su esquema)."""
 
     memories: MemoriesConfig
     """Defaults de la memoria a largo plazo: store, digest y los dos jobs nocturnos.
@@ -239,8 +259,13 @@ class GlobalConfig(_ConfigBaseModel):
     chat_history: ChatHistoryConfig
     """Defaults del historial de conversación a corto plazo. Heredable por agente."""
 
-    channels: ChannelsGlobalConfig = ChannelsGlobalConfig()
-    """Flags de presentación transversales a todos los canales. Solo global."""
+    channels: ChannelsGlobalConfig = Field(
+        default=ChannelsGlobalConfig(), json_schema_extra={"fijo_en_runtime": True}
+    )
+    """Flags de presentación transversales a todos los canales. Solo global.
+
+    No se cambia en runtime con ``config_set``: es la misma superficie de canales
+    que el bloque del agente, y esa decide quién puede hablarle al bot."""
     skills: SkillsConfig = SkillsConfig()
     """Defaults de la selección RAG de skills. Heredable por agente."""
 
@@ -271,11 +296,14 @@ class GlobalConfig(_ConfigBaseModel):
     puede delegar y a quién (``enabled``, ``allowed_targets``) se decide solo
     per-agente: acá no se aceptan."""
 
-    admin: AdminConfig = AdminConfig()
+    admin: AdminConfig = Field(default=AdminConfig(), json_schema_extra={"fijo_en_runtime": True})
     """Admin server HTTP del daemon: dónde escucha y con qué clave se protege.
 
     Es la puerta por la que la CLI habla con el daemon y por la que se expone el
-    gateway ``POST /admin/tool/invoke``."""
+    gateway ``POST /admin/tool/invoke``.
+
+    No se cambia en runtime con ``config_set``: de su host y su puerto depende que
+    la CLI siga alcanzando al daemon, y ``auth_key`` es una credencial."""
 
     user: UserConfig = UserConfig()
     """Preferencias del dueño de la instancia (hoy: la timezone del cron y los timestamps)."""
@@ -299,5 +327,10 @@ class GlobalConfig(_ConfigBaseModel):
 
     photos: PhotosConfig | None = None
     """Configuración del pipeline de fotos. None = feature desactivada (no se carga nada)."""
-    providers: dict[str, ProviderConfig] = {}
-    """Registry top-level de proveedores — credenciales compartidas por vendor."""
+    providers: dict[str, ProviderConfig] = Field(
+        default={}, json_schema_extra={"fijo_en_runtime": True}
+    )
+    """Registry top-level de proveedores — credenciales compartidas por vendor.
+
+    No se cambia en runtime con ``config_set``: un ``base_url`` pisado mandaría la
+    ``api_key`` a otro host."""

@@ -89,6 +89,12 @@ explícita del operador, con la capacidad ya disponible vía la tool `scheduler`
 una capacidad nueva NO: eso es la explosión N×M. Y NUNCA replicar estos slash en un canal
 nuevo — un Slack que nazca mañana hereda las TOOLS, no `/scheduler`.
 
+`/reload` además DESCARTA los overrides de runtime que `config_set` dejó en memoria y avisa
+cuáles (`config-set-efimero`). El privilegio de operador para tools es más estricto que el
+de los slash: con `allowed_user_ids` vacía los slash los usa cualquiera por privado, pero
+`config_set` falla cerrado (lista vacía = nadie es operador). La asimetría es inherente y
+está aceptada.
+
 ## Tiers de recursos — harness-global vs per-agente
 
 **LEER antes de agregar un recurso con estado.**
@@ -154,7 +160,11 @@ son los mínimos. Paso a paso, con lo que el kernel y el composition root espera
    call-sites (`formato-en-el-borde-del-transporte`).
 2. **Traducir la entrada a un turno.** El inbound recibe su I/O nativo, autoriza, y llama a
    `run_agent.execute()` con un `ChannelContext`; en chats uno-a-uno pasa por
-   `dispatch_inbound_turn` (inyección in-flight). Media: entregá el path del fichero como
+   `dispatch_inbound_turn` (inyección in-flight). Decidí `es_operador` con TU auth y pasalo
+   por `execute()`; si tu canal no puede atribuir un turno a una persona, es `False` (las
+   tools privilegiadas, como `config_set`, se rechazan en ese turno). Tu `IChannel.stop()`
+   tiene que cumplir el contrato de drenaje: esperar los turnos en vuelo y su entrega antes
+   de volver. Media: entregá el path del fichero como
    bloque de la gramática de attachments (`inaki/shared/attachment.py`) y el LLM hace el
    resto con sus tools. **Nada de capacidades en el canal** (regla THIN, arriba).
 3. **Tu sección de config** vive en `<canal>/config.py` como modelo Pydantic con

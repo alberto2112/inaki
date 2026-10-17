@@ -143,6 +143,7 @@ class TelegramBot:
         self._turns = TurnRunner(
             ports=ports,
             app=self._app,
+            auth=self._auth,
             agent_id=settings.id,
             behavior=self._behavior,
             broadcast_receiver=broadcast_receiver,

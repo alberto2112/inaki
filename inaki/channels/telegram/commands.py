@@ -262,8 +262,13 @@ class SlashCommands:
         """Reinicia el daemon: cierra todos los channels, recarga config y vuelve a levantar.
 
         Equivalente a ``inaki reload`` o ``POST /admin/reload``. El bot que recibió el
-        comando se va a apagar como parte del reload — el reply se envía ANTES de señalar
-        al runner para que el usuario tenga feedback antes del corte.
+        comando se va a apagar como parte del reload.
+
+        Es el reload MANUAL: descarta los overrides de runtime (``config_set``) y el
+        reply dice cuáles. Pide el reload ANTES de responder porque necesita la lista
+        de descartados; la entrega la garantiza el drenaje del runner (``IChannel.stop``
+        espera a los handlers en vuelo antes de cerrar el bot). Extiende un slash
+        existente: el panel del operador, determinista y sin LLM.
         """
         user = update.effective_user
         chat = update.effective_chat
@@ -277,16 +282,22 @@ class SlashCommands:
                 "Reload no disponible — el bot no fue arrancado con DaemonReloader inyectado."
             )
             return
-        await message.reply_text("Reiniciando daemon...")
+        descartados: list[str] = self._reloader.request_reload() or []
         logger.info(
             "Reload solicitado vía /reload Telegram",
             extra={
                 "agent_id": self._settings.id,
                 "user_id": user.id,
                 "chat_id": chat.id,
+                "overrides_descartados": len(descartados),
             },
         )
-        self._reloader.request_reload()
+        texto = "Reiniciando daemon..."
+        if descartados:
+            texto += "\nSe descartan los cambios de runtime:\n" + "\n".join(
+                f"- {linea}" for linea in descartados
+            )
+        await message.reply_text(texto)
 
     async def cmd_ratelimit(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """`/ratelimit [count [window] | reset]` — override en runtime del rate limiter.

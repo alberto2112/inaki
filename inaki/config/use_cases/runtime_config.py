@@ -20,12 +20,15 @@ mismo.
 El origen de cada valor (``default`` / ``global`` / ``agent``) sí viene de la
 vista de disco, capturado en el MISMO instante del arranque en que se construyó
 el snapshot — momento en el que disco y memoria coinciden por construcción.
+Los valores pisados por ``config_set`` (la capa de overrides en memoria) llevan
+el origen ``runtime``, que gana sobre el de disco: es un overlay de una línea
+sobre ese mapa, no un segundo merge.
 
 **Los secretos se redactan al construir, no al consultar.** El snapshot que
 guarda esta clase ya no contiene ninguna credencial en claro: no hay bandera
 que las revele porque no están. Es deliberado — lo que una tool devuelve viaja
-al contexto del LLM, al historial y al chat, y ninguna tool recibe la identidad
-de quien pregunta.
+al contexto del LLM, al historial y al chat, y eso vale también en un turno de
+operador: ni el operador ve una credencial por chat.
 """
 
 from __future__ import annotations
@@ -40,6 +43,10 @@ from inaki.config.use_cases.show_effective import (
     aplanar,
     es_path_secreto,
 )
+
+ORIGEN_RUNTIME = "runtime"
+"""Origen de un valor pisado en memoria por ``config_set``. Se pierde en un
+``/reload`` manual, un reinicio del servicio o un reload fallido."""
 
 ORIGEN_DESCONOCIDO = "desconocido"
 """Origen de un valor cuyo mapa de capas no se pudo construir.
@@ -60,7 +67,7 @@ class CampoRuntime:
     """Valor en memoria. Redactado si el campo es una credencial."""
 
     origen: str
-    """Capa que aportó el valor: ``default`` | ``global`` | ``agent`` | ``desconocido``."""
+    """Capa que aportó el valor: ``default`` | ``global`` | ``agent`` | ``runtime`` | ``desconocido``."""
 
     es_secreto: bool = False
     """Si el schema lo marca como credencial."""
@@ -77,6 +84,10 @@ class RuntimeConfigUseCase:
             paths ausentes quedan en ``ORIGEN_DESCONOCIDO``.
         paths_secretos: Rutas marcadas como credenciales en el schema, con
             comodín ``*`` por segmento (``providers.*.api_key``).
+        paths_runtime: Hojas pisadas por ``config_set`` (la capa de overrides en
+            memoria). Un path igual a uno de ellos, o debajo de uno, lleva
+            ``origen="runtime"``, que pisa el de disco. El VALOR no cambia de
+            fuente: ``config_en_memoria`` ya trae los overrides aplicados.
     """
 
     def __init__(
@@ -84,13 +95,17 @@ class RuntimeConfigUseCase:
         config_en_memoria: dict[str, Any],
         origenes: dict[str, str] | None = None,
         paths_secretos: frozenset[str] = frozenset(),
+        paths_runtime: frozenset[str] = frozenset(),
     ) -> None:
         origenes = origenes or {}
         self._campos: dict[str, CampoRuntime] = {}
         for path, valor in sorted(aplanar(config_en_memoria).items()):
-            self._campos[path] = self._construir(
-                path, valor, origenes.get(path, ORIGEN_DESCONOCIDO), paths_secretos
+            origen = (
+                ORIGEN_RUNTIME
+                if _es_runtime(path, paths_runtime)
+                else origenes.get(path, ORIGEN_DESCONOCIDO)
             )
+            self._campos[path] = self._construir(path, valor, origen, paths_secretos)
 
     @staticmethod
     def _construir(
@@ -145,3 +160,8 @@ class RuntimeConfigUseCase:
         if hermanos:
             return sorted(hermanos)[:limite]
         return get_close_matches(path, list(self._campos), n=limite, cutoff=0.5)
+
+
+def _es_runtime(path: str, paths_runtime: frozenset[str]) -> bool:
+    """``path`` es una hoja pisada en runtime, o cuelga de una (``a.b`` bajo ``a.b``)."""
+    return any(path == p or path.startswith(f"{p}.") for p in paths_runtime)

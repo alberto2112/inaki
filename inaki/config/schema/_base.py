@@ -7,6 +7,7 @@ fija ``use_attribute_docstrings`` + ``extra="forbid"`` para TODO el schema.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from difflib import get_close_matches
 from pathlib import Path
 from typing import Annotated, Any
@@ -37,8 +38,24 @@ def _expand_user_list(v: Any) -> Any:
     return v
 
 
-ExpandedPath = Annotated[str, BeforeValidator(_expand_user_str)]
-ExpandedPathList = Annotated[list[str], BeforeValidator(_expand_user_list)]
+@dataclass(frozen=True)
+class _FijoEnRuntime:
+    """Marca de metadata: el campo que la lleva NO se cambia en runtime.
+
+    Pydantic conserva en ``FieldInfo.metadata`` (o, dentro de ``list[...]`` /
+    ``X | None``, en el ``Annotated`` del tipo del ítem) la metadata que no
+    reconoce, así que la marca viaja con el TIPO y no con una lista de paths.
+    La lee ``inaki.config.introspection.paths_fijos_en_runtime()``. Un campo de
+    ruta nuevo queda cubierto con solo usar ``RuntimePath``/``ExpandedPath``.
+    """
+
+
+FIJO_EN_RUNTIME = _FijoEnRuntime()
+"""Instancia única de la marca. Va dentro del ``Annotated`` de los tipos de ruta."""
+
+
+ExpandedPath = Annotated[str, BeforeValidator(_expand_user_str), FIJO_EN_RUNTIME]
+ExpandedPathList = Annotated[list[str], BeforeValidator(_expand_user_list), FIJO_EN_RUNTIME]
 
 
 # Valores SQLite especiales que NO deben interpretarse como paths.
@@ -64,7 +81,7 @@ def _resolve_runtime_path(v: Any) -> Any:
     return str(get_inaki_home() / p)
 
 
-RuntimePath = Annotated[str, BeforeValidator(_resolve_runtime_path)]
+RuntimePath = Annotated[str, BeforeValidator(_resolve_runtime_path), FIJO_EN_RUNTIME]
 
 
 # ---------------------------------------------------------------------------

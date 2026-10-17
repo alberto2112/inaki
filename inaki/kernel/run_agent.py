@@ -253,6 +253,7 @@ class RunAgentUseCase:
         chat_id: str | None = None,
         ephemeral: bool = False,
         skip_marker: str | None = None,
+        es_operador: bool = False,
     ) -> str:
         """Ejecuta un turno del agente.
 
@@ -294,6 +295,13 @@ class RunAgentUseCase:
                 LLMs no siempre cumplen "respondé EXACTAMENTE con __SKIP__" y
                 suelen agregar pre/post-amble — antes era estricto y dejaba pasar
                 el marker al chat. Default ``None`` → siempre se persiste.
+            es_operador: veredicto del CANAL: este turno lo pidió el operador (p. ej.
+                Telegram privado con el usuario en ``allowed_user_ids``, o la admin
+                key en REST). Habilita las tools que declaran ``requires_operator``.
+                Es un kwarg y no un campo de ``ChannelContext`` a propósito: el
+                contexto se publica en un ContextVar que la delegación sync hereda,
+                y el hijo no puede heredar el privilegio. Default ``False`` (falla
+                cerrado) en todo camino sin canal: scheduler, delegación, one-shot.
         """
         # Una sola fuente de verdad: con ctx presente, el scope (channel, chat_id)
         # se deriva de él salvo override explícito del caller.
@@ -314,6 +322,7 @@ class RunAgentUseCase:
                 chat_id=effective_chat_id,
                 ephemeral=ephemeral,
                 skip_marker=skip_marker,
+                es_operador=es_operador,
             )
         finally:
             reset_current_channel_context(token)
@@ -328,6 +337,7 @@ class RunAgentUseCase:
         chat_id: str,
         ephemeral: bool,
         skip_marker: str | None,
+        es_operador: bool = False,
     ) -> str:
         """Cuerpo del turno. ``channel``/``chat_id`` llegan ya normalizados por ``execute``.
 
@@ -341,7 +351,11 @@ class RunAgentUseCase:
             agent_id=agent_id, turn_id=uuid.uuid4().hex[:12], channel=channel, chat_id=chat_id
         )
         turno.trace(
-            "turn.start", user_input=user_input, ephemeral=ephemeral, skip_marker=skip_marker
+            "turn.start",
+            user_input=user_input,
+            ephemeral=ephemeral,
+            skip_marker=skip_marker,
+            es_operador=es_operador,
         )
 
         # Snapshot antes del primer await para evitar carrera con flushes concurrentes
@@ -612,6 +626,7 @@ class RunAgentUseCase:
                 reroute_tools=_reroute_tools_for_drain,
                 reroute_max_extra_tools=self._settings.tools_top_k,
                 tracer=turno,
+                turno_de_operador=es_operador,
             )
         except ToolLoopMaxIterationsError as e:
             response = e.last_response or (

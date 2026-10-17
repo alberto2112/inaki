@@ -36,6 +36,7 @@ async def test_traza_llm_y_tools_en_orden() -> None:
         ]
     )
     tools = MagicMock()
+    tools.requires_operator = MagicMock(return_value=False)  # sin tools privilegiadas
     tools.execute = AsyncMock(
         return_value=ToolResult(tool_name="web_search", output="resultado", success=True)
     )

@@ -9,6 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
+from pydantic import Field
+
 from inaki.config.schema._base import ExpandedPath, _ConfigBaseModel
 
 ContainmentMode = Literal["strict", "warn", "off"]
@@ -30,14 +32,19 @@ class WorkspaceConfig(_ConfigBaseModel):
     Es también la frontera que aplica ``containment``. ``~`` se expande al cargar
     la config."""
 
-    containment: ContainmentMode = "strict"
+    containment: ContainmentMode = Field(
+        default="strict", json_schema_extra={"fijo_en_runtime": True}
+    )
     """Qué hacer cuando un path resuelto se sale del workspace (absoluto o vía ``..``).
 
     - ``strict`` (default, recomendado en producción) → aborta con
       ``WorkspaceEscapeError``; la tool nunca toca el fichero.
     - ``warn`` → permite el acceso y deja un WARNING en el log.
     - ``off`` → sin chequeo; las tools pueden leer y escribir en cualquier lado
-      al que llegue el proceso."""
+      al que llegue el proceso.
+
+    No se cambia en runtime con ``config_set``: aflojar la contención desde un chat
+    le abriría todo el filesystem a una inyección, hasta el próximo ``/reload``."""
 
     def model_post_init(self, __context: object) -> None:
         # Expand ~ in the default value (BeforeValidator no corre en defaults de clase).

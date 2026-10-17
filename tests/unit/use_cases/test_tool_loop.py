@@ -57,6 +57,7 @@ def _make_llm(*responses: LLMResponse | str, thinking_active: bool = False) -> A
 def _make_tools(tool_name: str = "mytool", success: bool = True) -> MagicMock:
     """Tools mock que devuelve siempre un ToolResult exitoso (o fallido)."""
     tools = AsyncMock()
+    tools.requires_operator = MagicMock(return_value=False)  # sin tools privilegiadas
     tools.execute = AsyncMock(
         return_value=ToolResult(
             tool_name=tool_name,
@@ -317,6 +318,7 @@ async def test_circuit_breaker_blocks_after_threshold_failures():
     # El LLM siempre pide la misma tool (vamos a llegar al breaker antes de max_iter)
     llm = _make_llm(tool_call, tool_call, tool_call, "Respuesta final")
     tools = AsyncMock()
+    tools.requires_operator = MagicMock(return_value=False)  # sin tools privilegiadas
     tools.execute = AsyncMock(return_value=failing_result)
 
     result = await run_tool_loop(
@@ -351,6 +353,7 @@ async def test_circuit_breaker_does_not_execute_tripped_tool():
     # Iteración 3: LLM responde sin tools
     llm = _make_llm(tool_call, tool_call, "Respuesta sin tools")
     tools = AsyncMock()
+    tools.requires_operator = MagicMock(return_value=False)  # sin tools privilegiadas
     tools.execute = AsyncMock(return_value=failing_result)
 
     await run_tool_loop(
@@ -375,6 +378,7 @@ async def test_circuit_breaker_not_tripped_for_retryable_errors():
 
     llm = _make_llm(tool_call, tool_call, "Final")
     tools = AsyncMock()
+    tools.requires_operator = MagicMock(return_value=False)  # sin tools privilegiadas
     tools.execute = AsyncMock(return_value=failing_result)
 
     result = await run_tool_loop(
@@ -402,6 +406,7 @@ async def test_circuit_breaker_resets_on_success():
     # fallo → éxito → fallo → éxito → sin tools
     llm = _make_llm(tool_call, tool_call, tool_call, tool_call, "Final")
     tools = AsyncMock()
+    tools.requires_operator = MagicMock(return_value=False)  # sin tools privilegiadas
     tools.execute = AsyncMock(
         side_effect=[fail_result, success_result, fail_result, success_result]
     )

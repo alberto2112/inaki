@@ -30,7 +30,7 @@ from inaki.kernel.ports.channel_port import (
 from inaki.kernel.ports.history_port import IHistoryStore
 from inaki.kernel.ports.llm_port import ILLMProvider
 from inaki.kernel.ports.scope_registry_port import IScopeRegistry, Scope
-from inaki.kernel.ports.tool_port import IToolExecutor
+from inaki.kernel.ports.tool_port import IToolExecutor, ToolResult
 from inaki.kernel.ports.turn_tracer_port import ITurnTracer, NullTurnTracer
 from inaki.shared.errors import ToolLoopMaxIterationsError
 from inaki.shared.message import Message, Role
@@ -52,6 +52,16 @@ _CANCEL_WRAPUP_INSTRUCTION = (
 # cuando el kill-switch cortó a mitad. Mantiene el pairing protocolar
 # assistant+tool_calls ↔ tool results (sin esto, el provider tira 400).
 _CANCELLED_TOOL_RESULT = "NOT EXECUTED — the user cancelled the task (kill-switch)."
+
+# Rechazo de una tool privilegiada (`ITool.requires_operator`) en un turno que no es
+# de operador. Va en español como el `CIRCUIT OPEN` y le habla al LLM: el "NO la
+# vuelvas a llamar" evita que insista (el rechazo es no-retryable, así que al tercer
+# intento el circuit breaker abre igual).
+_RECHAZO_PRIVILEGIO = (
+    "PRIVILEGIO — esta tool solo se ejecuta en un turno del operador. Este turno no "
+    "es de operador: NO la vuelvas a llamar. Decile al usuario que ese cambio lo "
+    "tiene que pedir el operador."
+)
 
 
 # Tope de veces que un drain in-flight puede resetear el contador de iteraciones
@@ -222,6 +232,7 @@ async def run_tool_loop(
     reroute_tools: Callable[[str], Awaitable[list[dict]]] | None = None,
     reroute_max_extra_tools: int = 0,
     tracer: ITurnTracer | None = None,
+    turno_de_operador: bool = False,
 ) -> str:
     """
     Ejecuta el loop LLM + tool-dispatch hasta obtener respuesta final o
@@ -314,6 +325,11 @@ async def run_tool_loop(
             el caller). El loop emite ``llm.response`` por cada llamada al
             provider y ``tool.call``/``tool.result`` por cada tool. Solo
             observa: no cambia el flujo. Default ``None`` → tracer nulo.
+        turno_de_operador: True si el canal atribuyó este turno al operador
+            (``RunAgentUseCase.execute(es_operador=True)``). Sin él, una tool que
+            declara ``requires_operator`` se rechaza ANTES de ejecutarse. Default
+            ``False`` (falla cerrado): el one-shot de la delegación no lo pasa, así
+            que un hijo nunca hereda el privilegio del turno del padre.
 
     Returns:
         El texto de respuesta final del LLM (sin tool calls).
@@ -570,7 +586,25 @@ async def run_tool_loop(
                 )
 
             tracer.trace("tool.call", tool=tool_name, call_id=tc_id, args=kwargs)
-            result = await tools.execute(tool_name, **kwargs)
+            # Enforcement de privilegio: la ÚNICA puerta que nadie esquiva es la
+            # ejecución (el page-in de arriba deja llamar cualquier tool del registry
+            # aunque el routing no la muestre). El resultado sintético sigue el camino
+            # normal de abajo: traza, historial, circuit breaker.
+            if not turno_de_operador and tools.requires_operator(tool_name):
+                result = ToolResult(
+                    tool_name=tool_name,
+                    output=_RECHAZO_PRIVILEGIO,
+                    success=False,
+                    error=_RECHAZO_PRIVILEGIO,
+                    retryable=False,
+                )
+                logger.warning(
+                    "[privilegio] '%s' rechazada: turno sin operador (agent=%s)",
+                    tool_name,
+                    agent_id,
+                )
+            else:
+                result = await tools.execute(tool_name, **kwargs)
             tracer.trace(
                 "tool.result",
                 tool=tool_name,

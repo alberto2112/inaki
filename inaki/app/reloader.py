@@ -16,12 +16,43 @@ from __future__ import annotations
 
 import asyncio
 
+from inaki.config.ports import ModoReload
+from inaki.config.runtime_overrides import OverridesDeRuntime
+
 
 class DaemonReloader:
-    def __init__(self) -> None:
-        self._event = asyncio.Event()
+    """Señal de reload con dos modos (feature ``config-set-efimero``).
 
-    def request_reload(self) -> None:
+    - ``request_reload()`` — MANUAL (las tres puertas: ``POST /admin/reload``,
+      ``inaki reload`` y ``/reload`` de Telegram): descarta los overrides de runtime
+      EN EL MOMENTO del pedido y devuelve una línea por cada uno descartado. Descartar
+      acá hace imposible que un ``config_set`` posterior sobreviva: el use case ve
+      ``modo == "descartar"`` y rechaza.
+    - ``request_reload_para_aplicar()`` — solo ``config_set``: el store se conserva y
+      el bootstrap lo lee. Si ya hay un manual pendiente no lo pisa (gana el manual).
+
+    ``overrides`` es opcional para que quien construye el reloader pelado (tests) no
+    tenga que armar un store.
+    """
+
+    def __init__(self, overrides: OverridesDeRuntime | None = None) -> None:
+        self._event = asyncio.Event()
+        self._overrides = overrides
+        self._modo: ModoReload | None = None
+
+    @property
+    def modo(self) -> ModoReload | None:
+        return self._modo
+
+    def request_reload(self) -> list[str]:
+        descartados = self._overrides.descartar_todo() if self._overrides is not None else []
+        self._modo = "descartar"
+        self._event.set()
+        return descartados
+
+    def request_reload_para_aplicar(self) -> None:
+        if self._modo is None:
+            self._modo = "aplicar"
         self._event.set()
 
     async def wait_for_reload(self) -> None:

@@ -86,7 +86,7 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 # exchangelib no expone py.typed marker — third-party sin stubs.
-# Usado por el ext de exchange_calendar.
+# Usado por el ext de ms_exchange.
 module = "exchangelib.*"
 ignore_missing_imports = true
 

@@ -1053,6 +1053,7 @@ Tuvo ``extra="allow"`` mientras el bloque no se validaba al cargar: sin validaci
 |---|---|---|---|
 | `token` | `str` | `''` | 🔒 |
 | `allowed_user_ids` | `list[int]` | _(default factory)_ |  |
+| `operator_user_ids` | `list[int]` | _(default factory)_ |  |
 | `allowed_chat_ids` | `list[int]` | _(default factory)_ |  |
 | `reactions` | `bool` | `False` |  |
 | `voice_enabled` | `bool` | `True` |  |
@@ -1063,6 +1064,18 @@ Tuvo ``extra="allow"`` mientras el bloque no se validaba al cargar: sin validaci
 **`token`** — Token del bot de Telegram (BotFather). Requerido para que el canal levante.
 
 **`allowed_user_ids`** — IDs de usuarios autorizados en CHATS PRIVADOS. Lista vacía = sin restricción. NO aplica en grupos (los grupos se controlan solo por ``allowed_chat_ids``).
+
+**`operator_user_ids`** — IDs de los OPERADORES: quienes, en un chat privado, pueden disparar las tools privilegiadas (``requires_operator``, p. ej. la operación ``set`` de la tool ``config``). Es una lista aparte de ``allowed_user_ids`` porque son dos preguntas distintas —quién puede HABLAR y quién manda— y con una sola lista no se podía expresar "bot abierto para hablar, solo el dueño como operador".
+
+**Herencia**: lista vacía = los operadores son los de ``allowed_user_ids`` (el comportamiento de siempre, no hay que migrar nada). Con la lista declarada, solo esos ids son operadores y el resto de ``allowed_user_ids`` habla sin privilegio.
+
+Con las dos listas vacías nadie es operador: abrir el bot a todos no vuelve operador a nadie. En grupos nunca hay operador, con cualquier valor de esta lista (un turno de grupo no se puede atribuir a una persona).
+
+**Validación al cargar**: si ``allowed_user_ids`` no está vacía, todo id de esta lista tiene que estar en ella; un operador que no puede ni hablar por privado es una config contradictoria y el arranque aborta nombrando los ids sobrantes. Con ``allowed_user_ids`` vacía (habla cualquiera) no hay restricción.
+
+Combinaciones (chat privado), como ``allowed_user_ids`` / ``operator_user_ids`` → quién habla, quién es operador: vacía / vacía → todos, nadie; vacía / ``[yo]`` → todos, yo; ``[a, b]`` / vacía → a y b, a y b; ``[a, b]`` / ``[a]`` → a y b, solo a; ``[a]`` / ``[c]`` → error al cargar.
+
+Los slash commands del bot NO usan esta lista: siguen gobernados por ``allowed_user_ids``.
 
 **`allowed_chat_ids`** — IDs de grupos autorizados. Lista vacía = el bot NO responde en grupos (solo chats privados). En un grupo autorizado cualquier usuario puede interactuar: ``allowed_user_ids`` no se evalúa en grupos.
 

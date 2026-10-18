@@ -65,8 +65,21 @@ eso:
   caso, y el scheduler, `agent_send`, la delegación y los one-shot nunca son turno de
   operador. Podés leer el contexto para otra cosa (a qué chat avisar), nunca para
   autorizarte.
-- Telegram: operador = privado ∧ `allowed_user_ids` no vacía ∧ usuario listado (lista
-  vacía = nadie). REST/CLI: operador por la admin key. Grupos: nunca.
+- Telegram: operador = privado ∧ operadores efectivos no vacíos ∧ usuario entre ellos.
+  Los operadores son `operator_user_ids` y, si está vacía, heredan `allowed_user_ids`;
+  con las dos vacías nadie es operador (abrir el bot a todos no vuelve operador a
+  nadie). `allowed_user_ids` solo gobierna quién puede hablar y los slash commands, y si
+  no está vacía debe contener a todos los operadores (si no, la carga aborta).
+
+  | `allowed_user_ids` | `operator_user_ids` | habla (privado) | operador |
+  |---|---|---|---|
+  | vacía | vacía | todos | nadie |
+  | vacía | `[yo]` | todos | yo |
+  | `[a, b]` | vacía | a, b | a, b |
+  | `[a, b]` | `[a]` | a, b | a |
+  | `[a]` | `[c]` | — | error al cargar |
+
+  REST/CLI: operador por la admin key. Grupos: nunca.
 - `POST /admin/tool/invoke` no pasa por el tool loop (no hay turno): su auth es la admin
   key y no aplica este chequeo.
 - Si una extensión registra una tool con el nombre de una privilegiada sin declarar

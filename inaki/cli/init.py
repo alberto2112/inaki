@@ -118,8 +118,23 @@ def init(
                 default="",
                 show_default=False,
             )
-            allowed = [s.strip() for s in ids.split(",") if s.strip()]
-            extra["channels"] = {"telegram": {"token": token, "allowed_user_ids": allowed}}
+            allowed = _ids_separados_por_coma(ids)
+            telegram: dict = {"token": token, "allowed_user_ids": allowed}
+            # Con la lista restringida los operadores heredan ``allowed_user_ids``: no hay
+            # nada que preguntar. Solo con el bot abierto (habla cualquiera) hace falta
+            # decir quién manda, y vacío significa que nadie.
+            if not allowed:
+                operadores = _ids_separados_por_coma(
+                    typer.prompt(
+                        "IDs de operador, separados por coma — quiénes pueden cambiar la "
+                        "config por chat (vacío = nadie)",
+                        default="",
+                        show_default=False,
+                    )
+                )
+                if operadores:
+                    telegram["operator_user_ids"] = operadores
+            extra["channels"] = {"telegram": telegram}
 
         CreateAgentUseCase(repo).execute(
             agent_id,
@@ -151,6 +166,11 @@ def init(
     typer.echo(
         "\nListo. Probá con `inaki` (chat) o instalá el servicio con `inaki service install`."
     )
+
+
+def _ids_separados_por_coma(texto: str) -> list[str]:
+    """``"11, 22,"`` → ``["11", "22"]``: el parseo de las listas de ids del wizard."""
+    return [s.strip() for s in texto.split(",") if s.strip()]
 
 
 def _descargar_modelo(dest: Path) -> None:

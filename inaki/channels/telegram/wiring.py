@@ -98,6 +98,7 @@ def build_telegram_channel_settings(
     return TelegramChannelSettings(
         token=tg_cfg.token,
         allowed_user_ids=tuple(str(uid) for uid in tg_cfg.allowed_user_ids),
+        operator_user_ids=tuple(str(uid) for uid in tg_cfg.operator_user_ids),
         allowed_chat_ids=tuple(str(cid) for cid in tg_cfg.allowed_chat_ids),
         reactions=tg_cfg.reactions,
         voice_enabled=tg_cfg.voice_enabled,

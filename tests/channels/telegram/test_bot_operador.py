@@ -1,7 +1,9 @@
 """``TurnRunner`` traduce la auth de Telegram al bit ``es_operador`` de ``execute()``.
 
-Matriz (feature config-set-efimero): privado ∧ ``allowed_user_ids`` no vacía ∧ usuario
-listado → True. Lista vacía, usuario no listado, grupo y flush de grupo → False.
+Matriz (feature config-set-efimero): privado ∧ operadores efectivos no vacíos ∧ usuario
+listado → True. Sin operadores, usuario no listado, grupo y flush de grupo → False. Los
+operadores son ``operator_user_ids`` o, si está vacía, ``allowed_user_ids``; la tabla de
+verdad completa vive en ``test_operator_user_ids.py``.
 """
 
 from __future__ import annotations
@@ -12,12 +14,15 @@ from inaki.channels.telegram.bot import TelegramBot
 from inaki.channels.telegram.ports import TelegramChannelSettings
 
 
-def _make_bot(allowed_user_ids: tuple[str, ...]) -> tuple[TelegramBot, MagicMock]:
+def _make_bot(
+    allowed_user_ids: tuple[str, ...], operator_user_ids: tuple[str, ...] = ()
+) -> tuple[TelegramBot, MagicMock]:
     agent_cfg = MagicMock()
     agent_cfg.id = "test-agent"
     agent_cfg.telegram = TelegramChannelSettings(
         token="fake-token",
         allowed_user_ids=allowed_user_ids,
+        operator_user_ids=operator_user_ids,
         allowed_chat_ids=("-100",),
         reactions=False,
     )
@@ -89,3 +94,24 @@ async def test_flush_de_grupo_no_pasa_es_operador() -> None:
 
     kwargs = container.run_agent.execute.await_args.kwargs
     assert kwargs.get("es_operador", False) is False
+
+
+async def test_bot_abierto_con_operador_explicito_solo_ese_turno_es_operador() -> None:
+    """``allowed_user_ids`` vacía (habla cualquiera) + ``operator_user_ids`` = [123]:
+    el bot le pasa ``es_operador`` al kernel según la lista de operadores, no según
+    quién puede hablar."""
+    bot, container = _make_bot((), operator_user_ids=("123",))
+
+    await _mensaje(bot, _update(123, "private"))
+    assert container.run_agent.execute.await_args.kwargs["es_operador"] is True
+
+    await _mensaje(bot, _update(456, "private"))
+    assert container.run_agent.execute.await_args.kwargs["es_operador"] is False
+
+
+async def test_quien_habla_pero_no_esta_en_operadores_no_es_operador() -> None:
+    bot, container = _make_bot(("123", "456"), operator_user_ids=("123",))
+
+    await bot._turns.run(_update(456, "private"), "hola", chat_type="private")
+
+    assert container.run_agent.execute.await_args.kwargs["es_operador"] is False

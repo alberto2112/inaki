@@ -206,6 +206,12 @@ Cada una salió de un fallo en producción. El caso completo está en
 - **NUNCA** decidir un privilegio dentro de una tool ni por `ContextVar`: la tool declara
   `requires_operator`, el canal decide `es_operador` y el kernel lo hace cumplir en
   `run_tool_loop`. Una delegación o un one-shot nunca hereda el privilegio. → `config-set-efimero`
+- **NUNCA** atar el privilegio de operador a la lista de quién puede hablar: en Telegram son dos
+  (`allowed_user_ids` = quién habla por privado y usa los slash; `operator_user_ids` = quién es
+  operador, y si está vacía hereda `allowed_user_ids`). Operador = privado ∧ operadores efectivos NO
+  vacíos ∧ usuario entre ellos: con las dos vacías habla cualquiera y nadie es operador, y en
+  grupos nunca. Un operador fuera de una `allowed_user_ids` no vacía aborta la carga.
+  → `operator-user-ids`
 - **NUNCA** proteger una tool entera cuando solo una operación escribe (declará
   `unlocked_operations` + `operation_param`; `config`: `get`/`list` libres, `set` del operador),
   ni despachar la operación con una función distinta de la que la autoriza: se despacha con

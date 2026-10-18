@@ -91,6 +91,8 @@ class TelegramChannelSettings:
 
     token: str = ""
     allowed_user_ids: tuple[str, ...] = ()
+    operator_user_ids: tuple[str, ...] = ()
+    """Operadores declarados; vacía = heredan ``allowed_user_ids`` (lo resuelve ``TelegramAuth``)."""
     allowed_chat_ids: tuple[str, ...] = ()
     reactions: bool = False
     voice_enabled: bool = True

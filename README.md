@@ -66,7 +66,7 @@ inaki init                                                  # provider, first ag
 inaki service install                                       # systemd unit (prints the sudo steps)
 ```
 
-`inaki init` asks a handful of sequential questions, writes `~/.inaki/config/global.yaml` and the first agent YAML through the same config use cases every other editor uses, validates the result with the **same loader the daemon boots with**, and offers to download the local embeddings model (`intfloat/multilingual-e5-small`, ~470 MB) into `~/.inaki/models/e5-small/`. Re-running it is safe: it asks before replacing a credential or creating another agent.
+`inaki init` asks a handful of sequential questions, writes `~/.inaki/config/global.yaml` and the first agent YAML through the same config use cases every other editor uses, validates the result with the **same loader the daemon boots with**, and offers to download the local embeddings model (`intfloat/multilingual-e5-small`, ~470 MB) into `~/.inaki/models/e5-small/`. If you open the Telegram bot to everyone (empty allowed user IDs) it also asks who the operators are (empty = nobody); with a restricted list it does not ask, because operators inherit it. Re-running it is safe: it asks before replacing a credential or creating another agent.
 
 Face recognition (`photos.enabled`) needs `insightface`, which compiles on ARM, so it is an **optional extra**: `pipx install "inaki[faces] @ git+https://github.com/alberto2112/inaki"`. With photos enabled and the extra missing, the daemon starts without photos and logs an `ERROR` saying so.
 
@@ -207,6 +207,9 @@ channels:
   telegram:
     token: "7xxxxxxx:AAF..."          # Bot token from BotFather
     allowed_user_ids: ["123456789"]   # Allowed private chat user IDs. Empty = everyone.
+    operator_user_ids: []             # Who may trigger privileged tools (e.g. `config` set), private chats only.
+                                      # Empty = inherit allowed_user_ids; both empty = nobody is operator.
+                                      # If allowed_user_ids is set, every operator must be listed there.
     allowed_chat_ids: []              # Allowed group chat IDs (negative numbers).
                                       # Empty list = bot does NOT respond in groups.
     reactions: true

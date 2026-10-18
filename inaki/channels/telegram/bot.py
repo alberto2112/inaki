@@ -127,7 +127,9 @@ class TelegramBot:
         )
 
         # --- colaboradores, en orden de dependencia ---
-        self._auth = TelegramAuth(tg_cfg.allowed_user_ids, tg_cfg.allowed_chat_ids)
+        self._auth = TelegramAuth(
+            tg_cfg.allowed_user_ids, tg_cfg.allowed_chat_ids, tg_cfg.operator_user_ids
+        )
         self._reactions = Reactions(private=tg_cfg.reactions, groups=grupos.reactions)
         # La política la construye el ``wiring`` (sabe si el agente es autónomo);
         # el fallback deshabilitado cubre al caller que arma un bot suelto (tests).

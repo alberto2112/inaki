@@ -1,6 +1,6 @@
 """Autorización del bot de Telegram: quién puede hablarle y desde dónde.
 
-Objeto puro (sin PTB, sin I/O): recibe las dos listas de la config y responde
+Objeto puro (sin PTB, sin I/O): recibe las listas de la config y responde
 la matriz por contexto. Lo consumen los handlers de mensaje, el ingress de
 broadcast (que llega sin ``Update``) y el aviso de vuelta online.
 """
@@ -20,13 +20,23 @@ class TelegramAuth:
       NO responde en grupos); ``allowed_user_ids`` NO aplica en grupos.
     - Operador (``is_operator``): el veredicto de privilegio para las tools que
       declaran ``requires_operator``. Más estricto que ``is_allowed``: falla cerrado.
+      Lo gobierna ``operator_user_ids``, que si está vacía hereda ``allowed_user_ids``.
     """
 
     def __init__(
-        self, allowed_user_ids: tuple[str, ...], allowed_chat_ids: tuple[str, ...]
+        self,
+        allowed_user_ids: tuple[str, ...],
+        allowed_chat_ids: tuple[str, ...],
+        operator_user_ids: tuple[str, ...] = (),
     ) -> None:
         self.allowed_user_ids: list[str] = list(allowed_user_ids)
         self.allowed_chat_ids: list[str] = list(allowed_chat_ids)
+        self.operator_user_ids: list[str] = list(operator_user_ids)
+
+    @property
+    def operadores(self) -> list[str]:
+        """Operadores efectivos: los declarados, o ``allowed_user_ids`` si no hay ninguno."""
+        return self.operator_user_ids or self.allowed_user_ids
 
     def is_allowed(self, user_id: int) -> bool:
         """Admin-only: la regla de los comandos slash y de los chats privados."""
@@ -37,16 +47,17 @@ class TelegramAuth:
     def is_operator(self, user_id: int, chat_type: str) -> bool:
         """¿Este turno lo pidió el operador? Habilita las tools ``requires_operator``.
 
-        Privado ∧ ``allowed_user_ids`` NO vacía ∧ el usuario está listado. Falla
+        Privado ∧ operadores efectivos NO vacíos ∧ el usuario está entre ellos
+        (``operator_user_ids``, o ``allowed_user_ids`` si aquella está vacía). Falla
         cerrado a propósito, a diferencia de ``is_allowed`` (lista vacía = todos):
-        con la lista vacía cualquiera puede escribirle al bot por privado, y eso no
-        lo vuelve operador. En grupos nunca: no hay forma de atribuir un turno a una
+        con las dos listas vacías cualquiera puede escribirle al bot por privado, y
+        eso no lo vuelve operador. En grupos nunca: no hay forma de atribuir un turno a una
         persona (``sender_name`` es el último humano del lote).
         """
         return (
             chat_type not in _TIPOS_GRUPO
-            and bool(self.allowed_user_ids)
-            and str(user_id) in self.allowed_user_ids
+            and bool(self.operadores)
+            and str(user_id) in self.operadores
         )
 
     def is_allowed_chat(self, chat_id: int | str) -> bool:

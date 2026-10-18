@@ -296,7 +296,7 @@ class RunAgentUseCase:
                 suelen agregar pre/post-amble — antes era estricto y dejaba pasar
                 el marker al chat. Default ``None`` → siempre se persiste.
             es_operador: veredicto del CANAL: este turno lo pidió el operador (p. ej.
-                Telegram privado con el usuario en ``allowed_user_ids``, o la admin
+                Telegram privado con el usuario entre los operadores del canal, o la admin
                 key en REST). Habilita las tools que declaran ``requires_operator``.
                 Es un kwarg y no un campo de ``ChannelContext`` a propósito: el
                 contexto se publica en un ContextVar que la delegación sync hereda,

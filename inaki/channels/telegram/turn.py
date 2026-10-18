@@ -102,7 +102,8 @@ class TurnRunner:
             return
         chat_id = chat.id
         es_grupo = chat_type in _TIPOS_GRUPO
-        # Veredicto de privilegio: el canal DECIDE, el kernel hace cumplir. Entra por
+        # Veredicto de privilegio (``operator_user_ids``, o ``allowed_user_ids`` si aquella
+        # está vacía): el canal DECIDE, el kernel hace cumplir. Entra por
         # ``execute()`` (no por ``ChannelContext``) para que un hijo delegado no lo herede.
         es_operador = self._auth.is_operator(user.id, chat_type)
         secciones: list[str] = list(extra_sections or [])

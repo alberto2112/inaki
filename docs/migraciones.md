@@ -72,6 +72,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
 
 | Nota | Cambio observable |
 |---|---|
+| [`operator-user-ids`](#operator-user-ids) | Campo nuevo `channels.telegram.operator_user_ids`: quién es operador deja de colgar de `allowed_user_ids`. Vacía hereda `allowed_user_ids` (sin cambios para las configs existentes); declarada, solo esos ids son operadores. Un operador fuera de una `allowed_user_ids` no vacía **aborta la carga** con un error que nombra los ids |
 | [`privilegio-por-operacion`](#privilegio-por-operacion) | `config_set` dejó de existir: es la operación `set` de la tool `config`, que ahora es privilegiada POR OPERACIÓN (`get`/`list` libres para cualquier turno, `set` solo del operador). Un historial viejo puede mencionar `config_set`. En un sub-agente o fuera del daemon `config` sigue siendo solo lectura. El hijo de una delegación ve `config` y el kernel le rechaza `set` |
 | [`config-set-efimero`](#config-set-efimero) | Tool nueva `config_set` (solo a pedido del operador): el agente cambia un parámetro de su config EN MEMORIA y el daemon se reconstruye con él. El `/reload` manual (REST, CLI y Telegram) **descarta** esos cambios y avisa cuáles (`POST /admin/reload` suma `overrides_descartados`); un reinicio o un reload fallido los pierde todos. Con `allowed_user_ids` vacía nadie es operador. El `/reload` de Telegram pide el reload antes de responder |
 | [`reload-fallido-reinicia`](#reload-fallido-reinicia) | Un `/reload` cuyo ensamblado falla termina con **exit 1** y systemd reinicia el servicio desde disco (antes, exit 0: daemon muerto en silencio). Un `llm.provider`/`embedding.provider` inexistente sale como `Error de configuración` limpio, al arrancar y al recargar (antes, traceback de `ValueError`) |
@@ -121,7 +122,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `in-flight-message-injection`, `turn-kill-switch`
 - **Retención y alcance del registro**: `ventana-cuenta-conversacion`, `trim-cuenta-conversacion`,
   `search-history-retention-horizon`
-- **Telegram y canales**: `timestamps-solo-en-user`, `rotulo-del-emisor-en-grupos`, `telegram-composicion`, `channels-validados-al-cargar`, `attachment-grammar`,
+- **Telegram y canales**: `operator-user-ids`, `timestamps-solo-en-user`, `rotulo-del-emisor-en-grupos`, `telegram-composicion`, `channels-validados-al-cargar`, `attachment-grammar`,
   `formato-en-el-borde-del-transporte`,
   `groups-vs-broadcast`, `broadcast-human-reset`, `rate-limit-por-intervenciones`,
   `broadcast-topology-config`, `broadcast-arranque-observable`,
@@ -139,10 +140,64 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`, `reload-fallido-reinicia`,
-  `config-set-efimero`, `privilegio-por-operacion`,
+  `config-set-efimero`, `privilegio-por-operacion`, `operator-user-ids`,
   `agent-id-igual-al-fichero`, `knowledge-token-budget-retirado`
 - **Providers LLM**: `llm-un-solo-camino-de-construccion`, `openai-habla-responses`, `anthropic-api-actual`
 - **Delegación**: `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
+
+---
+
+### `operator-user-ids`
+
+**La decisión (2026-10-18)**: en Telegram, quién podía HABLAR por privado y quién era
+OPERADOR (el que dispara las tools privilegiadas, como la operación `set` de `config`)
+colgaban de la misma lista, `allowed_user_ids`. Eso hacía inexpresable el caso real:
+"bot abierto para hablar, solo el dueño como operador". Con la lista vacía hablaba
+cualquiera pero nadie era operador; con el dueño listado, el bot dejaba de ser abierto.
+Eran dos preguntas distintas con una sola respuesta posible.
+
+**El cambio**:
+- Campo nuevo `channels.telegram.operator_user_ids: list[int]` (default vacío), junto a
+  `allowed_user_ids` y con el mismo tipo. Su docstring en el schema documenta la herencia,
+  la validación y que en grupos nunca hay operador (de ahí sale `config-reference.md`).
+- Operadores efectivos = `operator_user_ids` si no está vacía; si está vacía, heredan
+  `allowed_user_ids` (el comportamiento de antes, así que ningún YAML existente se migró).
+- `TelegramAuth.is_operator`: privado ∧ operadores efectivos no vacíos ∧ usuario entre ellos.
+  Con las dos listas vacías nadie es operador (siguió fallando cerrado). En grupos, nunca.
+  `is_allowed`, `is_authorized` y los slash commands no cambiaron. `TelegramAuth` recibió el
+  tercer parámetro `operator_user_ids` (opcional) y la herencia se resuelve ahí, en un único
+  lugar; `TelegramChannelSettings` ganó el campo homónimo, mapeado en `build_telegram_channel_settings`.
+- Validación al cargar (`model_validator` de `TelegramChannelConfig`): si `allowed_user_ids`
+  no estaba vacía, todo id de `operator_user_ids` tenía que estar en ella, porque un operador
+  que no puede ni hablar por privado es una config contradictoria. El error es un
+  `ValueError` del modelo, que el loader envuelve en `ConfigError` nombrando el fichero y que
+  el borde de config (`errores_del_operador()`) imprime como una línea con exit 1. Con
+  `allowed_user_ids` vacía no hubo restricción.
+- `inaki init` pregunta por los operadores solo cuando `allowed_user_ids` quedó vacía (bot
+  abierto): "IDs de operador, separados por coma", con default vacío (= nadie), y escribe
+  `operator_user_ids` solo si la respuesta no es vacía. Con `allowed_user_ids` restringida no
+  pregunta nada y no escribe el campo, porque los operadores heredan la lista.
+
+Tabla de verdad (chat privado):
+
+| `allowed_user_ids` | `operator_user_ids` | habla | operador |
+|---|---|---|---|
+| vacía | vacía | todos | nadie |
+| vacía | `[yo]` | todos | yo |
+| `[a, b]` | vacía | a, b | a, b |
+| `[a, b]` | `[a]` | a, b | a |
+| `[a]` | `[c]` | — | error al cargar |
+
+**Cambios observables**: ninguno para una config que no declara `operator_user_ids`. Quien
+la declaró con `allowed_user_ids` no vacía y un id que no está en ella recibió un error de
+carga en lugar de un operador que no podía hablar. Las notas `config-set-efimero` y
+`privilegio-por-operacion` describen la regla anterior ("lista vacía = nadie") y quedaron
+como instantánea de ese momento.
+
+**Sin migración.**
+
+**Invariante**: NUNCA atar el privilegio de operador a la lista de quién puede hablar, ni
+dejar que una lista de operadores nombre a alguien que `allowed_user_ids` deja afuera.
 
 ---
 
@@ -192,6 +247,9 @@ del schema dicen `config set` en vez de `config_set`.
 
 **Invariante**: NUNCA proteger una tool entera cuando solo una de sus operaciones
 escribe, ni despachar la operación con una función distinta de la que la autoriza.
+
+*Cerrado después:* quién es operador en Telegram dejó de colgar solo de
+`allowed_user_ids`; ver [`operator-user-ids`](#operator-user-ids).
 
 ---
 
@@ -273,6 +331,10 @@ reconstruir.
 *Cerrado después:* la tool `config_set` se fusionó en `config` (`operation: set`)
 y el privilegio pasó a ser por operación; ver
 [`privilegio-por-operacion`](#privilegio-por-operacion).
+
+*Cerrado después:* "lista vacía = nadie es operador" pasó a valer solo con
+`operator_user_ids` y `allowed_user_ids` vacías a la vez; ver
+[`operator-user-ids`](#operator-user-ids).
 
 ---
 

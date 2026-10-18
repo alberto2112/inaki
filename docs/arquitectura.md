@@ -92,8 +92,9 @@ nuevo — un Slack que nazca mañana hereda las TOOLS, no `/scheduler`.
 `/reload` además DESCARTA los overrides de runtime que `config` (`operation: set`) dejó en memoria y avisa
 cuáles (`config-set-efimero`). El privilegio de operador para tools es más estricto que el
 de los slash: con `allowed_user_ids` vacía los slash los usa cualquiera por privado, pero
-`config` con `operation: set` falla cerrado (lista vacía = nadie es operador). La asimetría es inherente y
-está aceptada.
+`config` con `operation: set` falla cerrado (con `operator_user_ids` y `allowed_user_ids` vacías
+nadie es operador; si solo `operator_user_ids` está vacía, heredan los de `allowed_user_ids`). La
+asimetría es inherente y está aceptada.
 
 ## Tiers de recursos — harness-global vs per-agente
 

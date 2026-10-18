@@ -83,3 +83,46 @@ def test_la_descarga_del_modelo_va_al_model_dirname_anclado_al_home(home: Path) 
     descargar.assert_called_once()
     assert descargar.call_args.args[0] == home / "models" / "e5-small"
     assert "modelo listo" in result.output
+
+
+# --- Operadores de Telegram: solo se preguntan con el bot abierto ---------------------
+
+_HASTA_TELEGRAM = "\nsk-test\n\n\n\nInaki\nAsistente\nSos Inaki.\ny\n123:ABC\n"
+_PREGUNTA_OPERADORES = "IDs de operador"
+
+
+def _telegram_del_agente(home: Path) -> dict:
+    return yaml.safe_load((home / "agents" / "general.yaml").read_text())["channels"]["telegram"]
+
+
+def test_bot_abierto_pregunta_por_los_operadores_y_los_escribe(home: Path) -> None:
+    """Fila "vacía / [yo]" de la tabla de verdad: habla cualquiera, opera el dueño."""
+    # IDs permitidos: vacío (abierto) / IDs de operador: 99, 77
+    result = _init(home, _HASTA_TELEGRAM + "\n99, 77\n")
+
+    assert result.exit_code == 0, result.output
+    assert _PREGUNTA_OPERADORES in result.output
+    assert "Configuración válida" in result.output
+    assert _telegram_del_agente(home) == {
+        "token": "123:ABC",
+        "allowed_user_ids": [],
+        "operator_user_ids": ["99", "77"],
+    }
+
+
+def test_bot_abierto_con_operadores_vacios_no_escribe_el_campo(home: Path) -> None:
+    """Fila "vacía / vacía": nadie es operador, y el YAML no declara lo que no se eligió."""
+    result = _init(home, _HASTA_TELEGRAM + "\n\n")
+
+    assert result.exit_code == 0, result.output
+    assert _PREGUNTA_OPERADORES in result.output
+    assert _telegram_del_agente(home) == {"token": "123:ABC", "allowed_user_ids": []}
+
+
+def test_bot_restringido_no_pregunta_por_operadores_y_hereda(home: Path) -> None:
+    """Fila "[a, b] / vacía": los operadores heredan, así que no hay nada que preguntar."""
+    result = _init(home, _HASTA_TELEGRAM + "11, 22\n")
+
+    assert result.exit_code == 0, result.output
+    assert _PREGUNTA_OPERADORES not in result.output
+    assert _telegram_del_agente(home) == {"token": "123:ABC", "allowed_user_ids": ["11", "22"]}

@@ -63,8 +63,12 @@ async def test_cada_aviso_sale_por_el_outbound_de_su_agente_al_chat_de_origen():
 
     await avisos_post_arranque(store)(_runtime(a=tg_a, b=tg_b))
 
-    tg_a.send.assert_awaited_once_with(chat_id="123", kind=OutboundKind.TEXT, text="uno")
-    tg_b.send.assert_awaited_once_with(chat_id="-100", kind=OutboundKind.TEXT, text="dos")
+    tg_a.send.assert_awaited_once_with(
+        chat_id="123", kind=OutboundKind.TEXT, text="uno", record_history=False
+    )
+    tg_b.send.assert_awaited_once_with(
+        chat_id="-100", kind=OutboundKind.TEXT, text="dos", record_history=False
+    )
 
 
 async def test_dos_avisos_del_mismo_chat_salen_en_orden():
@@ -124,5 +128,7 @@ async def test_un_destino_inexistente_es_warning_que_nombra_el_destino(aviso, ra
     with caplog.at_level(logging.WARNING):
         await avisos_post_arranque(store)(_runtime(a=tg))
 
-    tg.send.assert_awaited_once_with(chat_id="123", kind=OutboundKind.TEXT, text="el sano")
+    tg.send.assert_awaited_once_with(
+        chat_id="123", kind=OutboundKind.TEXT, text="el sano", record_history=False
+    )
     assert razon in caplog.text

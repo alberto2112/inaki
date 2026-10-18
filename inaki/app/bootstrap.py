@@ -72,6 +72,10 @@ def avisos_post_arranque(
     destino que ya no existe— es un WARNING que nombra el destino: el cambio ya está
     aplicado y el aviso es cortesía. Cada aviso se entrega una sola vez
     (``tomar_avisos`` vacía la lista).
+
+    El aviso NO se persiste (``record_history=False``): es feedback del arnés al
+    operador, no algo que dijo el agente. En ``history.db`` el LLM lo leería como
+    una respuesta propia sobre un cambio de modelo que no recuerda haber hecho.
     """
     from inaki.kernel.domain.outbound_kind import OutboundKind
 
@@ -84,7 +88,12 @@ def avisos_post_arranque(
                 outbound = app_container.get_agent(aviso.agent_id).channel_outbound_registry.get(
                     aviso.canal
                 )
-                await outbound.send(chat_id=aviso.chat_id, kind=OutboundKind.TEXT, text=aviso.texto)
+                await outbound.send(
+                    chat_id=aviso.chat_id,
+                    kind=OutboundKind.TEXT,
+                    text=aviso.texto,
+                    record_history=False,
+                )
             except Exception as exc:  # noqa: BLE001 — cortesía: nunca corta el arranque
                 log.warning(
                     "No se pudo entregar el aviso de config (set) a %s: %s",

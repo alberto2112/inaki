@@ -79,7 +79,23 @@ _ANTHROPIC_VERSION = "2023-06-01"
 # ``tools``: si la request actual no coincide, se reenvía el assistant SIN sus
 # bloques thinking (text y tool_use intactos) — el camino que la propia API
 # documenta como recuperación, a costa del razonamiento de esa iteración.
+#
+# Prompt caching: Anthropic NO cachea solo (a diferencia de OpenAI/DeepSeek);
+# sin ``cache_control`` cada request paga el prefijo entero a precio completo.
+# El prefijo se renderiza ``tools`` → ``system`` → ``messages`` y cualquier byte
+# distinto invalida todo lo que viene después. Van dos breakpoints:
+#   - uno explícito al final del ``system``: cachea tools + system, y sobrevive
+#     aunque cambie el historial;
+#   - el automático (``cache_control`` top-level): la API lo pone en el último
+#     bloque y lo corre hacia adelante con la conversación, así cada iteración
+#     del tool loop lee lo que escribió la anterior.
+# TTL de 5 minutos (el default): el ahorro grande está dentro del tool loop,
+# donde las iteraciones van seguidas. La escritura cuesta 1.25× y la lectura
+# 0.1×, así que un turno de una sola llamada paga un 25% extra sobre el prefijo.
+# El ``usage`` de la respuesta se loguea para poder verificar los hits.
 # ---------------------------------------------------------------------------
+
+_CACHE_EFIMERO = {"type": "ephemeral"}
 
 _EFFORTS_VALIDOS = ("low", "medium", "high", "xhigh", "max")
 
@@ -313,6 +329,7 @@ class AnthropicProvider(BaseLLMProvider):
         payload: dict = {
             "model": self._cfg.model,
             "max_tokens": self._cfg.max_tokens,
+            "cache_control": dict(_CACHE_EFIMERO),
             "messages": self._build_anthropic_messages(
                 messages,
                 con_tools=bool(converted_tools),
@@ -320,7 +337,9 @@ class AnthropicProvider(BaseLLMProvider):
             ),
         }
         if system_prompt:
-            payload["system"] = system_prompt
+            payload["system"] = [
+                {"type": "text", "text": system_prompt, "cache_control": dict(_CACHE_EFIMERO)}
+            ]
         if self.thinking_active:
             payload["thinking"] = {"type": "adaptive", "display": "summarized"}
         if self._effort:
@@ -409,6 +428,21 @@ class AnthropicProvider(BaseLLMProvider):
                 len(text_blocks),
             )
 
+    def _log_usage(self, usage: dict) -> None:
+        """Deja en el log cuánto del prefijo salió de cache: sin esto, un
+        invalidador silencioso (algo que cambia en el system o en las tools)
+        solo se ve en la factura."""
+        if not usage:
+            return
+        logger.info(
+            "Anthropic usage (%s): input=%s cache_read=%s cache_write=%s output=%s",
+            self._cfg.model,
+            usage.get("input_tokens", 0),
+            usage.get("cache_read_input_tokens", 0),
+            usage.get("cache_creation_input_tokens", 0),
+            usage.get("output_tokens", 0),
+        )
+
     async def _request(self, payload: dict) -> dict:
         """POST a ``/messages``; devuelve el JSON crudo. Envuelve errores en LLMError."""
         try:
@@ -439,9 +473,10 @@ class AnthropicProvider(BaseLLMProvider):
         payload = self._build_payload(messages, system_prompt, tools)
         data = await self._request(payload)
         content = data.get("content") or []
-        huella = _huella_prefijo(payload.get("system", ""), payload.get("tools", []))
+        huella = _huella_prefijo(system_prompt, payload.get("tools", []))
         text_blocks, tool_calls, thinking, provider_content = self._parse_content(content, huella)
         self._check_stop_reason(data, text_blocks, tool_calls)
+        self._log_usage(data.get("usage") or {})
         logger.info(
             "%s", self._format_response_log("Anthropic", "\n".join(text_blocks), tool_calls)
         )

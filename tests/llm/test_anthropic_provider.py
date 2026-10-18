@@ -375,7 +375,7 @@ def test_payload_thinking_adaptive_with_effort_even_with_tools() -> None:
     payload = provider._build_payload([Message(role=Role.USER, content="x")], "sys", _TOOLS)
     assert payload["thinking"] == {"type": "adaptive", "display": "summarized"}
     assert payload["output_config"] == {"effort": "high"}
-    assert payload["system"] == "sys"
+    assert payload["system"][0]["text"] == "sys"
     assert payload["max_tokens"] == 16000
     assert "tools" in payload
 
@@ -433,6 +433,44 @@ def test_init_rejects_unknown_effort() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_payload_cache_breakpoints_on_system_and_tail() -> None:
+    """Breakpoint explícito al final del system (cachea tools + system) y el
+    automático top-level para la cola de la conversación."""
+    provider = AnthropicProvider(_cfg())
+    payload = provider._build_payload([Message(role=Role.USER, content="x")], "sys", _TOOLS)
+    assert payload["system"] == [
+        {"type": "text", "text": "sys", "cache_control": {"type": "ephemeral"}}
+    ]
+    assert payload["cache_control"] == {"type": "ephemeral"}
+    # Más de 4 breakpoints es un 400: este payload usa 2.
+    assert json.dumps(payload).count("cache_control") == 2
+
+
+def test_payload_without_system_keeps_tail_cache() -> None:
+    provider = AnthropicProvider(_cfg())
+    payload = provider._build_payload([Message(role=Role.USER, content="x")], "", None)
+    assert "system" not in payload
+    assert payload["cache_control"] == {"type": "ephemeral"}
+
+
+async def test_complete_logs_cache_usage(monkeypatch, caplog) -> None:
+    data = {
+        "content": [{"type": "text", "text": "ok"}],
+        "stop_reason": "end_turn",
+        "usage": {
+            "input_tokens": 12,
+            "cache_read_input_tokens": 30000,
+            "cache_creation_input_tokens": 500,
+            "output_tokens": 40,
+        },
+    }
+    _mock_post(monkeypatch, data)
+    provider = AnthropicProvider(_cfg())
+    with caplog.at_level("INFO", logger="inaki.llm.anthropic"):
+        await provider.complete([Message(role=Role.USER, content="x")], "sys")
+    assert "cache_read=30000 cache_write=500" in caplog.text
+
+
 @pytest.fixture
 def fake_payload() -> dict:
     return {
@@ -481,7 +519,10 @@ async def test_complete_posts_to_messages_endpoint(monkeypatch, fake_payload) ->
     assert captured["headers"]["anthropic-version"] == "2023-06-01"
     assert captured["json"]["model"] == "claude-opus-4-6"
     assert "temperature" not in captured["json"]
-    assert captured["json"]["system"] == "system prompt"
+    assert captured["json"]["system"] == [
+        {"type": "text", "text": "system prompt", "cache_control": {"type": "ephemeral"}}
+    ]
+    assert captured["json"]["cache_control"] == {"type": "ephemeral"}
     assert captured["json"]["max_tokens"] == 2048
     # parameters:{} (falsy) → input_schema por defecto (Anthropic exige schema válido)
     assert captured["json"]["tools"] == [

@@ -145,6 +145,31 @@ async def test_happy_path_multiple_tool_calls_then_final_response():
     assert tools.execute.call_count == 2
 
 
+async def test_tool_schemas_sent_sorted_by_name():
+    """El routing entrega por score: el mismo set puede venir en otro orden.
+    El loop lo normaliza por nombre para que el prefijo cacheable no cambie."""
+    llm = _make_llm("ok")
+    schemas = [
+        {"type": "function", "function": {"name": nombre}} for nombre in ("zeta", "alfa", "mu")
+    ]
+
+    await run_tool_loop(
+        llm=llm,
+        tools=_make_tools(),
+        messages=_base_messages(),
+        system_prompt="Sos un asistente.",
+        tool_schemas=schemas,
+        max_iterations=5,
+        circuit_breaker_threshold=3,
+        agent_id="test-agent",
+    )
+
+    enviados = llm.complete.call_args.kwargs["tools"]
+    assert [s["function"]["name"] for s in enviados] == ["alfa", "mu", "zeta"]
+    # La lista del caller queda intacta.
+    assert [s["function"]["name"] for s in schemas] == ["zeta", "alfa", "mu"]
+
+
 async def test_does_not_mutate_original_messages():
     """El loop no muta la lista de mensajes original."""
     original = _base_messages()

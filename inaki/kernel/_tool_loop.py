@@ -362,7 +362,14 @@ async def run_tool_loop(
     # ``page_in_schemas=None`` el feature queda inerte (one-shot, legacy).
     # Los lookups usan .get() porque el loop no impone la forma OpenAI del
     # schema — callers de test pasan dicts sueltos.
-    tool_schemas = list(tool_schemas)
+    #
+    # Orden determinista por nombre: el routing entrega las tools por score, así
+    # que el MISMO set puede llegar en otro orden de un turno al siguiente. Las
+    # tools son lo primero del prefijo que cachean los providers (Anthropic las
+    # renderiza antes que el system): otro orden ⇒ otro prefijo ⇒ cache miss de
+    # TODO. Lo que se suma a mitad de turno (page-in, re-routing) va al final,
+    # para no mover lo que ya estaba.
+    tool_schemas = sorted(tool_schemas, key=lambda sch: sch.get("function", {}).get("name", ""))
     visible_names = {sch.get("function", {}).get("name", "") for sch in tool_schemas}
     page_in_by_name: dict[str, dict] | None = (
         {name: sch for sch in page_in_schemas if (name := sch.get("function", {}).get("name", ""))}

@@ -2,12 +2,15 @@
 
 Colaborador de ``TelegramBot`` con dependencias explícitas. Son el panel del
 OPERADOR: admin-only (``TelegramAuth.is_allowed``), deterministas, sin LLM. Lo
-único que MUTAN es la política de rate limit (``GroupRateLimit``), que el flujo
-de grupos y el ingress de broadcast leen."""
+único que MUTAN en el proceso es la política de rate limit (``GroupRateLimit``),
+que el flujo de grupos y el ingress de broadcast leen. ``/model``, ``/effort`` y
+``/temperature`` no mutan nada propio: son atajos de la tool ``config`` del agente
+(``get`` sin argumento, ``set`` con él), y el ``set`` exige ``is_operator``."""
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from telegram import BotCommand, Message, Update
@@ -18,9 +21,31 @@ from inaki.channels.telegram.message_mapper import split_message
 from inaki.channels.telegram.ports import TelegramBotPorts, TelegramBotSettings
 from inaki.channels.telegram.rate_limit import GroupRateLimit
 from inaki.scheduler.domain.task import ScheduledTask
+from inaki.shared.channel_context import (
+    ChannelContext,
+    reset_current_channel_context,
+    set_current_channel_context,
+)
 from inaki.shared.errors import TaskNotFoundError
 
 logger = logging.getLogger(__name__)
+
+_EFFORT_APAGADO = frozenset({"off", "none", "null"})
+"""Palabras con las que ``/effort`` desactiva el razonamiento (``reasoning_effort: null``)."""
+
+
+def _valor_model(arg: str) -> str:
+    return arg
+
+
+def _valor_effort(arg: str) -> str | None:
+    normalizado = arg.strip().lower()
+    return None if normalizado in _EFFORT_APAGADO else normalizado
+
+
+def _valor_temperature(arg: str) -> float:
+    # Coma decimal aceptada: es lo que sale natural en un teclado en español.
+    return float(arg.replace(",", "."))
 
 
 class SlashCommands:
@@ -96,7 +121,6 @@ class SlashCommands:
             "/consolidate — Extraer recuerdos del historial\n"
             "/reconcile — Reconsiderar y consolidar recuerdos relacionados\n"
             "/clear — Limpiar historial de ESTE chat (privado o grupo)\n"
-            "/clear_all — Limpiar TODO el historial del agente (todos los chats)\n"
             "/new — Consolidar memoria y limpiar este chat (alias de /consolidate + /clear)\n"
             "/scheduler list — Listar tareas programadas\n"
             "/scheduler show <id> — Detalle de una tarea\n"
@@ -104,6 +128,9 @@ class SlashCommands:
             "/scheduler disable <id> — Deshabilitar una tarea\n"
             "/scheduler run <id> — Disparar una tarea AHORA (no toca su agenda)\n"
             "/ratelimit — Mostrar/ajustar el rate limiter de grupos (autonomous) en runtime\n"
+            "/model [modelo] — Ver o cambiar el modelo del LLM (en caliente, sin persistir)\n"
+            "/effort [nivel|off] — Ver o cambiar el reasoning effort (en caliente, sin persistir)\n"
+            "/temperature [valor] — Ver o cambiar la temperatura (en caliente, sin persistir)\n"
             "/reload — Reiniciar el daemon (cierra y vuelve a levantar todos los canales)\n"
             "/start — Presentación\n"
             "/help — Este mensaje"
@@ -167,10 +194,7 @@ class SlashCommands:
             await message.reply_text("No hay ninguna tarea corriendo en este chat.")
 
     async def cmd_clear(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Borra el historial SOLO del chat actual (privado o grupo).
-
-        Para limpiar el historial del agente en todos los chats, usar /clear_all.
-        """
+        """Borra el historial SOLO del chat actual (privado o grupo)."""
         user = update.effective_user
         chat = update.effective_chat
         message = update.message
@@ -191,24 +215,6 @@ class SlashCommands:
                 self._settings.id,
                 chat_id,
             )
-            await message.reply_text(f"Error: {exc}")
-
-    async def cmd_clear_all(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Borra TODO el historial del agente (todos los canales y chats).
-
-        También resetea el ``agent_state`` (sticky skills/tools).
-        """
-        user = update.effective_user
-        message = update.message
-        if user is None or message is None:
-            return
-        if not self._auth.is_allowed(user.id):
-            return
-        try:
-            await self._ports.history.clear_history()
-            await message.reply_text("Historial completo del agente limpiado.")
-        except Exception as exc:
-            logger.exception("Error en /clear_all Telegram para '%s'", self._settings.id)
             await message.reply_text(f"Error: {exc}")
 
     async def cmd_new(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -298,6 +304,93 @@ class SlashCommands:
                 f"- {linea}" for linea in descartados
             )
         await message.reply_text(texto)
+
+    async def cmd_model(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """`/model [modelo]` — muestra o cambia ``llm.model``."""
+        await self._config_slash(update, context, "/model", "llm.model", _valor_model)
+
+    async def cmd_effort(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """`/effort [nivel|off]` — muestra o cambia ``llm.reasoning_effort`` (``off`` = null)."""
+        await self._config_slash(update, context, "/effort", "llm.reasoning_effort", _valor_effort)
+
+    async def cmd_temperature(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """`/temperature [valor]` — muestra o cambia ``llm.temperature``."""
+        await self._config_slash(
+            update, context, "/temperature", "llm.temperature", _valor_temperature
+        )
+
+    async def _config_slash(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        comando: str,
+        path: str,
+        parsear: Callable[[str], Any],
+    ) -> None:
+        """Atajo de la tool ``config``: sin argumento ``get``, con uno ``set``.
+
+        No reimplementa nada: la validación, la denylist, el no-op, el store en memoria
+        y el reload que aplica el cambio son los de ``config set`` (efímero: se pierde
+        con ``/reload`` o reinicio). Leer lo puede cualquiera que use los slash; cambiar,
+        solo el operador (``is_operator``: privado y en la lista de operadores). El
+        kernel hace cumplir ``requires_operator`` en el tool loop, pero esto no es un
+        turno: el canal decide ``es_operador`` y acá se aplica, igual que en un turno.
+
+        El ``set`` corre con el ``ChannelContext`` de este chat publicado para que la
+        tool agende el aviso de "volví con el cambio aplicado" tras el reinicio.
+        """
+        user = update.effective_user
+        chat = update.effective_chat
+        message = update.message
+        if user is None or chat is None or message is None:
+            return
+        if not self._auth.is_allowed(user.id):
+            return
+        tools = self._ports.tools
+        if tools is None:
+            await message.reply_text("La tool config no está disponible en este proceso.")
+            return
+
+        args = context.args or []
+        if not args:
+            resultado = await tools.execute("config", operation="get", path=path)
+            await message.reply_text(resultado.output)
+            return
+
+        if not self._auth.is_operator(user.id, chat.type):
+            await message.reply_text(
+                f"Cambiar la config es solo para el operador, por privado. "
+                f"Sin argumento, {comando} muestra el valor actual."
+            )
+            return
+        if len(args) > 1:
+            await message.reply_text(f"Uso: {comando} <valor> (un solo argumento).")
+            return
+        try:
+            valor = parsear(args[0])
+        except ValueError:
+            await message.reply_text(f"Valor inválido para {comando}: '{args[0]}'.")
+            return
+
+        contexto = ChannelContext(
+            channel_type="telegram", user_id=str(user.id), chat_id=str(chat.id)
+        )
+        token = set_current_channel_context(contexto)
+        try:
+            resultado = await tools.execute("config", operation="set", path=path, value=valor)
+        finally:
+            reset_current_channel_context(token)
+        logger.info(
+            "%s vía Telegram",
+            comando,
+            extra={
+                "agent_id": self._settings.id,
+                "user_id": user.id,
+                "path": path,
+                "success": resultado.success,
+            },
+        )
+        await message.reply_text(resultado.output)
 
     async def cmd_ratelimit(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """`/ratelimit [count [window] | reset]` — override en runtime del rate limiter.
@@ -546,7 +639,6 @@ class SlashCommands:
             BotCommand("help", "Lista de comandos disponibles"),
             BotCommand("stop", "Detener la tarea en curso de este chat (kill-switch)"),
             BotCommand("clear", "Limpiar historial de este chat"),
-            BotCommand("clear_all", "Limpiar todo el historial del agente"),
             BotCommand("new", "Consolidar memoria y empezar de cero en este chat"),
             BotCommand("consolidate", "Extraer recuerdos del historial"),
             BotCommand("reconcile", "Reconsiderar recuerdos relacionados"),
@@ -555,6 +647,9 @@ class SlashCommands:
             BotCommand(
                 "ratelimit", "Ver/ajustar el rate limiter de grupos (autonomous) en runtime"
             ),
+            BotCommand("model", "Ver o cambiar el modelo del LLM (en caliente)"),
+            BotCommand("effort", "Ver o cambiar el reasoning effort (en caliente)"),
+            BotCommand("temperature", "Ver o cambiar la temperatura del LLM (en caliente)"),
             BotCommand(
                 "reload", "Reiniciar el daemon (cierra y vuelve a levantar todos los canales)"
             ),

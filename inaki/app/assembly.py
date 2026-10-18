@@ -849,6 +849,7 @@ class _FuenteDelBot:
         self.telegram_file_repo = b.telegram_file_repo
         self.telegram_file_downloader = b.telegram_file_downloader
         self.channel_outbound_registry = b.outbounds
+        self.tools = b.tools
 
 
 # ---------------------------------------------------------------------------

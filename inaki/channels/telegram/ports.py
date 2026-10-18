@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from inaki.scheduler.ports.use_case import IManualTaskRunner
 from inaki.kernel.ports.channel_port import IChannelOutbound
 from inaki.kernel.ports.scope_registry_port import IScopeRegistry
+from inaki.kernel.ports.tool_port import IToolExecutor
 from inaki.kernel.conversation_history import ConversationHistory
 from inaki.kernel.run_agent import RunAgentUseCase
 from inaki.scheduler.use_cases.schedule_task import ScheduleTaskUseCase
@@ -47,6 +48,8 @@ class TelegramBotPorts:
     telegram_file_downloader: IFileDownloader | None = None
     channel_outbound: IChannelOutbound | None = None
     """Egress del canal del agente: por acá salen los intermedios en vivo del turno."""
+    tools: IToolExecutor | None = None
+    """Tools del agente: ``/model``, ``/effort`` y ``/temperature`` invocan la tool ``config``."""
 
 
 @dataclass(frozen=True)

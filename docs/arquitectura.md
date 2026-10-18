@@ -77,7 +77,8 @@ El CLI offline (`inaki/`) puede construir el use case directo para bootstrap sin
 — eso es legítimo (es un composition root), no una pasarela en un canal.
 
 **Excepción CERRADA — los slash commands de Telegram** (`commands.py`: `/stop`, `/clear`,
-`/consolidate`, `/reconcile`, `/scheduler`, `/ratelimit`, `/reload`, `/chatid`). NO son
+`/consolidate`, `/reconcile`, `/scheduler`, `/ratelimit`, `/reload`, `/chatid`, `/model`,
+`/effort`, `/temperature`). NO son
 la vía de acceso a capacidades: son el **panel de control del OPERADOR** — admin-only por
 `allowed_user_ids`, deterministas, sin pasar por el LLM. Existen para cuando el LLM está
 ocupado, o cuando querés CERTEZA de que la acción se hizo. Toda capacidad que exponen
@@ -88,6 +89,16 @@ explícita del operador, con la capacidad ya disponible vía la tool `scheduler`
 (`operation: "run"`), `inaki scheduler run` y el REST admin. Crear un slash **NUEVO** para
 una capacidad nueva NO: eso es la explosión N×M. Y NUNCA replicar estos slash en un canal
 nuevo — un Slack que nazca mañana hereda las TOOLS, no `/scheduler`.
+
+`/model`, `/effort` y `/temperature` (2026-10-18, decisión explícita del operador) son
+slash nuevos pero NO una capacidad nueva: son atajos de la tool `config` sobre
+`llm.model`, `llm.reasoning_effort` y `llm.temperature`. El bot recibe el `IToolExecutor`
+del agente (`TelegramBotPorts.tools`) e invoca `config` igual que el gateway
+`/admin/tool/invoke`: sin argumento `get`, con uno `set`. No reimplementan validación,
+denylist ni reload. Como no hay turno, el kernel no hace cumplir `requires_operator`: el
+canal decide `is_operator` y rechaza el `set` antes de invocar (leer queda abierto a quien
+usa los slash). El `set` corre con el `ChannelContext` del chat publicado para que la tool
+agende el aviso de vuelta tras el reinicio. → `slash-de-config`
 
 `/reload` además DESCARTA los overrides de runtime que `config` (`operation: set`) dejó en memoria y avisa
 cuáles (`config-set-efimero`). El privilegio de operador para tools es más estricto que el

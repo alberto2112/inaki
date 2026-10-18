@@ -38,6 +38,7 @@ from inaki.channels.telegram.tools.send_telegram_message_tool import SendTelegra
 from inaki.channels.telegram.tools.send_to_telegram_tool import SendToTelegramTool
 from inaki.config import AgentConfig
 from inaki.kernel.domain.channel_outbound_registry import ChannelOutboundRegistry
+from inaki.kernel.ports.tool_port import IToolExecutor
 from inaki.kernel.ports.history_port import IHistoryStore
 from inaki.kernel.ports.scope_registry_port import IScopeRegistry
 from inaki.kernel.ports.tool_port import ITool
@@ -136,6 +137,7 @@ class FuentesDelBot(Protocol):
     telegram_file_repo: IFileRecordRepo | None
     telegram_file_downloader: IFileDownloader | None
     channel_outbound_registry: ChannelOutboundRegistry
+    tools: IToolExecutor
 
 
 def build_telegram_bot_ports(fuente: FuentesDelBot) -> TelegramBotPorts:
@@ -158,6 +160,7 @@ def build_telegram_bot_ports(fuente: FuentesDelBot) -> TelegramBotPorts:
         channel_outbound=(
             registro.get("telegram") if "telegram" in registro.list_channels() else None
         ),
+        tools=fuente.tools,
     )
 
 

@@ -196,13 +196,15 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("reconcile", cmd.cmd_reconcile))
         self._app.add_handler(CommandHandler("stop", cmd.cmd_stop))
         self._app.add_handler(CommandHandler("clear", cmd.cmd_clear))
-        self._app.add_handler(CommandHandler("clear_all", cmd.cmd_clear_all))
         self._app.add_handler(CommandHandler("new", cmd.cmd_new))
         self._app.add_handler(CommandHandler("help", cmd.cmd_help))
         self._app.add_handler(CommandHandler("scheduler", cmd.cmd_scheduler))
         self._app.add_handler(CommandHandler("chatid", cmd.cmd_chatid))
         self._app.add_handler(CommandHandler("ratelimit", cmd.cmd_ratelimit))
         self._app.add_handler(CommandHandler("reload", cmd.cmd_reload))
+        self._app.add_handler(CommandHandler("model", cmd.cmd_model))
+        self._app.add_handler(CommandHandler("effort", cmd.cmd_effort))
+        self._app.add_handler(CommandHandler("temperature", cmd.cmd_temperature))
         media = self._media
         # Handlers de voz ANTES del de texto (el dispatcher de python-telegram-bot
         # evalúa handlers en orden de registro). SIEMPRE registrados: el flag

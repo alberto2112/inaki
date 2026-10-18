@@ -72,6 +72,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
 
 | Nota | Cambio observable |
 |---|---|
+| [`slash-de-config`](#slash-de-config) | Telegram: se retiró `/clear_all` (borraba el historial del agente en TODOS los chats; `/clear` sigue limpiando el chat actual). Slash nuevos `/model`, `/effort` y `/temperature`: sin argumento muestran el valor, con uno lo cambian en caliente vía la tool `config` (`set`, efímero, solo el operador por privado) |
 | [`operator-user-ids`](#operator-user-ids) | Campo nuevo `channels.telegram.operator_user_ids`: quién es operador deja de colgar de `allowed_user_ids`. Vacía hereda `allowed_user_ids` (sin cambios para las configs existentes); declarada, solo esos ids son operadores. Un operador fuera de una `allowed_user_ids` no vacía **aborta la carga** con un error que nombra los ids |
 | [`privilegio-por-operacion`](#privilegio-por-operacion) | `config_set` dejó de existir: es la operación `set` de la tool `config`, que ahora es privilegiada POR OPERACIÓN (`get`/`list` libres para cualquier turno, `set` solo del operador). Un historial viejo puede mencionar `config_set`. En un sub-agente o fuera del daemon `config` sigue siendo solo lectura. El hijo de una delegación ve `config` y el kernel le rechaza `set` |
 | [`config-set-efimero`](#config-set-efimero) | Tool nueva `config_set` (solo a pedido del operador): el agente cambia un parámetro de su config EN MEMORIA y el daemon se reconstruye con él. El `/reload` manual (REST, CLI y Telegram) **descarta** esos cambios y avisa cuáles (`POST /admin/reload` suma `overrides_descartados`); un reinicio o un reload fallido los pierde todos. Con `allowed_user_ids` vacía nadie es operador. El `/reload` de Telegram pide el reload antes de responder |
@@ -122,7 +123,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `in-flight-message-injection`, `turn-kill-switch`
 - **Retención y alcance del registro**: `ventana-cuenta-conversacion`, `trim-cuenta-conversacion`,
   `search-history-retention-horizon`
-- **Telegram y canales**: `operator-user-ids`, `timestamps-solo-en-user`, `rotulo-del-emisor-en-grupos`, `telegram-composicion`, `channels-validados-al-cargar`, `attachment-grammar`,
+- **Telegram y canales**: `slash-de-config`, `operator-user-ids`, `timestamps-solo-en-user`, `rotulo-del-emisor-en-grupos`, `telegram-composicion`, `channels-validados-al-cargar`, `attachment-grammar`,
   `formato-en-el-borde-del-transporte`,
   `groups-vs-broadcast`, `broadcast-human-reset`, `rate-limit-por-intervenciones`,
   `broadcast-topology-config`, `broadcast-arranque-observable`,
@@ -144,6 +145,37 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `agent-id-igual-al-fichero`, `knowledge-token-budget-retirado`
 - **Providers LLM**: `llm-un-solo-camino-de-construccion`, `openai-habla-responses`, `anthropic-api-actual`
 - **Delegación**: `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
+
+---
+
+### `slash-de-config`
+
+**La decisión (2026-10-18)**: cambiar el modelo, el reasoning effort o la temperatura del
+agente exigía pedírselo al LLM ("cambiá tu modelo a X") y confiar en que llamara a `config`
+con `operation: set`. El operador quería la certeza del panel de slash: un comando
+determinista, sin LLM. Al mismo tiempo, `/clear_all` (borrar el historial del agente en
+todos los chats y canales desde un chat de Telegram) era un botón demasiado destructivo
+para tenerlo en el menú.
+
+**El cambio**:
+- Se retiró `/clear_all` (handler, menú, `/help`). `/clear` (este chat) y `/new` quedaron;
+  la limpieza total siguió disponible como `DELETE /history` en REST.
+- Slash nuevos `/model [modelo]`, `/effort [nivel|off]` y `/temperature [valor]` sobre
+  `llm.model`, `llm.reasoning_effort` y `llm.temperature`. Sin argumento invocaban `config`
+  con `get`; con uno, `set`. `off`/`none`/`null` desactivaban el effort (`null`); la
+  temperatura aceptaba coma decimal. Más de un argumento era error de uso.
+- No fue una capacidad nueva: `TelegramBotPorts` ganó `tools: IToolExecutor` (el
+  `ToolRegistry` del agente, vía `FuentesDelBot`) y los slash invocaban `config` como el
+  gateway admin. Validación, denylist, no-op, store en memoria y reload eran los de
+  `config-set-efimero`; la respuesta al operador era el `output` de la tool tal cual.
+- Privilegio: leer lo podía cualquiera que usara los slash (`is_allowed`, también en
+  grupos); cambiar, solo `is_operator` (privado ∧ operador). Sin turno no hay `run_tool_loop`
+  que haga cumplir `requires_operator`, así que el canal rechazaba antes de invocar.
+- El `set` corría con `ChannelContext(telegram, chat)` publicado en el `ContextVar` para que
+  la tool agendara el aviso "volví con el cambio aplicado". El privilegio NO salía de ahí.
+
+**Invariante**: un slash nuevo solo es aceptable como atajo de una capacidad que ya vive en
+una tool, y nunca se replica en otro canal (`arquitectura.md`, excepción cerrada).
 
 ---
 

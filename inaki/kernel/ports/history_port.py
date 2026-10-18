@@ -250,8 +250,7 @@ class IHistoryStore(ABC):
 
         Si tanto ``channel`` como ``chat_id`` son ``None`` borra TODO el historial
         del agente y también el ``agent_state`` (sticky skills/tools), manteniendo
-        ambos en sincronía. Es el modo "limpieza total" (``/clear_all`` en Telegram,
-        ``DELETE /history`` en REST, ``/clear`` en CLI).
+        ambos en sincronía. Es el modo "limpieza total" (``DELETE /history`` en REST, ``/clear`` en CLI).
 
         Si se proveen ``channel`` y/o ``chat_id`` borra los mensajes que matchean
         ese filtro Y el ``agent_state`` del mismo scope. Es el modo "limpieza

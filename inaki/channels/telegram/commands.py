@@ -5,12 +5,13 @@ OPERADOR: admin-only (``TelegramAuth.is_allowed``), deterministas, sin LLM. Lo
 único que MUTAN en el proceso es la política de rate limit (``GroupRateLimit``),
 que el flujo de grupos y el ingress de broadcast leen. ``/model``, ``/effort`` y
 ``/temperature`` no mutan nada propio: son atajos de la tool ``config`` del agente
-(``get`` sin argumento, ``set`` con él), y el ``set`` exige ``is_operator``."""
+(``get`` sin argumentos, ``set`` con ellos), y el ``set`` exige ``is_operator``."""
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from telegram import BotCommand, Message, Update
@@ -34,18 +35,50 @@ _EFFORT_APAGADO = frozenset({"off", "none", "null"})
 """Palabras con las que ``/effort`` desactiva el razonamiento (``reasoning_effort: null``)."""
 
 
-def _valor_model(arg: str) -> str:
-    return arg
+def _set_model(args: list[str]) -> tuple[str, Any]:
+    """``<modelo>`` cambia solo ``llm.model``; ``<provider> <modelo>`` cambia los dos.
+
+    Los dos van en UN solo ``set`` sobre el bloque ``llm``: el id de un modelo solo
+    tiene sentido dentro de su provider, y dos ``set`` seguidos validarían (y
+    reiniciarían el daemon con) un par intermedio que nadie pidió.
+    """
+    if len(args) == 1:
+        return "llm.model", args[0]
+    provider, modelo = args
+    return "llm", {"provider": provider, "model": modelo}
 
 
-def _valor_effort(arg: str) -> str | None:
-    normalizado = arg.strip().lower()
-    return None if normalizado in _EFFORT_APAGADO else normalizado
+def _set_effort(args: list[str]) -> tuple[str, Any]:
+    normalizado = args[0].strip().lower()
+    return "llm.reasoning_effort", None if normalizado in _EFFORT_APAGADO else normalizado
 
 
-def _valor_temperature(arg: str) -> float:
+def _set_temperature(args: list[str]) -> tuple[str, Any]:
     # Coma decimal aceptada: es lo que sale natural en un teclado en español.
-    return float(arg.replace(",", "."))
+    return "llm.temperature", float(args[0].replace(",", "."))
+
+
+@dataclass(frozen=True)
+class _AtajoDeConfig:
+    """Un slash que es atajo de la tool ``config``.
+
+    ``lectura`` son los paths que muestra sin argumentos; ``escritura`` traduce de 1 a
+    ``max_args`` argumentos a ``(path, valor)`` del ``set`` (``ValueError`` si el valor
+    no se puede interpretar).
+    """
+
+    comando: str
+    uso: str
+    lectura: tuple[str, ...]
+    max_args: int
+    escritura: Callable[[list[str]], tuple[str, Any]]
+
+
+_MODEL = _AtajoDeConfig(
+    "/model", "[provider] <modelo>", ("llm.provider", "llm.model"), 2, _set_model
+)
+_EFFORT = _AtajoDeConfig("/effort", "<nivel|off>", ("llm.reasoning_effort",), 1, _set_effort)
+_TEMPERATURE = _AtajoDeConfig("/temperature", "<valor>", ("llm.temperature",), 1, _set_temperature)
 
 
 class SlashCommands:
@@ -128,7 +161,8 @@ class SlashCommands:
             "/scheduler disable <id> — Deshabilitar una tarea\n"
             "/scheduler run <id> — Disparar una tarea AHORA (no toca su agenda)\n"
             "/ratelimit — Mostrar/ajustar el rate limiter de grupos (autonomous) en runtime\n"
-            "/model [modelo] — Ver o cambiar el modelo del LLM (en caliente, sin persistir)\n"
+            "/model [[provider] modelo] — Ver o cambiar el modelo del LLM; con provider "
+            "cambia los dos juntos (en caliente, sin persistir)\n"
             "/effort [nivel|off] — Ver o cambiar el reasoning effort (en caliente, sin persistir)\n"
             "/temperature [valor] — Ver o cambiar la temperatura (en caliente, sin persistir)\n"
             "/reload — Reiniciar el daemon (cierra y vuelve a levantar todos los canales)\n"
@@ -306,28 +340,24 @@ class SlashCommands:
         await message.reply_text(texto)
 
     async def cmd_model(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """`/model [modelo]` — muestra o cambia ``llm.model``."""
-        await self._config_slash(update, context, "/model", "llm.model", _valor_model)
+        """`/model [[provider] modelo]` — muestra o cambia ``llm.model`` (y ``llm.provider``)."""
+        await self._config_slash(update, context, _MODEL)
 
     async def cmd_effort(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """`/effort [nivel|off]` — muestra o cambia ``llm.reasoning_effort`` (``off`` = null)."""
-        await self._config_slash(update, context, "/effort", "llm.reasoning_effort", _valor_effort)
+        await self._config_slash(update, context, _EFFORT)
 
     async def cmd_temperature(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """`/temperature [valor]` — muestra o cambia ``llm.temperature``."""
-        await self._config_slash(
-            update, context, "/temperature", "llm.temperature", _valor_temperature
-        )
+        await self._config_slash(update, context, _TEMPERATURE)
 
     async def _config_slash(
         self,
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
-        comando: str,
-        path: str,
-        parsear: Callable[[str], Any],
+        atajo: _AtajoDeConfig,
     ) -> None:
-        """Atajo de la tool ``config``: sin argumento ``get``, con uno ``set``.
+        """Atajo de la tool ``config``: sin argumentos ``get``, con ellos ``set``.
 
         No reimplementa nada: la validación, la denylist, el no-op, el store en memoria
         y el reload que aplica el cambio son los de ``config set`` (efímero: se pierde
@@ -353,23 +383,26 @@ class SlashCommands:
 
         args = context.args or []
         if not args:
-            resultado = await tools.execute("config", operation="get", path=path)
-            await message.reply_text(resultado.output)
+            salidas = [
+                (await tools.execute("config", operation="get", path=path)).output
+                for path in atajo.lectura
+            ]
+            await message.reply_text("\n".join(salidas))
             return
 
         if not self._auth.is_operator(user.id, chat.type):
             await message.reply_text(
                 f"Cambiar la config es solo para el operador, por privado. "
-                f"Sin argumento, {comando} muestra el valor actual."
+                f"Sin argumentos, {atajo.comando} muestra el valor actual."
             )
             return
-        if len(args) > 1:
-            await message.reply_text(f"Uso: {comando} <valor> (un solo argumento).")
+        if len(args) > atajo.max_args:
+            await message.reply_text(f"Uso: {atajo.comando} {atajo.uso}")
             return
         try:
-            valor = parsear(args[0])
+            path, valor = atajo.escritura(args)
         except ValueError:
-            await message.reply_text(f"Valor inválido para {comando}: '{args[0]}'.")
+            await message.reply_text(f"Valor inválido para {atajo.comando}: '{' '.join(args)}'.")
             return
 
         contexto = ChannelContext(
@@ -382,7 +415,7 @@ class SlashCommands:
             reset_current_channel_context(token)
         logger.info(
             "%s vía Telegram",
-            comando,
+            atajo.comando,
             extra={
                 "agent_id": self._settings.id,
                 "user_id": user.id,
@@ -647,7 +680,7 @@ class SlashCommands:
             BotCommand(
                 "ratelimit", "Ver/ajustar el rate limiter de grupos (autonomous) en runtime"
             ),
-            BotCommand("model", "Ver o cambiar el modelo del LLM (en caliente)"),
+            BotCommand("model", "Ver o cambiar provider y modelo del LLM (en caliente)"),
             BotCommand("effort", "Ver o cambiar el reasoning effort (en caliente)"),
             BotCommand("temperature", "Ver o cambiar la temperatura del LLM (en caliente)"),
             BotCommand(

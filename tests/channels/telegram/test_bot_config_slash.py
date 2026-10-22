@@ -1,7 +1,8 @@
 """``/model``, ``/effort`` y ``/temperature``: atajos de la tool ``config`` desde Telegram.
 
-Sin argumento leen (``get``, abierto a quien usa los slash); con argumento cambian
-(``set``, solo el operador por privado). No reimplementan nada: el veredicto y el
+Sin argumentos leen (``get``, abierto a quien usa los slash); con argumentos cambian
+(``set``, solo el operador por privado). ``/model <provider> <modelo>`` cambia los dos
+en un solo ``set``. No reimplementan nada: el veredicto y el
 texto son los de la tool, y el ``set`` corre con el ``ChannelContext`` del chat
 publicado para que la tool agende el aviso de vuelta tras el reinicio.
 """
@@ -62,7 +63,6 @@ def tools() -> MagicMock:
 @pytest.mark.parametrize(
     ("comando", "path"),
     [
-        ("cmd_model", "llm.model"),
         ("cmd_effort", "llm.reasoning_effort"),
         ("cmd_temperature", "llm.temperature"),
     ],
@@ -76,13 +76,29 @@ async def test_sin_argumento_lee_el_valor_con_get(tools, comando, path):
     update.message.reply_text.assert_awaited_once_with("salida de la tool")
 
 
+async def test_model_sin_argumento_muestra_provider_y_modelo_en_un_mensaje(tools):
+    async def _execute(nombre, **kwargs):
+        return ToolResult(tool_name=nombre, output=f"{kwargs['path']} = x", success=True)
+
+    tools.execute = AsyncMock(side_effect=_execute)
+    update = _update()
+
+    await _bot(tools)._commands.cmd_model(update, _context())
+
+    assert [c.kwargs["path"] for c in tools.execute.await_args_list] == [
+        "llm.provider",
+        "llm.model",
+    ]
+    update.message.reply_text.assert_awaited_once_with("llm.provider = x\nllm.model = x")
+
+
 async def test_leer_no_exige_operador(tools):
     """Leer está abierto a quien usa los slash: en un grupo también responde."""
     update = _update(chat_type="group", chat_id=-100)
 
-    await _bot(tools)._commands.cmd_model(update, _context())
+    await _bot(tools)._commands.cmd_temperature(update, _context())
 
-    tools.execute.assert_awaited_once_with("config", operation="get", path="llm.model")
+    tools.execute.assert_awaited_once_with("config", operation="get", path="llm.temperature")
 
 
 async def test_model_con_argumento_hace_set_con_el_contexto_del_chat(tools):
@@ -105,6 +121,22 @@ async def test_model_con_argumento_hace_set_con_el_contexto_del_chat(tools):
     assert (contexto.channel_type, contexto.context_id) == ("telegram", "12345")
     assert current_channel_context() is None  # se restaura al salir
     update.message.reply_text.assert_awaited_once_with("Accepted: ...")
+
+
+async def test_model_con_provider_cambia_los_dos_en_un_solo_set(tools):
+    """Dos ``set`` seguidos validarían (y reiniciarían con) un par provider/modelo
+    intermedio que nadie pidió: va un solo ``set`` sobre el bloque ``llm``."""
+    update = _update()
+
+    await _bot(tools)._commands.cmd_model(update, _context("anthropic", "claude-opus-5-5"))
+
+    tools.execute.assert_awaited_once_with(
+        "config",
+        operation="set",
+        path="llm",
+        value={"provider": "anthropic", "model": "claude-opus-5-5"},
+    )
+    update.message.reply_text.assert_awaited_once_with("salida de la tool")
 
 
 @pytest.mark.parametrize(
@@ -137,13 +169,21 @@ async def test_temperature_invalida_no_toca_la_config(tools):
     assert "Valor inválido" in update.message.reply_text.await_args.args[0]
 
 
-async def test_mas_de_un_argumento_es_error_de_uso(tools):
+@pytest.mark.parametrize(
+    ("comando", "args", "uso"),
+    [
+        ("cmd_model", ("anthropic", "claude", "opus"), "Uso: /model [provider] <modelo>"),
+        ("cmd_effort", ("high", "medium"), "Uso: /effort <nivel|off>"),
+        ("cmd_temperature", ("0.3", "0.5"), "Uso: /temperature <valor>"),
+    ],
+)
+async def test_demasiados_argumentos_es_error_de_uso(tools, comando, args, uso):
     update = _update()
 
-    await _bot(tools)._commands.cmd_model(update, _context("claude", "opus"))
+    await getattr(_bot(tools)._commands, comando)(update, _context(*args))
 
     tools.execute.assert_not_awaited()
-    assert update.message.reply_text.await_args.args[0].startswith("Uso: /model")
+    update.message.reply_text.assert_awaited_once_with(uso)
 
 
 async def test_set_en_grupo_se_rechaza(tools):

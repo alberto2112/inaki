@@ -94,7 +94,9 @@ nuevo — un Slack que nazca mañana hereda las TOOLS, no `/scheduler`.
 slash nuevos pero NO una capacidad nueva: son atajos de la tool `config` sobre
 `llm.model`, `llm.reasoning_effort` y `llm.temperature`. El bot recibe el `IToolExecutor`
 del agente (`TelegramBotPorts.tools`) e invoca `config` igual que el gateway
-`/admin/tool/invoke`: sin argumento `get`, con uno `set`. No reimplementan validación,
+`/admin/tool/invoke`: sin argumentos `get`, con argumentos `set`. `/model <provider> <modelo>`
+cambia `llm.provider` y `llm.model` en UN solo `set` sobre el bloque `llm`: dos `set`
+seguidos validarían y reiniciarían con un par intermedio (→ `model-con-provider`). No reimplementan validación,
 denylist ni reload. Como no hay turno, el kernel no hace cumplir `requires_operator`: el
 canal decide `is_operator` y rechaza el `set` antes de invocar (leer queda abierto a quien
 usa los slash). El `set` corre con el `ChannelContext` del chat publicado para que la tool

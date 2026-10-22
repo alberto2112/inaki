@@ -73,6 +73,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
 
 | Nota | Cambio observable |
 |---|---|
+| [`model-con-provider`](#model-con-provider) | Telegram: `/model <provider> <modelo>` cambia `llm.provider` y `llm.model` juntos, en un solo `set` (un reinicio). `/model <modelo>` sigue cambiando solo el modelo; sin argumentos muestra provider y modelo. Un `config set` con un mapa reporta solo las claves pedidas, no el bloque entero |
 | [`tool-output-completo`](#tool-output-completo) | Un tool result largo se persiste cabeza (40 %) + cola (60 %) en vez de solo cabeza; el marcador dice cuántos chars se omitieron y trae una `ref`. El output completo queda en la misma fila de `history.db` y se lee con la tool nueva `tool_output` |
 | [`slash-de-config`](#slash-de-config) | Telegram: se retiró `/clear_all` (borraba el historial del agente en TODOS los chats; `/clear` sigue limpiando el chat actual). Slash nuevos `/model`, `/effort` y `/temperature`: sin argumento muestran el valor, con uno lo cambian en caliente vía la tool `config` (`set`, efímero, solo el operador por privado) |
 | [`operator-user-ids`](#operator-user-ids) | Campo nuevo `channels.telegram.operator_user_ids`: quién es operador deja de colgar de `allowed_user_ids`. Vacía hereda `allowed_user_ids` (sin cambios para las configs existentes); declarada, solo esos ids son operadores. Un operador fuera de una `allowed_user_ids` no vacía **aborta la carga** con un error que nombra los ids |
@@ -125,7 +126,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `in-flight-message-injection`, `turn-kill-switch`
 - **Retención y alcance del registro**: `tool-output-completo`, `ventana-cuenta-conversacion`,
   `trim-cuenta-conversacion`, `search-history-retention-horizon`
-- **Telegram y canales**: `slash-de-config`, `operator-user-ids`, `timestamps-solo-en-user`, `rotulo-del-emisor-en-grupos`, `telegram-composicion`, `channels-validados-al-cargar`, `attachment-grammar`,
+- **Telegram y canales**: `model-con-provider`, `slash-de-config`, `operator-user-ids`, `timestamps-solo-en-user`, `rotulo-del-emisor-en-grupos`, `telegram-composicion`, `channels-validados-al-cargar`, `attachment-grammar`,
   `formato-en-el-borde-del-transporte`,
   `groups-vs-broadcast`, `broadcast-human-reset`, `rate-limit-por-intervenciones`,
   `broadcast-topology-config`, `broadcast-arranque-observable`,
@@ -147,6 +148,36 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `agent-id-igual-al-fichero`, `knowledge-token-budget-retirado`
 - **Providers LLM**: `llm-un-solo-camino-de-construccion`, `openai-habla-responses`, `anthropic-api-actual`
 - **Delegación**: `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
+
+---
+
+### `model-con-provider`
+
+**La decisión (2026-10-22)**: `/model` solo cambiaba `llm.model`. Para pasar a un modelo de
+otro provider hacían falta dos cambios, y el id de un modelo solo tiene sentido dentro de su
+provider. Dos slash separados (`/provider` y `/model`) se descartaron: cada `config set`
+valida y reinicia el daemon, así que el primero validaba (y, si pasaba, arrancaba con) un
+par provider/modelo intermedio que nadie había pedido, y si no pasaba no había forma de
+cambiar de provider. El operador eligió dos argumentos (`/model <provider> <modelo>`) en vez
+de `provider:modelo`: hay ids de modelo que llevan `:` (`qwen3:8b` en Ollama,
+`deepseek/deepseek-chat:free` en OpenRouter) y el separador habría sido ambiguo.
+
+**El cambio**:
+- `/model <provider> <modelo>` invocaba `config` con `set` sobre `llm` y el mapa
+  `{provider, model}`: un solo override, una validación, un reinicio, un aviso. No hizo
+  falta tocar la tool ni el motor: un mapa ya fundía solo las claves dadas.
+- `/model <modelo>` seguía cambiando solo `llm.model`; sin argumentos, `/model` mostraba
+  `llm.provider` y `llm.model` en un mensaje. Tres o más argumentos eran error de uso.
+- Los tres atajos (`/model`, `/effort`, `/temperature`) pasaron a declararse como
+  `_AtajoDeConfig` (paths que leen, aridad máxima, traducción args → `(path, valor)`) en
+  `commands.py`, con un único `_config_slash` que los ejecuta.
+- `GestionarOverridesUseCase.set` reportaba, para un path de bloque, TODAS sus hojas: un
+  `set llm {provider, model}` habría confirmado también la temperatura, el timeout y el
+  resto del bloque. Pasó a reportar (en la respuesta y en el aviso tras el reinicio) solo las
+  hojas que el mapa pedido tocaba.
+
+**Invariante**: provider y modelo se cambian JUNTOS o no se cambia el provider: un estado
+intermedio que pasa por la validación y por un reinicio no es un detalle de UX.
 
 ---
 

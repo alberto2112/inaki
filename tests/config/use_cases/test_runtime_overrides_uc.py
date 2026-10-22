@@ -120,6 +120,24 @@ def test_un_dict_funde_solo_las_claves_dadas_y_una_lista_reemplaza():
     assert efectivo["tools"]["pinned"] == ["memory"]
 
 
+def test_un_dict_reporta_solo_las_claves_que_pidio_no_el_bloque_entero():
+    """``/model <provider> <modelo>`` hace ``set llm {provider, model}``: la confirmación
+    no arrastra la temperatura que nadie tocó."""
+    uc, store, reloader = _uc()
+
+    r = uc.set("llm", {"provider": "anthropic", "model": "claude"})
+
+    assert r.estado is EstadoSet.ACEPTADO
+    assert r.valor == {"provider": "anthropic", "model": "claude"}
+    assert r.anterior == {"provider": "openai", "model": "a"}
+    assert _efectivo(store)["llm"] == {
+        "provider": "anthropic",
+        "model": "claude",
+        "temperature": 0.7,
+    }
+    assert reloader.pedidos == 1
+
+
 def test_el_valor_reportado_es_el_validado_no_el_pedido():
     def validar(candidato):
         efectivo = _efectivo(candidato)
@@ -410,3 +428,17 @@ def test_la_denylist_real_del_schema_rechaza(path, valor):
 
     _rechazado(r, MotivoRechazo.PATH_FIJO)
     assert reloader.pedidos == 0 and store.paths_runtime(AGENTE) == frozenset()
+
+
+def test_la_denylist_real_deja_cambiar_provider_y_modelo_juntos():
+    """El ``set`` de ``/model <provider> <modelo>`` no toca ninguna hoja fija del schema."""
+    efectivo = {"llm": {"provider": "openai", "model": "a"}}
+    uc, _, reloader = _uc(
+        validar=lambda c: deep_merge(efectivo, c.capa_agente(AGENTE)),
+        fijos=paths_fijos_en_runtime(),
+    )
+
+    r = uc.set("llm", {"provider": "anthropic", "model": "claude"})
+
+    assert r.estado is EstadoSet.ACEPTADO
+    assert reloader.pedidos == 1

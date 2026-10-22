@@ -174,8 +174,8 @@ class GestionarOverridesUseCase:
             return self._rechazo(path, MotivoRechazo.CONFIG_INVALIDA, detalle=str(exc))
 
         nuevo_plano = aplanar(nuevo)
-        anterior = self._valor_en(actual_plano, path)
-        efectivo = self._valor_en(nuevo_plano, path)
+        anterior = self._valor_en(actual_plano, path, valor)
+        efectivo = self._valor_en(nuevo_plano, path, valor)
         if _bajo(actual_plano, path) == _bajo(nuevo_plano, path):
             return ResultadoSet(EstadoSet.SIN_CAMBIO, path, valor=efectivo, anterior=anterior)
 
@@ -208,12 +208,21 @@ class GestionarOverridesUseCase:
         return False
 
     @staticmethod
-    def _valor_en(plano: dict[str, Any], path: str) -> Any:
-        """Valor de la hoja ``path``; si nombra un bloque, el dict de sus hojas relativas."""
+    def _valor_en(plano: dict[str, Any], path: str, pedido: Any) -> Any:
+        """Valor de la hoja ``path``; si nombra un bloque, el dict de las hojas que ``pedido`` toca.
+
+        Un mapa cambia solo las claves dadas, así que se reporta solo eso: ``llm =
+        {provider, model}`` no arrastra la temperatura ni el timeout que nadie pidió.
+        """
         if path in plano:
             return plano[path]
+        tocadas = tuple(aplanar(anidar(path, pedido)))
         prefijo = f"{path}."
-        return {k[len(prefijo) :]: v for k, v in plano.items() if k.startswith(prefijo)}
+        return {
+            k[len(prefijo) :]: v
+            for k, v in plano.items()
+            if any(k == t or k.startswith(f"{t}.") for t in tocadas)
+        }
 
     @staticmethod
     def _rechazo(

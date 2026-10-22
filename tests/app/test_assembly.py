@@ -23,6 +23,7 @@ _BUILTINS = {
     "knowledge_admin",
     "memory",
     "search_history",
+    "tool_output",
     "web_search",
     "read_file",
     "write_file",

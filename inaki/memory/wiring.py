@@ -31,6 +31,7 @@ from inaki.memory.adapters.sqlite_history_store import HistoryStoreSettings, SQL
 from inaki.memory.adapters.sqlite_memory_repo import SQLiteMemoryRepository
 from inaki.memory.tools.memory_tool import MemoryTool
 from inaki.memory.tools.search_history_tool import SearchHistoryTool
+from inaki.memory.tools.tool_output_tool import ToolOutputTool
 from inaki.memory.use_cases.consolidate_all_agents import ConsolidateAllAgentsUseCase
 from inaki.memory.use_cases.consolidate_memory import ConsolidateMemoryUseCase
 from inaki.memory.use_cases.digest import DigestWriter
@@ -178,7 +179,8 @@ def build_memory_tools(
 ) -> list[ITool]:
     """Gestión de recuerdos (tool única ``memory``: search/list/update/delete, y
     ``create`` si ``memories.capture.enabled``) y búsqueda en el historial CRUDO
-    scopeada al ``agent_id`` (``search_history``, sin cambios)."""
+    scopeada al ``agent_id`` (``search_history``, sin cambios), más la lectura del
+    output completo de un tool result truncado (``tool_output``)."""
     capture = build_memory_settings(cfg.memories).capture
     return [
         MemoryTool(
@@ -190,6 +192,7 @@ def build_memory_tools(
             capture=capture,
         ),
         SearchHistoryTool(history=history, agent_id=cfg.id),
+        ToolOutputTool(history=history, agent_id=cfg.id),
     ]
 
 

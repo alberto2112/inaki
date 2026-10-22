@@ -62,6 +62,7 @@ existe este documento— y la contradicción no queda flotando.
 
 ### Migración automática en caliente — sin acción
 
+`tool-output-completo` (agrega `full_ref`/`full_content` a `history`),
 `persist-tool-calls`, `groups-vs-broadcast`, `tool-config-own-file`,
 `agent-state-scoped-by-channel-chat`, `secrets-layer-eradication`,
 `channels-validados-al-cargar`, `motor-de-merge-unico`, `kernel-limpio` (quita `photos.debug`
@@ -72,6 +73,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
 
 | Nota | Cambio observable |
 |---|---|
+| [`tool-output-completo`](#tool-output-completo) | Un tool result largo se persiste cabeza (40 %) + cola (60 %) en vez de solo cabeza; el marcador dice cuántos chars se omitieron y trae una `ref`. El output completo queda en la misma fila de `history.db` y se lee con la tool nueva `tool_output` |
 | [`slash-de-config`](#slash-de-config) | Telegram: se retiró `/clear_all` (borraba el historial del agente en TODOS los chats; `/clear` sigue limpiando el chat actual). Slash nuevos `/model`, `/effort` y `/temperature`: sin argumento muestran el valor, con uno lo cambian en caliente vía la tool `config` (`set`, efímero, solo el operador por privado) |
 | [`operator-user-ids`](#operator-user-ids) | Campo nuevo `channels.telegram.operator_user_ids`: quién es operador deja de colgar de `allowed_user_ids`. Vacía hereda `allowed_user_ids` (sin cambios para las configs existentes); declarada, solo esos ids son operadores. Un operador fuera de una `allowed_user_ids` no vacía **aborta la carga** con un error que nombra los ids |
 | [`privilegio-por-operacion`](#privilegio-por-operacion) | `config_set` dejó de existir: es la operación `set` de la tool `config`, que ahora es privilegiada POR OPERACIÓN (`get`/`list` libres para cualquier turno, `set` solo del operador). Un historial viejo puede mencionar `config_set`. En un sub-agente o fuera del daemon `config` sigue siendo solo lectura. El hijo de una delegación ve `config` y el kernel le rechaza `set` |
@@ -121,8 +123,8 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
 - **Historial y persistencia del turno**: `kernel-limpio`, `outbound-send-single-owner`,
   `persist-tool-calls`, `incremental-persist`, `intermediate-persist`,
   `in-flight-message-injection`, `turn-kill-switch`
-- **Retención y alcance del registro**: `ventana-cuenta-conversacion`, `trim-cuenta-conversacion`,
-  `search-history-retention-horizon`
+- **Retención y alcance del registro**: `tool-output-completo`, `ventana-cuenta-conversacion`,
+  `trim-cuenta-conversacion`, `search-history-retention-horizon`
 - **Telegram y canales**: `slash-de-config`, `operator-user-ids`, `timestamps-solo-en-user`, `rotulo-del-emisor-en-grupos`, `telegram-composicion`, `channels-validados-al-cargar`, `attachment-grammar`,
   `formato-en-el-borde-del-transporte`,
   `groups-vs-broadcast`, `broadcast-human-reset`, `rate-limit-por-intervenciones`,
@@ -145,6 +147,50 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `agent-id-igual-al-fichero`, `knowledge-token-budget-retirado`
 - **Providers LLM**: `llm-un-solo-camino-de-construccion`, `openai-habla-responses`, `anthropic-api-actual`
 - **Delegación**: `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
+
+---
+
+### `tool-output-completo`
+
+**El bug (2026-10-22)**: el agente (Opus en producción) no pudo verificar en un turno
+posterior lo que había devuelto una tool. `persist_tool_result_max_chars` (2000)
+recortaba la copia persistida del tool result conservando solo la CABEZA, con el marcador
+`…[truncado]`. En ese caso la cabeza era HTML inútil, y lo que importaba (la respuesta de
+`/api/stat`) estaba al final y se perdió. Lo diagnosticó el propio agente y propuso dos
+cambios: truncar cabeza + cola, y guardar el output completo aparte con una referencia en
+el historial.
+
+**El cambio**:
+- `RunAgentUseCase._truncate_tool_result` pasó a conservar el 40 % del presupuesto de
+  la cabeza y el 60 % de la cola. El marcador del medio decía cuántos chars se omitieron
+  sobre el total y nombraba la tool y la `ref` con las que recuperar el resto
+  (`call tool_output with ref="…"`). Iba en inglés porque lo lee el LLM.
+- El output completo viajaba como `ToolOutputArchive(ref, content)` a
+  `IHistoryStore.append(..., full_output=...)` y quedaba en la MISMA fila, en las
+  columnas nuevas `full_ref`/`full_content` (`ALTER TABLE` en caliente, índice parcial
+  sobre `full_ref`). `full_content` quedó fuera de los `SELECT` de mensajes: al contexto
+  del LLM solo llegaba el content truncado.
+- La `ref` la generaba el kernel (12 hex de un uuid4). El `tool_call_id` no servía como
+  clave porque hay providers que lo repiten entre turnos (`call_dsml_{idx}` de DeepSeek).
+- Tool builtin nueva `tool_output` (`inaki/memory/tools/tool_output_tool.py`, junto a
+  `search_history`): devolvía el output por `ref`, scopeado a `agent_id`, paginado de a
+  16 000 chars con `offset`. Ante una ref ausente decía "ya no lo tengo", nunca "no
+  existió". No se pinneó: el marcador la nombraba y la alcanzaba el page-in.
+
+**Por qué en `history.db` y no en `/tmp` ni en ficheros sueltos**: se evaluó guardar en
+`/tmp/inaki_tool_outputs/` para que el SO purgara solo, sin agendar una tarea en el
+scheduler. Se descartó por cuatro motivos. `/tmp` se vacía con cada reboot mientras
+`history.db` sobrevive, así que el historial quedaba apuntando a ficheros que ya no
+existían. `read_file` no llegaba con `workspace.containment: strict`. La ruta era
+predecible, en un directorio escribible por todos, y compartida entre instancias con
+distinto `--home`. Y desde Debian Trixie `/tmp` es tmpfs por defecto, o sea RAM de la Pi. Guardándolo en la
+fila, la retención salía gratis y era coherente por construcción: `trim` y `clear` borraban
+el output junto con el marcador que lo referenciaba. Mientras el modelo viera el
+marcador, el output existía.
+
+**Invariante**: NUNCA guardar el output completo de un tool result fuera de la fila que
+lo referencia. Una referencia que sobrevive a lo que apunta fuerza al modelo a confundir
+"no lo tengo" con "no pasó" (ver `search-history-retention-horizon`).
 
 ---
 

@@ -240,7 +240,7 @@ Ports are contracts (ABC) that the core defines and adapters implement.
 | `IEmbeddingProvider` | `embedding_port.py` | `embed_query(text)`, `embed_passage(text)` |
 | `ITool` / `IToolExecutor` | `tool_port.py` | `execute(**kwargs) -> ToolResult`, `get_schemas_relevant(...)` |
 | `ISkillRepository` | `skill_port.py` | `list_all`, `retrieve`, `retrieve_with_scores` |
-| `IHistoryStore` | `history_port.py` | Scoped by `(agent_id, channel, chat_id)`: `append`, `load`, `load_full`, `clear`, `trim`, `search`, `update_content`, `retention_horizon`, `load_uninfused`, `mark_infused`, `load_state`, `save_state` — plus the in-flight drainage pair `last_row_id` / `load_user_messages_since` |
+| `IHistoryStore` | `history_port.py` | Scoped by `(agent_id, channel, chat_id)`: `append`, `load`, `load_full`, `clear`, `trim`, `search`, `update_content`, `retention_horizon`, `load_uninfused`, `mark_infused`, `load_state`, `save_state` — plus the in-flight drainage pair `last_row_id` / `load_user_messages_since`, and `get_tool_output` (full output of a truncated tool result, archived via `append(..., full_output=ToolOutputArchive)`) |
 | `IScopeRegistry` | `scope_registry_port.py` | `try_mark_busy`, `mark_idle`, `request_cancel`, `is_cancel_requested` |
 | `IVisionPort` | `vision_port.py` | `detect_and_embed(image_bytes) -> list[FaceDetection]` |
 

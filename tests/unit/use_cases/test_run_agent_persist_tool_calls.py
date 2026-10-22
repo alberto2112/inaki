@@ -1,7 +1,8 @@
 """Tests del feature persist-tool-calls a nivel RunAgentUseCase.
 
 Verifican que, con ``chat_history.persist_tool_calls`` activo, el turno persiste
-el rastro estructurado (assistant+tool_calls ↔ tool result, truncado) y que con
+el rastro estructurado (assistant+tool_calls ↔ tool result, truncado cabeza+cola
+con el output completo archivado) y que con
 el flag apagado el comportamiento es idéntico al legacy.
 """
 
@@ -73,14 +74,44 @@ async def test_persist_on_guarda_el_rastro_de_tool_calls(agent_config, mocks):
     assert tool_msg.content == "/x"
 
 
-async def test_persist_on_trunca_tool_result_largo(agent_config, mocks):
+async def test_persist_on_trunca_cabeza_y_cola_y_archiva_el_completo(agent_config, mocks):
+    """40 % cabeza + 60 % cola: el final (exit code, JSON de estado) sobrevive, y el
+    output entero viaja a la misma fila con la ref que nombra el marcador."""
     _tool_then_final_llm(mocks[0])
-    uc = _build_uc(agent_config, mocks, persist=True, max_chars=20, tool_output="X" * 100)
+    completo = "H" * 50 + "M" * 30 + "T" * 20
+    uc = _build_uc(agent_config, mocks, persist=True, max_chars=20, tool_output=completo)
 
     await uc.execute("guardá esto")
 
-    _, tool_msg = _persisted(mocks[4])[2]
-    assert tool_msg.content == "X" * 20 + "\n…[truncado]"
+    llamada = mocks[4].append.call_args_list[2]
+    tool_msg = llamada.args[1]
+    archivo = llamada.kwargs["full_output"]
+    assert tool_msg.content.startswith("H" * 8 + "\n…[80 of 100 chars omitted.")
+    assert tool_msg.content.endswith("]…\n" + "T" * 12)
+    assert f'ref="{archivo.ref}"' in tool_msg.content
+    assert archivo.content == completo
+
+
+async def test_persist_on_no_archiva_un_result_corto(agent_config, mocks):
+    _tool_then_final_llm(mocks[0])
+    uc = _build_uc(agent_config, mocks, persist=True, max_chars=20, tool_output="corto")
+
+    await uc.execute("guardá esto")
+
+    llamada = mocks[4].append.call_args_list[2]
+    assert llamada.args[1].content == "corto"
+    assert "full_output" not in llamada.kwargs
+
+
+async def test_max_chars_cero_no_trunca(agent_config, mocks):
+    _tool_then_final_llm(mocks[0])
+    uc = _build_uc(agent_config, mocks, persist=True, max_chars=0, tool_output="X" * 5000)
+
+    await uc.execute("guardá esto")
+
+    llamada = mocks[4].append.call_args_list[2]
+    assert llamada.args[1].content == "X" * 5000
+    assert "full_output" not in llamada.kwargs
 
 
 async def test_persist_off_es_legacy_sin_mensajes_tool(agent_config, mocks):

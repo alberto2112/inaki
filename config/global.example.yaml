@@ -212,9 +212,14 @@ chat_history:
   # Persistir el par assistant+tool_calls ↔ tool_results en el historial.
   persist_tool_calls: true
   # Truncación (en chars) de cada tool result al persistirlo con ``persist_tool_calls``.
-  # Acota el costo de contexto y disco cuando una tool devuelve un volcado grande
-  # (web_search, RAG). ``0`` = sin truncar. El turno en curso siempre ve el result
-  # completo; solo la copia persistida se recorta.
+  # Acota el costo de contexto cuando una tool devuelve un volcado grande (web_search,
+  # RAG). ``0`` = sin truncar. El turno en curso siempre ve el result completo; solo la
+  # copia que entra al contexto de los turnos siguientes se recorta: se conserva el 40 %
+  # de la cabeza y el 60 % de la cola (donde suelen estar el exit code o el JSON de
+  # estado), con un marcador en el medio que dice cuánto se omitió. El output COMPLETO
+  # queda en la misma fila de ``history.db`` y el agente lo recupera con la tool
+  # ``tool_output``; se borra junto con la fila (consolidación o ``/clear``), sin purga
+  # aparte.
   persist_tool_result_max_chars: 2000
 
 # -----------------------------------------------------------------------------

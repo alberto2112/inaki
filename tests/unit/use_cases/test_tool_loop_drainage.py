@@ -85,6 +85,9 @@ class _FakeHistoryStore(IHistoryStore):
     async def append(self, *args, **kwargs) -> int | None:  # noqa: ARG002
         return None
 
+    async def get_tool_output(self, *args, **kwargs) -> str | None:  # noqa: ARG002
+        return None
+
     async def update_content(self, *args, **kwargs) -> bool:  # noqa: ARG002
         return False
 

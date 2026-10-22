@@ -276,8 +276,10 @@ Persisted in `history.db` (`history` table, scoped by `agent_id, channel, chat_i
   matching `tool` results — when `chat_history.persist_tool_calls` is on
   (**default `true`**). This is what gives the main agent episodic memory of its own
   actions across turns: which path it wrote to, which file it already sent.
-  Each persisted tool result is truncated to `persist_tool_result_max_chars`
-  (the in-flight turn always sees the full output).
+  Each persisted tool result is truncated to `persist_tool_result_max_chars`,
+  keeping head (40 %) + tail (60 %) around a marker with a `ref`; the full output
+  stays in the same row and the `tool_output` tool reads it back (the in-flight
+  turn always sees the full output). See note `tool-output-completo`.
 
 ```
 persist_tool_calls: true (default)     persist_tool_calls: false (legacy)

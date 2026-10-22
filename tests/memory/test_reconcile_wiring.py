@@ -42,6 +42,7 @@ from inaki.config import (
 )
 from inaki.memory.tools.memory_tool import MemoryTool
 from inaki.memory.tools.search_history_tool import SearchHistoryTool
+from inaki.memory.tools.tool_output_tool import ToolOutputTool
 from inaki.memory.use_cases.digest import DigestWriter
 from inaki.memory.use_cases.reconcile_memory import ReconcileMemoryUseCase
 from inaki.memory.wiring import (
@@ -375,14 +376,15 @@ def test_wire_sub_agentes_loguea_error_si_el_id_no_es_un_sub_agente(caplog) -> N
 
 
 # ---------------------------------------------------------------------------
-# build_memory_tools — tool única `memory` + `search_history` (fase 4)
+# build_memory_tools — tool única `memory` + `search_history` + `tool_output`
 # ---------------------------------------------------------------------------
 
 
-def test_build_memory_tools_devuelve_memory_y_search_history() -> None:
+def test_build_memory_tools_devuelve_memory_search_history_y_tool_output() -> None:
     """La tríada vieja (search_memory/delete_memory/update_memory) desapareció:
     ``build_memory_tools`` devuelve exactamente ``memory`` (tool única) y
-    ``search_history`` (sin cambios)."""
+    ``search_history`` (sin cambios), más ``tool_output`` (lectura del output
+    completo de un tool result truncado)."""
     memory = MagicMock()
     digest = DigestWriter(
         memory, agent_id="test-agent", settings=build_memory_settings(_make_memory_config())
@@ -397,9 +399,10 @@ def test_build_memory_tools_devuelve_memory_y_search_history() -> None:
         digest=digest,
     )
 
-    assert [t.name for t in tools] == ["memory", "search_history"]
+    assert [t.name for t in tools] == ["memory", "search_history", "tool_output"]
     assert isinstance(tools[0], MemoryTool)
     assert isinstance(tools[1], SearchHistoryTool)
+    assert isinstance(tools[2], ToolOutputTool)
 
 
 # ---------------------------------------------------------------------------

@@ -34,7 +34,7 @@ from inaki.kernel.domain.conversation_state import ConversationState
 from inaki.kernel.ports.background_delegation_port import IBackgroundDelegationQueue
 from inaki.kernel.ports.channel_port import IIntermediateSink
 from inaki.kernel.ports.embedding_port import IEmbeddingProvider
-from inaki.kernel.ports.history_port import IHistoryStore
+from inaki.kernel.ports.history_port import IHistoryStore, ToolOutputArchive
 from inaki.kernel.ports.knowledge_port import IKnowledgeRetriever
 from inaki.kernel.ports.llm_port import ILLMProvider
 from inaki.kernel.ports.memory_port import IMemoryRepository
@@ -67,6 +67,16 @@ from inaki.shared.message import Message, Role
 from inaki.shared.skip_marker import is_skip_response
 
 logger = logging.getLogger(__name__)
+
+# Truncado de tool results al persistirlos: se conserva el 40 % del presupuesto
+# de la cabeza y el 60 % de la cola (el final suele traer el exit code, el JSON de
+# estado o el resumen). El marcador va en inglés: lo lee el LLM, y nombra la tool
+# y la ref con las que recuperar el output entero (ver ``tool-output-completo``).
+_TRUNCADO_PROPORCION_CABEZA = 40
+_TRUNCADO_MARCADOR = (
+    "\n…[{omitidos} of {total} chars omitted. Full output still stored: "
+    'call tool_output with ref="{ref}"]…\n'
+)
 
 
 @dataclass
@@ -547,12 +557,7 @@ class RunAgentUseCase:
             if incremental:
 
                 async def _persist_trace_msg(msg: Message) -> None:
-                    await self._history.append(
-                        agent_id,
-                        self._truncate_tool_result(msg),
-                        channel=channel,
-                        chat_id=chat_id,
-                    )
+                    await self._append_trace(agent_id, msg, channel=channel, chat_id=chat_id)
 
                 persist_trace = _persist_trace_msg
             else:
@@ -649,12 +654,7 @@ class RunAgentUseCase:
                 # que persistimos ESTE trace y NO además recording_sink.messages (sería
                 # duplicar la misma narración). Los tool results se truncan al persistir.
                 for msg in tool_trace:
-                    await self._history.append(
-                        agent_id,
-                        self._truncate_tool_result(msg),
-                        channel=channel,
-                        chat_id=chat_id,
-                    )
+                    await self._append_trace(agent_id, msg, channel=channel, chat_id=chat_id)
             elif recording_sink is not None:
                 for block in recording_sink.messages:
                     await self._history.append(
@@ -683,20 +683,49 @@ class RunAgentUseCase:
         turno.trace("turn.end", response=response, skip_persist=skip_persist)
         return response
 
-    def _truncate_tool_result(self, message: Message) -> Message:
-        """Trunca el ``content`` de un tool result al persistirlo (persist-tool-calls).
+    async def _append_trace(
+        self, agent_id: str, message: Message, *, channel: str, chat_id: str
+    ) -> None:
+        """Persiste un mensaje del rastro protocolar (persist-tool-calls).
 
-        Los mensajes que no son ``role=tool`` se devuelven intactos (el assistant
-        con tool_calls no se recorta: su narración es valiosa). El turno en curso
-        ya vio el result completo; solo la copia persistida se acota, para no
-        inflar el contexto de turnos futuros con volcados grandes (web_search, RAG).
+        Un tool result más largo que ``persist_tool_result_max_chars`` se guarda
+        truncado CABEZA + COLA (el final es donde suelen estar el exit code, el
+        JSON de estado o el resumen) y su output completo viaja a la MISMA fila
+        como ``ToolOutputArchive``: el marcador del medio le dice al LLM con qué
+        ``ref`` recuperarlo vía la tool ``tool_output``. El turno en curso ya vio
+        el result completo; solo la copia del historial se acota, para no inflar
+        el contexto de turnos futuros con volcados grandes (web_search, RAG).
         ``persist_tool_result_max_chars <= 0`` desactiva la truncación.
         """
+        truncado = self._truncate_tool_result(message)
+        if truncado is None:
+            await self._history.append(agent_id, message, channel=channel, chat_id=chat_id)
+            return
+        persistido, archivo = truncado
+        await self._history.append(
+            agent_id, persistido, channel=channel, chat_id=chat_id, full_output=archivo
+        )
+
+    def _truncate_tool_result(self, message: Message) -> tuple[Message, ToolOutputArchive] | None:
+        """``(mensaje truncado, output completo)``, o ``None`` si no hay que truncar.
+
+        Los mensajes que no son ``role=tool`` nunca se recortan (el assistant con
+        tool_calls lleva narración valiosa).
+        """
         max_chars = self._settings.persist_tool_result_max_chars
-        if message.role != Role.TOOL or max_chars <= 0 or len(message.content) <= max_chars:
-            return message
-        truncated = message.content[:max_chars] + "\n…[truncado]"
-        return message.model_copy(update={"content": truncated})
+        content = message.content
+        if message.role != Role.TOOL or max_chars <= 0 or len(content) <= max_chars:
+            return None
+        ref = uuid.uuid4().hex[:12]
+        cabeza = max_chars * _TRUNCADO_PROPORCION_CABEZA // 100
+        cola = max_chars - cabeza
+        omitidos = len(content) - max_chars
+        marcador = _TRUNCADO_MARCADOR.format(omitidos=omitidos, total=len(content), ref=ref)
+        truncated = content[:cabeza] + marcador + (content[-cola:] if cola else "")
+        return (
+            message.model_copy(update={"content": truncated}),
+            ToolOutputArchive(ref=ref, content=content),
+        )
 
     async def inspect(
         self,

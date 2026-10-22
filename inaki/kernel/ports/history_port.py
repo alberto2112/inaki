@@ -1,8 +1,23 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import datetime
 
 from inaki.kernel.domain.conversation_state import ConversationState
 from inaki.shared.message import Message
+
+
+@dataclass(frozen=True)
+class ToolOutputArchive:
+    """Output COMPLETO de un tool result cuyo ``content`` se persiste truncado.
+
+    ``ref`` es la clave con la que la tool ``tool_output`` lo recupera: la genera
+    el kernel (el ``tool_call_id`` no sirve, hay providers que lo reutilizan entre
+    turnos, p. ej. ``call_dsml_0``) y viaja también en el marcador del ``content``
+    truncado. Ver la nota ``tool-output-completo``.
+    """
+
+    ref: str
+    content: str
 
 
 class IHistoryStore(ABC):
@@ -13,6 +28,8 @@ class IHistoryStore(ABC):
         message: Message,
         channel: str = "",
         chat_id: str = "",
+        *,
+        full_output: ToolOutputArchive | None = None,
     ) -> int | None:
         """
         Persiste un mensaje en el historial del agente.
@@ -26,11 +43,25 @@ class IHistoryStore(ABC):
                      Cadena vacía cuando el canal no aplica o no es relevante.
             chat_id: Identificador del chat dentro del canal (ej: ID de grupo Telegram).
                      Cadena vacía para chats privados o canales sin distinción de chat.
+            full_output: Solo para un ``Role.TOOL`` cuyo ``content`` llega truncado:
+                el output completo se guarda EN LA MISMA FILA, así que vive y muere
+                con ella (``trim``/``clear`` lo borran sin purga aparte, y no hay
+                referencias colgadas). Ver ``get_tool_output``.
 
         Returns:
             El ID autoincremental de la fila insertada, o ``None`` si el rol no
             se persiste (p. ej. tool_call). Útil para obtener el ``history_id``
             necesario al vincular metadata de fotos.
+        """
+        ...
+
+    @abstractmethod
+    async def get_tool_output(self, agent_id: str, ref: str) -> str | None:
+        """Output completo archivado con ``append(..., full_output=...)``.
+
+        Filtra por ``agent_id`` (un agente nunca lee el rastro de otro). ``None``
+        cuando no está: la ref es inválida o su fila ya la borró ``trim``/``clear``
+        — "no lo tengo", nunca "no existió".
         """
         ...
 

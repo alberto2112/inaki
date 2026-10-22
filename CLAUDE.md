@@ -169,6 +169,9 @@ Cada una salió de un fallo en producción. El caso completo está en
   store: lo que se borra (`trim`) y lo que se lee (`max_messages`).
   → `trim-cuenta-conversacion`, `ventana-cuenta-conversacion`
 - **NUNCA** persistir un grupo protocolar confiando en que "el load lo arregla". → `incremental-persist`
+- **NUNCA** guardar el output completo de un tool result fuera de la fila que lo
+  referencia (ni en `/tmp` ni en un fichero aparte): una referencia que sobrevive a lo
+  que apunta hace que el modelo confunda "no lo tengo" con "no pasó". → `tool-output-completo`
 - **NUNCA** volver a un drain por conteo sobre una vista ventaneada — el cursor es por
   rowid monotónico. → `in-flight-message-injection`
 - **NUNCA** cerrar el tool loop sin drenar (checkpoint C): si el ACK le prometió al usuario

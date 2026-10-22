@@ -10,6 +10,9 @@ Schema:
   history     — una fila por mensaje con flag `infused` (0=pendiente, 1=procesado).
                 Incluye columnas `channel` y `chat_id` para múltiples canales/grupos,
                 y `tool_calls`/`tool_call_id` (NULL salvo en el rastro de tool calls).
+                `full_ref`/`full_content` guardan el output COMPLETO de un tool result
+                que se persistió truncado (NULL en el resto): viven y mueren con la
+                fila, así que `trim`/`clear` los purgan sin tarea aparte.
   agent_state — una fila por agente con el estado conversacional (sticky TTLs)
                 serializado en JSON.
 """
@@ -27,7 +30,7 @@ from typing import AsyncIterator
 import aiosqlite
 
 from inaki.kernel.domain.conversation_state import ConversationState
-from inaki.kernel.ports.history_port import IHistoryStore
+from inaki.kernel.ports.history_port import IHistoryStore, ToolOutputArchive
 from inaki.shared.message import Message, Role
 
 logger = logging.getLogger(__name__)
@@ -57,7 +60,9 @@ CREATE TABLE IF NOT EXISTS history (
     channel      TEXT    NOT NULL DEFAULT '',
     chat_id      TEXT    NOT NULL DEFAULT '',
     tool_calls   TEXT,
-    tool_call_id TEXT
+    tool_call_id TEXT,
+    full_ref     TEXT,
+    full_content TEXT
 );
 """
 
@@ -66,6 +71,8 @@ CREATE TABLE IF NOT EXISTS history (
 _PERSISTED_ROLES = (Role.USER, Role.ASSISTANT, Role.TOOL)
 
 # Lista de columnas de los SELECT de mensajes (incluye las de persist-tool-calls).
+# `full_content` queda AFUERA a propósito: el contexto del LLM solo ve el content
+# truncado; el completo sale únicamente por `get_tool_output`.
 _COLS = "role, content, created_at, channel, chat_id, tool_calls, tool_call_id"
 
 # Índice principal: consultas filtradas por agente + canal + chat + posición.
@@ -81,6 +88,12 @@ CREATE INDEX IF NOT EXISTS idx_history_uninfused ON history(agent_id, infused);
 # Índice secundario para consultas cross-agent por canal/chat (p. ej. auditoría).
 _CREATE_CHANNEL_CHAT_INDEX = """
 CREATE INDEX IF NOT EXISTS idx_history_channel_chat ON history(channel, chat_id);
+"""
+
+# Lookup de `get_tool_output`. Parcial: casi ninguna fila tiene output archivado.
+_CREATE_FULL_REF_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_history_full_ref ON history(agent_id, full_ref)
+WHERE full_ref IS NOT NULL;
 """
 
 _CREATE_STATE_TABLE = """
@@ -220,12 +233,14 @@ class SQLiteHistoryStore(IHistoryStore):
         await conn.execute(_CREATE_INDEX)
         await conn.execute(_CREATE_INFUSED_INDEX)
         await conn.execute(_CREATE_CHANNEL_CHAT_INDEX)
+        await conn.execute(_CREATE_FULL_REF_INDEX)
         await self._ensure_agent_state_schema(conn)
         await conn.commit()
 
     async def _ensure_history_columns(self, conn: aiosqlite.Connection) -> None:
         """Migra en caliente la tabla ``history`` agregando las columnas del feature
-        persist-tool-calls (``tool_calls``, ``tool_call_id``) si faltan.
+        persist-tool-calls (``tool_calls``, ``tool_call_id``) y las del output
+        completo archivado (``full_ref``, ``full_content``) si faltan.
 
         Idempotente: detecta las columnas existentes vía ``PRAGMA table_info`` y
         solo aplica el ``ALTER TABLE ADD COLUMN`` de las que falten. Las DBs
@@ -234,10 +249,10 @@ class SQLiteHistoryStore(IHistoryStore):
         """
         rows = await conn.execute_fetchall("PRAGMA table_info(history)")
         existing = {r["name"] for r in rows}
-        for column in ("tool_calls", "tool_call_id"):
+        for column in ("tool_calls", "tool_call_id", "full_ref", "full_content"):
             if column not in existing:
                 await conn.execute(f"ALTER TABLE history ADD COLUMN {column} TEXT")
-                logger.info("Migración history: columna '%s' agregada (persist-tool-calls)", column)
+                logger.info("Migración history: columna '%s' agregada", column)
 
     async def _ensure_agent_state_schema(self, conn: aiosqlite.Connection) -> None:
         """Crea o migra la tabla agent_state al schema scoped por (channel, chat_id).
@@ -278,6 +293,8 @@ class SQLiteHistoryStore(IHistoryStore):
         message: Message,
         channel: str = "",
         chat_id: str = "",
+        *,
+        full_output: ToolOutputArchive | None = None,
     ) -> int | None:
         if message.role not in _PERSISTED_ROLES:
             return None
@@ -295,8 +312,9 @@ class SQLiteHistoryStore(IHistoryStore):
             await self._ensure_schema(conn)
             cursor = await conn.execute(
                 "INSERT INTO history "
-                "(agent_id, role, content, created_at, channel, chat_id, tool_calls, tool_call_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "(agent_id, role, content, created_at, channel, chat_id, tool_calls, "
+                "tool_call_id, full_ref, full_content) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     agent_id,
                     message.role.value,
@@ -306,10 +324,24 @@ class SQLiteHistoryStore(IHistoryStore):
                     chat_id,
                     tool_calls_json,
                     message.tool_call_id,
+                    full_output.ref if full_output else None,
+                    full_output.content if full_output else None,
                 ),
             )
             await conn.commit()
             return cursor.lastrowid
+
+    async def get_tool_output(self, agent_id: str, ref: str) -> str | None:
+        async with self._conn() as conn:
+            await self._ensure_schema(conn)
+            rows = list(
+                await conn.execute_fetchall(
+                    "SELECT full_content FROM history WHERE agent_id = ? AND full_ref = ? "
+                    "ORDER BY id DESC LIMIT 1",
+                    (agent_id, ref),
+                )
+            )
+        return rows[0]["full_content"] if rows else None
 
     async def update_content(
         self,

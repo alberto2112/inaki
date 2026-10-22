@@ -433,7 +433,7 @@ Con ``False`` (default) el agente solo ve los mensajes de la conversación actua
 
 Default ``True``: el agente principal tiene memoria episódica de sus propias acciones entre turnos (no olvida en qué path escribió con ``write_file``, ni qué ficheros ya mandó). Con ``False`` el rastro vive solo en el tool loop del turno y se descarta — el agente queda amnésico de su actividad con herramientas, que es lo que producía el patrón "afirmo haber hecho algo que no recuerdo haber hecho". Solo afecta al agente principal; los subagentes one-shot quedan afuera por diseño. Ver las notas de migración ``persist-tool-calls`` y ``outbound-send-single-owner`` en ``CLAUDE.md``.
 
-**`persist_tool_result_max_chars`** — Truncación (en chars) de cada tool result al persistirlo con ``persist_tool_calls``. Acota el costo de contexto y disco cuando una tool devuelve un volcado grande (web_search, RAG). ``0`` = sin truncar. El turno en curso siempre ve el result completo; solo la copia persistida se recorta.
+**`persist_tool_result_max_chars`** — Truncación (en chars) de cada tool result al persistirlo con ``persist_tool_calls``. Acota el costo de contexto cuando una tool devuelve un volcado grande (web_search, RAG). ``0`` = sin truncar. El turno en curso siempre ve el result completo; solo la copia que entra al contexto de los turnos siguientes se recorta: se conserva el 40 % de la cabeza y el 60 % de la cola (donde suelen estar el exit code o el JSON de estado), con un marcador en el medio que dice cuánto se omitió. El output COMPLETO queda en la misma fila de ``history.db`` y el agente lo recupera con la tool ``tool_output``; se borra junto con la fila (consolidación o ``/clear``), sin purga aparte.
 
 ### `ChannelsGlobalConfig`
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextvars import ContextVar, Token
+from typing import NamedTuple
 
 from pydantic import BaseModel, computed_field, field_validator
 
@@ -104,9 +105,10 @@ class ChannelContext(BaseModel, frozen=True):
 # en las tools que enrutan por ``routing_key``).
 #
 # Consumidores: las tools que necesitan saber "desde qué conversación me
-# llamaron" (scheduler channel_send, face tools, send/download de Telegram,
-# delegate) leen esto vía ``contexto_del_turno.get_channel_context()`` durante el
-# tool loop, que SIEMPRE ocurre dentro de un ``execute()`` en curso.
+# llamaron" (scheduler channel_send, face tools, send/download de Telegram)
+# leen esto vía ``contexto_del_turno.get_channel_context()`` durante el tool
+# loop, que SIEMPRE ocurre dentro de un ``execute()`` en curso. ``delegate`` NO:
+# lee el scope del turno (abajo).
 
 _current_channel_context: ContextVar[ChannelContext | None] = ContextVar(
     "current_channel_context", default=None
@@ -126,3 +128,44 @@ def set_current_channel_context(ctx: ChannelContext | None) -> Token:
 def reset_current_channel_context(token: Token) -> None:
     """Restaura el valor previo al ``set`` correspondiente (fin del turno)."""
     _current_channel_context.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# Scope de historial del turno en curso (task-safe via contextvars)
+# ---------------------------------------------------------------------------
+#
+# El ``(channel, chat_id)`` EFECTIVO con el que el turno carga y persiste el
+# historial. No es lo mismo que el ``ChannelContext``: los turnos sin remitente
+# (el que procesa un ``[bg-N]``, un ``agent_send`` del scheduler) corren con
+# ``ctx=None`` pero SÍ pertenecen a una conversación, y el admin REST fuerza el
+# scope ``("", "")`` aunque tenga ctx. Lo lee ``delegate`` para saber a qué
+# conversación devolver el resultado de una delegación en background.
+#
+# FIX bg-scope-del-turno: antes ``delegate`` derivaba el scope del ctx, así que
+# una delegación lanzada desde el turno de un ``[bg-N]`` se encolaba con
+# ``("", "")`` y su resultado se persistía en un historial que nadie lee.
+
+
+class TurnScope(NamedTuple):
+    """Scope de historial de un turno: ``(channel, chat_id)``."""
+
+    channel: str
+    chat_id: str
+
+
+_current_turn_scope: ContextVar[TurnScope | None] = ContextVar("current_turn_scope", default=None)
+
+
+def current_turn_scope() -> TurnScope | None:
+    """Devuelve el scope del turno en curso, o ``None`` si no hay turno."""
+    return _current_turn_scope.get()
+
+
+def set_current_turn_scope(scope: TurnScope | None) -> Token:
+    """Publica el scope del turno. Devuelve el token para restaurar con ``reset``."""
+    return _current_turn_scope.set(scope)
+
+
+def reset_current_turn_scope(token: Token) -> None:
+    """Restaura el valor previo al ``set`` correspondiente (fin del turno)."""
+    _current_turn_scope.reset(token)

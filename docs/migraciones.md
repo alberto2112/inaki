@@ -73,6 +73,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
 
 | Nota | Cambio observable |
 |---|---|
+| [`bg-scope-del-turno`](#bg-scope-del-turno) | Una delegación lanzada desde el turno que procesa un `[bg-N]` (o desde un `agent_send`) devuelve su resultado a ESA conversación (antes se perdía en el historial `("", "")` sin avisar a nadie). Una respuesta de bg-N sin canal de destino deja un WARNING |
 | [`model-con-provider`](#model-con-provider) | Telegram: `/model <provider> <modelo>` cambia `llm.provider` y `llm.model` juntos, en un solo `set` (un reinicio). `/model <modelo>` sigue cambiando solo el modelo; sin argumentos muestra provider y modelo. Un `config set` con un mapa reporta solo las claves pedidas, no el bloque entero |
 | [`tool-output-completo`](#tool-output-completo) | Un tool result largo se persiste cabeza (40 %) + cola (60 %) en vez de solo cabeza; el marcador dice cuántos chars se omitieron y trae una `ref`. El output completo queda en la misma fila de `history.db` y se lee con la tool nueva `tool_output` |
 | [`slash-de-config`](#slash-de-config) | Telegram: se retiró `/clear_all` (borraba el historial del agente en TODOS los chats; `/clear` sigue limpiando el chat actual). Slash nuevos `/model`, `/effort` y `/temperature`: sin argumento muestran el valor, con uno lo cambian en caliente vía la tool `config` (`set`, efímero, solo el operador por privado) |
@@ -147,7 +148,53 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `config-set-efimero`, `privilegio-por-operacion`, `operator-user-ids`,
   `agent-id-igual-al-fichero`, `knowledge-token-budget-retirado`
 - **Providers LLM**: `llm-un-solo-camino-de-construccion`, `openai-habla-responses`, `anthropic-api-actual`
-- **Delegación**: `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
+- **Delegación**: `bg-scope-del-turno`, `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
+
+---
+
+### `bg-scope-del-turno`
+
+**El bug (2026-10-23)**: Iñaki lanzó una investigación en background (`bg-1`) que
+murió por un `ReadTimeout` del LLM. El `[bg-1] failed` llegó bien al grupo de
+Telegram, y en ESE turno Iñaki relanzó el trabajo partido en `bg-2` y `bg-3`. A
+partir de ahí, silencio: `bg-3` también falló, `bg-2` terminó con un informe de
+200 líneas, el padre procesó los dos resultados y escribió sus respuestas, y no
+salió ningún `sendMessage`, ningún error y ningún aviso en el log. Cuando el
+usuario preguntó, Iñaki creía que las dos seguían trabajando, y `background_tasks`
+devolvía una lista vacía porque la cola las había purgado como entregadas.
+
+`history.db` lo dejó claro: `[bg-1]` estaba en `telegram / -5391232271`, pero
+`[bg-2]` y `[bg-3]` estaban en el scope `("", "")`. `delegate` sacaba el scope de la
+conversación del `ChannelContext` del turno, y el turno que procesa un `[bg-N]`
+se despacha con `channel`/`chat_id` pero sin ctx: no tiene remitente. Con
+`ctx=None`, `delegate` encolaba con `("", "")`. El dispatch persistía el resultado
+en ese historial huérfano, `is_conversational("")` daba falso y `_deliver_response`
+salía por el `return` silencioso del modo headless. Los turnos `agent_send` del
+scheduler tenían el mismo hueco.
+
+**El cambio**:
+
+- `inaki/shared/channel_context.py` sumó un segundo `ContextVar`, el
+  `TurnScope(channel, chat_id)`: el scope EFECTIVO con el que el turno carga y
+  persiste el historial. `RunAgentUseCase.execute` lo publica junto al ctx y lo
+  limpia al terminar.
+- `DelegationCaller` dejó de pedir `get_channel_context()` y pasó a pedir
+  `get_turn_scope()` (`_ContextoDelTurno` en el composition root lo lee del
+  `ContextVar`). `delegate` nunca había usado el ctx para otra cosa que el scope.
+  De paso, una delegación desde el chat REST/CLI sin canal explícito (historial
+  en `("", "")`, ctx `cli`) devolvía el resultado al scope `("cli", "")`, que esa
+  conversación no leía; también pasó a usar el scope del historial.
+- `_deliver_response` sigue sin enviar cuando el scope no es un canal
+  conversacional, pero ahora deja un WARNING con la task, el scope y el agente.
+  El return silencioso quedó solo para el modo sin sender (tests / headless).
+
+**Sin migración de DB ni de config.** Las filas huérfanas que el bug ya había
+dejado en `("", "")` se quedaron donde estaban.
+
+**Invariante**: NUNCA derivar "a qué conversación pertenece este turno" del
+remitente. El `ChannelContext` dice QUIÉN habla, y un turno sin remitente
+(`[bg-N]`, `agent_send`) sigue perteneciendo a una conversación. Si una tool
+necesita la conversación, la saca del scope del turno.
 
 ---
 

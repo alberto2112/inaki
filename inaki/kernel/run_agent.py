@@ -58,9 +58,12 @@ from inaki.kernel._turn_pipeline import (
 )
 from inaki.shared.channel_context import (
     ChannelContext,
+    TurnScope,
     current_channel_context,
     reset_current_channel_context,
+    reset_current_turn_scope,
     set_current_channel_context,
+    set_current_turn_scope,
 )
 from inaki.shared.errors import ToolLoopMaxIterationsError
 from inaki.shared.message import Message, Role
@@ -318,10 +321,14 @@ class RunAgentUseCase:
         effective_channel = channel if channel is not None else (ctx.channel_type if ctx else "")
         effective_chat_id = chat_id if chat_id is not None else ((ctx.chat_id or "") if ctx else "")
 
-        # Publicar el contexto del turno para las tools (scheduler, faces, telegram,
-        # delegate). Set incondicional — también con ctx=None — para que un execute()
+        # Publicar el contexto del turno para las tools (scheduler, faces, telegram).
+        # Set incondicional — también con ctx=None — para que un execute()
         # anidado (delegación sync) no herede el contexto del turno padre.
         token = set_current_channel_context(ctx)
+        # El scope va aparte: un turno sin remitente (``[bg-N]``, ``agent_send``)
+        # tiene ctx=None pero sí conversación, y ``delegate`` la necesita para
+        # devolverle el resultado (FIX bg-scope-del-turno).
+        token_scope = set_current_turn_scope(TurnScope(effective_channel, effective_chat_id))
         try:
             return await self._execute_turn(
                 user_input=user_input,
@@ -335,6 +342,7 @@ class RunAgentUseCase:
                 es_operador=es_operador,
             )
         finally:
+            reset_current_turn_scope(token_scope)
             reset_current_channel_context(token)
 
     async def _execute_turn(

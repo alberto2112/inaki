@@ -35,7 +35,7 @@ from inaki.shared.errors import ToolLoopMaxIterationsError
 if TYPE_CHECKING:
     from inaki.kernel.ports.background_delegation_port import IBackgroundDelegationQueue
     from inaki.kernel.run_agent_one_shot import RunAgentOneShotUseCase
-    from inaki.shared.channel_context import ChannelContext
+    from inaki.shared.channel_context import TurnScope
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +46,14 @@ logger = logging.getLogger(__name__)
 # satisface por duck-typing; la dirección hexagonal queda intacta
 # (un módulo NO importa el composition root).
 class DelegationCaller(Protocol):
-    """Container llamador: el contexto del turno en curso para resolver el scope."""
+    """Container llamador: el scope de historial del turno en curso.
 
-    def get_channel_context(self) -> ChannelContext | None: ...
+    El scope y no el ``ChannelContext``: un turno sin remitente (el que procesa
+    un ``[bg-N]``, un ``agent_send``) corre con ``ctx=None`` pero pertenece a una
+    conversación, y el resultado tiene que volver a ESA conversación.
+    """
+
+    def get_turn_scope(self) -> TurnScope | None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -396,9 +401,9 @@ class DelegateTool(ITool):
 
         Flow:
         1. Allow-list check (REQ-DG-2) — fail-fast antes de tocar la cola.
-        2. Resolver scope ``(channel, chat_id)`` via ``caller_container.get_channel_context()``.
-           Si no hay contexto activo (ej. CLI / daemon sin canal), fallback a ``("", "")``.
-           Mapeo: ``ctx.channel_type → channel``, ``ctx.chat_id → chat_id`` (vacío si None).
+        2. Resolver scope ``(channel, chat_id)`` via ``caller_container.get_turn_scope()``:
+           el scope de historial del turno en curso, el mismo en el que se persiste.
+           Sin turno activo (ej. el gateway admin) → fallback a ``("", "")``.
         3. ``queue.enqueue(...)`` — devuelve ``bg-N`` en <50ms (REQ-BGD-2).
         4. ToolResult con ``DelegationResult(status="success", summary="Delegation queued",
            details=task_id)`` — el LLM lee ``details`` para anunciarle al usuario el ``bg-N``.
@@ -434,22 +439,20 @@ class DelegateTool(ITool):
             )
             return self._build_tool_result(result)
 
-        # 2. Resolver scope desde el contexto activo del caller
+        # 2. Resolver scope desde el turno activo del caller. NO desde el ctx: el
+        # turno de un [bg-N] no tiene ctx, y una delegación relanzada desde ahí se
+        # encolaba con ("", "") — su resultado acababa en un historial huérfano
+        # (FIX bg-scope-del-turno).
         try:
-            ctx = self._caller_container.get_channel_context()
+            scope = self._caller_container.get_turn_scope()
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "DelegateTool(async): get_channel_context() falló: %s — fallback a ('', '')",
+                "DelegateTool(async): get_turn_scope() falló: %s — fallback a ('', '')",
                 exc,
             )
-            ctx = None
+            scope = None
 
-        if ctx is None:
-            channel = ""
-            chat_id = ""
-        else:
-            channel = ctx.channel_type
-            chat_id = ctx.chat_id or ""
+        channel, chat_id = scope if scope is not None else ("", "")
 
         # 3. Encolar (REQ-BGD-2)
         try:

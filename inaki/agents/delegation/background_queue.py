@@ -328,7 +328,19 @@ class BackgroundDelegationQueueAdapter:
         está persistida — se loguea el error y el usuario la tiene en el
         historial aunque no le haya llegado el mensaje.
         """
-        if self._result_sender is None or target is None:
+        if self._result_sender is None:
+            return
+        if target is None:
+            # No es un error del envío sino de a dónde: el usuario no se entera de
+            # nada. Así se vio el bug del scope ("", "") — sin una línea en el log.
+            logger.warning(
+                "background-delegation %s: el scope %r:%r no es un canal conversacional "
+                "de '%s' — la respuesta queda solo en ese historial, nadie la recibe",
+                task.id,
+                task.channel,
+                task.chat_id,
+                task.caller_agent_id,
+            )
             return
         if not response.strip() or is_skip_response(response):
             logger.info(

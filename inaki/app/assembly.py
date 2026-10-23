@@ -114,7 +114,12 @@ from inaki.scheduler.wiring import (
     build_scheduler,
     build_scheduler_tool,
 )
-from inaki.shared.channel_context import ChannelContext, current_channel_context
+from inaki.shared.channel_context import (
+    ChannelContext,
+    TurnScope,
+    current_channel_context,
+    current_turn_scope,
+)
 from inaki.shared.errors import ConfigError, InakiError
 from inaki.skills.yaml_skill_repo import YamlSkillRepository
 from inaki.tools.registry import ToolRegistry
@@ -181,11 +186,16 @@ class _Registros:
 
 class _ContextoDelTurno:
     """Lo que las tools y ``delegate`` piden del "container llamador": el
-    ``ChannelContext`` del turno en curso (un ``ContextVar`` task-safe)."""
+    ``ChannelContext`` y el scope de historial del turno en curso (dos
+    ``ContextVar`` task-safe)."""
 
     @staticmethod
     def get_channel_context() -> ChannelContext | None:
         return current_channel_context()
+
+    @staticmethod
+    def get_turn_scope() -> TurnScope | None:
+        return current_turn_scope()
 
 
 contexto_del_turno = _ContextoDelTurno()

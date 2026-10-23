@@ -750,6 +750,26 @@ class TestResultDelivery:
         sender.send_message.assert_not_called()
         sender.build_intermediate_sink.assert_not_called()
 
+    async def test_respuesta_sin_destino_deja_warning(self, caplog) -> None:
+        """FIX bg-scope-del-turno: una respuesta que no llega a nadie no puede
+        salir en silencio. El bug del scope ("", "") no dejó ni una línea."""
+        sender = _build_sender()
+        adapter, dispatcher = _build_adapter(
+            one_shot_for={"r": _one_shot_returning("ok")},
+            result_sender=sender,
+            conversational_channels=frozenset({"telegram"}),
+        )
+        dispatcher.dispatch.return_value = "La investigación terminó"
+
+        with caplog.at_level("WARNING", logger="inaki.agents.delegation.background_queue"):
+            task_id = await _enqueue_and_run(adapter, channel="", chat_id="")
+
+        sender.send_message.assert_not_called()
+        avisos = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(avisos) == 1
+        assert task_id in avisos[0].getMessage()
+        assert "nadie la recibe" in avisos[0].getMessage()
+
     async def test_live_sink_se_pasa_al_dispatch_en_canal_conversacional(self) -> None:
         """La narración intermedia del turno fluye en vivo por el sink del
         sender (mismo patrón que agent_send en el scheduler)."""

@@ -28,7 +28,14 @@ import pytest
 from inaki.agents.delegation.delegate_tool import _RESULT_FORMAT_FOOTER, DelegateTool
 from inaki.kernel.domain.delegation_result import DelegationResult
 from inaki.kernel.ports.tool_port import ToolResult
-from inaki.shared.channel_context import ChannelContext
+from inaki.app.assembly import contexto_del_turno
+from inaki.shared.channel_context import (
+    TurnScope,
+    reset_current_channel_context,
+    reset_current_turn_scope,
+    set_current_channel_context,
+    set_current_turn_scope,
+)
 from inaki.shared.errors import ToolLoopMaxIterationsError
 
 # ---------------------------------------------------------------------------
@@ -88,7 +95,7 @@ def _make_tool(
 
     if caller_container is None:
         caller_container = MagicMock()
-        caller_container.get_channel_context = MagicMock(return_value=None)
+        caller_container.get_turn_scope = MagicMock(return_value=None)
 
     if queue is None:
         queue = MagicMock()
@@ -822,7 +829,7 @@ def _make_async_tool(
         queue.enqueue = AsyncMock(return_value="bg-1")
     if caller_container is None:
         caller_container = MagicMock()
-        caller_container.get_channel_context = MagicMock(return_value=None)
+        caller_container.get_turn_scope = MagicMock(return_value=None)
     tool = DelegateTool(
         allowed_targets=allowed_targets if allowed_targets is not None else _ALLOWED_TARGETS,
         build_child=MagicMock(),
@@ -879,12 +886,10 @@ async def test_default_async_completa_en_menos_de_50ms() -> None:
     assert elapsed < 0.050
 
 
-async def test_async_propaga_canal_y_chat_del_channel_context() -> None:
-    """Triangulación: cuando hay ChannelContext activo, sus campos se mapean a
-    channel/chat_id del enqueue. ``ctx.channel_type → channel``."""
-    ctx = ChannelContext(channel_type="telegram", user_id="42", chat_id="42")
+async def test_async_propaga_el_scope_del_turno() -> None:
+    """El scope del enqueue es el scope de historial del turno en curso."""
     caller_container = MagicMock()
-    caller_container.get_channel_context = MagicMock(return_value=ctx)
+    caller_container.get_turn_scope = MagicMock(return_value=TurnScope("telegram", "42"))
 
     tool, queue, _ = _make_async_tool(caller_container=caller_container)
     await tool.execute(agent_id="researcher", task="x")
@@ -894,9 +899,29 @@ async def test_async_propaga_canal_y_chat_del_channel_context() -> None:
     assert kwargs["chat_id"] == "42"
 
 
-async def test_async_fallback_canal_vacio_sin_channel_context() -> None:
-    """Triangulación: sin ChannelContext → channel='' chat_id='' (CLI/daemon)."""
-    tool, queue, _ = _make_async_tool()  # default: get_channel_context → None
+async def test_async_relanzada_desde_un_turno_bg_conserva_la_conversacion() -> None:
+    """Regresión FIX bg-scope-del-turno (2026-10-23): el turno que procesa un
+    ``[bg-N]`` corre SIN ChannelContext. Una delegación relanzada desde ahí se
+    encolaba con ``("", "")`` y su resultado se perdía en un historial huérfano.
+    Con el contexto real del arnés: ctx ausente, scope presente."""
+    tool, queue, _ = _make_async_tool(caller_container=contexto_del_turno)
+
+    token_ctx = set_current_channel_context(None)
+    token_scope = set_current_turn_scope(TurnScope("telegram", "-5391232271"))
+    try:
+        await tool.execute(agent_id="researcher", task="x")
+    finally:
+        reset_current_turn_scope(token_scope)
+        reset_current_channel_context(token_ctx)
+
+    kwargs = queue.enqueue.await_args.kwargs
+    assert kwargs["channel"] == "telegram"
+    assert kwargs["chat_id"] == "-5391232271"
+
+
+async def test_async_fallback_canal_vacio_sin_turno() -> None:
+    """Sin turno activo (p. ej. el gateway admin) → channel='' chat_id=''."""
+    tool, queue, _ = _make_async_tool()  # default: get_turn_scope → None
 
     await tool.execute(agent_id="researcher", task="x")
 

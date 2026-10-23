@@ -392,6 +392,7 @@ async def test_grupo_delega_al_buffer_flush_idempotente(agent_cfg, mock_containe
     """
     bot = _build_bot(agent_cfg, mock_container)
     bot._groups.schedule_flush = MagicMock()
+    bot._groups.dispara_turno = MagicMock(return_value=True)
     update = _mk_update(chat_type="group")
     context = MagicMock()
 
@@ -812,6 +813,8 @@ async def test_handle_photo_modo_bang_emite_user_input_photo_sin_assistant_respo
         bot = TelegramBot(settings=cfg, ports=container, broadcast_emitter=None)
 
     bot._egress.emit = AsyncMock()
+    # El modo `!` es una orden al bot: en grupo solo aplica si el mensaje dispara turno.
+    bot._groups.dispara_turno = MagicMock(return_value=True)
 
     update = _mk_update(chat_type="group", caption="!transcribí esto")
     update.message.from_user = MagicMock(username="alberto", first_name="Alberto")
@@ -842,3 +845,20 @@ async def test_handle_photo_modo_bang_emite_user_input_photo_sin_assistant_respo
     assert len(assistant_calls) == 0
     assert photo_calls[0].kwargs["content"] == "texto extraído de la foto"
     assert photo_calls[0].kwargs["sender"] == "@alberto (Alberto)"
+
+
+async def test_grupo_sin_mencion_persiste_la_foto_sin_turno(agent_cfg, mock_container) -> None:
+    """Modo ``mention`` sin mención: la foto se analiza y su bloque enriquecido
+    queda en el historial como contexto, pero no hay flush ni reacción."""
+    bot = _build_bot(agent_cfg, mock_container)
+    bot._groups.schedule_flush = MagicMock()
+    bot._groups.dispara_turno = MagicMock(return_value=False)
+    update = _mk_update(chat_type="group")
+
+    await bot._media.handle_photo(update, MagicMock())
+
+    mock_container.history.record_photo_message.assert_awaited_once()
+    mock_container.history.update_message_content.assert_awaited_once()
+    bot._groups.schedule_flush.assert_not_called()
+    mock_container.run_agent.execute.assert_not_called()
+    update.message.set_reaction.assert_not_awaited()

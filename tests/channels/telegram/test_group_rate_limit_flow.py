@@ -21,7 +21,9 @@ class _TurnsFake:
         self._respondio = respondio
         self.llamadas = 0
 
-    async def run_group(self, chat_id: str, chat_type: str, last_sender: dict) -> bool:
+    async def run_group(
+        self, chat_id: str, chat_type: str, last_sender: dict, *, consulta: str | None = None
+    ) -> bool:
         self.llamadas += 1
         return self._respondio
 

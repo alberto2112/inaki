@@ -228,8 +228,11 @@ async def test_happy_path_transcribe_y_pipeline(agent_cfg, mock_container) -> No
 async def test_audio_en_grupo_se_prefija_con_sender(agent_cfg, mock_container) -> None:
     """En grupos, el bloque se inyecta al pipeline con el prefijo
     ``"{sender} (audio):"`` — mismo espíritu que `_format_history_prefix`
-    aplica a los broadcasts entrantes."""
+    aplica a los broadcasts entrantes. Se persiste y entra al buffer de grupo
+    (``disparar``) como cualquier mensaje: nunca un ``execute()`` directo."""
     bot = _build_bot(agent_cfg, mock_container)
+    bot._groups.dispara_turno = MagicMock(return_value=True)
+    bot._groups.disparar = AsyncMock()
     voice = _mk_voice(bytes_result=b"audio-bytes", file_size=500)
     update = _mk_update(voice=voice)
     update.message.chat.type = "supergroup"
@@ -240,9 +243,13 @@ async def test_audio_en_grupo_se_prefija_con_sender(agent_cfg, mock_container) -
 
     await bot._media.handle_voice(update, context)
 
-    user_input = mock_container.run_agent.execute.await_args.args[0]
+    mock_container.run_agent.execute.assert_not_called()
+    user_input = mock_container.history.record_user_message.await_args.args[0]
     assert user_input.startswith("@alberto (audio):\n@audio")
     assert "@transcription: cuánto es 5+5" in user_input
+    disparo = bot._groups.disparar.await_args
+    assert disparo is not None
+    assert disparo.kwargs["consulta"] == user_input
 
 
 async def test_audio_en_privado_no_se_prefija(agent_cfg, mock_container) -> None:
@@ -498,3 +505,40 @@ async def test_audio_demasiado_grande_loguea_warning_con_tamano(
         f"Se esperaba un WARNING que incluyera {oversize} bytes; "
         f"warnings registrados: {warning_texts}"
     )
+
+
+async def test_audio_en_grupo_sin_mencion_se_persiste_sin_turno(agent_cfg, mock_container) -> None:
+    """Modo ``mention`` sin mención: el audio se transcribe y persiste como
+    contexto del grupo, pero NO dispara turno ni reacciona ni le habla al chat."""
+    bot = _build_bot(agent_cfg, mock_container)
+    bot._groups.dispara_turno = MagicMock(return_value=False)
+    bot._groups.disparar = AsyncMock()
+    voice = _mk_voice(bytes_result=b"audio-bytes", file_size=500)
+    update = _mk_update(voice=voice)
+    update.message.chat.type = "supergroup"
+    update.message.from_user.username = "alberto"
+
+    mock_container.transcription.transcribe.return_value = "mañana llueve"
+
+    await bot._media.handle_voice(update, MagicMock())
+
+    persistido = mock_container.history.record_user_message.await_args.args[0]
+    assert "@transcription: mañana llueve" in persistido
+    bot._groups.disparar.assert_not_awaited()
+    mock_container.run_agent.execute.assert_not_called()
+    update.message.set_reaction.assert_not_awaited()
+    update.message.reply_text.assert_not_awaited()
+
+
+async def test_audio_en_grupo_dirigido_a_otro_se_descarta(agent_cfg, mock_container) -> None:
+    """Lo dirigido a otro (reply a otro bot) no se transcribe ni se persiste."""
+    bot = _build_bot(agent_cfg, mock_container)
+    bot._groups.es_para_otro = MagicMock(return_value=True)
+    voice = _mk_voice(bytes_result=b"audio-bytes", file_size=500)
+    update = _mk_update(voice=voice)
+    update.message.chat.type = "supergroup"
+
+    await bot._media.handle_voice(update, MagicMock())
+
+    mock_container.transcription.transcribe.assert_not_called()
+    mock_container.history.record_user_message.assert_not_awaited()

@@ -771,3 +771,54 @@ async def test_intermedios_no_se_persisten_con_skip_marker(use_case, mock_histor
     appended_roles = [call.args[1].role for call in mock_history.append.call_args_list]
     assert Role.ASSISTANT not in appended_roles
     assert appended_roles.count(Role.USER) == 1
+
+
+def _uc_con_routing(mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools):
+    skill = Skill(id="s1", name="skill1", description="desc1")
+    mock_skills.list_all.return_value = [skill]
+    mock_skills.retrieve.return_value = [skill]
+    mock_tools.get_schemas.return_value = []
+    return _make_use_case(
+        {
+            "skills": SkillsConfig(semantic_routing_min_skills=0),
+            "tools": ToolsConfig(semantic_routing_min_tools=10),
+        },
+        mock_llm,
+        mock_memory,
+        mock_embedder,
+        mock_skills,
+        mock_history,
+        mock_tools,
+    )
+
+
+async def test_history_derived_con_query_explicita_rutea_solo_por_ella(
+    mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools
+):
+    """El flush de grupo en ``mention``: el batch trae contexto persistido sin turno,
+    pero el embedding del routing es solo lo que se le dirigió al agente."""
+    mock_history.load.return_value = [
+        Message(role=Role.USER, content="marta said: ganó River 2 a 0"),
+        Message(role=Role.USER, content="pedro said: @inaki_bot ¿quién ganó?"),
+    ]
+    uc = _uc_con_routing(
+        mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools
+    )
+
+    await uc.execute(query="pedro said: @inaki_bot ¿quién ganó?")
+
+    mock_embedder.embed_query.assert_awaited_once_with("pedro said: @inaki_bot ¿quién ganó?")
+
+
+async def test_history_derived_sin_trailing_aborta_aunque_haya_query(
+    mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools
+):
+    """La query explícita no reemplaza la condición de correr: sin trailing role=user
+    (otro flush ya consumió el batch) el turno se aborta igual."""
+    mock_history.load.return_value = [Message(role=Role.ASSISTANT, content="ya respondí")]
+    uc = _uc_con_routing(
+        mock_llm, mock_memory, mock_embedder, mock_skills, mock_history, mock_tools
+    )
+
+    assert await uc.execute(query="algo") == ""
+    mock_llm.complete.assert_not_called()

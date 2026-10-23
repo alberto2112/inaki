@@ -171,6 +171,15 @@ class MediaHandlers:
 
         chat_type = chat.type
         chat_id = str(chat.id)
+        es_grupo = chat_type in _TIPOS_GRUPO
+
+        # Grupos: mismo gate que el texto (``GroupFlow``). Lo dirigido a otro se
+        # descarta; el resto se analiza y persiste SIEMPRE, pero solo dispara
+        # turno —y solo entonces reacciona o le habla al chat— si corresponde
+        # por behavior/mención.
+        if es_grupo and self._groups.es_para_otro(message):
+            return
+        dispara = not es_grupo or self._groups.dispara_turno(message)
 
         # Feature check: si photos no está wired, avisar y salir.
         # En grupos hacemos return silencioso para no inundar el chat con el aviso
@@ -189,15 +198,18 @@ class MediaHandlers:
         image_bytes, _mime, _size = payload
 
         caption_raw = (getattr(message, "caption", None) or "").strip()
-        # "!transcribí este texto" → prompt override para el scene describer.
-        if caption_raw.startswith("!"):
+        # "!transcribí este texto" → prompt override para el scene describer. Es
+        # una orden al bot con respuesta directa: sin turno no aplica, y el
+        # caption queda como texto común.
+        if dispara and caption_raw.startswith("!"):
             scene_prompt = caption_raw[1:].strip()
             caption = ""
         else:
             scene_prompt = None
             caption = caption_raw
 
-        await self._reactions.react(update, "👀")
+        if dispara:
+            await self._reactions.react(update, "👀")
 
         # Los bytes ya están en memoria → al workspace sin segunda descarga.
         # Mismo dest (key = file_unique_id) que usaría download_from_telegram.
@@ -253,8 +265,9 @@ class MediaHandlers:
                 )
             except Exception as exc:
                 logger.exception("Error procesando foto Telegram para '%s'", self._settings.id)
-                await message.reply_text(f"Error al procesar la foto: {exc}")
-                await self._reactions.react(update, "👎")
+                if dispara:
+                    await message.reply_text(f"Error al procesar la foto: {exc}")
+                    await self._reactions.react(update, "👎")
                 return
 
             # Enviar imagen anotada si existe (cara desconocida en chat privado).
@@ -353,14 +366,16 @@ class MediaHandlers:
                 )
 
             # Dispatch:
-            # - Grupo: delegamos al buffer-flush idempotente. Si ya hay un flush
-            #   pendiente disparado por mensajes previos, esta llamada es no-op y
-            #   ese flush eventual va a leer la foto enriquecida junto con todo lo
-            #   demás. Evita el race "foto + texto rápido" → dos execute() paralelos.
+            # - Grupo: si dispara, al buffer-flush idempotente. Si ya hay un flush
+            #   pendiente disparado por mensajes previos, se suma a ese y va a leer
+            #   la foto enriquecida junto con todo lo demás. Evita el race "foto +
+            #   texto rápido" → dos execute() paralelos. Si no dispara, la foto
+            #   ya quedó persistida como contexto y no hay nada más que hacer.
             # - Privado con slot adquirido: turno history-derived (la query
             #   del turno se deriva del trailing role=user que acabamos de actualizar).
-            if chat_type in _TIPOS_GRUPO:
-                self._groups.schedule_flush(chat_id, chat_type)
+            if es_grupo:
+                if dispara:
+                    await self._groups.disparar(update, chat_type, consulta=enriched_content)
             else:
                 await self._turns.run(update, None, chat_type=chat_type)
         finally:
@@ -430,8 +445,11 @@ class MediaHandlers:
         # Telegram suele poner el caption en UNA sola foto del álbum (no
         # siempre la primera) — el primer no-vacío gana como fallback del
         # que se recupere de los records al flushear.
+        # Ese miembro pasa a ser el ``update`` del álbum: es el que puede traer la
+        # mención al bot en sus ``caption_entities`` (gate de grupo).
         if caption and not buf.caption:
             buf.caption = caption
+            buf.update = update
         # Solo el creador adquiere el slot (privado), ya con el buffer guardado.
         if is_new and chat_type not in _TIPOS_GRUPO:
             chat = update.effective_chat
@@ -842,6 +860,15 @@ class MediaHandlers:
         chat = update.effective_chat
         chat_id_str = str(chat.id) if chat is not None else ""
         chat_type = message.chat.type if message.chat else "private"
+        es_grupo = chat_type in _TIPOS_GRUPO
+
+        # Grupos: mismo gate que el texto (``GroupFlow``). Lo dirigido a otro se
+        # descarta; el resto se transcribe y persiste SIEMPRE, pero solo dispara
+        # turno —y solo entonces reacciona o le avisa errores al chat— si
+        # corresponde por behavior/mención.
+        if es_grupo and self._groups.es_para_otro(message):
+            return
+        dispara = not es_grupo or self._groups.dispara_turno(message)
 
         async def _persistir_marcador(local_path: Path | None) -> None:
             """Deja el bloque @ en el historial sin disparar turno (salidas tempranas)."""
@@ -902,14 +929,16 @@ class MediaHandlers:
                 exc.limit_bytes,
             )
             await _persistir_marcador(local_path)
-            await self._reactions.react(update, "👎")
-            await message.reply_text(
-                f"El audio es demasiado grande ({exc.size_bytes // (1024 * 1024)} MB). "
-                f"Máximo permitido: {exc.limit_bytes // (1024 * 1024)} MB."
-            )
+            if dispara:
+                await self._reactions.react(update, "👎")
+                await message.reply_text(
+                    f"El audio es demasiado grande ({exc.size_bytes // (1024 * 1024)} MB). "
+                    f"Máximo permitido: {exc.limit_bytes // (1024 * 1024)} MB."
+                )
             return
 
-        await self._reactions.react(update, "👀")
+        if dispara:
+            await self._reactions.react(update, "👀")
 
         # Errores del provider se reportan al usuario pero NO corren el pipeline
         # (sin texto no hay nada que ejecutar).
@@ -917,14 +946,16 @@ class MediaHandlers:
             transcribed = await transcribe.execute(audio_bytes, mime, declared_size=effective_size)
         except EmptyTranscriptionError:
             await _persistir_marcador(local_path)
-            await message.reply_text("La transcripción vino vacía.")
-            await self._reactions.react(update, "👎")
+            if dispara:
+                await message.reply_text("La transcripción vino vacía.")
+                await self._reactions.react(update, "👎")
             return
         except TranscriptionError as exc:
             logger.warning("Transcripción fallida para agente '%s': %s", self._settings.id, exc)
             await _persistir_marcador(local_path)
-            await message.reply_text(f"No pude transcribir el audio: {exc}")
-            await self._reactions.react(update, "👎")
+            if dispara:
+                await message.reply_text(f"No pude transcribir el audio: {exc}")
+                await self._reactions.react(update, "👎")
             return
 
         sender = extract_sender_name(message)
@@ -953,8 +984,14 @@ class MediaHandlers:
         block = format_attachment(att, transcription=transcribed)
         # En grupos, el bot originante antepone el sender — misma estructura
         # que `_format_history_prefix` aplica a los broadcasts entrantes.
-        if chat_type in _TIPOS_GRUPO:
-            user_input = f"{sender} (audio):\n{block}"
-        else:
-            user_input = block
-        await self._turns.run(update, user_input, chat_type=chat_type)
+        if not es_grupo:
+            await self._turns.run(update, block, chat_type=chat_type)
+            return
+        # Grupo: persistir acá (sin turno de por medio que lo haga) y, si
+        # corresponde, sumarse al buffer-flush como cualquier otro mensaje.
+        user_input = f"{sender} (audio):\n{block}"
+        await self._ports.history.record_user_message(
+            user_input, channel="telegram", chat_id=chat_id_str
+        )
+        if dispara:
+            await self._groups.disparar(update, chat_type, consulta=user_input)

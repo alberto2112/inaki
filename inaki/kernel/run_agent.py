@@ -267,6 +267,7 @@ class RunAgentUseCase:
         ephemeral: bool = False,
         skip_marker: str | None = None,
         es_operador: bool = False,
+        query: str | None = None,
     ) -> str:
         """Ejecuta un turno del agente.
 
@@ -315,6 +316,13 @@ class RunAgentUseCase:
                 contexto se publica en un ContextVar que la delegación sync hereda,
                 y el hijo no puede heredar el privilegio. Default ``False`` (falla
                 cerrado) en todo camino sin canal: scheduler, delegación, one-shot.
+            query: solo en modo history-derived (``user_input=None``): texto para el
+                embedding y el routing del turno en lugar del trailing batch entero.
+                Lo usa el flush de grupo cuando el batch acumula mensajes persistidos
+                SIN turno (modo ``mention``/``listen``): todo eso es contexto, pero la
+                consulta es solo lo que se le dirigió al agente. El trailing batch
+                sigue siendo la condición para correr: sin él, el turno se aborta
+                igual. Ignorado si hay ``user_input``.
         """
         # Una sola fuente de verdad: con ctx presente, el scope (channel, chat_id)
         # se deriva de él salvo override explícito del caller.
@@ -340,6 +348,7 @@ class RunAgentUseCase:
                 ephemeral=ephemeral,
                 skip_marker=skip_marker,
                 es_operador=es_operador,
+                query=query,
             )
         finally:
             reset_current_turn_scope(token_scope)
@@ -356,6 +365,7 @@ class RunAgentUseCase:
         ephemeral: bool,
         skip_marker: str | None,
         es_operador: bool = False,
+        query: str | None = None,
     ) -> str:
         """Cuerpo del turno. ``channel``/``chat_id`` llegan ya normalizados por ``execute``.
 
@@ -412,10 +422,10 @@ class RunAgentUseCase:
         # ``record_user_message``. La query para embedding/routing se deriva del
         # trailing batch de role=user del historial.
         if user_input is not None:
-            query: str = user_input
+            query = user_input
         else:
-            query = extract_trailing_user_batch(history)
-            if not query:
+            trailing = extract_trailing_user_batch(history)
+            if not trailing:
                 logger.warning(
                     "execute() llamado sin user_input pero el historial no tiene "
                     "trailing role=user (agent=%s, channel=%s, chat_id=%s) — abortando turno",
@@ -424,6 +434,9 @@ class RunAgentUseCase:
                     chat_id,
                 )
                 return ""
+            # La query explícita acota el routing a lo dirigido al agente; el resto
+            # del batch entra igual al LLM como historial.
+            query = query or trailing
 
         digest_text = self._read_digest(channel=channel, chat_id=chat_id)
         prev_state = await self._history.load_state(agent_id, channel=channel, chat_id=chat_id)

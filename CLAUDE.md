@@ -201,6 +201,11 @@ Cada una salió de un fallo en producción. El caso completo está en
   el reloj lo marca el propio loop, la ventana se le sincroniza y el presupuesto se renueva
   justo a tiempo. Se acotan las intervenciones CONSECUTIVAS, y el reset barato que no miente
   es el que exige una señal externa. → `rate-limit-por-intervenciones`
+- **NUNCA** atar la persistencia de un mensaje de grupo a si dispara turno: en `listen` y
+  `mention` lo que se dice es contexto y se guarda igual. Texto, audio, foto y álbum pasan
+  por el MISMO gate (`GroupFlow.es_para_otro` / `dispara_turno`); un handler de media que
+  decide por su cuenta hace divergir la regla. En `mention`, el routing usa solo lo
+  dirigido al bot (`execute(query=...)`). → `grupos-persisten-sin-turno`
 - **NUNCA** cobrarle presupuesto a un silencio: si el modelo eligió `__SKIP__`, gastar cupo
   castiga justo la conducta que se quiere premiar. → `rate-limit-por-intervenciones`
 

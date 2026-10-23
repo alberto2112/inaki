@@ -3,11 +3,11 @@
 Dos caminos con el mismo ciclo (execute → ``__SKIP__`` → reply → egress de
 broadcast → errores de red), que difieren solo en de dónde sale el turno:
 
-- ``run``: hay un ``Update`` concreto detrás (privado, mention en grupo, voz o
-  foto). Responde citando el mensaje (``reply_text``) y, en privados, aplica la
-  inyección in-flight (``dispatch_inbound_turn``).
-- ``run_group``: el flush del buffer de grupo. No hay ``Update``: la query se
-  deriva del trailing batch del historial y se envía con ``send_message``.
+- ``run``: hay un ``Update`` concreto detrás (chat privado). Responde citando el
+  mensaje (``reply_text``) y aplica la inyección in-flight (``dispatch_inbound_turn``).
+- ``run_group``: el flush del buffer de grupo — TODO lo de grupos (texto, voz,
+  foto, álbum) entra por ``GroupFlow``. No hay ``Update``: la query es lo dirigido
+  al agente (o el trailing batch del historial) y se envía con ``send_message``.
 """
 
 from __future__ import annotations
@@ -118,8 +118,7 @@ class TurnRunner:
         self._ports.run_agent.set_extra_system_sections([s for s in secciones if s])
 
         # Identidad del remitente — hay UN único humano emisor que disparó este
-        # ``execute()`` (privado, mention/respuesta dirigida al bot en grupo, o
-        # voz/foto en grupo, que no pasan por el buffer), así que
+        # ``execute()`` (privado; los grupos van por el buffer), así que
         # ``{{CHANNEL.SENDER}}/USERNAME/FIRST_NAME/LAST_NAME}}`` tienen valor unívoco.
         # El flush de grupos (``run_group``) resuelve el sender desde el snapshot
         # del último emisor humano del batch.
@@ -244,7 +243,12 @@ class TurnRunner:
             self._ports.run_agent.set_extra_system_sections([])
 
     async def run_group(
-        self, chat_id_str: str, chat_type: str, last_sender: dict[str, str | None]
+        self,
+        chat_id_str: str,
+        chat_type: str,
+        last_sender: dict[str, str | None],
+        *,
+        consulta: str | None = None,
     ) -> bool:
         """Flush de un grupo: construye la respuesta desde el historial y la envía.
 
@@ -257,6 +261,11 @@ class TurnRunner:
         ``last_sender`` es el snapshot del último emisor humano del chat (vacío
         si no hubo: los cuatro campos quedan en ``None`` y las variables
         ``{{CHANNEL.SENDER}}/...`` se dejan literales).
+
+        ``consulta`` es lo que se le dirigió al agente en este batch (modo
+        ``mention``): acota el routing (``execute(query=...)``) mientras el resto
+        del batch persistido sin turno entra como historial. ``None`` → la query
+        es el trailing batch entero.
         """
         chat_id_int = int(chat_id_str)
         secciones: list[str] = []
@@ -284,6 +293,7 @@ class TurnRunner:
             response = await self._ports.run_agent.execute(
                 ctx=turn_ctx,
                 skip_marker=SKIP_MARKER if self._behavior == "autonomous" else None,
+                query=consulta,
             )
 
             if not response:

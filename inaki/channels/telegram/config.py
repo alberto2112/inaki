@@ -168,8 +168,16 @@ class TelegramGroupsConfig(_ConfigBaseModel):
     """
     Modo de comportamiento en grupos:
     - ``listen`` → nunca invoca el LLM, solo escucha.
-    - ``mention`` → invoca el LLM solo si el mensaje menciona al bot (requiere ``bot_username``).
+    - ``mention`` → invoca el LLM solo si el mensaje menciona al bot o responde a
+      uno suyo (también en el caption de una foto, audio o álbum).
     - ``autonomous`` → invoca el LLM ante cualquier mensaje (sujeto a rate limiter).
+
+    En los tres modos, todo lo que se dice en el grupo (texto, fotos analizadas,
+    audios transcriptos) se guarda en el historial aunque no invoque al LLM: cuando
+    por fin se le habla, el agente tiene el contexto (hasta donde llegue
+    ``chat_history.max_messages``). Lo que menciona o responde a OTRO se descarta.
+    En ``mention``, la búsqueda de tools, skills y knowledge usa solo los mensajes
+    dirigidos al bot; el resto le llega como conversación.
     """
 
     bot_username: str | None = None

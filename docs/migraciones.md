@@ -73,6 +73,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
 
 | Nota | Cambio observable |
 |---|---|
+| [`grupos-persisten-sin-turno`](#grupos-persisten-sin-turno) | Telegram, grupos en `mention`/`listen`: los mensajes que no invocan al LLM se guardan en el historial (texto, fotos analizadas, audios transcriptos) y el agente los ve como contexto cuando lo mencionan. En `mention`, un audio o una foto sin mención ya no disparan respuesta, y una mención en el caption de un media cuenta. El análisis de fotos y la transcripción corren sobre todo lo que llega al grupo |
 | [`bg-scope-del-turno`](#bg-scope-del-turno) | Una delegación lanzada desde el turno que procesa un `[bg-N]` (o desde un `agent_send`) devuelve su resultado a ESA conversación (antes se perdía en el historial `("", "")` sin avisar a nadie). Una respuesta de bg-N sin canal de destino deja un WARNING |
 | [`model-con-provider`](#model-con-provider) | Telegram: `/model <provider> <modelo>` cambia `llm.provider` y `llm.model` juntos, en un solo `set` (un reinicio). `/model <modelo>` sigue cambiando solo el modelo; sin argumentos muestra provider y modelo. Un `config set` con un mapa reporta solo las claves pedidas, no el bloque entero |
 | [`tool-output-completo`](#tool-output-completo) | Un tool result largo se persiste cabeza (40 %) + cola (60 %) en vez de solo cabeza; el marcador dice cuántos chars se omitieron y trae una `ref`. El output completo queda en la misma fila de `history.db` y se lee con la tool nueva `tool_output` |
@@ -127,7 +128,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `in-flight-message-injection`, `turn-kill-switch`
 - **Retención y alcance del registro**: `tool-output-completo`, `ventana-cuenta-conversacion`,
   `trim-cuenta-conversacion`, `search-history-retention-horizon`
-- **Telegram y canales**: `model-con-provider`, `slash-de-config`, `operator-user-ids`, `timestamps-solo-en-user`, `rotulo-del-emisor-en-grupos`, `telegram-composicion`, `channels-validados-al-cargar`, `attachment-grammar`,
+- **Telegram y canales**: `grupos-persisten-sin-turno`, `model-con-provider`, `slash-de-config`, `operator-user-ids`, `timestamps-solo-en-user`, `rotulo-del-emisor-en-grupos`, `telegram-composicion`, `channels-validados-al-cargar`, `attachment-grammar`,
   `formato-en-el-borde-del-transporte`,
   `groups-vs-broadcast`, `broadcast-human-reset`, `rate-limit-por-intervenciones`,
   `broadcast-topology-config`, `broadcast-arranque-observable`,
@@ -149,6 +150,62 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `agent-id-igual-al-fichero`, `knowledge-token-budget-retirado`
 - **Providers LLM**: `llm-un-solo-camino-de-construccion`, `openai-habla-responses`, `anthropic-api-actual`
 - **Delegación**: `bg-scope-del-turno`, `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
+
+---
+
+### `grupos-persisten-sin-turno`
+
+**El bug (2026-10-23)**: en un grupo con `behavior: mention`, cuando por fin se
+mencionaba a Iñaki, el agente no sabía de qué se venía hablando. `GroupFlow.handle_message`
+decidía "¿dispara turno?" y "¿se persiste?" con el mismo `return`: un texto sin
+mención salía antes de `record_user_message` y no dejaba rastro en `history.db`. Lo
+mismo pasaba con `listen`, que no guardaba nada a pesar de su nombre ("solo
+escucha"), y con los álbumes y documentos con caption, que entraban por el mismo
+camino.
+
+Al revisar los media apareció el bug contrario. `handle_voice` llamaba a
+`TurnRunner.run` directo y `handle_photo` a `schedule_flush`, sin pasar por
+`GroupFlow`, así que en `mention` (y también en `listen`) **cualquier** audio o foto
+del grupo disparaba una respuesta del LLM aunque nadie hubiera mencionado al bot. Y
+`detect_mention` solo leía `message.text`/`entities`: una foto con el caption
+"@bot ¿qué es esto?" no contaba como mención, porque Telegram pone esas entidades en
+`caption_entities`.
+
+**El cambio**:
+
+- `GroupFlow` separó las dos decisiones. `es_para_otro` descarta lo que menciona o
+  responde a otro, igual que antes y sin persistirlo. `dispara_turno` decide el turno
+  (`listen` nunca, `mention` solo si el mensaje está dirigido al bot, `autonomous`
+  siempre). `disparar` hace lo que solo corresponde cuando hay turno: el snapshot de
+  `last_sender`, la reacción 👀, el rate limiter y el flush. Todo lo que no es para
+  otro se persiste en los tres modos.
+- Audio y foto pasaron por ese mismo gate. En grupo se analizan, se transcriben y se
+  persisten siempre; reaccionan, avisan errores al chat y disparan turno solo si
+  `dispara_turno`. El audio de grupo dejó de correr un `execute()` propio y pasó a
+  sumarse al buffer como el resto. El modo `!` de las fotos (respuesta directa del
+  descriptor) quedó atado a que el mensaje dispare turno: sin turno, el caption es
+  texto común.
+- `detect_mention`/`hay_menciones` leen el caption y `caption_entities` cuando el
+  mensaje no tiene texto. Un álbum adopta como `update` el miembro que trae el
+  caption, que es donde puede venir la mención.
+- **La query del turno.** Con la persistencia silenciosa, el trailing batch del flush
+  pasó a ser todo lo dicho desde la última respuesta. e5 trunca a 512 tokens, así
+  que el embedding del routing se habría quedado con los mensajes más viejos y la
+  mención, al final, habría quedado afuera. `RunAgentUseCase.execute` sumó `query=`:
+  en modo history-derived, reemplaza al trailing batch para el routing (tools,
+  skills, knowledge), mientras el batch entero llega igual al LLM como historial y
+  sigue siendo la condición para correr. En `mention`, `GroupFlow` acumula en
+  `consultas` lo que se le dirigió desde el último flush y se lo pasa por
+  `run_group(consulta=...)`. `autonomous` siguió con el trailing batch entero:
+  ahí todo lo persistido dispara, incluidos los broadcasts del ingress.
+
+**Sin migración de DB ni de config.** El costo de visión y transcripción pasó a
+cubrir todo lo que llega al grupo, no solo lo dirigido al bot.
+
+**Invariante**: NUNCA atar la persistencia de un mensaje de grupo a la decisión de
+disparar turno. Lo que se dijo en el grupo es contexto aunque no se le haya hablado al
+agente, y un handler de media que decide por su cuenta salteándose `GroupFlow` hace que
+la misma regla diverja por tipo de mensaje.
 
 ---
 

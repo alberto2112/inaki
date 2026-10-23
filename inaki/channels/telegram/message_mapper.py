@@ -255,23 +255,40 @@ def format_group_message(message) -> str:
     return f"{remitente} said: {texto}"
 
 
+def _texto_y_entidades(message) -> tuple[str, list]:
+    """Texto del mensaje y sus entidades — o el caption y las suyas si es un media.
+
+    Telegram separa las dos: una foto con "@bot ¿qué es esto?" trae la mención en
+    ``caption_entities`` y ``entities`` vacío. Sin esto, mencionar al bot en el
+    caption de una foto, audio o álbum no contaba como mención.
+    """
+    texto = getattr(message, "text", None)
+    if isinstance(texto, str) and texto:
+        return texto, list(getattr(message, "entities", None) or [])
+    caption = getattr(message, "caption", None)
+    if isinstance(caption, str) and caption:
+        return caption, list(getattr(message, "caption_entities", None) or [])
+    return texto or "", list(getattr(message, "entities", None) or [])
+
+
 def hay_menciones(message) -> bool:
     """Devuelve ``True`` si el mensaje contiene al menos una entidad de tipo mención.
 
     Detecta ``mention`` (``@usuario``) y ``text_mention`` (usuario sin username público).
-    No distingue a quién apunta la mención — solo informa si hay alguna.
+    No distingue a quién apunta la mención — solo informa si hay alguna. Mira el
+    texto o, en un media, el caption.
 
     Args:
-        message: Objeto ``telegram.Message`` con el campo ``entities`` poblado.
+        message: Objeto ``telegram.Message`` con ``entities`` (o ``caption_entities``).
     """
-    entities = getattr(message, "entities", None) or []
+    _, entities = _texto_y_entidades(message)
     return any(getattr(e, "type", None) in ("mention", "text_mention") for e in entities)
 
 
 def detect_mention(message, bot_username: str) -> bool:
     """Detecta si un mensaje menciona al bot por su username.
 
-    Itera ``message.entities`` buscando:
+    Itera las entidades del texto (o del caption, en un media) buscando:
     - ``type == "mention"``: extrae el substring del texto, compara sin ``@`` con ``bot_username``.
     - ``type == "text_mention"``: compara ``entity.user.username`` con ``bot_username``.
 
@@ -282,8 +299,7 @@ def detect_mention(message, bot_username: str) -> bool:
     Returns:
         ``True`` si alguna entidad menciona al bot; ``False`` en caso contrario.
     """
-    entities = getattr(message, "entities", None) or []
-    texto = message.text or ""
+    texto, entities = _texto_y_entidades(message)
 
     for entity in entities:
         tipo = getattr(entity, "type", None)

@@ -1,7 +1,7 @@
 """Lógica compartida para adaptadores compatibles con OpenAI Chat Completions.
 
-OpenAI y Groq usan el mismo formato de payload (OpenAI-compatible).
-Esta función privada evita duplicación entre los dos adaptadores.
+OpenAI, Groq y DeepSeek usan el mismo formato de payload (OpenAI-compatible).
+Esta función privada evita duplicación entre los adaptadores.
 NO exportar: es un detalle de implementación del paquete scene.
 """
 
@@ -23,7 +23,7 @@ _PROMPT_DEFAULT = (
     "Be precise and objective."
 )
 
-_MAX_TOKENS = 1024
+MAX_TOKENS = 1024
 
 
 def resolver_prompt(
@@ -45,6 +45,7 @@ async def describir_imagen_openai_compat(
     base_url: str,
     headers: dict[str, str],
     nombre_proveedor: str,
+    parametros_salida: dict | None = None,
 ) -> str:
     """Llama a un endpoint compatible con OpenAI Chat Completions (visión multimodal).
 
@@ -55,6 +56,8 @@ async def describir_imagen_openai_compat(
         base_url: URL del endpoint (chat/completions).
         headers: Headers HTTP ya construidos por el adaptador.
         nombre_proveedor: Nombre del proveedor para mensajes de error.
+        parametros_salida: Parámetros de generación propios del vendor (la clave del
+            tope de tokens, ``thinking``…). None = ``max_completion_tokens`` de OpenAI.
 
     Returns:
         Texto de descripción de la escena.
@@ -84,7 +87,7 @@ async def describir_imagen_openai_compat(
                 ],
             },
         ],
-        "max_completion_tokens": _MAX_TOKENS,
+        **(parametros_salida or {"max_completion_tokens": MAX_TOKENS}),
     }
 
     try:

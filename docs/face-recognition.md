@@ -29,7 +29,7 @@ ProcessPhotoUseCase.execute(image_bytes, history_id, ...)
      │        SqliteFaceRegistryAdapter (faces.db / sqlite-vec)
      │
      ├── ISceneDescriberPort.describe → scene text
-     │        AnthropicSceneDescriberAdapter | OpenAI | Groq
+     │        AnthropicSceneDescriberAdapter | OpenAI | Groq | DeepSeek
      │
      ├── IPhotoAnnotatorPort.annotate → annotated PNG/JPEG bytes
      │        PillowPhotoAnnotator

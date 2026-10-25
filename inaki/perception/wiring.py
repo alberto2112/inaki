@@ -30,6 +30,7 @@ from inaki.perception.adapters.face_metadata.sqlite_message_face_metadata_repo i
 from inaki.perception.adapters.faces.sqlite_face_registry import SqliteFaceRegistryAdapter
 from inaki.perception.adapters.imaging.pillow_annotator import PillowPhotoAnnotator
 from inaki.perception.adapters.scene.anthropic_describer import AnthropicSceneDescriberAdapter
+from inaki.perception.adapters.scene.deepseek_describer import DeepSeekSceneDescriberAdapter
 from inaki.perception.adapters.scene.groq_describer import GroqSceneDescriberAdapter
 from inaki.perception.adapters.scene.openai_describer import OpenAISceneDescriberAdapter
 from inaki.perception.adapters.transcription.base import (
@@ -267,6 +268,9 @@ def _build_scene_describer(
         return OpenAISceneDescriberAdapter(api_key, scene.model, scene.prompt_template)
     if scene.provider == "groq":
         return GroqSceneDescriberAdapter(api_key, scene.model, scene.prompt_template)
+    if scene.provider == "deepseek":
+        return DeepSeekSceneDescriberAdapter(api_key, scene.model, scene.prompt_template)
     raise InakiError(
-        f"Scene provider desconocido: '{scene.provider}'. Válidos: anthropic, openai, groq"
+        f"Scene provider desconocido: '{scene.provider}'. "
+        "Válidos: anthropic, openai, groq, deepseek"
     )

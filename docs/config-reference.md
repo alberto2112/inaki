@@ -852,18 +852,18 @@ Configuración del proveedor de descripción de escena (LLM multimodal).
 
 | Field | Type | Default | Secret |
 |---|---|---|---|
-| `provider` | `Literal['anthropic', 'openai', 'groq']` | `'anthropic'` |  |
+| `provider` | `Literal['anthropic', 'openai', 'groq', 'deepseek']` | `'anthropic'` |  |
 | `model` | `str` | `'claude-sonnet-4-6'` |  |
 | `prompt_template` | `str \| None` | `null` |  |
 | `api_key` | `str \| None` | `null` | 🔒 |
 
-**`provider`** — Vendor del LLM multimodal que describe la foto: ``anthropic``, ``openai`` o ``groq``.
+**`provider`** — Vendor del LLM multimodal que describe la foto: ``anthropic``, ``openai``, ``groq`` o ``deepseek``.
 
-Registry PROPIO, independiente del de ``llm``: cada opción tiene su adapter de escena. Si ``api_key`` está vacío, la credencial se busca en ``providers:`` por esta misma key (o por una entrada cuyo ``type`` coincida). Un valor fuera de los tres soportados aborta el arranque del pipeline.
+Registry PROPIO, independiente del de ``llm``: cada opción tiene su adapter de escena. Si ``api_key`` está vacío, la credencial se busca en ``providers:`` por esta misma key (o por una entrada cuyo ``type`` coincida). Un valor fuera de los cuatro soportados aborta el arranque del pipeline.
 
 **`model`** — Modelo multimodal a usar, en el nombre que espera el ``provider`` elegido.
 
-Tiene que soportar visión: ``claude-sonnet-4-6`` para anthropic, ``gpt-4o`` para openai, un scout de llama-4 para groq.
+Tiene que soportar visión: ``claude-sonnet-4-6`` para anthropic, ``gpt-4o`` para openai, un scout de llama-4 para groq, ``deepseek-flash`` para deepseek.
 
 **`prompt_template`** — Prompt personalizado en español. None = usar el prompt built-in del adaptador.
 

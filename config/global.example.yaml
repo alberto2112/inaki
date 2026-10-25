@@ -506,8 +506,8 @@ photos:
     ambiguous_threshold: 0.4
   # Descripción de la escena vía LLM multimodal: vendor, modelo, prompt y credencial.
   scene:
-    # Vendor del LLM multimodal que describe la foto: ``anthropic``, ``openai`` o
-    # ``groq``.
+    # Vendor del LLM multimodal que describe la foto: ``anthropic``, ``openai``,
+    # ``groq`` o ``deepseek``.
     provider: anthropic
     # Modelo multimodal a usar, en el nombre que espera el ``provider`` elegido.
     model: claude-sonnet-4-6

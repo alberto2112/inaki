@@ -15,7 +15,7 @@ from inaki.shared.errors import SceneDescriptionError
 def detectar_media_type(image_bytes: bytes) -> str:
     """Devuelve el media type de la imagen según su cabecera.
 
-    Cubre los cuatro formatos que aceptan Anthropic, OpenAI y Groq: JPEG, PNG,
+    Cubre los cuatro formatos que aceptan Anthropic, OpenAI, Groq y DeepSeek: JPEG, PNG,
     GIF y WebP.
 
     Raises:

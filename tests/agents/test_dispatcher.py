@@ -61,6 +61,19 @@ class TestLLMDispatcherAdapterLockPerScope:
         assert ("inaki", "telegram", "99") in locks
         assert len(locks) == 2
 
+    async def test_skip_routing_llega_a_execute(self) -> None:
+        """El dispatcher es un pasamanos: ``skip_routing`` tiene que llegar al kernel."""
+        agent = MagicMock()
+        agent.run_agent.execute = AsyncMock(return_value="ok")
+        dispatcher = LLMDispatcherAdapter({"inaki": agent})
+
+        await dispatcher.dispatch("inaki", "[bg-1] ok", channel="cli", skip_routing=True)
+        await dispatcher.dispatch("inaki", "hola", channel="cli")
+
+        primera, segunda = agent.run_agent.execute.await_args_list
+        assert primera.kwargs["skip_routing"] is True
+        assert segunda.kwargs["skip_routing"] is False
+
     async def test_lock_se_libera_aunque_execute_lance(self) -> None:
         """El lock debe liberarse si ``run_agent.execute`` lanza una excepción;
         de lo contrario el siguiente dispatch al mismo scope quedaría colgado.

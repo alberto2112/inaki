@@ -48,6 +48,7 @@ class LLMDispatcherAdapter:
         chat_id: str = "",
         ephemeral: bool = False,
         skip_marker: str | None = None,
+        skip_routing: bool = False,
     ) -> str:
         agent = self._agents.get(agent_id)
         if agent is None:
@@ -61,4 +62,5 @@ class LLMDispatcherAdapter:
                 chat_id=chat_id,
                 ephemeral=ephemeral,
                 skip_marker=skip_marker,
+                skip_routing=skip_routing,
             )

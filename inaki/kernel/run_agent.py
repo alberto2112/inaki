@@ -268,6 +268,7 @@ class RunAgentUseCase:
         skip_marker: str | None = None,
         es_operador: bool = False,
         query: str | None = None,
+        skip_routing: bool = False,
     ) -> str:
         """Ejecuta un turno del agente.
 
@@ -323,6 +324,13 @@ class RunAgentUseCase:
                 consulta es solo lo que se le dirigió al agente. El trailing batch
                 sigue siendo la condición para correr: sin él, el turno se aborta
                 igual. Ignorado si hay ``user_input``.
+            skip_routing: el input de este turno NO es intención del usuario sino un
+                RESULTADO (el ``[bg-N]`` de una delegación, un aviso del sistema):
+                no se embebe ni se hace pre-fetch de knowledge; el turno ve las tools
+                y skills sticky del estado previo más ``tools.pinned``, sin tocar sus
+                TTL (mismo camino que el bypass por input corto). El page-in sigue
+                disponible. Lo que NO cambia: el re-routing de mensajes drenados
+                in-flight, que sí son usuario. Default ``False``.
         """
         # Una sola fuente de verdad: con ctx presente, el scope (channel, chat_id)
         # se deriva de él salvo override explícito del caller.
@@ -349,6 +357,7 @@ class RunAgentUseCase:
                 skip_marker=skip_marker,
                 es_operador=es_operador,
                 query=query,
+                skip_routing=skip_routing,
             )
         finally:
             reset_current_turn_scope(token_scope)
@@ -366,6 +375,7 @@ class RunAgentUseCase:
         skip_marker: str | None,
         es_operador: bool = False,
         query: str | None = None,
+        skip_routing: bool = False,
     ) -> str:
         """Cuerpo del turno. ``channel``/``chat_id`` llegan ya normalizados por ``execute``.
 
@@ -449,6 +459,7 @@ class RunAgentUseCase:
             embedder=self._embedder,
             skills=self._skills,
             tools=self._tools,
+            skip_routing=skip_routing,
         )
         turno.trace(
             "turn.routing",

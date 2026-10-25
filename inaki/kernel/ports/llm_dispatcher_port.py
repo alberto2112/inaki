@@ -16,4 +16,5 @@ class ILLMDispatcher(Protocol):
         chat_id: str = "",
         ephemeral: bool = False,
         skip_marker: str | None = None,
+        skip_routing: bool = False,
     ) -> str: ...

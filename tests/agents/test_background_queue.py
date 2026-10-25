@@ -439,6 +439,7 @@ class TestHappyPathDispatch:
             channel="telegram",
             chat_id="42",
             skip_marker=SKIP_MARKER,
+            skip_routing=True,  # un [bg-N] es un resultado, no una intención del usuario
         )
 
     async def test_cada_task_corre_con_el_presupuesto_de_su_caller(self) -> None:

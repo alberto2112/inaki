@@ -73,6 +73,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
 
 | Nota | Cambio observable |
 |---|---|
+| [`bg-delivery-sin-routing`](#bg-delivery-sin-routing) | El turno que entrega un `[bg-N]` (o el aviso de interrupción) ya no hace semantic routing ni pre-fetch de knowledge: ve las tools/skills sticky de la conversación más `tools.pinned`, en vez de las que matchean el tema del resultado. El provider de embeddings `openai` recorta la entrada a 24.000 chars y el error de OpenAI ahora trae el cuerpo de la respuesta |
 | [`bg-delegation-transcript`](#bg-delegation-transcript) | Las delegaciones en background sobreviven al reinicio: ids `bg-1000+` en `background_tasks.db`, transcript completo consultable con `background_tasks(action=inspect)`, fallos con diagnóstico (ya no `TimeoutError: ` vacío) y aviso agrupado de lo que un reinicio / `/reload` cortó. Opt-in `delegation.grant_workdir` (directorio de trabajo `dwss/<8>` por delegación) y parámetro `input_files` de `delegate` |
 | [`grupos-persisten-sin-turno`](#grupos-persisten-sin-turno) | Telegram, grupos en `mention`/`listen`: los mensajes que no invocan al LLM se guardan en el historial (texto, fotos analizadas, audios transcriptos) y el agente los ve como contexto cuando lo mencionan. En `mention`, un audio o una foto sin mención ya no disparan respuesta, y una mención en el caption de un media cuenta. El análisis de fotos y la transcripción corren sobre todo lo que llega al grupo |
 | [`bg-scope-del-turno`](#bg-scope-del-turno) | Una delegación lanzada desde el turno que procesa un `[bg-N]` (o desde un `agent_send`) devuelve su resultado a ESA conversación (antes se perdía en el historial `("", "")` sin avisar a nadie). Una respuesta de bg-N sin canal de destino deja un WARNING |
@@ -149,8 +150,71 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `docs-de-config-completas`, `config-limpieza-final`, `borde-de-config`, `reload-fallido-reinicia`,
   `config-set-efimero`, `privilegio-por-operacion`, `operator-user-ids`,
   `agent-id-igual-al-fichero`, `knowledge-token-budget-retirado`
-- **Providers LLM**: `llm-un-solo-camino-de-construccion`, `openai-habla-responses`, `anthropic-api-actual`
-- **Delegación**: `bg-scope-del-turno`, `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`, `bg-delegation-transcript`
+- **Providers LLM y embeddings**: `bg-delivery-sin-routing` (embeddings `openai`), `llm-un-solo-camino-de-construccion`, `openai-habla-responses`, `anthropic-api-actual`
+- **Delegación**: `bg-delivery-sin-routing`, `bg-scope-del-turno`, `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`, `bg-delegation-transcript`
+
+---
+
+### `bg-delivery-sin-routing`
+
+**El bug (2026-10-25)**: la delegación `bg-1001` terminó bien y su resultado
+renderizado (60.388 chars) quedó guardado, pero nunca llegó al padre: la task
+terminó en `delivery_failed`. Entregarlo corre un turno completo del padre
+(`BackgroundDelegationQueueAdapter._dispatch_result` → `ILLMDispatcher.dispatch` →
+`RunAgentUseCase.execute`), y ese turno hacía semantic routing: `embed_query` con
+el texto ENTERO del `[bg-1001] ...`. El provider `openai` lo mandó sin tocar a
+`text-embedding-3-small` (máx. 8192 tokens), OpenAI contestó 400, el turno murió
+con `EmbeddingError` y los tres reintentos del dispatch fallaron igual. Además, el
+error logueado era `Client error '400 Bad Request' for url ...` sin el cuerpo de la
+respuesta, así que la causa no se pudo leer desde el log: hizo falta reproducirla.
+
+Dos defectos independientes, y cualquiera de los dos bastaba para romper:
+
+1. **Conceptual**: un `[bg-N]` es un RESULTADO, no una intención del usuario.
+   Embeberlo para elegir tools, skills y knowledge selecciona por el *tema del
+   resultado*, no por lo que el padre necesita hacer con él.
+2. **Robustez**: el provider de embeddings no acotaba su entrada. Cualquier mensaje
+   de usuario suficientemente largo tenía el mismo destino.
+
+**El cambio**:
+
+- `RunAgentUseCase.execute(..., skip_routing=False)` (y `run_semantic_routing`). Con
+  `True` el turno toma el camino del bypass por input corto: tools y skills
+  sticky del estado previo más `tools.pinned`, sin embedding y sin pre-fetch de
+  knowledge. Los TTL sticky no se consumen y el estado no se persiste (sin una
+  consulta observada no hay con qué decaer ni refrescar nada). Diferencia
+  deliberada con el bypass corto: sin sticky previo no se cae al catálogo entero,
+  se expone solo lo pinneado; el resto llega por page-in. El re-routing de los
+  mensajes drenados in-flight no cambió: esos sí son usuario.
+- `ILLMDispatcher.dispatch(..., skip_routing=False)` y `LLMDispatcherAdapter` lo
+  pasan al kernel. La cola de delegación lo manda en `True` en `_dispatch_al_scope`,
+  o sea en la entrega de cada `[bg-N]` Y en el aviso agrupado de lo que un
+  reinicio cortó: ninguno de los dos es intención del usuario.
+- `OpenAIEmbeddingProvider` recorta la entrada a `MAX_CHARS_ENTRADA = 24_000`
+  caracteres (sin tokenizer, no se agregó `tiktoken`): ~4 chars/token en español y
+  ~3 en código/JSON dan ~8000 tokens en el peor de esos casos, bajo el tope de
+  8192. Conserva la cabeza. Recortar una query se loguea en DEBUG; recortar un
+  passage (indexación de memoria/knowledge) pierde contenido guardado y sale como
+  WARNING con el largo original y el recortado.
+- Red de seguridad: ante un 400 que dice que la entrada excede el contexto
+  (`error.code == "context_length_exceeded"` o el mensaje "maximum context
+  length"/"maximum input length"; OpenAI no siempre manda el `code` en embeddings)
+  reintenta con la mitad del texto, hasta 2 veces. Cualquier otro 400 falla al
+  instante como antes.
+- El `EmbeddingError` ahora incluye el cuerpo de la respuesta de OpenAI truncado a
+  300 chars. Nunca headers ni la api key.
+
+**Cambio observable**: el turno que entrega un `[bg-N]` conserva las tools sticky
+de la conversación y las pinneadas, en vez de las que matchean el tema del
+resultado; si el padre necesita otra, la pagina. Un mensaje largo del usuario
+deja de romper el embedding: se embebe su cabeza.
+
+**Sin migración de DB ni de config.** Los embeddings ya guardados no cambian.
+
+**Invariante**: NUNCA rutear (ni embeber) un turno cuyo input no es intención del
+usuario: un resultado de delegación o un aviso del sistema entra con
+`skip_routing`. Y NUNCA mandar texto de largo no acotado a una API externa de
+embeddings.
 
 ---
 

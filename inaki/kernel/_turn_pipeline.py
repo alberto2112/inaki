@@ -329,18 +329,27 @@ async def run_semantic_routing(
     embedder: IEmbeddingProvider,
     skills: ISkillRepository,
     tools: IToolExecutor,
+    skip_routing: bool = False,
 ) -> RoutingOutcome:
     """Selecciona skills y tool schemas para el turno (RAG + sticky TTL).
 
     Tres caminos:
       - routing inactivo (pocos skills/tools) → pasa todo sin filtrar.
-      - bypass por input corto → hereda la selección sticky previa intacta,
-        sin calcular embedding ni tocar TTLs.
+      - bypass (input corto con sticky previo, o ``skip_routing``) → hereda la
+        selección sticky previa intacta, sin calcular embedding ni tocar TTLs.
       - routing activo → embed de la query, retrieve top-k, ``apply_sticky``
         sobre la selección y marca ``state_dirty`` para que el caller persista.
 
     ``tools_override`` fuerza ese set de schemas y desactiva el routing de
     tools (el de skills sigue corriendo) — usado por triggers del scheduler.
+
+    ``skip_routing`` (FIX bg-delivery-sin-routing): el input de este turno NO es
+    la intención del usuario (p. ej. el ``[bg-N]`` con el resultado de una
+    delegación) y embeberlo selecciona tools por el TEMA del resultado, no por
+    la necesidad — además de mandar a un proveedor externo un texto de tamaño
+    arbitrario. Toma el camino del bypass por input corto con una diferencia
+    deliberada: sin sticky previo NO cae al catálogo entero, expone solo lo
+    pinneado (lo demás llega por page-in).
     """
     agent_id = settings.agent_id
     all_skills = await skills.list_all()
@@ -358,33 +367,46 @@ async def run_semantic_routing(
     # tanto para semantic routing como para knowledge pre-fetch.
     query_vec: list[float] | None = None
 
-    routing_bypass = should_bypass_routing_for_short_input(
+    routing_bypass = skip_routing or should_bypass_routing_for_short_input(
         user_input=query,
         min_words_threshold=settings.min_words_threshold,
         prev_state=prev_state,
     )
 
     if routing_bypass:
-        # Input corto con selección sticky previa → heredar intacta.
-        # No se calcula embedding, no se toca el TTL, no se persiste estado.
-        if skills_routing_active and prev_state.sticky_skills:
+        # Input corto con selección sticky previa (o turno sin intención de
+        # usuario) → heredar intacta. No se calcula embedding, no se toca el TTL,
+        # no se persiste estado: sin una consulta observada no hay con qué decaer
+        # ni refrescar nada. Con ``skip_routing`` la herencia vale AUNQUE esté
+        # vacía (→ nada, no el catálogo entero; el bypass corto siempre tiene
+        # sticky de dónde heredar).
+        if skills_routing_active and (prev_state.sticky_skills or skip_routing):
             skills_by_id = {s.id: s for s in all_skills}
             retrieved_skills = [
                 skills_by_id[i] for i in prev_state.sticky_skills if i in skills_by_id
             ]
-        if tools_routing_active and prev_state.sticky_tools:
+        if tools_routing_active and (prev_state.sticky_tools or skip_routing):
             schemas_by_name = {sch["function"]["name"]: sch for sch in all_schemas}
             tool_schemas = [
                 schemas_by_name[n] for n in prev_state.sticky_tools if n in schemas_by_name
             ]
-        logger.info(
-            "[routing] short-input bypass (agent=%s words=%d threshold=%d sticky_skills=%d sticky_tools=%d)",
-            agent_id,
-            len(query.split()),
-            settings.min_words_threshold,
-            len(prev_state.sticky_skills),
-            len(prev_state.sticky_tools),
-        )
+        if skip_routing:
+            logger.info(
+                "[routing] skip_routing (agent=%s chars=%d sticky_skills=%d sticky_tools=%d)",
+                agent_id,
+                len(query),
+                len(prev_state.sticky_skills),
+                len(prev_state.sticky_tools),
+            )
+        else:
+            logger.info(
+                "[routing] short-input bypass (agent=%s words=%d threshold=%d sticky_skills=%d sticky_tools=%d)",
+                agent_id,
+                len(query.split()),
+                settings.min_words_threshold,
+                len(prev_state.sticky_skills),
+                len(prev_state.sticky_tools),
+            )
     elif skills_routing_active or tools_routing_active:
         query_vec = await embedder.embed_query(query)
         if skills_routing_active:

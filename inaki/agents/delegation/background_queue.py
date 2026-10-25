@@ -1234,6 +1234,11 @@ class BackgroundDelegationQueueAdapter:
                     channel=task.channel,
                     chat_id=task.chat_id,
                     skip_marker=SKIP_MARKER,
+                    # FIX bg-delivery-sin-routing: ni el ``[bg-N]`` ni el aviso de
+                    # interrupción son intención del usuario. Rutearlos embebía el
+                    # resultado ENTERO (60.388 chars en bg-1001) contra el proveedor de
+                    # embeddings: 400 por exceso de contexto y la entrega moría.
+                    skip_routing=True,
                 )
             except AgentNotFoundError as dispatch_exc:
                 logger.warning(

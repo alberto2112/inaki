@@ -25,8 +25,9 @@ RunAgentUseCase.execute()
         ├── list_all_skills()     → more than semantic_routing_min_skills? → skills_routing_active
         ├── get_all_schemas()     → more than semantic_routing_min_tools?  → tools_routing_active
         │
-        ├── short input (< semantic_routing.min_words_threshold) AND previous sticky exists?
-        │       ├── YES → short-input bypass:
+        ├── skip_routing (input is a result, not user intent: `[bg-N]` delivery) OR
+        │   short input (< semantic_routing.min_words_threshold) AND previous sticky exists?
+        │       ├── YES → bypass:
         │       │         inherit previous sticky selection intact
         │       │         (no embed, no TTL decay, no persist)
         │       └── NO → follow normal flow:
@@ -263,6 +264,18 @@ put(hash, provider, dim, embedding)
 | Field | Default | Description |
 |-------|---------|-------------|
 | `min_words_threshold` | `0` | Minimum words in user_input to re-run routing. Below this threshold (and if a previous sticky exists) embedding is skipped and the previous turn's selection is inherited intact. `0` = feature disabled (historical behavior) |
+
+---
+
+## `skip_routing` (turns whose input is not user intent)
+
+`RunAgentUseCase.execute(..., skip_routing=True)` takes the same path as the short-input bypass: previous sticky skills/tools plus `tools.pinned`, **no** `embed_query`, **no** knowledge pre-fetch, sticky TTLs untouched, state not persisted. It is used for the turn that delivers a background delegation result (`[bg-N] ...`) and for the post-restart interruption notice: those inputs are results or system notices, and embedding them would select tools by the topic of the result instead of by need (and could send tens of thousands of chars to the embedding provider).
+
+Differences from the short-input bypass:
+
+- It does not need a previous sticky: with none, the turn sees only the pinned tools (not the whole catalog); anything else is reached through tool page-in.
+- In-flight drain re-routing (`_reroute_tools_for_drain`) is unchanged: drained messages are real user messages.
+- `inspect()` has no such parameter; it always reflects a normal user turn.
 
 ---
 

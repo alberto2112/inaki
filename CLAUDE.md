@@ -184,6 +184,11 @@ Cada una salió de un fallo en producción. El caso completo está en
   UNE, y con techo): hay trabajo en vuelo con las viejas. → `in-flight-message-injection`
 - **NUNCA** re-emitir el bloque completo de un attachment ya persistido para agregarle el
   análisis — eso es `format_analysis_delta`. → `attachment-grammar`
+- **NUNCA** rutear (embeber) un turno cuyo input no es intención del usuario —un `[bg-N]`,
+  un aviso del sistema—: entra por `execute(skip_routing=True)`. El routing elige por el
+  tema del texto, no por la necesidad, y un resultado de 60.000 chars contra la API de
+  embeddings (tope de 8192 tokens) mató la entrega. Un provider de embeddings externo
+  tampoco recibe texto sin acotar. → `bg-delivery-sin-routing`
 - **NUNCA** descartar el return del `dispatch()`: es la única vía por la que un resultado
   `bg-N` llega al usuario. → `background-delegation`
 - **NUNCA** presentar como `running` una delegación cuyo hijo ya terminó, ni dejar su

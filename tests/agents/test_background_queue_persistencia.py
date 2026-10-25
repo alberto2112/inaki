@@ -2021,6 +2021,17 @@ class TestAvisoPostArranque:
         assert uno in kw["prompt"] and dos in kw["prompt"]
         assert "interrupted" in kw["prompt"]
 
+    async def test_el_aviso_no_rutea_por_su_texto(self, store) -> None:
+        """El aviso del sistema tampoco es intención del usuario: no se embebe."""
+        await _sembrar(store, "running")
+        adapter, dispatcher = _armar(store=store)
+        await adapter.start()
+
+        await _avisar(adapter)
+        await adapter.stop()
+
+        assert dispatcher.dispatch.await_args.kwargs["skip_routing"] is True
+
     async def test_una_conversacion_distinta_recibe_su_propio_aviso(self, store) -> None:
         await _sembrar(store, "running", chat_id="42")
         await _sembrar(store, "running", chat_id="77")

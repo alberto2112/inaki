@@ -43,6 +43,7 @@ from inaki.agents.dispatcher import LLMDispatcherAdapter
 from inaki.agents.scope_registry import InMemoryScopeRegistryAdapter
 from inaki.agents.wiring import (
     build_background_queue,
+    build_background_task_store,
     build_background_tasks_tool,
     build_delegate_tool,
     build_discovery_section,
@@ -153,6 +154,9 @@ class _Borrador:
     jobs: MemoryJobs
     scope_registry: IScopeRegistry
     tracer: ITurnTracer
+    # ``workspace.path`` efectivo (el que ya resolvieron las file tools): la raíz donde la
+    # cola de background crea el workdir de las delegaciones de este agente.
+    workspace: Path
     outbounds: ChannelOutboundRegistry = field(default_factory=ChannelOutboundRegistry)
     # pasada 3
     scheduler: tuple[SchedulerBundle, str] | None = None
@@ -440,6 +444,7 @@ def _construir_agente(
         jobs=jobs,
         scope_registry=scope_registry,
         tracer=tracer,
+        workspace=workspace,
         outbounds=outbounds,
     )
 
@@ -512,10 +517,22 @@ def _construir_harness(
             tracer=caller.tracer,
         )
 
+    # La cola es harness-global; los workspaces y el flag ``grant_workdir`` son per-agente
+    # (del que DELEGA): el composition root los reparte. Solo los agentes regulares delegan,
+    # así que los sub-agentes no aportan raíz. Estático por ensamblado: ``/reload`` y
+    # ``config set`` reensamblan.
+    regulares = {aid: b for aid, b in borradores.items() if not registry.is_sub_agent(aid)}
     background_queue = build_background_queue(
         dispatcher=dispatcher,
         one_shot_resolver=_resolve_one_shot,
         result_sender=router,
+        store=build_background_task_store(_data_db_path(borradores, "background_tasks.db")),
+        workspaces={aid: b.workspace for aid, b in regulares.items()},
+        con_workdir=[
+            aid
+            for aid, b in regulares.items()
+            if b.cfg.delegation.enabled and b.cfg.delegation.grant_workdir
+        ],
     )
     consolidate_all = build_consolidate_all(
         {aid: b.jobs.consolidate for aid, b in borradores.items() if b.jobs.consolidate},

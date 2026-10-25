@@ -385,18 +385,22 @@ workspace:
 # [delegation]
 # -----------------------------------------------------------------------------
 #
-# Presupuestos de una llamada delegada: iteraciones y timeout.
+# Lo que lleva una llamada delegada: presupuestos (iteraciones y timeout) y, en
+# background, un directorio de trabajo propio.
 #
 # En ``global.yaml`` son los DEFAULTS; cada agente los hereda por el merge y
 # los pisa en su propio bloque ``delegation`` (``AgentDelegationConfig``).
 # Manda el valor del agente que DELEGA (el caller): el que delega fija el
-# presupuesto de la tarea. Declararlos en un sub-agente es un error de carga —
-# el sub no delega, así que ahí no tendrían efecto.
+# presupuesto y el directorio de la tarea. Declararlos en un sub-agente es un
+# error de carga — el sub no delega, así que ahí no tendrían efecto.
 
 delegation:
   # Vueltas máximas del tool loop que puede gastar UNA llamada delegada.
   max_iterations_per_sub: 10
   timeout_seconds: 60   # Presupuesto de reloj de una llamada delegada, en segundos.
+  # Da a cada delegación EN BACKGROUND un directorio de trabajo propio dentro del
+  # workspace.
+  grant_workdir: false
 
 # -----------------------------------------------------------------------------
 # [admin]

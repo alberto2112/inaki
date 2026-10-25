@@ -73,6 +73,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
 
 | Nota | Cambio observable |
 |---|---|
+| [`bg-delegation-transcript`](#bg-delegation-transcript) | Las delegaciones en background sobreviven al reinicio: ids `bg-1000+` en `background_tasks.db`, transcript completo consultable con `background_tasks(action=inspect)`, fallos con diagnóstico (ya no `TimeoutError: ` vacío) y aviso agrupado de lo que un reinicio / `/reload` cortó. Opt-in `delegation.grant_workdir` (directorio de trabajo `dwss/<8>` por delegación) y parámetro `input_files` de `delegate` |
 | [`grupos-persisten-sin-turno`](#grupos-persisten-sin-turno) | Telegram, grupos en `mention`/`listen`: los mensajes que no invocan al LLM se guardan en el historial (texto, fotos analizadas, audios transcriptos) y el agente los ve como contexto cuando lo mencionan. En `mention`, un audio o una foto sin mención ya no disparan respuesta, y una mención en el caption de un media cuenta. El análisis de fotos y la transcripción corren sobre todo lo que llega al grupo |
 | [`bg-scope-del-turno`](#bg-scope-del-turno) | Una delegación lanzada desde el turno que procesa un `[bg-N]` (o desde un `agent_send`) devuelve su resultado a ESA conversación (antes se perdía en el historial `("", "")` sin avisar a nadie). Una respuesta de bg-N sin canal de destino deja un WARNING |
 | [`model-con-provider`](#model-con-provider) | Telegram: `/model <provider> <modelo>` cambia `llm.provider` y `llm.model` juntos, en un solo `set` (un reinicio). `/model <modelo>` sigue cambiando solo el modelo; sin argumentos muestra provider y modelo. Un `config set` con un mapa reporta solo las claves pedidas, no el bloque entero |
@@ -149,7 +150,117 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `config-set-efimero`, `privilegio-por-operacion`, `operator-user-ids`,
   `agent-id-igual-al-fichero`, `knowledge-token-budget-retirado`
 - **Providers LLM**: `llm-un-solo-camino-de-construccion`, `openai-habla-responses`, `anthropic-api-actual`
-- **Delegación**: `bg-scope-del-turno`, `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`
+- **Delegación**: `bg-scope-del-turno`, `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`, `bg-delegation-transcript`
+
+---
+
+### `bg-delegation-transcript`
+
+**El bug (2026-10-25)**: Iñaki delegó una investigación en background y la tarea
+murió. El mensaje que llegó al grupo fue `[bg-3] failed: TimeoutError: ` — el tipo
+de la excepción y nada más, porque `asyncio.TimeoutError` no trae mensaje y el
+camino de fallo del hijo hacía `str(exc)` crudo. El padre no sabía qué había hecho
+el hijo antes de morir, ni si la tool que estaba corriendo (un `shell_exec`) llegó
+a ejecutarse. Para peor, la cola vivía 100% en memoria: un `/reload` o un
+`config set` que recarga el daemon cortaba las delegaciones en vuelo sin avisar a
+nadie, y `background_tasks` devolvía una lista vacía como si nunca hubieran
+existido.
+
+**El cambio**:
+
+- **Store durable.** Nuevo `inaki/agents/delegation/sqlite_task_store.py`
+  (`background_tasks.db`, tier harness-global, filas por `caller_agent_id`). El id
+  pasó a ser `bg-{rowid}` arrancando en `bg-1000`; un `bg-m{N}` es una delegación
+  que NO se pudo persistir (el store estaba caído) y solo vive en el proceso. El
+  dict de la cola es la proyección de lo vivo; el store es la verdad durable, y
+  `_transicionar` es el único mutador (dict primero, store después).
+- **Transcript.** El hijo efímero recibe un `IDelegationTranscript` (port nuevo del
+  kernel) y cada mensaje (user, assistant con sus `tool_calls`, tool) se escribe en
+  `bg_task_messages` a medida que ocurre, así un SIGKILL conserva lo hecho hasta ahí.
+  Cada mensaje se acota a 12450 caracteres (40% cabeza, 60% cola); el `result`
+  final nunca se recorta. Sensibilidad: los transcripts son contenido completo de
+  tools y de prompts, en la clase `full_content`, igual que `history.db`.
+- **Fallos con diagnóstico.** `failure_report.py` clasifica el fallo
+  (`timeout` / `max_iterations` / `exception`) y arma un reporte con el último
+  paso, las iteraciones usadas y las tool calls SIN PAR (llamadas sin resultado):
+  se presentan como "outcome unknown, it may have had side effects", nunca como
+  "no pasó nada". `detail` nunca queda vacío (`TimeoutError (no message)`).
+- **Contrato de resultado.** `result_contract.py` es la fuente única del footer de
+  formato (`RESULT_FORMAT_FOOTER`, movido desde `delegate_tool.py`) y de
+  `render_resultado`; la cola lo aplica también al `system_prompt` del hijo
+  background, que antes salía sin footer.
+- **Estados nuevos.** `interrupted` (el daemon paró con la tarea `queued`/`running`)
+  y `cancelled` / `dismissed`; `cancel` es `async` y una tarea ya terminada
+  responde `finished`. El prompt in-flight explica `interrupted` y sugiere
+  `inspect` para un `[bg-N] failed`.
+- **Aviso post-arranque.** Al arrancar, un hook (`avisos_de_background`, compuesto
+  con `componer_al_arrancar`, cada hook aislado en su `try`) programa UN aviso por
+  conversación `(caller, channel, chat_id)` con lo que el reinicio cortó. Las
+  `delivery_failed` barridas van en línea aparte, recuperables con
+  `background_tasks(action=cancel)`. `notified=1` solo después de un dispatch
+  exitoso (si falla, se reintenta en el próximo arranque). Un scope que no es un
+  canal conversacional (`("", "")`, CLI/REST, canal que el router no da por vivo) no
+  recibe aviso —caería en un historial que nadie lee—: se loguea en INFO y esas
+  tareas quedan sin avisar (`notified=0`) y visibles en la sección in-flight del
+  padre hasta que las descarte con `cancel` o la retención las pode.
+- **`inspect`.** `background_tasks(action=inspect, task_id, last_n)`: estado,
+  fallo, `result`, últimos `last_n` pasos (10 por defecto, máx. 50; contenido a 1500
+  caracteres cabeza+cola), workdir e insumos. Es de solo lectura y acotada al
+  caller: la tarea de otro agente es indistinguible de una inexistente, y una
+  podada responde "I no longer have it" (nunca "doesn't exist"). Si el transcript
+  no se pudo persistir entero, lo dice (`transcript_incomplete`, guardado en la
+  fila para que sobreviva al reinicio). El hijo efímero no ve ni `delegate` ni
+  `background_tasks`.
+- **Retención.** Dos cotas simultáneas por caller: se poda lo terminado hace más de
+  14 días O fuera de las últimas 20. Nunca se poda `queued`, `running`,
+  `delivering` ni `delivery_failed`; una `interrupted` aún no avisada solo cae por
+  edad (14 días).
+- **Red de seguridad del ciclo de vida.** Una excepción inesperada fuera de la ejecución
+  del hijo (render, sink, store) ya no deja la tarea en `running`/`delivering` para
+  siempre: sin resultado se entrega al padre un `[bg-N] failed (exception)` de error
+  interno; con el resultado ya persistido queda `delivery_failed` conservándolo.
+- **Workdir opt-in.** `delegation.grant_workdir` (default `false`, solo agentes
+  regulares; en un sub-agente es `ConfigError`) le da a cada delegación background
+  un directorio `<workspace>/dwss/<8 chars [a-z0-9]>`. La contención es **solo por
+  prompt**: el hijo es instruido a trabajar ahí, pero `shell_exec` no arranca en ese
+  directorio y nada impide escribir fuera (riesgo aceptado). No hay tope de tamaño
+  del workdir. Su vida está atada a la fila: se borra al podar la fila, y al
+  arrancar un barrido borra los `dwss/*` que ninguna fila referencia. El borrado
+  pasa por una compuerta (ruta absoluta, padre `dwss`, nombre `^[a-z0-9]{8}$`, ni la
+  ruta ni su padre son symlink, sin `..`); lo que no la cumple se loguea en ERROR y
+  NO se borra.
+- **`input_files`.** `delegate(input_files=[...])` copia ficheros (solo ficheros,
+  hasta 20 y 50 MiB en total) al workdir ANTES de encolar, así que no hay carrera con
+  el hijo. Solo con `wait=false` y con el flag activo. La contención es estricta
+  siempre (`resolve_path(..., "strict")`), sea cual sea `workspace.containment`;
+  una colisión de nombres (comparada con `casefold`) o cualquier rechazo aborta sin
+  encolar ni dejar nada creado. Para poder usar esa resolución desde `agents`,
+  `inaki/tools/path_resolution.py` se movió a `inaki/shared/path_resolution.py`
+  (sin shim; las notas anteriores de este documento citan la ruta vieja porque así se llamaba entonces).
+- **Degradación ruidosa.** Si el store no abre o una escritura falla, se loguea
+  **ERROR** (no WARNING) una vez por tarea nombrando la capacidad perdida,
+  "background task transcript/durable state unavailable"; la delegación se entrega
+  igual desde memoria.
+
+**Cambios observables**:
+
+- Un `/reload` manual, o un `config set` que recarga, ahora AVISA al usuario de las
+  delegaciones que cortó (antes las perdía en silencio).
+- Los ids de delegación empiezan en `bg-1000` y no se reutilizan, ni siquiera tras
+  podar todo.
+- El texto de `background_tasks` ya no dice que la lista se pierde al reiniciar.
+
+**Sin migración de config.** `delegation.grant_workdir` es opt-in y no cambia nada
+si no se activa. `background_tasks.db` se crea sola en el primer arranque (esquema
+con `CREATE TABLE`, sin `ALTER`); no hay datos previos que migrar porque la cola
+anterior no persistía nada. El campo se documenta solo en su docstring del schema
+(`docs/config-reference.md` lo regenera `inaki gen-docs`).
+
+**Invariante**: NUNCA reportar un fallo de delegación con `str(exc)` crudo: un
+mensaje vacío es una confesión fantasma. NUNCA presentar como "sin efecto" una tool
+call sin resultado: no se sabe, y se dice. NUNCA hacer `rmtree` sobre una ruta leída
+de la DB sin la compuerta. NUNCA copiar insumos de una delegación sin contención
+estricta.
 
 ---
 
@@ -910,6 +1021,8 @@ WARNING sin el tipo de excepción y sin traceback.
 - `stop()` pasó a cancelar también las delegaciones lanzadas, no solo el consumer.
 
 **Sin migración de DB ni de config.** La cola sigue siendo 100% in-memory.
+
+*Cerrado después:* la cola dejó de ser 100% in-memory en [`bg-delegation-transcript`](#bg-delegation-transcript) (store SQLite, `inspect`, ids `bg-1000+`).
 
 **Invariante**: NUNCA presentar como "en curso" una task cuyo hijo ya terminó.
 Un estado que miente es peor que ninguno: el agente espera, no avisa y no puede
@@ -3634,6 +3747,8 @@ la única vía por la que el anuncio de un bg-result llega al usuario.
 **Sin migración de DB ni cambios de config**. El feature es 100% in-memory: si
 el daemon reinicia con tasks in-flight, se pierden silenciosamente (decisión
 explícita para uso doméstico Pi 5 — sin retries ni persistencia).
+
+*Cerrado después:* en [`bg-delegation-transcript`](#bg-delegation-transcript) las delegaciones se persisten, un reinicio las marca `interrupted` y el usuario recibe un aviso (se mantiene sin retries automáticos).
 
 **Lock-per-scope en `LLMDispatcherAdapter`**: la misma instancia se comparte
 entre `BackgroundDelegationQueueAdapter` y `SchedulerService` para que ambos

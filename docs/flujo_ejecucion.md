@@ -227,6 +227,13 @@ visible subset with the sub's own `tools.allowed`). The async path resolves the 
 way via `one_shot_resolver(caller_id, target_id)`.
 See [`arquitectura.md`](arquitectura.md) → delegación con herencia.
 
+**Note:** the background queue is durable. `start()` opens `background_tasks.db`, closes the
+orphans left by a crash (`running` → `interrupted`), prunes by age/count, rehydrates the
+`delivery_failed` ones and sweeps unreferenced `dwss/*` workdirs; `stop()` marks the live tasks
+`interrupted` without dispatching. The bootstrap `al_arrancar` hook (`avisos_de_background`,
+composed with `componer_al_arrancar`) only *schedules* one grouped notice per conversation, so
+channel startup is never blocked by it.
+
 ---
 
 ## History Format in SQLite

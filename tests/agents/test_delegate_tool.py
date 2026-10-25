@@ -13,7 +13,7 @@ Cobertura de requisitos:
 - Canonical reason strings match del design doc.
 - Wire check: args correctos pasados al child one-shot.
 - Round-trip: ToolResult.output es JSON válido para DelegationResult.model_validate_json.
-- Task 6.2: _RESULT_FORMAT_FOOTER SIEMPRE presente en el system_prompt pasado al hijo.
+- Task 6.2: RESULT_FORMAT_FOOTER SIEMPRE presente en el system_prompt pasado al hijo.
 """
 
 from __future__ import annotations
@@ -25,7 +25,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from inaki.agents.delegation.delegate_tool import _RESULT_FORMAT_FOOTER, DelegateTool
+from inaki.agents.delegation import delegate_tool as delegate_tool_module
+from inaki.agents.delegation.delegate_tool import DelegateTool
+from inaki.agents.delegation.result_contract import RESULT_FORMAT_FOOTER
+from inaki.kernel.domain.background_task import EnqueuedTask, InputFilesRejected
 from inaki.kernel.domain.delegation_result import DelegationResult
 from inaki.kernel.ports.tool_port import ToolResult
 from inaki.app.assembly import contexto_del_turno
@@ -99,7 +102,7 @@ def _make_tool(
 
     if queue is None:
         queue = MagicMock()
-        queue.enqueue = AsyncMock(return_value="bg-1")
+        queue.enqueue = AsyncMock(return_value=EnqueuedTask(task_id="bg-1"))
 
     return DelegateTool(
         allowed_targets=allowed_targets,
@@ -491,13 +494,19 @@ async def test_passes_correct_args_to_child_one_shot():
     # system_prompt must contain both the caller's override and the footer
     effective = call_kwargs["system_prompt"]
     assert "You are a data analyst" in effective
-    assert _RESULT_FORMAT_FOOTER in effective
+    assert RESULT_FORMAT_FOOTER in effective
+
+
+def test_el_footer_tiene_una_sola_fuente_en_result_contract():
+    """bg-delegation-transcript: el path async y el sync comparten el MISMO footer; si
+    ``delegate_tool`` volviera a definir una copia, divergirían en silencio."""
+    assert not hasattr(delegate_tool_module, "_RESULT_FORMAT_FOOTER")
 
 
 async def test_passes_child_default_plus_footer_when_no_system_prompt_provided():
     """
     Task 6.2: cuando system_prompt no se pasa, el child recibe su default prompt
-    + _RESULT_FORMAT_FOOTER como effective_system_prompt (no None).
+    + RESULT_FORMAT_FOOTER como effective_system_prompt (no None).
     """
     response = _valid_json_response()
     container = _make_child_container(
@@ -522,7 +531,7 @@ async def test_passes_child_default_plus_footer_when_no_system_prompt_provided()
     effective = call_kwargs["system_prompt"]
     assert effective is not None
     assert "Base child prompt." in effective
-    assert _RESULT_FORMAT_FOOTER in effective
+    assert RESULT_FORMAT_FOOTER in effective
 
 
 # ---------------------------------------------------------------------------
@@ -711,7 +720,7 @@ async def test_canonical_reason_strings_are_exact():
 async def test_footer_appended_when_system_prompt_is_none():
     """
     Task 6.2: cuando system_prompt=None, el child recibe
-    child_default + '\\n\\n' + _RESULT_FORMAT_FOOTER.
+    child_default + '\\n\\n' + RESULT_FORMAT_FOOTER.
     """
     response = _valid_json_response()
     container = _make_child_container(
@@ -725,13 +734,13 @@ async def test_footer_appended_when_system_prompt_is_none():
     call_kwargs = container.run_agent_one_shot.execute.await_args.kwargs
     effective = call_kwargs["system_prompt"]
     assert "Base child prompt." in effective
-    assert _RESULT_FORMAT_FOOTER in effective
+    assert RESULT_FORMAT_FOOTER in effective
 
 
 async def test_footer_appended_when_system_prompt_is_provided():
     """
     Task 6.2: cuando system_prompt="Override prompt.", el child recibe
-    override + '\\n\\n' + _RESULT_FORMAT_FOOTER.
+    override + '\\n\\n' + RESULT_FORMAT_FOOTER.
     """
     response = _valid_json_response()
     container = _make_child_container(one_shot_response=response)
@@ -747,7 +756,7 @@ async def test_footer_appended_when_system_prompt_is_provided():
     call_kwargs = container.run_agent_one_shot.execute.await_args.kwargs
     effective = call_kwargs["system_prompt"]
     assert "Override prompt." in effective
-    assert _RESULT_FORMAT_FOOTER in effective
+    assert RESULT_FORMAT_FOOTER in effective
 
 
 async def test_footer_literal_substring_present():
@@ -787,7 +796,7 @@ async def test_footer_always_present_regardless_of_caller_prompt(caller_prompt: 
 
     call_kwargs = container.run_agent_one_shot.execute.await_args.kwargs
     effective = call_kwargs["system_prompt"]
-    assert _RESULT_FORMAT_FOOTER in effective
+    assert RESULT_FORMAT_FOOTER in effective
 
 
 async def test_never_raises_on_child_build_error():
@@ -826,7 +835,7 @@ def _make_async_tool(
     """Factory para tests del path async. Devuelve (tool, queue, caller_container)."""
     if queue is None:
         queue = MagicMock()
-        queue.enqueue = AsyncMock(return_value="bg-1")
+        queue.enqueue = AsyncMock(return_value=EnqueuedTask(task_id="bg-1"))
     if caller_container is None:
         caller_container = MagicMock()
         caller_container.get_turn_scope = MagicMock(return_value=None)
@@ -862,7 +871,7 @@ async def test_default_async_invoca_queue_enqueue() -> None:
 async def test_default_async_devuelve_queued_tool_result() -> None:
     """REQ-DG-10: ToolResult tiene status=success, summary='Delegation queued', details=task_id."""
     queue = MagicMock()
-    queue.enqueue = AsyncMock(return_value="bg-7")
+    queue.enqueue = AsyncMock(return_value=EnqueuedTask(task_id="bg-7"))
     tool, _, _ = _make_async_tool(queue=queue)
 
     result = await tool.execute(agent_id="researcher", task="x")
@@ -955,6 +964,182 @@ async def test_async_falla_grasiosamente_si_enqueue_lanza() -> None:
     assert dr.status == "failed"
     assert dr.reason == "enqueue_failed"
     assert "cola rota" in (dr.details or "")
+
+
+# ---------------------------------------------------------------------------
+# Workdir por delegación (REQ-BGW-5): el queued le dice al padre dónde quedó el directorio
+# ---------------------------------------------------------------------------
+
+_WORKDIR = "/home/pi/.inaki/workspace/dwss/x7k2p9qa"
+
+
+async def _queued_con(enqueued: EnqueuedTask) -> DelegationResult:
+    queue = MagicMock()
+    queue.enqueue = AsyncMock(return_value=enqueued)
+    tool, _, _ = _make_async_tool(queue=queue)
+    result = await tool.execute(agent_id="researcher", task="x")
+    return DelegationResult.model_validate_json(result.output)
+
+
+async def test_queued_con_workdir_informa_ruta_relativa_absoluta_y_retencion() -> None:
+    dr = await _queued_con(EnqueuedTask(task_id="bg-1000", workdir=_WORKDIR))
+
+    assert dr.status == "success"
+    assert dr.summary == "Delegation queued"
+    assert dr.details is not None
+    lineas = dr.details.splitlines()
+    assert lineas[0] == "bg-1000"
+    assert "`dwss/x7k2p9qa/`" in dr.details
+    assert f"`{_WORKDIR}`" in dr.details
+    assert "deleted together with the task record" in dr.details
+    assert "14 days" in dr.details and "last 20 per agent" in dr.details
+
+
+async def test_queued_con_workdir_no_invita_a_dejar_insumos_despues() -> None:
+    """REQ-BGW-5 S2: dejar ficheros DESPUÉS del queued es una carrera con el arranque del
+    hijo; los insumos van por ``input_files``."""
+    dr = await _queued_con(EnqueuedTask(task_id="bg-1000", workdir=_WORKDIR))
+
+    texto = (dr.details or "").lower()
+    for frase in ("drop", "leave", "put your files", "copy your files", "may have started"):
+        assert frase not in texto
+
+
+async def test_queued_sin_workdir_sigue_siendo_solo_el_id() -> None:
+    dr = await _queued_con(EnqueuedTask(task_id="bg-1000"))
+
+    assert dr.details == "bg-1000"
+
+
+async def test_queued_con_workdir_no_disponible_lo_dice_sin_fingir_ruta() -> None:
+    dr = await _queued_con(EnqueuedTask(task_id="bg-1000", workdir_unavailable=True))
+
+    assert dr.details is not None
+    assert dr.details.splitlines()[0] == "bg-1000"
+    assert "Working directory: unavailable (it could not be created)" in dr.details
+    assert "dwss" not in dr.details
+
+
+# ---------------------------------------------------------------------------
+# input_files (REQ-BGW-11/12/13/14): el parámetro, sus precondiciones y el mapeo de errores
+# ---------------------------------------------------------------------------
+
+
+def test_el_schema_expone_input_files_como_lista_opcional_de_strings() -> None:
+    prop = DelegateTool.parameters_schema["properties"]["input_files"]
+
+    assert prop["type"] == "array"
+    assert prop["items"] == {"type": "string"}
+    assert "input_files" not in DelegateTool.parameters_schema["required"]
+    # Lo lee el LLM: en inglés, opcional y con sus precondiciones.
+    assert prop["description"].startswith("Optional.")
+    assert "background mode (wait=false)" in prop["description"]
+    assert "20" in prop["description"] and "50 MiB" in prop["description"]
+
+
+async def test_input_files_con_wait_true_falla_sin_encolar_ni_construir_el_hijo() -> None:
+    """REQ-BGW-11 S1: la precondición se chequea antes de tocar nada."""
+    tool, queue, _ = _make_async_tool()
+
+    result = await tool.execute(
+        agent_id="researcher", task="x", wait=True, input_files=["notas/a.md"]
+    )
+
+    queue.enqueue.assert_not_awaited()
+    tool._build_child.assert_not_called()  # type: ignore[attr-defined]
+    dr = DelegationResult.model_validate_json(result.output)
+    assert result.success is False
+    assert dr.status == "failed"
+    assert dr.reason == "input_files_require_background"
+    assert dr.summary == "input_files requires background mode (wait=false)."
+
+
+async def test_input_files_vacio_se_comporta_como_ausente() -> None:
+    """REQ-BGW-11 S3: ``[]`` no es un pedido; ni siquiera con wait=true falla."""
+    tool, queue, _ = _make_async_tool()
+
+    result = await tool.execute(agent_id="researcher", task="x", input_files=[])
+
+    queue.enqueue.assert_awaited_once()
+    assert queue.enqueue.await_args.kwargs["input_files"] == ()
+    assert DelegationResult.model_validate_json(result.output).status == "success"
+
+
+async def test_input_files_se_pasa_a_la_cola_en_el_orden_pedido() -> None:
+    tool, queue, _ = _make_async_tool()
+
+    await tool.execute(agent_id="researcher", task="x", input_files=["b/z.csv", "a/y.md"])
+
+    assert queue.enqueue.await_args.kwargs["input_files"] == ("b/z.csv", "a/y.md")
+
+
+async def test_input_files_como_string_suelto_es_una_lista_de_uno() -> None:
+    """El LLM a veces manda el string en lugar de la lista; no se parte en caracteres."""
+    tool, queue, _ = _make_async_tool()
+
+    await tool.execute(agent_id="researcher", task="x", input_files="notas/a.md")
+
+    assert queue.enqueue.await_args.kwargs["input_files"] == ("notas/a.md",)
+
+
+@pytest.mark.parametrize(
+    ("reason", "path"),
+    [
+        ("input_files_require_workdir", None),
+        ("input_file_outside_workspace", "../../etc/passwd"),
+        ("input_file_not_found", "notas/falta.md"),
+        ("input_file_not_a_file", "notas"),
+        ("input_file_name_collision", "x.md"),
+        ("input_files_too_many", None),
+        ("input_files_too_large", None),
+        ("input_files_workdir_unavailable", "/ws/dwss"),
+        ("input_file_copy_failed", "notas/a.md"),
+    ],
+)
+async def test_input_files_rechazados_se_devuelven_como_failed_con_su_reason(
+    reason: str, path: str | None
+) -> None:
+    """REQ-BGW-12/13: cada rechazo de la cola llega al LLM con su ``reason`` estable, el
+    mensaje del dominio como summary y la ruta ofensora en details. Nada se encola."""
+    excepcion = InputFilesRejected(reason, path)  # type: ignore[arg-type]
+    queue = MagicMock()
+    queue.enqueue = AsyncMock(side_effect=excepcion)
+    tool, _, _ = _make_async_tool(queue=queue)
+
+    result = await tool.execute(agent_id="researcher", task="x", input_files=["lo-que-sea"])
+
+    dr = DelegationResult.model_validate_json(result.output)
+    assert result.success is False
+    assert dr.status == "failed"
+    assert dr.reason == reason
+    assert dr.summary == str(excepcion)
+    assert dr.details == path
+
+
+async def test_un_error_que_no_es_de_input_files_sigue_siendo_enqueue_failed() -> None:
+    queue = MagicMock()
+    queue.enqueue = AsyncMock(side_effect=RuntimeError("cola rota"))
+    tool, _, _ = _make_async_tool(queue=queue)
+
+    result = await tool.execute(agent_id="researcher", task="x", input_files=["a.md"])
+
+    assert DelegationResult.model_validate_json(result.output).reason == "enqueue_failed"
+
+
+async def test_queued_con_insumos_los_nombra_en_details() -> None:
+    """REQ-BGW-14 S1: los basenames copiados figuran en el resultado queued."""
+    dr = await _queued_con(
+        EnqueuedTask(task_id="bg-1000", workdir=_WORKDIR, input_files=["a.md", "b.csv"])
+    )
+
+    assert dr.details is not None
+    assert "Input files copied there before it started: a.md, b.csv." in dr.details
+
+
+async def test_queued_sin_insumos_no_menciona_input_files() -> None:
+    dr = await _queued_con(EnqueuedTask(task_id="bg-1000", workdir=_WORKDIR))
+
+    assert "Input files" not in (dr.details or "")
 
 
 # ---------------------------------------------------------------------------

@@ -401,3 +401,51 @@ def test_presupuesto_de_delegacion_en_un_sub_agente_aborta(tmp_path: Path, campo
     assert f"delegation.{campo}" in mensaje
     assert "worker.yaml" in mensaje
     assert "agente que delega" in mensaje
+
+
+# --- delegation.grant_workdir (REQ-BGW-1): lo fija el caller, igual que los presupuestos ------
+
+
+def test_grant_workdir_del_global_se_hereda_y_el_agente_lo_pisa(tmp_path: Path) -> None:
+    """REQ-BGW-1 S2: default en ``global.yaml``, override en ``agents/{id}.yaml``."""
+    agents_dir = tmp_path / "agents"
+    _write_raw(agents_dir, "ana", "delegation:\n  enabled: true\n  grant_workdir: true\n")
+    _write_raw(agents_dir, "beto", "delegation:\n  enabled: true\n  grant_workdir: false\n")
+    _write_agent(agents_dir, "carla")
+    global_raw = {**_GLOBAL_RAW, "delegation": {"grant_workdir": False}}
+
+    sin_global = AgentRegistry(agents_dir, global_raw)
+
+    assert sin_global.get("ana").delegation.grant_workdir is True
+    assert sin_global.get("beto").delegation.grant_workdir is False
+    assert sin_global.get("carla").delegation.grant_workdir is False
+
+    con_global = AgentRegistry(agents_dir, {**_GLOBAL_RAW, "delegation": {"grant_workdir": True}})
+
+    assert con_global.get("ana").delegation.grant_workdir is True
+    assert con_global.get("beto").delegation.grant_workdir is False  # el agente pisa al global
+    assert con_global.get("carla").delegation.grant_workdir is True  # hereda
+
+
+def test_grant_workdir_sin_declarar_es_false(tmp_path: Path) -> None:
+    agents_dir = tmp_path / "agents"
+    _write_agent(agents_dir, "principal")
+
+    registry = AgentRegistry(agents_dir, _GLOBAL_RAW)
+
+    assert registry.get("principal").delegation.grant_workdir is False
+
+
+def test_grant_workdir_en_un_sub_agente_aborta_nombrando_el_campo(tmp_path: Path) -> None:
+    """REQ-BGW-1 S3: el sub no delega, así que ahí el flag no tendría efecto."""
+    agents_dir = tmp_path / "agents"
+    _write_agent(agents_dir, "principal")
+    _write_raw(agents_dir / "sub-agents", "worker", "delegation:\n  grant_workdir: true\n")
+
+    with pytest.raises(ConfigError) as exc:
+        AgentRegistry(agents_dir, _GLOBAL_RAW)
+
+    mensaje = str(exc.value)
+    assert "delegation.grant_workdir" in mensaje
+    assert "worker.yaml" in mensaje
+    assert "lo fija el agente que delega" in mensaje

@@ -10,13 +10,14 @@ from inaki.config.schema._base import _ConfigBaseModel
 
 
 class DelegationConfig(_ConfigBaseModel):
-    """Presupuestos de una llamada delegada: iteraciones y timeout.
+    """Lo que lleva una llamada delegada: presupuestos (iteraciones y timeout) y, en
+    background, un directorio de trabajo propio.
 
     En ``global.yaml`` son los DEFAULTS; cada agente los hereda por el merge y
     los pisa en su propio bloque ``delegation`` (``AgentDelegationConfig``).
     Manda el valor del agente que DELEGA (el caller): el que delega fija el
-    presupuesto de la tarea. Declararlos en un sub-agente es un error de carga —
-    el sub no delega, así que ahí no tendrían efecto."""
+    presupuesto y el directorio de la tarea. Declararlos en un sub-agente es un
+    error de carga — el sub no delega, así que ahí no tendrían efecto."""
 
     max_iterations_per_sub: int = 10
     """Vueltas máximas del tool loop que puede gastar UNA llamada delegada.
@@ -35,6 +36,29 @@ class DelegationConfig(_ConfigBaseModel):
     ``max_iterations_per_sub``, que cuenta vueltas. Vale igual para
     ``wait=true`` y para la delegación en background. Lo fija el agente que
     delega: en ``global.yaml`` es el default, en ``agents/{id}.yaml`` lo pisa."""
+
+    grant_workdir: bool = False
+    """Da a cada delegación EN BACKGROUND un directorio de trabajo propio dentro del workspace.
+
+    Con ``True``, al encolar una delegación ``wait=false`` se crea
+    ``<workspace.path del que delega>/dwss/<8 caracteres a-z0-9>``. El resultado
+    ``queued`` de ``delegate`` le devuelve la ruta al agente, y el prompt del
+    sub-agente le ordena crear ahí todo lo que produzca. Los ficheros de entrada se
+    pasan con el parámetro ``input_files`` de ``delegate``, que los copia ahí ANTES
+    de encolar (solo disponible con este flag; hasta 20 ficheros y 50 MiB en total,
+    siempre dentro del workspace). Las delegaciones ``wait=true`` nunca reciben
+    directorio.
+
+    La contención es SOLO por instrucción: el sub-agente usa las tools del que
+    delega, que resuelven contra su workspace entero, así que nada le impide
+    escribir fuera del directorio. ``shell_exec`` no arranca en él.
+
+    El directorio vive lo que vive el registro de la task: se borra cuando la
+    retención poda la task (14 días o fuera de las últimas 20 terminadas por
+    agente) y al arrancar se barren los que quedaron sin registro. No tiene tope de
+    tamaño (los insumos sí). Lo fija el agente que delega: en ``global.yaml`` es el
+    default, en ``agents/{id}.yaml`` lo pisa; declararlo en un sub-agente es error
+    de carga."""
 
 
 class AgentDelegationConfig(DelegationConfig):

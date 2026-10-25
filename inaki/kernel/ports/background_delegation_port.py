@@ -1,8 +1,8 @@
-"""Port `IBackgroundDelegationQueue` — cola in-memory de delegaciones async.
+"""Port `IBackgroundDelegationQueue` — cola de delegaciones async.
 
 El feature ``background-delegation`` (REQ-BGD-1..8) desacopla las delegaciones
 largas (``delegate(..., wait=False)``) del turno del agente padre. El port
-expone cuatro operaciones:
+expone cinco operaciones:
 
 - ``enqueue`` — registra una task y devuelve un ``task_id`` (``bg-N``) en <50ms,
   sin esperar a que el hijo termine (REQ-BGD-2).
@@ -11,17 +11,26 @@ expone cuatro operaciones:
   (REQ-BGD-4, 7).
 - ``cancel`` — corta una task en cola o corriendo, o descarta una cuya entrega
   falló devolviendo su resultado.
+- ``inspect`` — transcript y desenlace de una task, viva o terminada (REQ-BGI-1).
 - ``start`` / ``stop`` — ciclo de vida del consumer interno (REQ-BGD-1).
 
-La implementación viene en ``adapters/outbound/delegation/`` y es 100% in-memory
-(REQ-BGD-8): si el daemon reinicia, las tasks in-flight se pierden.
+El estado de las tasks y su transcript sobreviven a un restart (REQ-BGD-8, REQ-BGP-1..4):
+una task cortada por un restart pasa a ``interrupted`` y se le avisa al padre, no se
+pierde en silencio. La implementación vive en el módulo ``agents``
+(``inaki/agents/delegation/``).
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Protocol
 
-from inaki.kernel.domain.background_task import BackgroundTaskView, CancelOutcome
+from inaki.kernel.domain.background_task import (
+    BackgroundTaskView,
+    CancelOutcome,
+    EnqueuedTask,
+    TaskInspection,
+)
 
 
 class IBackgroundDelegationQueue(Protocol):
@@ -44,32 +53,59 @@ class IBackgroundDelegationQueue(Protocol):
         chat_id: str,
         max_iterations: int,
         timeout_seconds: int,
-    ) -> str:
+        input_files: Sequence[str] = (),
+    ) -> EnqueuedTask:
         """Encola una delegación. Retorna el ``task_id`` (``bg-N``) en <50ms.
 
         ``max_iterations`` y ``timeout_seconds`` son el presupuesto del CALLER:
         viajan con cada task porque la cola es una sola para todo el arnés y
         cada agente que delega fija el suyo.
+
+        Si el que delega tiene un directorio de trabajo por delegación
+        (``delegation.grant_workdir``), la cola lo crea ANTES de devolver y lo informa en
+        ``EnqueuedTask.workdir``; si no pudo crearlo, la delegación se encola igual y lo
+        dice (``workdir_unavailable``).
+
+        ``input_files`` son rutas del workspace del caller que se COPIAN al workdir antes
+        de encolar, para que el hijo las vea desde su primer paso. Si no se pueden copiar
+        (flag apagado, fuera del workspace, inexistentes, topes...) lanza
+        ``InputFilesRejected`` y NO se creó ningún directorio ni se encoló nada.
         """
         ...
 
     def snapshot_inflight(self, caller_agent_id: str) -> list[BackgroundTaskView]:
-        """Devuelve las tasks vivas del caller, ordenadas por start time.
+        """Devuelve las tasks pendientes del caller, ordenadas por start time.
 
-        Incluye ``delivery_failed``: una task cuya entrega falló sigue siendo
-        asunto pendiente del caller. Tasks entregadas o canceladas ya fueron
-        purgadas (REQ-BGD-4). Lista vacía si no hay ninguna para ese caller.
+        Incluye ``delivery_failed`` (una entrega fallida sigue siendo asunto
+        pendiente del caller) e ``interrupted`` mientras espera su aviso. Las
+        tasks terminales NO aparecen (REQ-BGD-4): se consultan con ``inspect``.
+        Lista vacía si no hay ninguna para ese caller.
         """
         ...
 
-    def cancel(self, task_id: str, caller_agent_id: str) -> CancelOutcome:
+    async def cancel(self, task_id: str, caller_agent_id: str) -> CancelOutcome:
         """Cancela ``task_id`` si pertenece a ``caller_agent_id``.
 
         ``queued``/``running`` → se corta (``cancelled``); ``delivery_failed`` →
         se descarta devolviendo el resultado guardado (``dismissed``);
-        ``delivering`` → no se toca (cortaría el turno del padre a mitad). Una
-        task de OTRO caller responde ``not_found``: un agente no ve ni corta las
-        delegaciones de otro.
+        ``delivering`` → no se toca (cortaría el turno del padre a mitad); una task
+        ya terminada responde ``finished``. Una task de OTRO caller responde
+        ``not_found``: un agente no ve ni corta las delegaciones de otro.
+
+        Es ``async`` porque persiste la transición, pero la decisión y la mutación
+        del estado en memoria ocurren ANTES del primer ``await``: sin ventana para
+        que el consumer cambie la task entre el chequeo y la acción.
+        """
+        ...
+
+    async def inspect(
+        self, task_id: str, caller_agent_id: str, *, last_n: int
+    ) -> TaskInspection | None:
+        """Estado, desenlace y últimos ``last_n`` pasos del transcript de ``task_id``.
+
+        ``None`` significa "no la tengo": no existe, la podó la retención, o es de
+        OTRO caller (idéntico a inexistente: no se revela su existencia). Es de solo
+        lectura — no cambia el estado de la task ni dispara ningún dispatch.
         """
         ...
 
@@ -78,5 +114,8 @@ class IBackgroundDelegationQueue(Protocol):
         ...
 
     async def stop(self) -> None:
-        """Cancela el consumer y abandona in-flight sin dispatchear (REQ-BGD-8)."""
+        """Cancela el consumer y las delegaciones en curso sin dispatchear (REQ-BGD-8).
+
+        Las que estaban ``queued``/``running`` quedan ``interrupted``, no perdidas.
+        """
         ...

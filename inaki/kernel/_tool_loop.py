@@ -285,7 +285,8 @@ async def run_tool_loop(
             lista y la persiste tras el loop, así que queda completa aun si el turno
             corta por ``ToolLoopMaxIterationsError`` (mismo patrón que
             ``RecordingIntermediateSink``). Default ``None`` → no se acumula nada
-            (subagentes one-shot y modo legacy). NO incluye los mensajes ``user``
+            (one-shot sin ``recorder`` y modo legacy). El one-shot de una delegación
+            background pasa ``recorder.trace`` para conservar las tool calls sin par. NO incluye los mensajes ``user``
             drenados in-flight (esos ya están persistidos por el inbound adapter).
         page_in_schemas: Catálogo COMPLETO de schemas para el page-in de tools
             (feature ``tool-page-in``). Si el LLM llama una tool que no está en
@@ -314,12 +315,15 @@ async def run_tool_loop(
             mensaje del rastro (assistant+tool_calls, tool results, circuit-open
             y results sintéticos de cancelación) EN el momento en que se genera
             — el historial refleja el turno en vivo y un crash del daemon no
-            pierde el trabajo ya narrado. Solo lo pasa ``RunAgentUseCase`` en
+            pierde el trabajo ya narrado. Lo pasa ``RunAgentUseCase`` en
             turnos que NO pueden terminar en ``__SKIP__`` (``skip_marker is
             None``, decidido al inicio); los turnos skip-capaces siguen con el
-            batch post-loop del caller. Mutuamente excluyente en la práctica
-            con ``tool_trace`` (el caller pasa uno u otro), aunque el loop
-            tolera ambos. Default ``None`` → sin persistencia incremental.
+            batch post-loop del caller. ``RunAgentUseCase`` pasa uno u otro
+            junto con ``tool_trace``; el one-shot de una delegación background
+            pasa AMBOS (``recorder.trace`` y ``recorder``) porque el transcript
+            durable necesita lo escrito en vivo y el rastro para detectar tool
+            calls sin par. El loop tolera ambos. Default ``None`` → sin
+            persistencia incremental.
         reroute_tools: Callback de re-routing semántico para el texto drenado
             in-flight. Recibe el texto de los mensajes recién drenados y
             devuelve los schemas que ese texto hace relevantes; el loop los UNE

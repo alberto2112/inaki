@@ -94,6 +94,24 @@ class TestRenderInFlightSection:
 
         assert "delivery error" not in out
 
+    def test_interrupted_se_explica_y_se_lista_con_su_estado(self) -> None:
+        """REQ-BGD-4/7 S1: una task cortada por un restart sigue visible; el LLM debe
+        saber que NO va a entregar nada solo, que perdió trabajo y qué hacer."""
+        out = render_in_flight_section([_view(id="bg-1001", status="interrupted")])
+
+        assert "- bg-1001 → researcher | status: interrupted" in out
+        assert "`interrupted`" in out
+        assert "NEVER deliver a result on its own" in out
+        # Relanzar repite los efectos de lo que ya hizo: el LLM tiene que saberlo.
+        assert "side effects" in out
+
+    def test_failed_con_detalle_sugiere_inspect(self) -> None:
+        """REQ-BGP-5: ``[bg-N] failed (timeout)`` trae la pista; la sección enseña a usarla."""
+        out = render_in_flight_section([_view()])
+
+        assert "`[bg-N] failed (...)`" in out
+        assert "background_tasks(action=inspect, task_id=...)" in out
+
     def test_instruccion_explica_el_marker(self) -> None:
         """El LLM debe entender qué significa recibir un mensaje `[bg-N] ...`."""
         out = render_in_flight_section([_view()])

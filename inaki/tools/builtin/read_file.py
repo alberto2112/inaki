@@ -6,7 +6,7 @@ import json
 import logging
 from pathlib import Path
 
-from inaki.tools.path_resolution import (
+from inaki.shared.path_resolution import (
     ContainmentMode,
     WorkspaceEscapeError,
     resolve_path,

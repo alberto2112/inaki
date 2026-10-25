@@ -15,6 +15,7 @@ import pytest
 from inaki.agents.delegation.delegate_tool import DelegateTool
 from inaki.app.assembly import ensamblar
 from inaki.app.runtime import AgentRuntime, HarnessRuntime
+from inaki.config import AgentDelegationConfig
 from inaki.shared.errors import AgentNotFoundError
 from tests.app.conftest import RegistryFalso, agent_cfg, global_cfg
 
@@ -113,3 +114,84 @@ async def test_startup_y_shutdown_arrancan_y_paran_los_servicios(
         assert harness.scheduler.service._task is not None
     finally:
         await harness.shutdown()
+
+
+# --- cola de background: store durable y workdirs (bg-delegation-transcript, F6) -------------
+
+
+def test_la_cola_recibe_un_store_en_el_directorio_de_datos_sin_abrirlo(
+    home: Path, bordes_falsos: AsyncMock
+) -> None:
+    """El store es del tier harness-global: UN fichero junto al ``history.db`` (mismo patrón
+    que ``faces.db`` / ``telegram_files.db``). Ensamblar es sync y no toca el disco: el store
+    se abre recién en ``start()`` de la cola."""
+    from inaki.agents.delegation.sqlite_task_store import SQLiteBackgroundTaskStore
+
+    harness = _ensamblar(home, agent_cfg("dev"), agent_cfg("ops"))
+
+    store = harness.background_queue._store
+    assert isinstance(store, SQLiteBackgroundTaskStore)
+    assert store._path == home / "data" / "background_tasks.db"
+    assert store._db is None  # no se abrió
+    assert not store._path.exists()  # ni se creó el fichero
+
+
+async def test_startup_abre_el_store_y_shutdown_lo_cierra(
+    home: Path, bordes_falsos: AsyncMock
+) -> None:
+    harness = _ensamblar(home, agent_cfg("dev"))
+    store = harness.background_queue._store
+    assert store is not None
+
+    await harness.startup()
+    try:
+        assert store._db is not None  # type: ignore[attr-defined]
+        assert (home / "data" / "background_tasks.db").exists()
+    finally:
+        await harness.shutdown()
+
+    assert store._db is None  # type: ignore[attr-defined]
+
+
+def test_con_el_flag_el_caller_tiene_workdir_y_las_raices_son_las_de_los_regulares(
+    home: Path, bordes_falsos: AsyncMock
+) -> None:
+    """REQ-BGW-1 S2: ``grant_workdir`` en un agente solo le da workdir a ese agente; los
+    sub-agentes no delegan, así que no aportan raíz."""
+    con = agent_cfg("ana", delegation=AgentDelegationConfig(enabled=True, grant_workdir=True))
+    sin = agent_cfg("beto", delegation=AgentDelegationConfig(enabled=True))
+
+    harness = _ensamblar(home, con, sin, subs=[agent_cfg("worker")])
+
+    gestor = harness.background_queue._workdirs
+    assert gestor is not None
+    assert gestor.tiene_workdir("ana") is True
+    assert gestor.tiene_workdir("beto") is False
+    assert set(gestor._workspaces) == {"ana", "beto"}  # el sub-agente no tiene raíz
+    assert (
+        gestor._workspaces["ana"]
+        == Path(harness.agents["ana"].agent_config.workspace.path).resolve()
+    )
+
+
+def test_sin_el_flag_nadie_tiene_workdir_pero_el_gestor_existe(
+    home: Path, bordes_falsos: AsyncMock
+) -> None:
+    """El gestor se construye SIEMPRE: ``inspect`` y la poda lo necesitan aunque ningún
+    caller tenga el flag (una fila vieja puede traer un workdir)."""
+    harness = _ensamblar(home, agent_cfg("dev", delegation_enabled=True))
+
+    gestor = harness.background_queue._workdirs
+    assert gestor is not None
+    assert gestor.tiene_workdir("dev") is False
+
+
+def test_el_flag_sin_delegacion_habilitada_no_da_workdir(
+    home: Path, bordes_falsos: AsyncMock
+) -> None:
+    """Sin ``delegate`` el agente no puede encolar nada: el flag solo vale con ``enabled``."""
+    cfg = agent_cfg("dev", delegation=AgentDelegationConfig(enabled=False, grant_workdir=True))
+
+    harness = _ensamblar(home, cfg)
+
+    assert harness.background_queue._workdirs.tiene_workdir("dev") is False  # type: ignore[union-attr]

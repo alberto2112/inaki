@@ -136,6 +136,22 @@ tags:
 
 ---
 
+### `BackgroundTask` — `background_task.py`
+
+Una delegación `delegate(wait=false)`. Id `bg-{rowid}` desde `bg-1000` (`bg-m{N}` = no
+persistida: el store estaba caído y solo vive en el proceso). Estados: vivos `queued`,
+`running`, `delivering`; terminales `delivered`, `cancelled`, `dismissed`; `delivery_failed` (viva: resultado guardado,
+cancelable) e `interrupted` (cortada por un restart; sigue visible hasta que se avisa).
+Guarda `result`, `result_status`, `result_parse_error`, `failure` (`DelegationFailure`:
+`timeout` / `max_iterations` / `exception` / `unknown_target`, con el último paso y las tool calls
+sin par), `iterations_used`, `notified`, `transcript_incomplete`, `workdir` (ruta absoluta o
+`None`) e `input_files` (basenames). Apoyan el modelo: `TranscriptEntry` (un paso del hijo),
+`TaskInspection` (lo que devuelve `inspect`, con `persisted`), `EnqueuedTask` (lo que devuelve
+`enqueue`: id + `workdir` + `workdir_unavailable` + `input_files`), `WorkdirState` /
+`WorkdirEntry` (listado acotado a 20 entradas) e `InputFilesRejected` (10 motivos). La vista
+al prompt es `BackgroundTaskView`. Persistencia: `background_tasks.db` (tablas `bg_tasks`,
+`bg_task_messages`), tier harness-global. Ver `bg-delegation-transcript` en `docs/migraciones.md`.
+
 ### `ScheduledTask` — `task.py`
 
 Task scheduled for future or periodic execution.

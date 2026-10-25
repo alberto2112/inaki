@@ -15,7 +15,7 @@ DelegateTool NO envuelve en wait_for; solo captura asyncio.TimeoutError que el u
 case propaga cuando se excede timeout_seconds.
 
 Task 6.2: DelegateTool construye un effective_system_prompt que antepone el prompt base
-(del caller o el default del agente hijo) y agrega _RESULT_FORMAT_FOOTER al final.
+(del caller o el default del agente hijo) y agrega RESULT_FORMAT_FOOTER (``result_contract``) al final.
 El hijo SIEMPRE recibe las instrucciones de formato — sin esto, parse_delegation_result
 devolvería result_parse_error en cada llamada.
 """
@@ -27,6 +27,10 @@ import copy
 import logging
 from typing import TYPE_CHECKING, Callable, Protocol
 
+from inaki.agents.delegation.result_contract import con_footer
+from inaki.agents.delegation.sqlite_task_store import RETENCION_DIAS, RETENCION_ULTIMAS
+from inaki.agents.delegation.workdirs import ruta_relativa
+from inaki.kernel.domain.background_task import EnqueuedTask, InputFilesRejected
 from inaki.kernel.domain.delegation_result import DelegationResult
 from inaki.kernel.ports.tool_port import ITool, ToolResult
 from inaki.kernel._result_parser import parse_delegation_result
@@ -56,37 +60,49 @@ class DelegationCaller(Protocol):
     def get_turn_scope(self) -> TurnScope | None: ...
 
 
-# ---------------------------------------------------------------------------
-# Result-format footer — task 6.2
-#
-# This constant is appended to every effective system prompt sent to the child
-# agent. It instructs the child to end its response with a fenced ```json```
-# block containing the required fields, which parse_delegation_result then
-# extracts. Without this footer the child has no contract and the parser
-# always returns result_parse_error.
-# ---------------------------------------------------------------------------
-_RESULT_FORMAT_FOOTER = """\
-You MUST end your response with a fenced JSON block in the following format, exactly:
+def _normalizar_input_files(valor: list[str] | str | None) -> tuple[str, ...]:
+    """``input_files`` tal como lo manda el LLM → tupla. ``[]``/``None`` = ausente.
 
-```json
-{
-  "status": "success" | "failed",
-  "summary": "one-sentence description of what you did",
-  "details": "COMPLETE OUTPUT HERE — verbatim, not a summary",
-  "reason": "failure reason code or null"
-}
-```
+    Un string suelto (el modelo olvida la lista) es un solo fichero: ``tuple("a.md")`` lo
+    partiría en caracteres.
+    """
+    if not valor:
+        return ()
+    if isinstance(valor, str):
+        return (valor,)
+    return tuple(valor)
 
-Rules for each field:
-- `status`: `"success"` if you completed the task, `"failed"` if you could not.
-- `summary`: one short sentence (what you did or why you failed).
-- `details`: the COMPLETE output you produced — the FULL text of anything you wrote, \
-generated, or computed. If the task asked you to write articles, posts, code, plans, or \
-any artifact, paste the ENTIRE content here verbatim. Do NOT summarize or truncate. \
-If nothing was produced, use null.
-- `reason`: a short error code if status is "failed", otherwise null.
 
-This JSON block is the LAST thing in your response. Do not add any text after the closing fence."""
+def _detalle_encolada(enqueued: EnqueuedTask) -> str:
+    """Texto ``details`` del resultado ``queued`` (lo lee el LLM, en inglés).
+
+    Sin workdir es solo el id. Con workdir le dice al padre dónde quedó, que el hijo
+    escribe ahí, y que el directorio muere con el registro de la task. NUNCA lo invita a
+    dejar ficheros ahí después de encolar: el hijo puede haber arrancado ya, y los insumos
+    van por ``input_files``, que los copia ANTES de encolar.
+    """
+    if enqueued.workdir is None:
+        if enqueued.workdir_unavailable:
+            return (
+                f"{enqueued.task_id}\nWorking directory: unavailable (it could not be "
+                "created); the child will work in your workspace as usual."
+            )
+        return enqueued.task_id
+    lineas = [
+        enqueued.task_id,
+        f"Working directory: `{ruta_relativa(enqueued.workdir)}` "
+        f"(absolute: `{enqueued.workdir}`). The child was told to write its outputs there.",
+    ]
+    if enqueued.input_files:
+        lineas.append(
+            f"Input files copied there before it started: {', '.join(enqueued.input_files)}."
+        )
+    lineas.append(
+        "The directory is deleted together with the task record (finished tasks are kept "
+        f"{RETENCION_DIAS} days, last {RETENCION_ULTIMAS} per agent) — copy out anything "
+        "you want to keep."
+    )
+    return "\n".join(lineas)
 
 
 class DelegateTool(ITool):
@@ -137,6 +153,18 @@ class DelegateTool(ITool):
                     "delegation result to make your next decision or tool call."
                 ),
                 "default": False,
+            },
+            "input_files": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Optional. Paths of files in YOUR workspace to copy into the child's "
+                    "working directory before it starts, so it can read them from its first "
+                    "step. Regular files only (max 20, 50 MiB total), copied flat by file "
+                    "name (names must be unique). Only works in background mode (wait=false) "
+                    "and when this agent is granted working directories; otherwise the call "
+                    "fails."
+                ),
             },
         },
         "required": ["agent_id", "task"],
@@ -199,6 +227,7 @@ class DelegateTool(ITool):
         task: str,
         system_prompt: str | None = None,
         wait: bool = False,
+        input_files: list[str] | str | None = None,
         **kwargs,
     ) -> ToolResult:
         """Dispatcher: ``wait=True`` → sync path (legacy); ``wait=False`` → async queue.
@@ -226,11 +255,20 @@ class DelegateTool(ITool):
         ``reason="background_delegation_unavailable"`` — fail-fast en lugar de
         crashear.
         """
+        insumos = _normalizar_input_files(input_files)
         if wait:
+            if insumos:
+                # El workdir solo existe en background (hay una fila que lo purgue): con
+                # wait=true no hay dónde copiar. Se falla antes de tocar nada.
+                return self._rechazo_de_insumos(
+                    InputFilesRejected("input_files_require_background")
+                )
             return await self._execute_sync(
                 agent_id=agent_id, task=task, system_prompt=system_prompt
             )
-        return await self._execute_async(agent_id=agent_id, task=task, system_prompt=system_prompt)
+        return await self._execute_async(
+            agent_id=agent_id, task=task, system_prompt=system_prompt, input_files=insumos
+        )
 
     async def _execute_sync(
         self,
@@ -248,7 +286,7 @@ class DelegateTool(ITool):
         Flow:
         1. Allow-list check (REQ-DG-2) → target_not_allowed
         2. Registry lookup (REQ-DG-3) → unknown_agent
-        3. Construir effective_system_prompt (base + _RESULT_FORMAT_FOOTER) — task 6.2
+        3. Construir effective_system_prompt (base + RESULT_FORMAT_FOOTER) — task 6.2
         4. Llamar al one-shot use case del hijo
         5. Capturar TimeoutError → timeout
         6. Capturar ToolLoopMaxIterationsError → max_iterations_exceeded
@@ -313,7 +351,7 @@ class DelegateTool(ITool):
         # -----------------------------------------------------------------------
         # 3. Build effective system prompt — task 6.2
         #
-        #    _RESULT_FORMAT_FOOTER ALWAYS appended so the child knows to emit a
+        #    RESULT_FORMAT_FOOTER (result_contract) ALWAYS appended so the child knows to emit a
         #    trailing ```json``` block. Without it, parse_delegation_result returns
         #    result_parse_error on every call.
         #
@@ -323,11 +361,9 @@ class DelegateTool(ITool):
         #      (child_one_shot.system_prompt — el prompt del sub-agente ya resuelto).
         #      Es una property que devuelve str, no puede romper el never-raises.
         # -----------------------------------------------------------------------
-        if system_prompt is not None:
-            base_prompt = system_prompt
-        else:
-            base_prompt = child_one_shot.system_prompt
-        effective_system_prompt = base_prompt + "\n\n" + _RESULT_FORMAT_FOOTER
+        effective_system_prompt = con_footer(
+            system_prompt, por_defecto=child_one_shot.system_prompt
+        )
 
         # -----------------------------------------------------------------------
         # 5–8. Call child + catch all failure modes (REQ-DG-6 / REQ-DG-8)
@@ -396,6 +432,7 @@ class DelegateTool(ITool):
         agent_id: str,
         task: str,
         system_prompt: str | None,
+        input_files: tuple[str, ...] = (),
     ) -> ToolResult:
         """Encola la delegación en background y retorna ``task_id`` inmediatamente.
 
@@ -456,7 +493,7 @@ class DelegateTool(ITool):
 
         # 3. Encolar (REQ-BGD-2)
         try:
-            task_id = await self._queue.enqueue(
+            enqueued = await self._queue.enqueue(
                 caller_agent_id=self._caller_agent_id,
                 target_agent_id=agent_id,
                 prompt=task,
@@ -465,7 +502,16 @@ class DelegateTool(ITool):
                 chat_id=chat_id,
                 max_iterations=self._max_iterations_per_sub,
                 timeout_seconds=self._timeout_seconds,
+                input_files=input_files,
             )
+        except InputFilesRejected as rechazo:
+            logger.warning(
+                "DelegateTool(async): input_files rechazados para '%s' (%s): %s",
+                agent_id,
+                rechazo.reason,
+                rechazo,
+            )
+            return self._rechazo_de_insumos(rechazo)
         except Exception as exc:  # noqa: BLE001
             logger.exception(
                 "DelegateTool(async): queue.enqueue() falló para target '%s'", agent_id
@@ -482,12 +528,12 @@ class DelegateTool(ITool):
         result = DelegationResult(
             status="success",
             summary="Delegation queued",
-            details=task_id,
+            details=_detalle_encolada(enqueued),
         )
         logger.debug(
             "DelegateTool(async): delegación '%s' encolada como '%s' (caller=%s scope=%s:%s)",
             agent_id,
-            task_id,
+            enqueued.task_id,
             self._caller_agent_id,
             channel,
             chat_id,
@@ -497,6 +543,17 @@ class DelegateTool(ITool):
     # ---------------------------------------------------------------------------
     # Private helpers
     # ---------------------------------------------------------------------------
+
+    def _rechazo_de_insumos(self, rechazo: InputFilesRejected) -> ToolResult:
+        """``failed`` con el ``reason`` estable del rechazo; la ruta ofensora va en details."""
+        return self._build_tool_result(
+            DelegationResult(
+                status="failed",
+                summary=str(rechazo),
+                details=rechazo.path,
+                reason=rechazo.reason,
+            )
+        )
 
     def _build_tool_result(self, delegation_result: DelegationResult) -> ToolResult:
         """Serializa DelegationResult a JSON y lo envuelve en ToolResult."""

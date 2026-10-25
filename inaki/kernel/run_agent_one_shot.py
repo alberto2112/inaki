@@ -14,6 +14,10 @@ Contratos clave:
 - REQ-OS-5: Si `settings.allowed_tools` no es None, restringe el schema a ese subset
              (intersección con el registry recibido). Usado por el sub-agente efímero
              del flujo delegate para acotar qué tools del caller ve el hijo.
+- REQ-BGP-2: con ``recorder`` el transcript del hijo se anota mensaje a mensaje
+             (user inicial, assistant+tool_calls, tool results, respuesta final):
+             ``recorder.trace`` es el espejo en memoria y ``recorder.record`` la
+             escritura durable. Sin ``recorder`` la llamada al loop es la de siempre.
 - REQ-DG-9: Filtra la tool "delegate" de los schemas antes de pasarlos al loop
              (prevención de recursión por construcción). Filtra también
              "background_tasks": las delegaciones en background son del padre, y
@@ -25,12 +29,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 
 from inaki.kernel.domain.agent_settings import OneShotSettings
+from inaki.kernel.ports.delegation_transcript_port import IDelegationTranscript
 from inaki.kernel.ports.llm_port import ILLMProvider
 from inaki.kernel.ports.tool_port import IToolExecutor
 from inaki.kernel.ports.turn_tracer_port import ITurnTracer, NullTurnTracer
 from inaki.kernel._tool_loop import run_tool_loop
+from inaki.shared.errors import ToolLoopMaxIterationsError
 from inaki.shared.message import Message, Role
 
 logger = logging.getLogger(__name__)
@@ -77,6 +84,8 @@ class RunAgentOneShotUseCase:
         system_prompt: str | None,
         max_iterations: int,
         timeout_seconds: int,
+        *,
+        recorder: IDelegationTranscript | None = None,
     ) -> str:
         """
         Ejecuta el agente sobre `task` y retorna la respuesta final del LLM.
@@ -90,6 +99,10 @@ class RunAgentOneShotUseCase:
                             Al superarse, propaga ToolLoopMaxIterationsError.
             timeout_seconds: Límite de tiempo en segundos. Al superarse,
                              propaga asyncio.TimeoutError.
+            recorder: Transcript opcional de la delegación (REQ-BGP-2). Si se
+                      pasa, recibe cada mensaje del hijo al generarse; ``record``
+                      nunca lo mata al turno. Los errores de arriba se propagan
+                      IGUAL: el recorder solo observa.
 
         Returns:
             Respuesta final en texto del LLM.
@@ -133,24 +146,91 @@ class RunAgentOneShotUseCase:
         # REQ-OS-1: historial limpio — solo el mensaje de la tarea actual.
         messages = [Message(role=Role.USER, content=task)]
 
+        tool_trace: list[Message] | None = None
+        persist_message: Callable[[Message], Awaitable[None]] | None = None
+        if recorder is not None:
+            persist_message = _grabar_seguro(recorder)
+            await _anotar(recorder, persist_message, messages[0])
+            tool_trace = recorder.trace
+
         # REQ-OS-3: timeout + iteraciones.
         # asyncio.TimeoutError y ToolLoopMaxIterationsError se propagan al caller.
-        response = await asyncio.wait_for(
-            run_tool_loop(
-                llm=self._llm,
-                tools=self._tools,
-                messages=messages,
-                system_prompt=effective_prompt,
-                tool_schemas=tool_schemas,
-                max_iterations=max_iterations,
-                circuit_breaker_threshold=self._cfg.circuit_breaker_threshold,
-                agent_id=self._cfg.agent_id,
-                request_delay_seconds=self._cfg.request_delay_seconds,
-                tracer=self._tracer.bind(
-                    agent_id=self._cfg.agent_id, turn_id=uuid.uuid4().hex[:12], mode="one_shot"
+        try:
+            response = await asyncio.wait_for(
+                run_tool_loop(
+                    llm=self._llm,
+                    tools=self._tools,
+                    messages=messages,
+                    system_prompt=effective_prompt,
+                    tool_schemas=tool_schemas,
+                    max_iterations=max_iterations,
+                    circuit_breaker_threshold=self._cfg.circuit_breaker_threshold,
+                    agent_id=self._cfg.agent_id,
+                    request_delay_seconds=self._cfg.request_delay_seconds,
+                    tool_trace=tool_trace,
+                    persist_message=persist_message,
+                    tracer=self._tracer.bind(
+                        agent_id=self._cfg.agent_id, turn_id=uuid.uuid4().hex[:12], mode="one_shot"
+                    ),
                 ),
-            ),
-            timeout=timeout_seconds,
-        )
+                timeout=timeout_seconds,
+            )
+        except ToolLoopMaxIterationsError as exc:
+            # Lo último que dijo el hijo es parte del rastro; el error sigue su camino.
+            if persist_message is not None and exc.last_response.strip():
+                assert recorder is not None
+                await _anotar(
+                    recorder,
+                    persist_message,
+                    Message(role=Role.ASSISTANT, content=exc.last_response),
+                )
+            raise
 
+        if persist_message is not None:
+            assert recorder is not None
+            await _anotar(recorder, persist_message, Message(role=Role.ASSISTANT, content=response))
         return response
+
+
+async def _anotar(
+    recorder: IDelegationTranscript,
+    grabar: Callable[[Message], Awaitable[None]],
+    message: Message,
+) -> None:
+    """Agrega ``message`` al espejo en memoria y lo manda a grabar.
+
+    El ``append`` va primero y es síncrono: aunque la escritura durable falle (o
+    la cancele un timeout), el trace en memoria ya lo tiene. ``grabar`` es el
+    wrapper seguro del turno (uno por ejecución, para avisar una sola vez).
+    """
+    recorder.trace.append(message)
+    await grabar(message)
+
+
+def _grabar_seguro(
+    recorder: IDelegationTranscript,
+) -> Callable[[Message], Awaitable[None]]:
+    """Envuelve ``recorder.record`` para que un fallo nunca mate el turno del hijo.
+
+    Defensa en profundidad: el contrato del port ya dice que ``record`` no lanza,
+    pero un recorder roto no puede costarle el resultado al padre. Avisa UNA vez
+    por turno (un disco lleno fallaría en cada mensaje y llenaría el log).
+    ``CancelledError`` no es ``Exception``: el timeout sigue cortando limpio.
+    """
+    avisado = False
+
+    async def _grabar(message: Message) -> None:
+        nonlocal avisado
+        try:
+            await recorder.record(message)
+        except Exception as exc:  # noqa: BLE001
+            if not avisado:
+                avisado = True
+                logger.warning(
+                    "RunAgentOneShotUseCase: el recorder falló (%s: %s); el transcript durable "
+                    "de esta delegación queda incompleto, el turno continúa",
+                    type(exc).__name__,
+                    exc,
+                )
+
+    return _grabar

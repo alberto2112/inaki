@@ -9,7 +9,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from inaki.tools.path_resolution import (
+from inaki.shared.path_resolution import (
     ContainmentMode,
     WorkspaceEscapeError,
     resolve_path,

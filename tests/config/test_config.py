@@ -380,6 +380,31 @@ def test_delegation_config_yaml_override_timeout_seconds() -> None:
     assert cfg.timeout_seconds == 120
 
 
+def test_delegation_config_grant_workdir_por_defecto_es_false() -> None:
+    """REQ-BGW-1: opt-in. Sin tocar nada, ninguna delegación recibe directorio de trabajo."""
+    assert DelegationConfig().grant_workdir is False
+    assert AgentDelegationConfig().grant_workdir is False
+
+
+def test_delegation_config_yaml_override_grant_workdir() -> None:
+    assert DelegationConfig(grant_workdir=True).grant_workdir is True
+    assert AgentDelegationConfig(enabled=True, grant_workdir=True).grant_workdir is True
+
+
+def test_la_unica_doc_de_grant_workdir_es_su_docstring_y_dice_lo_que_hay_que_saber() -> None:
+    """La doc de un campo de config NO vive en otro lado (``docs-de-config-autogeneradas``):
+    el docstring alimenta ``config-reference.md``, ``global.example.yaml`` y la UI web.
+    Si se recorta, el operador se entera de la contención "solo por prompt" por las malas."""
+    doc = " ".join((DelegationConfig.model_fields["grant_workdir"].description or "").split())
+
+    assert "dwss/" in doc  # dónde vive
+    assert "wait=false" in doc  # solo background
+    assert "instrucción" in doc  # contención solo por prompt
+    assert "input_files" in doc and "20 ficheros" in doc and "50 MiB" in doc
+    assert "se borra" in doc  # vida atada a la task
+    assert "sub-agente es error de carga" in doc  # lo fija el que delega
+
+
 # ---------------------------------------------------------------------------
 # AgentDelegationConfig — per-agent defaults
 # ---------------------------------------------------------------------------
@@ -514,6 +539,12 @@ def test_render_default_global_yaml_delegation_values_match_defaults() -> None:
     cfg = DelegationConfig()
     assert str(cfg.max_iterations_per_sub) in rendered  # "10"
     assert str(cfg.timeout_seconds) in rendered  # "60"
+
+
+def test_render_default_global_yaml_menciona_grant_workdir_sin_prosa() -> None:
+    """Una línea comentada con el default; la explicación es el docstring del schema."""
+    rendered = _render_default_global_yaml()
+    assert "#   grant_workdir: false" in rendered
 
 
 def test_render_default_global_yaml_delegation_is_commented_out() -> None:

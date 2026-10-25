@@ -13,12 +13,14 @@ Cobertura de requisitos:
 from __future__ import annotations
 
 import asyncio
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from inaki.kernel.domain.agent_settings import OneShotSettings
 from inaki.kernel.domain.llm_response import LLMResponse
+from inaki.kernel.ports.delegation_transcript_port import NullDelegationTranscript
 from inaki.kernel.ports.tool_port import ToolResult
 from inaki.kernel.run_agent_one_shot import RunAgentOneShotUseCase
 from inaki.shared.errors import ToolLoopMaxIterationsError
@@ -46,6 +48,9 @@ def _make_llm(response: str = "Resultado final") -> AsyncMock:
 def _make_tools(schemas: list[dict] | None = None) -> MagicMock:
     tools = MagicMock()
     tools.get_schemas.return_value = schemas if schemas is not None else []
+    # El loop real consulta el privilegio de operador antes de ejecutar: un MagicMock
+    # sin configurar es truthy y rechazaría toda tool.
+    tools.requires_operator.return_value = False
     tools.execute = AsyncMock(
         return_value=ToolResult(tool_name="mytool", output="ok", success=True)
     )
@@ -833,3 +838,214 @@ async def test_config_ya_no_se_excluye_del_hijo():
         _, kwargs = mock_loop.call_args
         sent_names = [sch["function"]["name"] for sch in kwargs["tool_schemas"]]
         assert sent_names == ["read_file", "config"]
+
+
+# ---------------------------------------------------------------------------
+# bg-delegation-transcript — NullDelegationTranscript (port del recorder)
+# ---------------------------------------------------------------------------
+
+
+async def test_null_transcript_trace_arranca_vacio_y_record_no_guarda_nada():
+    """Modo degradado: el recorder nulo no persiste, pero ``trace`` sigue siendo una
+    lista usable — el reporte de fallo honesto no depende del disco."""
+    nulo = NullDelegationTranscript()
+    assert nulo.trace == []
+
+    await nulo.record(Message(role=Role.USER, content="hola"))
+
+    # record es un no-op: ni lanza ni toca el espejo en memoria.
+    assert nulo.trace == []
+
+
+async def test_null_transcript_trace_es_una_lista_mutable_propia_de_cada_instancia():
+    """Quien consume ``trace`` (el tool loop) le hace append: no puede compartirse."""
+    a, b = NullDelegationTranscript(), NullDelegationTranscript()
+
+    a.trace.append(Message(role=Role.USER, content="x"))
+
+    assert [m.content for m in a.trace] == ["x"]
+    assert b.trace == []
+
+
+# ---------------------------------------------------------------------------
+# bg-delegation-transcript — recorder en execute() (REQ-BGP-2, REQ-BGP-8 S2)
+# ---------------------------------------------------------------------------
+
+
+class _RecorderFake:
+    """Recorder de prueba: ``trace`` en memoria + ``record`` que apunta lo recibido."""
+
+    def __init__(self, *, falla: bool = False) -> None:
+        self.trace: list[Message] = []
+        self.grabados: list[Message] = []
+        self._falla = falla
+
+    async def record(self, message: Message) -> None:
+        if self._falla:
+            raise OSError("disco lleno")
+        self.grabados.append(message)
+
+
+def _tool_call(call_id: str, name: str) -> dict:
+    return {"id": call_id, "function": {"name": name, "arguments": "{}"}}
+
+
+def _uc_sin_delay(**kwargs) -> RunAgentOneShotUseCase:
+    """Use case con ``request_delay_seconds=0`` (el default espacia 2 s cada llamada al LLM)."""
+    cfg = _make_settings().model_copy(update={"request_delay_seconds": 0.0})
+    return _make_use_case(settings=cfg, **kwargs)
+
+
+def _llm_con_una_tool(final: str = "listo") -> AsyncMock:
+    llm = AsyncMock()
+    llm.complete.side_effect = [
+        LLMResponse(text_blocks=["voy a mirar"], tool_calls=[_tool_call("c1", "shell_exec")]),
+        LLMResponse.of_text(final),
+    ]
+    return llm
+
+
+async def test_recorder_recibe_user_assistant_tool_y_final_en_orden():
+    recorder = _RecorderFake()
+    uc = _uc_sin_delay(llm=_llm_con_una_tool("terminé"))
+
+    result = await uc.execute(
+        task="investigá X",
+        system_prompt="p",
+        max_iterations=5,
+        timeout_seconds=30,
+        recorder=recorder,
+    )
+
+    assert result == "terminé"
+    assert [m.role for m in recorder.grabados] == [
+        Role.USER,
+        Role.ASSISTANT,
+        Role.TOOL,
+        Role.ASSISTANT,
+    ]
+    assert recorder.grabados[0].content == "investigá X"
+    assert recorder.grabados[1].tool_calls == [_tool_call("c1", "shell_exec")]
+    assert recorder.grabados[2].tool_call_id == "c1"
+    assert recorder.grabados[3].content == "terminé"
+    assert recorder.grabados[3].tool_calls is None
+    # El espejo en memoria tiene EXACTAMENTE lo mismo, en el mismo orden.
+    assert recorder.trace == recorder.grabados
+
+
+async def test_timeout_a_mitad_de_tool_deja_el_tool_call_sin_par_en_el_trace():
+    """REQ-BGP-2 S2: el assistant con tool_call ``c1`` figura SIN su tool result."""
+    recorder = _RecorderFake()
+    llm = AsyncMock()
+    llm.complete.return_value = LLMResponse(tool_calls=[_tool_call("c1", "shell_exec")])
+    tools = _make_tools()
+
+    async def _tool_colgada(*_a, **_k):
+        await asyncio.sleep(30)
+
+    tools.execute = AsyncMock(side_effect=_tool_colgada)
+    uc = _uc_sin_delay(llm=llm, tools=tools)
+
+    with pytest.raises(asyncio.TimeoutError):
+        await uc.execute(
+            task="t", system_prompt="p", max_iterations=5, timeout_seconds=1, recorder=recorder
+        )
+
+    assert [m.role for m in recorder.trace] == [Role.USER, Role.ASSISTANT]
+    assert recorder.trace[1].tool_calls == [_tool_call("c1", "shell_exec")]
+    assert recorder.grabados == recorder.trace
+
+
+async def test_max_iterations_anota_la_ultima_respuesta_y_relanza():
+    """REQ-OS-3 intacto: el error se propaga igual; solo se agrega el último texto."""
+    recorder = _RecorderFake()
+    uc = _make_use_case()
+
+    with patch(
+        "inaki.kernel.run_agent_one_shot.run_tool_loop",
+        new_callable=AsyncMock,
+        side_effect=ToolLoopMaxIterationsError(last_response="me quedé a medias"),
+    ):
+        with pytest.raises(ToolLoopMaxIterationsError) as exc_info:
+            await uc.execute(
+                task="t", system_prompt="p", max_iterations=3, timeout_seconds=30, recorder=recorder
+            )
+
+    assert exc_info.value.last_response == "me quedé a medias"
+    assert [m.role for m in recorder.grabados] == [Role.USER, Role.ASSISTANT]
+    assert recorder.grabados[1].content == "me quedé a medias"
+
+
+async def test_max_iterations_con_ultima_respuesta_vacia_no_anota_un_assistant_vacio():
+    recorder = _RecorderFake()
+    uc = _make_use_case()
+
+    with patch(
+        "inaki.kernel.run_agent_one_shot.run_tool_loop",
+        new_callable=AsyncMock,
+        side_effect=ToolLoopMaxIterationsError(last_response="   "),
+    ):
+        with pytest.raises(ToolLoopMaxIterationsError):
+            await uc.execute(
+                task="t", system_prompt="p", max_iterations=3, timeout_seconds=30, recorder=recorder
+            )
+
+    assert [m.role for m in recorder.grabados] == [Role.USER]
+
+
+async def test_recorder_que_lanza_no_mata_el_turno_y_avisa_una_sola_vez(caplog):
+    """REQ-BGP-8 S2: el hijo sigue y entrega; el trace en memoria sigue completo."""
+    recorder = _RecorderFake(falla=True)
+    uc = _uc_sin_delay(llm=_llm_con_una_tool("terminé igual"))
+
+    with caplog.at_level(logging.WARNING, logger="inaki.kernel.run_agent_one_shot"):
+        result = await uc.execute(
+            task="t", system_prompt="p", max_iterations=5, timeout_seconds=30, recorder=recorder
+        )
+
+    assert result == "terminé igual"
+    assert [m.role for m in recorder.trace] == [
+        Role.USER,
+        Role.ASSISTANT,
+        Role.TOOL,
+        Role.ASSISTANT,
+    ]
+    avisos = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and r.name == "inaki.kernel.run_agent_one_shot"
+    ]
+    assert len(avisos) == 1
+    assert "disco lleno" in avisos[0].getMessage()
+
+
+async def test_sin_recorder_el_loop_no_recibe_hooks():
+    """Camino sync sin cambios: ``tool_trace`` y ``persist_message`` quedan en None."""
+    uc = _make_use_case()
+
+    with patch(
+        "inaki.kernel.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
+        mock_loop.return_value = "ok"
+        await uc.execute(task="t", system_prompt="p", max_iterations=5, timeout_seconds=30)
+
+        _, kwargs = mock_loop.call_args
+        assert kwargs.get("tool_trace") is None
+        assert kwargs.get("persist_message") is None
+
+
+async def test_con_recorder_el_loop_recibe_el_trace_del_recorder_y_un_persist():
+    recorder = _RecorderFake()
+    uc = _make_use_case()
+
+    with patch(
+        "inaki.kernel.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
+        mock_loop.return_value = "ok"
+        await uc.execute(
+            task="t", system_prompt="p", max_iterations=5, timeout_seconds=30, recorder=recorder
+        )
+
+        _, kwargs = mock_loop.call_args
+        assert kwargs["tool_trace"] is recorder.trace
+        assert callable(kwargs["persist_message"])

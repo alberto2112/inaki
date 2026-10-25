@@ -105,6 +105,43 @@ def avisos_post_arranque(
     return hook
 
 
+def avisos_de_background() -> Callable[[HarnessRuntime], Awaitable[None]]:
+    """Hook ``al_arrancar``: avisa a los padres de las delegaciones que el reinicio cortó.
+
+    Corre tras ``_start_channels``, con el runtime NUEVO (REQ-BGD-11), nunca dentro de
+    ``startup()``: el aviso sale por los canales y estos todavía no estaban arriba. Solo
+    PROGRAMA el aviso y vuelve: dispara un turno completo del agente padre (llamada al LLM,
+    10-60 s) y el runner espera este hook ANTES de levantar las tareas de los canales —
+    esperarlo dejaría al bot sordo todo ese rato.
+    """
+
+    async def hook(app_container: HarnessRuntime) -> None:
+        app_container.background_queue.programar_avisos_post_arranque()
+
+    return hook
+
+
+def componer_al_arrancar(
+    *hooks: Callable[[HarnessRuntime], Awaitable[None]],
+) -> Callable[[HarnessRuntime], Awaitable[None]]:
+    """Un solo hook ``al_arrancar`` que corre varios, en orden, cada uno AISLADO.
+
+    El runner acepta un único hook y si levanta lo loguea y sigue; con dos hooks a secas,
+    uno roto dejaría sin correr al siguiente. Acá cada uno va en su propio ``try``: un
+    aviso de config que falla no apaga el aviso de las delegaciones cortadas (ni al revés).
+    """
+    log = logging.getLogger(__name__)
+
+    async def hook(app_container: HarnessRuntime) -> None:
+        for h in hooks:
+            try:
+                await h(app_container)
+            except Exception:  # noqa: BLE001 — un aviso fallido no tumba un daemon sano
+                log.exception("Un hook al_arrancar falló (%s) — se sigue con el resto", h)
+
+    return hook
+
+
 def run_daemon_mode(config_dir: Path, agents_dir: Path, global_config, registry) -> None:
     """Arranca todos los canales en modo servicio systemd.
 
@@ -151,6 +188,8 @@ def run_daemon_mode(config_dir: Path, agents_dir: Path, global_config, registry)
         run_daemon(
             bootstrap_fn,
             initial=(initial, registry),
-            al_arrancar=avisos_post_arranque(overrides),
+            al_arrancar=componer_al_arrancar(
+                avisos_post_arranque(overrides), avisos_de_background()
+            ),
         )
     )

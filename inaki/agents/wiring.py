@@ -8,12 +8,16 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
+from pathlib import Path
 from typing import Protocol
 
 from inaki.agents.delegation.background_queue import BackgroundDelegationQueueAdapter
 from inaki.agents.delegation.background_tasks_tool import BackgroundTasksTool
 from inaki.agents.delegation.delegate_tool import DelegateTool, DelegationCaller
+from inaki.agents.delegation.ports import IBackgroundTaskStore
+from inaki.agents.delegation.sqlite_task_store import SQLiteBackgroundTaskStore
+from inaki.agents.delegation.workdirs import GestorDeWorkdirs
 from inaki.config import (
     SUBAGENT_DEFAULTS,
     AgentConfig,
@@ -34,17 +38,40 @@ from inaki.llm.wiring import LLMProviderFactory
 logger = logging.getLogger(__name__)
 
 
+def build_background_task_store(db_path: str | Path) -> IBackgroundTaskStore:
+    """Store durable de las delegaciones en background (tier harness-global).
+
+    Construirlo NO toca el disco: ensamblar es síncrono. El fichero se abre y el esquema
+    se crea en ``start()`` de la cola.
+    """
+    return SQLiteBackgroundTaskStore(db_path)
+
+
 def build_background_queue(
     *,
     dispatcher: ILLMDispatcher,
     one_shot_resolver: Callable[[str, str], RunAgentOneShotUseCase | None],
     result_sender: IChannelSender,
+    store: IBackgroundTaskStore | None = None,
+    workspaces: Mapping[str, Path] | None = None,
+    con_workdir: Iterable[str] = (),
 ) -> BackgroundDelegationQueueAdapter:
+    """Cola de delegaciones en background.
+
+    ``store``: persistencia del estado y del transcript (``None`` = modo en memoria).
+    ``workspaces``: ``caller_id`` → ``workspace.path`` de cada agente que puede delegar;
+    ``con_workdir``: los callers con ``delegation.grant_workdir``. Las decide el composition
+    root (esta cola es harness-global y los workspaces son per-agente). El gestor se arma
+    SIEMPRE, aunque ningún caller tenga el flag: ``inspect`` y la poda lo usan igual sobre
+    filas que pueden traer un workdir de una config anterior.
+    """
     return BackgroundDelegationQueueAdapter(
         dispatcher=dispatcher,
         one_shot_resolver=one_shot_resolver,
         max_concurrent=3,
         result_sender=result_sender,
+        store=store,
+        workdirs=GestorDeWorkdirs(workspaces or {}, con_workdir),
     )
 
 

@@ -8,6 +8,7 @@ anota en el borrador para el runtime.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -71,6 +72,7 @@ def borrador(cfg: AgentConfig, *, tools: tuple[str, ...] = ("dummy_tool",)) -> _
         jobs=MemoryJobs(None, None),
         scope_registry=MagicMock(),
         tracer=NullTurnTracer(),
+        workspace=Path("workspace-falso"),
     )
 
 

@@ -1,6 +1,8 @@
 """Unit tests para BackgroundDelegationQueueAdapter (REQ-BGD-1..8 + REQ-DG-11).
 
-El adapter es la implementación in-memory de IBackgroundDelegationQueue:
+El adapter implementa IBackgroundDelegationQueue; estos tests lo corren SIN store (modo en
+memoria: ids ``bg-m{N}``). La integración con el store durable vive en
+``test_background_queue_persistencia.py``.
 - enqueue: registra task, devuelve bg-N en <50ms (REQ-BGD-2)
 - snapshot_inflight: lista tasks queued/running del caller (REQ-BGD-4)
 - start/stop: ciclo del consumer (REQ-BGD-1, 8)
@@ -73,58 +75,67 @@ def _build_sender(*, sink: object | None = None) -> MagicMock:
 
 
 class TestEnqueue:
-    async def test_enqueue_devuelve_bg_1_la_primera_vez(self) -> None:
+    async def test_enqueue_devuelve_bg_m1_la_primera_vez(self) -> None:
+        """Sin store el id es en memoria (``bg-m{N}``): no se confunde con un id durable."""
         adapter, _ = _build_adapter()
 
-        task_id = await adapter.enqueue(
-            caller_agent_id="inaki",
-            target_agent_id="researcher",
-            prompt="investigá X",
-            system_prompt=None,
-            channel="telegram",
-            chat_id="42",
-            max_iterations=5,
-            timeout_seconds=30,
-        )
+        task_id = (
+            await adapter.enqueue(
+                caller_agent_id="inaki",
+                target_agent_id="researcher",
+                prompt="investigá X",
+                system_prompt=None,
+                channel="telegram",
+                chat_id="42",
+                max_iterations=5,
+                timeout_seconds=30,
+            )
+        ).task_id
 
-        assert task_id == "bg-1"
+        assert task_id == "bg-m1"
 
     async def test_enqueue_counter_monotonico(self) -> None:
         """Triangulación: cada llamada incrementa el counter (REQ-BGD-2)."""
         adapter, _ = _build_adapter()
 
-        id1 = await adapter.enqueue(
-            caller_agent_id="inaki",
-            target_agent_id="r",
-            prompt="a",
-            system_prompt=None,
-            channel="",
-            chat_id="",
-            max_iterations=5,
-            timeout_seconds=30,
-        )
-        id2 = await adapter.enqueue(
-            caller_agent_id="inaki",
-            target_agent_id="r",
-            prompt="b",
-            system_prompt=None,
-            channel="",
-            chat_id="",
-            max_iterations=5,
-            timeout_seconds=30,
-        )
-        id3 = await adapter.enqueue(
-            caller_agent_id="otro",
-            target_agent_id="r",
-            prompt="c",
-            system_prompt=None,
-            channel="",
-            chat_id="",
-            max_iterations=5,
-            timeout_seconds=30,
-        )
+        id1 = (
+            await adapter.enqueue(
+                caller_agent_id="inaki",
+                target_agent_id="r",
+                prompt="a",
+                system_prompt=None,
+                channel="",
+                chat_id="",
+                max_iterations=5,
+                timeout_seconds=30,
+            )
+        ).task_id
+        id2 = (
+            await adapter.enqueue(
+                caller_agent_id="inaki",
+                target_agent_id="r",
+                prompt="b",
+                system_prompt=None,
+                channel="",
+                chat_id="",
+                max_iterations=5,
+                timeout_seconds=30,
+            )
+        ).task_id
+        id3 = (
+            await adapter.enqueue(
+                caller_agent_id="otro",
+                target_agent_id="r",
+                prompt="c",
+                system_prompt=None,
+                channel="",
+                chat_id="",
+                max_iterations=5,
+                timeout_seconds=30,
+            )
+        ).task_id
 
-        assert (id1, id2, id3) == ("bg-1", "bg-2", "bg-3")
+        assert (id1, id2, id3) == ("bg-m1", "bg-m2", "bg-m3")
 
     async def test_enqueue_completa_en_menos_de_50ms(self) -> None:
         """REQ-BGD-2: latencia <50ms (no espera al hijo)."""
@@ -155,16 +166,18 @@ class TestSnapshotInflight:
     async def test_snapshot_contiene_task_recien_encolada(self) -> None:
         adapter, _ = _build_adapter()
 
-        task_id = await adapter.enqueue(
-            caller_agent_id="inaki",
-            target_agent_id="researcher",
-            prompt="investigá el saldo de Galicia",
-            system_prompt=None,
-            channel="telegram",
-            chat_id="42",
-            max_iterations=5,
-            timeout_seconds=30,
-        )
+        task_id = (
+            await adapter.enqueue(
+                caller_agent_id="inaki",
+                target_agent_id="researcher",
+                prompt="investigá el saldo de Galicia",
+                system_prompt=None,
+                channel="telegram",
+                chat_id="42",
+                max_iterations=5,
+                timeout_seconds=30,
+            )
+        ).task_id
 
         snap = adapter.snapshot_inflight("inaki")
         assert len(snap) == 1
@@ -226,9 +239,18 @@ class TestSnapshotInflight:
 # ---------------------------------------------------------------------------
 
 
+def _json_ok(resumen: str) -> str:
+    """Respuesta del hijo que respeta el footer: bloque JSON de éxito (REQ-BGD-5)."""
+    return (
+        '```json\n{"status": "success", "summary": "' + resumen + '", '
+        '"details": null, "reason": null}\n```'
+    )
+
+
 def _one_shot_returning(value: str) -> MagicMock:
     """One-shot mock que devuelve ``value`` cuando se invoca .execute(...)."""
     mock = MagicMock()
+    mock.system_prompt = "Sos el hijo."
     mock.execute = AsyncMock(return_value=value)
     return mock
 
@@ -241,6 +263,7 @@ def _one_shot_sleeping(seconds: float, value: str = "done") -> MagicMock:
         return value
 
     mock = MagicMock()
+    mock.system_prompt = "Sos el hijo."
     mock.execute = AsyncMock(side_effect=slow)
     return mock
 
@@ -354,16 +377,18 @@ class TestSemaphoreYFIFO:
         ids = []
         for letra in ["a", "b", "c"]:
             ids.append(
-                await adapter.enqueue(
-                    caller_agent_id="inaki",
-                    target_agent_id="r",
-                    prompt=letra,
-                    system_prompt=None,
-                    channel="",
-                    chat_id="",
-                    max_iterations=5,
-                    timeout_seconds=30,
-                )
+                (
+                    await adapter.enqueue(
+                        caller_agent_id="inaki",
+                        target_agent_id="r",
+                        prompt=letra,
+                        system_prompt=None,
+                        channel="",
+                        chat_id="",
+                        max_iterations=5,
+                        timeout_seconds=30,
+                    )
+                ).task_id
             )
 
         # Esperar a que las 3 terminen
@@ -388,26 +413,28 @@ class TestSemaphoreYFIFO:
 class TestHappyPathDispatch:
     async def test_dispatch_invocado_con_marker_y_resultado(self) -> None:
         """REQ-BGD-5 + REQ-DG-11: prompt dispatcheado tiene formato [bg-N] <result>."""
-        one_shot = _one_shot_returning("Saldo $5.420")
+        one_shot = _one_shot_returning(_json_ok("Saldo $5.420"))
         adapter, dispatcher = _build_adapter(one_shot_for={"researcher": one_shot})
 
         await adapter.start()
-        task_id = await adapter.enqueue(
-            caller_agent_id="inaki",
-            target_agent_id="researcher",
-            prompt="dame el saldo",
-            system_prompt=None,
-            channel="telegram",
-            chat_id="42",
-            max_iterations=5,
-            timeout_seconds=30,
-        )
+        task_id = (
+            await adapter.enqueue(
+                caller_agent_id="inaki",
+                target_agent_id="researcher",
+                prompt="dame el saldo",
+                system_prompt=None,
+                channel="telegram",
+                chat_id="42",
+                max_iterations=5,
+                timeout_seconds=30,
+            )
+        ).task_id
         await asyncio.sleep(0.05)
         await adapter.stop()
 
         dispatcher.dispatch.assert_awaited_once_with(
             agent_id="inaki",
-            prompt=f"[{task_id}] Saldo $5.420",
+            prompt=f"[{task_id}] success: Saldo $5.420",
             intermediate_sink=None,  # sin sender → sin live sink
             channel="telegram",
             chat_id="42",
@@ -488,16 +515,18 @@ class TestHappyPathDispatch:
         dispatcher.dispatch.side_effect = captura_y_devuelve
 
         await adapter.start()
-        task_id = await adapter.enqueue(
-            caller_agent_id="inaki",
-            target_agent_id="r",
-            prompt="x",
-            system_prompt=None,
-            channel="",
-            chat_id="",
-            max_iterations=5,
-            timeout_seconds=30,
-        )
+        task_id = (
+            await adapter.enqueue(
+                caller_agent_id="inaki",
+                target_agent_id="r",
+                prompt="x",
+                system_prompt=None,
+                channel="",
+                chat_id="",
+                max_iterations=5,
+                timeout_seconds=30,
+            )
+        ).task_id
         await asyncio.sleep(0.05)
         await adapter.stop()
 
@@ -511,22 +540,24 @@ class TestHappyPathDispatch:
         NO se purga — queda visible en snapshot para que el agente no la dé por
         perdida ni la relance a ciegas.
         """
-        one_shot = _one_shot_returning("ok")
+        one_shot = _one_shot_returning(_json_ok("ok"))
         adapter, dispatcher = _build_adapter(one_shot_for={"r": one_shot})
         # Todos los intentos de dispatch fallan.
         dispatcher.dispatch.side_effect = RuntimeError("dispatch boom")
 
         await adapter.start()
-        task_id = await adapter.enqueue(
-            caller_agent_id="inaki",
-            target_agent_id="r",
-            prompt="x",
-            system_prompt=None,
-            channel="",
-            chat_id="",
-            max_iterations=5,
-            timeout_seconds=30,
-        )
+        task_id = (
+            await adapter.enqueue(
+                caller_agent_id="inaki",
+                target_agent_id="r",
+                prompt="x",
+                system_prompt=None,
+                channel="",
+                chat_id="",
+                max_iterations=5,
+                timeout_seconds=30,
+            )
+        ).task_id
         # Esperar a que se agoten los reintentos (3 intentos con backoff 0.5*n).
         await asyncio.sleep(2.0)
         await adapter.stop()
@@ -539,7 +570,7 @@ class TestHappyPathDispatch:
         assert vista.status == "delivery_failed"
         assert vista.error == "RuntimeError: dispatch boom"
         # El resultado del hijo NO se pierde: queda guardado en la task.
-        assert adapter._tasks[task_id].result == f"[{task_id}] ok"
+        assert adapter._tasks[task_id].result == f"[{task_id}] success: ok"
 
     async def test_dispatch_se_reintenta_y_eventualmente_entrega(self) -> None:
         """FIX silent-death: un fallo transitorio de dispatch se reintenta; si un
@@ -559,16 +590,18 @@ class TestHappyPathDispatch:
         dispatcher.dispatch.side_effect = falla_una_vez
 
         await adapter.start()
-        task_id = await adapter.enqueue(
-            caller_agent_id="inaki",
-            target_agent_id="r",
-            prompt="x",
-            system_prompt=None,
-            channel="",
-            chat_id="",
-            max_iterations=5,
-            timeout_seconds=30,
-        )
+        task_id = (
+            await adapter.enqueue(
+                caller_agent_id="inaki",
+                target_agent_id="r",
+                prompt="x",
+                system_prompt=None,
+                channel="",
+                chat_id="",
+                max_iterations=5,
+                timeout_seconds=30,
+            )
+        ).task_id
         await asyncio.sleep(1.0)
         await adapter.stop()
 
@@ -583,28 +616,31 @@ class TestHappyPathDispatch:
 
 class TestErrorPath:
     async def test_exception_en_one_shot_se_serializa_en_el_marker(self) -> None:
-        """REQ-BGD-5: cualquier exception del hijo se reporta como `[bg-N] failed: ...`."""
+        """REQ-BGD-5 / REQ-BGP-5: cualquier exception del hijo se reporta como
+        `[bg-N] failed (exception): ...` con tipo y mensaje (nunca texto vacío)."""
         roto = MagicMock()
         roto.execute = AsyncMock(side_effect=RuntimeError("boom"))
         adapter, dispatcher = _build_adapter(one_shot_for={"r": roto})
 
         await adapter.start()
-        task_id = await adapter.enqueue(
-            caller_agent_id="inaki",
-            target_agent_id="r",
-            prompt="x",
-            system_prompt=None,
-            channel="cli",
-            chat_id="",
-            max_iterations=5,
-            timeout_seconds=30,
-        )
+        task_id = (
+            await adapter.enqueue(
+                caller_agent_id="inaki",
+                target_agent_id="r",
+                prompt="x",
+                system_prompt=None,
+                channel="cli",
+                chat_id="",
+                max_iterations=5,
+                timeout_seconds=30,
+            )
+        ).task_id
         await asyncio.sleep(0.05)
         await adapter.stop()
 
         prompt = dispatcher.dispatch.await_args.kwargs["prompt"]
-        assert prompt.startswith(f"[{task_id}] failed: RuntimeError")
-        assert "boom" in prompt
+        assert prompt.startswith(f"[{task_id}] failed (exception)")
+        assert "RuntimeError: boom" in prompt
 
     async def test_target_desconocido_reporta_unknown_target_agent(self) -> None:
         """Triangulación: si el resolver devuelve None, el adapter no crashea —
@@ -612,21 +648,25 @@ class TestErrorPath:
         adapter, dispatcher = _build_adapter(one_shot_for={})  # sin targets
 
         await adapter.start()
-        task_id = await adapter.enqueue(
-            caller_agent_id="inaki",
-            target_agent_id="fantasma",
-            prompt="x",
-            system_prompt=None,
-            channel="",
-            chat_id="",
-            max_iterations=5,
-            timeout_seconds=30,
-        )
+        task_id = (
+            await adapter.enqueue(
+                caller_agent_id="inaki",
+                target_agent_id="fantasma",
+                prompt="x",
+                system_prompt=None,
+                channel="",
+                chat_id="",
+                max_iterations=5,
+                timeout_seconds=30,
+            )
+        ).task_id
         await asyncio.sleep(0.05)
         await adapter.stop()
 
         prompt = dispatcher.dispatch.await_args.kwargs["prompt"]
-        assert prompt == f"[{task_id}] failed: unknown_target_agent: 'fantasma'"
+        assert (
+            prompt == f"[{task_id}] failed (unknown_target): 'fantasma' is not a known sub-agent."
+        )
 
     async def test_purga_ocurre_aun_si_one_shot_lanza(self) -> None:
         """El path de error también se purga: el fallo del hijo se serializa en el
@@ -637,16 +677,18 @@ class TestErrorPath:
         adapter, _ = _build_adapter(one_shot_for={"r": roto})
 
         await adapter.start()
-        task_id = await adapter.enqueue(
-            caller_agent_id="inaki",
-            target_agent_id="r",
-            prompt="x",
-            system_prompt=None,
-            channel="",
-            chat_id="",
-            max_iterations=5,
-            timeout_seconds=30,
-        )
+        task_id = (
+            await adapter.enqueue(
+                caller_agent_id="inaki",
+                target_agent_id="r",
+                prompt="x",
+                system_prompt=None,
+                channel="",
+                chat_id="",
+                max_iterations=5,
+                timeout_seconds=30,
+            )
+        ).task_id
         await asyncio.sleep(0.05)
         await adapter.stop()
 
@@ -666,16 +708,18 @@ async def _enqueue_and_run(
 ) -> str:
     """Encola una task, deja correr el consumer y detiene el adapter."""
     await adapter.start()
-    task_id = await adapter.enqueue(
-        caller_agent_id="inaki",
-        target_agent_id="r",
-        prompt="investigá X",
-        system_prompt=None,
-        channel=channel,
-        chat_id=chat_id,
-        max_iterations=5,
-        timeout_seconds=30,
-    )
+    task_id = (
+        await adapter.enqueue(
+            caller_agent_id="inaki",
+            target_agent_id="r",
+            prompt="investigá X",
+            system_prompt=None,
+            channel=channel,
+            chat_id=chat_id,
+            max_iterations=5,
+            timeout_seconds=30,
+        )
+    ).task_id
     await asyncio.sleep(0.05)
     await adapter.stop()
     return task_id
@@ -755,7 +799,7 @@ class TestResultDelivery:
         salir en silencio. El bug del scope ("", "") no dejó ni una línea."""
         sender = _build_sender()
         adapter, dispatcher = _build_adapter(
-            one_shot_for={"r": _one_shot_returning("ok")},
+            one_shot_for={"r": _one_shot_returning(_json_ok("ok"))},
             result_sender=sender,
             conversational_channels=frozenset({"telegram"}),
         )
@@ -811,16 +855,18 @@ class TestResultDelivery:
 
 
 async def _enqueue(adapter: BackgroundDelegationQueueAdapter, caller: str = "inaki") -> str:
-    return await adapter.enqueue(
-        caller_agent_id=caller,
-        target_agent_id="r",
-        prompt="x",
-        system_prompt=None,
-        channel="",
-        chat_id="",
-        max_iterations=5,
-        timeout_seconds=30,
-    )
+    return (
+        await adapter.enqueue(
+            caller_agent_id=caller,
+            target_agent_id="r",
+            prompt="x",
+            system_prompt=None,
+            channel="",
+            chat_id="",
+            max_iterations=5,
+            timeout_seconds=30,
+        )
+    ).task_id
 
 
 class TestCancel:
@@ -831,7 +877,7 @@ class TestCancel:
         await asyncio.sleep(0.05)
         assert adapter.snapshot_inflight("inaki")[0].status == "running"
 
-        res = adapter.cancel(task_id, "inaki")
+        res = await adapter.cancel(task_id, "inaki")
         await asyncio.sleep(0.05)
         await adapter.stop()
 
@@ -852,7 +898,7 @@ class TestCancel:
         estados = {v.id: v.status for v in adapter.snapshot_inflight("inaki")}
         assert estados == {primera: "running", segunda: "queued"}
 
-        adapter.cancel(primera, "inaki")
+        await adapter.cancel(primera, "inaki")
         await asyncio.sleep(0.05)
         estados = {v.id: v.status for v in adapter.snapshot_inflight("inaki")}
         await adapter.stop()
@@ -865,7 +911,7 @@ class TestCancel:
         adapter, dispatcher = _build_adapter(one_shot_for={"r": one_shot})
         task_id = await _enqueue(adapter)
 
-        res = adapter.cancel(task_id, "inaki")
+        res = await adapter.cancel(task_id, "inaki")
         await adapter.start()
         await asyncio.sleep(0.05)
         await adapter.stop()
@@ -875,17 +921,19 @@ class TestCancel:
         dispatcher.dispatch.assert_not_called()
 
     async def test_descarta_delivery_failed_devolviendo_el_resultado(self) -> None:
-        adapter, dispatcher = _build_adapter(one_shot_for={"r": _one_shot_returning("informe")})
+        adapter, dispatcher = _build_adapter(
+            one_shot_for={"r": _one_shot_returning(_json_ok("informe"))}
+        )
         dispatcher.dispatch.side_effect = RuntimeError("provider caído")
         await adapter.start()
         task_id = await _enqueue(adapter)
         await asyncio.sleep(2.0)  # agota los reintentos (0.5 + 1.0)
 
-        res = adapter.cancel(task_id, "inaki")
+        res = await adapter.cancel(task_id, "inaki")
         await adapter.stop()
 
         assert res.outcome == "dismissed"
-        assert res.result == f"[{task_id}] informe"
+        assert res.result == f"[{task_id}] success: informe"
         assert res.error == "RuntimeError: provider caído"
         assert adapter.snapshot_inflight("inaki") == []
 
@@ -903,7 +951,7 @@ class TestCancel:
         task_id = await _enqueue(adapter)
         await asyncio.sleep(0.05)
 
-        res = adapter.cancel(task_id, "inaki")
+        res = await adapter.cancel(task_id, "inaki")
         estado = adapter.snapshot_inflight("inaki")[0].status
         liberar.set()
         await asyncio.sleep(0.05)
@@ -917,7 +965,7 @@ class TestCancel:
         adapter, _ = _build_adapter(one_shot_for={"r": _one_shot_sleeping(10.0)})
         task_id = await _enqueue(adapter, caller="inaki")
 
-        res = adapter.cancel(task_id, "anacleto")
+        res = await adapter.cancel(task_id, "anacleto")
 
         assert res.outcome == "not_found"
         assert [v.id for v in adapter.snapshot_inflight("inaki")] == [task_id]
@@ -925,4 +973,26 @@ class TestCancel:
     async def test_id_desconocido_es_not_found(self) -> None:
         adapter, _ = _build_adapter()
 
-        assert adapter.cancel("bg-99", "inaki").outcome == "not_found"
+        assert (await adapter.cancel("bg-99", "inaki")).outcome == "not_found"
+
+
+class TestInspectSinStore:
+    """Sin store (modo en memoria) ``inspect`` solo conoce lo que está vivo, y lo dice."""
+
+    async def test_una_task_viva_se_inspecciona_sin_transcript(self) -> None:
+        adapter, _ = _build_adapter(one_shot_for={"r": _one_shot_sleeping(10.0)})
+        task_id = await _enqueue(adapter)
+
+        insp = await adapter.inspect(task_id, "inaki", last_n=10)
+
+        assert insp is not None
+        assert insp.persisted is False
+        assert insp.messages == []
+        assert insp.task.status == "queued"
+
+    async def test_una_task_de_otro_caller_o_inexistente_es_none(self) -> None:
+        adapter, _ = _build_adapter(one_shot_for={"r": _one_shot_sleeping(10.0)})
+        task_id = await _enqueue(adapter)
+
+        assert await adapter.inspect(task_id, "otro", last_n=10) is None
+        assert await adapter.inspect("bg-m99", "inaki", last_n=10) is None

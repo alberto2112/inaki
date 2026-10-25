@@ -141,8 +141,9 @@ _DELEGATION_SECTION_COMMENT = """\
 # [delegation] — Delegación agente-a-agente (defaults globales)
 # -----------------------------------------------------------------------------
 #
-# Presupuestos POR DEFECTO de una llamada delegada. Cada agents/{id}.yaml los
-# pisa en su propio bloque `delegation` (manda el del agente que delega).
+# Valores POR DEFECTO de una llamada delegada (presupuestos y directorio de trabajo).
+# Cada agents/{id}.yaml los pisa en su propio bloque `delegation` (manda el del
+# agente que delega).
 # `delegation.enabled: true` y `allowed_targets: [...]` van solo per-agente:
 # habilitan la delegación en ese agente y acá no se aceptan.
 #
@@ -152,6 +153,7 @@ _DELEGATION_SECTION_COMMENT = """\
 # delegation:
 #   max_iterations_per_sub: 10   # máx. iteraciones del tool-loop por llamada delegada
 #   timeout_seconds: 60          # presupuesto de reloj por llamada delegada (asyncio.wait_for)
+#   grant_workdir: false         # directorio de trabajo por delegación en background
 """
 
 
@@ -784,14 +786,15 @@ def load_global_config(config_dir: Path, runtime: dict | None = None) -> tuple[G
 
 
 def _check_presupuestos_de_delegacion_en_sub(raw: dict, path: Path) -> None:
-    """Rechaza presupuestos de delegación declarados en el YAML CRUDO de un sub-agente.
+    """Rechaza campos de ``delegation`` declarados en el YAML CRUDO de un sub-agente.
 
-    ``max_iterations_per_sub`` y ``timeout_seconds`` los fija el agente que
-    DELEGA: el sub-agente nunca delega, así que en su fichero no tendrían
-    efecto, y el operador que los escribió cree que aplican. Aborta en vez de
-    ignorarlos (ver ``config-falla-ruidoso``). Va sobre el fichero crudo porque
-    tras el merge el sub HEREDA los defaults del global y ya no se distingue lo
-    declarado de lo heredado.
+    Los presupuestos (``max_iterations_per_sub``, ``timeout_seconds``) y
+    ``grant_workdir`` los fija el agente que DELEGA: el sub-agente nunca delega,
+    así que en su fichero no tendrían efecto, y el operador que los escribió cree
+    que aplican. Aborta en vez de ignorarlos (ver ``config-falla-ruidoso``). Itera
+    ``DelegationConfig.model_fields``, así que un campo nuevo de ese bloque queda
+    cubierto solo. Va sobre el fichero crudo porque tras el merge el sub HEREDA los
+    defaults del global y ya no se distingue lo declarado de lo heredado.
     """
     from inaki.shared.errors import ConfigError
 
@@ -804,7 +807,8 @@ def _check_presupuestos_de_delegacion_en_sub(raw: dict, path: Path) -> None:
     raise ConfigError(
         f"Config inválida para el sub-agente '{path.stem}' ({path}): "
         f"{', '.join(f'delegation.{k}' for k in declarados)} no tiene efecto en un "
-        f"sub-agente — el presupuesto de una delegación lo fija el agente que delega. "
+        f"sub-agente — lo que lleva una delegación (presupuestos, directorio de trabajo) "
+        f"lo fija el agente que delega. "
         f"Va en agents/{{caller}}.yaml (o como default en config/global.yaml)."
     )
 

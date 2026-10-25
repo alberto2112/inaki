@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from inaki.agents.delegation.delegate_tool import _RESULT_FORMAT_FOOTER, DelegateTool
+from inaki.agents.delegation.delegate_tool import DelegateTool
+from inaki.agents.delegation.result_contract import RESULT_FORMAT_FOOTER
 from inaki.tools.registry import ToolRegistry
 from inaki.kernel.domain.agent_settings import OneShotSettings
 from inaki.kernel.domain.conversation_state import ConversationState
@@ -211,6 +213,7 @@ def _build_container(
         jobs=MemoryJobs(None, None),
         scope_registry=MagicMock(),
         tracer=NullTurnTracer(),
+        workspace=Path("workspace-falso"),
     )
 
 
@@ -389,7 +392,7 @@ async def test_happy_path_end_to_end(tmp_path):
       1. Parent execute() returns final synthesized text.
       2. Parent LLM was called twice.
       3. Child LLM was called once.
-      4. Child LLM system prompt contains _RESULT_FORMAT_FOOTER (6.2 wired).
+      4. Child LLM system prompt contains RESULT_FORMAT_FOOTER (6.2 wired).
       5. Child LLM tool_schemas does NOT include "delegate" (REQ-DG-9).
       6. Parent system prompt contains child's id (6.1 wired).
       7. DelegationResult embedded in the chain has status="success".
@@ -445,10 +448,10 @@ async def test_happy_path_end_to_end(tmp_path):
     child_calls = _child_turn_calls(parent_llm)
     assert len(child_calls) == 1, f"Debe haber 1 turno del hijo. Hubo: {len(child_calls)}"
 
-    # Assertion 4: el turno del hijo lleva _RESULT_FORMAT_FOOTER (6.2 wired)
+    # Assertion 4: el turno del hijo lleva RESULT_FORMAT_FOOTER (6.2 wired)
     child_system_prompt = child_calls[0].args[1]
-    assert _RESULT_FORMAT_FOOTER in child_system_prompt, (
-        "El system prompt del hijo debe contener _RESULT_FORMAT_FOOTER (task 6.2)"
+    assert RESULT_FORMAT_FOOTER in child_system_prompt, (
+        "El system prompt del hijo debe contener RESULT_FORMAT_FOOTER (task 6.2)"
     )
 
     # Assertion 5: los schemas del turno del hijo NO incluyen 'delegate' (REQ-DG-9)

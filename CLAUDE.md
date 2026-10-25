@@ -189,6 +189,17 @@ Cada una salió de un fallo en producción. El caso completo está en
 - **NUNCA** presentar como `running` una delegación cuyo hijo ya terminó, ni dejar su
   resultado solo en una variable local de un camino que puede fallar: una entrega fallida
   es `delivery_failed`, con el resultado guardado y cancelable. → `bg-stuck-task`
+- **NUNCA** reportar el fallo de una delegación con `str(exc)` crudo: un `TimeoutError` no
+  trae mensaje y el padre recibe un `failed: TimeoutError: ` que no explica nada. El fallo
+  se clasifica (`timeout` / `max_iterations` / `exception`) y nunca queda con `detail` vacío.
+  → `bg-delegation-transcript`
+- **NUNCA** dejar que un restart, `/reload` o `stop()` borre una delegación en silencio: las
+  vivas pasan a `interrupted`, quedan consultables (`background_tasks(action=inspect)`) y el
+  arranque avisa UNA vez por conversación. Y si el store no abre o no escribe, el log es
+  **ERROR** que nombra la capacidad perdida, no WARNING. → `bg-delegation-transcript`
+- **NUNCA** hacer `rmtree` sobre una ruta leída de la DB sin la compuerta de `GestorDeWorkdirs.borrar`
+  (absoluta, sin `..`, padre `dwss`, nombre `^[a-z0-9]{8}$`, ni la ruta ni su padre symlink):
+  una fila corrupta o vieja no puede apuntar el borrado a otro lado. → `bg-delegation-transcript`
 
 **Kernel y canales**
 

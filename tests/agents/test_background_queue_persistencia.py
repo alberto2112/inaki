@@ -11,6 +11,7 @@ El store es el REAL; solo se rompe a propósito (``StoreRoto``) para probar la d
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import shutil
 import sqlite3
@@ -23,7 +24,7 @@ import pytest
 import pytest_asyncio
 
 from inaki.agents.delegation.background_queue import BackgroundDelegationQueueAdapter
-from inaki.agents.delegation.result_contract import RESULT_FORMAT_FOOTER
+from inaki.agents.delegation.result_contract import RESULT_FORMAT_FOOTER_PAUSABLE
 from inaki.agents.delegation.sqlite_task_store import SQLiteBackgroundTaskStore
 from inaki.agents.delegation.workdirs import GestorDeWorkdirs
 from inaki.kernel.domain.background_task import BackgroundTask, EnqueuedTask, InputFilesRejected
@@ -91,6 +92,24 @@ class StoreRoto(SQLiteBackgroundTaskStore):
     async def mark_notified(self, task_ids):
         self._probar("mark_notified")
         return await super().mark_notified(task_ids)
+
+    async def snapshot_completo(self, task_id, trace, *, desde_seq):
+        self._probar("snapshot_completo")
+        return await super().snapshot_completo(task_id, trace, desde_seq=desde_seq)
+
+    async def reabrir_transcript(self, task_id):
+        self._probar("reabrir_transcript")
+        return await super().reabrir_transcript(task_id)
+
+
+class StoreQueFallaAlPausar(SQLiteBackgroundTaskStore):
+    """Store real que rechaza SOLO la escritura de la transición a ``awaiting_input``: el resto
+    del ciclo de vida (running, snapshot, delivering...) persiste con normalidad."""
+
+    async def update(self, task_id, **campos):
+        if campos.get("status") == "awaiting_input":
+            raise sqlite3.OperationalError("disk I/O error (awaiting_input)")
+        return await super().update(task_id, **campos)
 
 
 def _one_shot(valor: str = "ok", *, system_prompt: str = "Sos el hijo.") -> MagicMock:
@@ -687,7 +706,7 @@ async def _correr(adapter, **kw) -> str:
 
 class TestRunTaskContrato:
     async def test_el_hijo_recibe_el_footer_sobre_el_prompt_del_caller(self, store) -> None:
-        """REQ-BGD-5 / REQ-DG-11: el path async lleva el mismo contrato JSON que el sync."""
+        """REQ-BGD-5 / REQ-DG-11: el path async lleva el contrato JSON, en su variante pausable."""
         hijo = _one_shot(_JSON_OK)
         adapter, _ = _armar(store=store, one_shot_for={"r": hijo})
         await adapter.start()
@@ -705,7 +724,7 @@ class TestRunTaskContrato:
         await adapter.stop()
 
         enviado = hijo.execute.await_args.kwargs["system_prompt"]
-        assert enviado == "Prompt del caller.\n\n" + RESULT_FORMAT_FOOTER
+        assert enviado == "Prompt del caller.\n\n" + RESULT_FORMAT_FOOTER_PAUSABLE
 
     async def test_sin_system_prompt_del_caller_el_footer_va_sobre_el_default_del_hijo(
         self, store
@@ -717,7 +736,7 @@ class TestRunTaskContrato:
         await _correr(adapter)
 
         enviado = hijo.execute.await_args.kwargs["system_prompt"]
-        assert enviado == "Default del sub-agente.\n\n" + RESULT_FORMAT_FOOTER
+        assert enviado == "Default del sub-agente.\n\n" + RESULT_FORMAT_FOOTER_PAUSABLE
 
     async def test_la_fila_conserva_el_system_prompt_del_caller_sin_footer(self, store) -> None:
         adapter, _ = _armar(store=store, one_shot_for={"r": _one_shot(_JSON_OK)})
@@ -2468,11 +2487,11 @@ class TestRedDeSeguridadDelCicloDeVida:
         real = modulo.render_resultado
         llamadas = {"n": 0}
 
-        def render_roto(task_id, raw):
+        def render_roto(task_id, raw, **kw):
             llamadas["n"] += 1
             if llamadas["n"] == 1:
                 raise ValueError("render roto")
-            return real(task_id, raw)
+            return real(task_id, raw, **kw)
 
         monkeypatch.setattr(modulo, "render_resultado", render_roto)
         prompts: list[str] = []
@@ -2511,7 +2530,7 @@ class TestRedDeSeguridadDelCicloDeVida:
     ) -> None:
         import inaki.agents.delegation.background_queue as modulo
 
-        def render_roto(task_id, raw):
+        def render_roto(task_id, raw, **kw):
             raise ValueError("render roto")
 
         monkeypatch.setattr(modulo, "render_resultado", render_roto)
@@ -3072,3 +3091,2027 @@ class TestPodaSinGestorDeWorkdirs:
         assert fila is None  # la fila SÍ se podó: la retención no depende del gestor
         assert huerfano.is_dir()
         assert any("sin borrar" in r.getMessage() for r in _errores(caplog))
+
+
+# ---------------------------------------------------------------------------
+# delegation-resume 4.1..4.3 — pausa `needs_input` → `awaiting_input` (REQ-RES-1..4)
+# ---------------------------------------------------------------------------
+
+_PREGUNTA = "¿Qué cuenta uso?"
+
+
+def _json_pausa(pregunta: str | None = _PREGUNTA, *, details: str | None = "Voy por la mitad."):
+    bloque = {
+        "status": "needs_input",
+        "summary": "Necesito un dato",
+        "details": details,
+        "reason": None,
+        "question": pregunta,
+    }
+    return "```json\n" + json.dumps(bloque, ensure_ascii=False) + "\n```"
+
+
+def _hijo_que_pausa(
+    raw: str | None = None,
+    *,
+    rondas: int = 1,
+    resultado_tool: str = "ok",
+    retener: asyncio.Event | None = None,
+) -> MagicMock:
+    """Hijo cuyo transcript tiene ``rondas`` idas a una tool y un cierre ``needs_input``.
+
+    Deja los mensajes en el recorder como lo hace el tool loop real (``trace`` síncrono y
+    ``record`` durable): USER, ``rondas`` × (ASSISTANT con tool call + TOOL) y el ASSISTANT de
+    cierre, o sea ``rondas + 1`` mensajes ASSISTANT.
+    """
+    cierre = raw if raw is not None else _json_pausa()
+    hijo = _one_shot()
+
+    async def corre(**kw):
+        rec = kw["recorder"]
+        mensajes = [Message(role=Role.USER, content=kw["task"])]
+        for i in range(rondas):
+            llamada = f"call{i}"
+            mensajes.append(
+                Message(role=Role.ASSISTANT, content="", tool_calls=[_tool_call(llamada, "shell")])
+            )
+            mensajes.append(Message(role=Role.TOOL, content=resultado_tool, tool_call_id=llamada))
+        mensajes.append(Message(role=Role.ASSISTANT, content=cierre))
+        for m in mensajes:
+            rec.trace.append(m)
+            await rec.record(m)
+        if retener is not None:
+            await retener.wait()
+        return cierre
+
+    hijo.execute = AsyncMock(side_effect=corre)
+    return hijo
+
+
+async def _pausar(adapter, **kw) -> str:
+    """Start + encolar + dejar correr (SIN stop): la task queda donde la dejó el ciclo."""
+    await adapter.start()
+    task_id = await _encolar(adapter, **kw)
+    await asyncio.sleep(0.15)
+    return task_id
+
+
+class TestPausaNeedsInput:
+    """4.1 — el hijo cierra con `needs_input` + `question` y la task pausa."""
+
+    async def test_la_task_queda_awaiting_input_y_no_delivered(self, store) -> None:
+        adapter, _ = _armar(store=store, one_shot_for={"r": _hijo_que_pausa()})
+
+        task_id = await _pausar(adapter)
+        fila = await store.get(task_id, "inaki")
+        en_dict = adapter._tasks.get(task_id)
+        await adapter.stop()
+
+        assert fila.status == "awaiting_input"
+        assert en_dict is not None and en_dict.status == "awaiting_input"
+        assert en_dict.question == _PREGUNTA
+
+    async def test_el_hijo_background_recibe_el_footer_pausable(self, store) -> None:
+        hijo = _hijo_que_pausa()
+        adapter, _ = _armar(store=store, one_shot_for={"r": hijo})
+
+        await _pausar(adapter)
+        await adapter.stop()
+
+        enviado = hijo.execute.await_args.kwargs["system_prompt"]
+        assert enviado == "Sos el hijo.\n\n" + RESULT_FORMAT_FOOTER_PAUSABLE
+
+    async def test_la_fila_guarda_la_pregunta_renderizada_y_los_campos_de_la_pausa(
+        self, store
+    ) -> None:
+        adapter, dispatcher = _armar(store=store, one_shot_for={"r": _hijo_que_pausa()})
+
+        task_id = await _pausar(adapter)
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        prompt = dispatcher.dispatch.await_args.kwargs["prompt"]
+        assert prompt.startswith(f"[{task_id}] needs_input: {_PREGUNTA}")
+        assert fila.result == prompt
+        assert fila.result_status == "needs_input"
+        assert fila.result_parse_error is False
+        assert fila.error is None
+        assert fila.failure is None
+
+    async def test_finished_at_se_escribe_al_pausar_para_que_la_retencion_cuente_desde_ahi(
+        self, store
+    ) -> None:
+        """Sin `finished_at` la poda por edad caería en `created_at` y borraría la pregunta
+        antes de los 14 días desde la pausa."""
+        adapter, _ = _armar(store=store, one_shot_for={"r": _hijo_que_pausa()})
+
+        task_id = await _pausar(adapter)
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert fila.finished_at is not None
+        assert fila.run_started_at is not None and fila.run_started_at <= fila.finished_at
+
+    async def test_iterations_used_cuenta_los_assistant_del_trace_incluido_el_cierre(
+        self, store
+    ) -> None:
+        adapter, _ = _armar(store=store, one_shot_for={"r": _hijo_que_pausa(rondas=2)})
+
+        task_id = await _pausar(adapter)
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert fila.iterations_used == 3  # 2 idas a tools + el cierre
+
+    async def test_antes_del_dispatch_la_fila_ya_esta_en_awaiting_input_con_todo_completo(
+        self, store
+    ) -> None:
+        """Orden snapshot → awaiting_input → dispatch (REQ-RES-2): al correr el dispatch el
+        resultado de la tool de 50.000 chars ya está entero en el disco."""
+        visto: dict = {}
+        adapter, dispatcher = _armar(
+            store=store, one_shot_for={"r": _hijo_que_pausa(resultado_tool="x" * 50_000)}
+        )
+
+        async def espiar(**kw):
+            fila = await store.get(visto["id"], "inaki")
+            pasos, _ = await store.messages(visto["id"], last_n=10)
+            visto["estado"] = fila.status
+            visto["result"] = fila.result
+            visto["finished_at"] = fila.finished_at
+            visto["tool"] = next(p for p in pasos if p.role is Role.TOOL)
+            return ""
+
+        dispatcher.dispatch = AsyncMock(side_effect=espiar)
+        await adapter.start()
+        visto["id"] = await _encolar(adapter)
+        await asyncio.sleep(0.2)
+        await adapter.stop()
+
+        assert visto["estado"] == "awaiting_input"
+        assert visto["result"] is not None and visto["finished_at"] is not None
+        assert len(visto["tool"].content) == 50_000
+        assert visto["tool"].original_chars is None
+
+    async def test_la_task_pausada_sigue_visible_para_el_padre_con_su_pregunta(self, store) -> None:
+        adapter, _ = _armar(store=store, one_shot_for={"r": _hijo_que_pausa()})
+
+        task_id = await _pausar(adapter)
+        vistas = adapter.snapshot_inflight("inaki")
+        await adapter.stop()
+
+        assert [(v.id, v.status, v.question_preview) for v in vistas] == [
+            (task_id, "awaiting_input", _PREGUNTA)
+        ]
+
+    async def test_la_pausa_con_workdir_lo_menciona_una_sola_vez(self, store, raiz: Path) -> None:
+        adapter, dispatcher = _armar(
+            store=store, one_shot_for={"r": _hijo_que_pausa()}, workdirs=_gestor(raiz)
+        )
+
+        encolada = None
+        await adapter.start()
+        encolada = await _encolar_completo(adapter)
+        await asyncio.sleep(0.15)
+        await adapter.stop()
+
+        prompt = dispatcher.dispatch.await_args.kwargs["prompt"]
+        assert prompt.count("Working directory:") == 1
+        assert f"dwss/{Path(encolada.workdir).name}/" in prompt  # type: ignore[arg-type]
+
+    async def test_stop_no_toca_una_task_en_awaiting_input(self, store) -> None:
+        """REQ-RES-4: sobrevive a restart/reload/stop (no pasa a interrupted)."""
+        adapter, _ = _armar(store=store, one_shot_for={"r": _hijo_que_pausa()})
+        task_id = await _pausar(adapter)
+
+        fila = await _stop_y_leer(adapter, store, task_id)
+
+        assert fila.status == "awaiting_input"
+        assert fila.notified is True  # el aviso salió y quedó marcado
+        assert task_id in adapter._tasks  # sigue en el dict (no terminal)
+        assert adapter._tasks[task_id].status == "awaiting_input"
+
+    async def test_stop_con_el_hijo_running_antes_de_pausar_lo_deja_interrupted(
+        self, store
+    ) -> None:
+        """REQ-RES-4 S4: el hijo todavía no cerró con needs_input."""
+        retener = asyncio.Event()
+
+        async def colgado(**_kw):
+            await retener.wait()
+
+        hijo = _one_shot()
+        hijo.execute = AsyncMock(side_effect=colgado)
+        adapter, _ = _armar(store=store, one_shot_for={"r": hijo})
+        task_id = await _pausar(adapter)
+
+        fila = await _stop_y_leer(adapter, store, task_id)
+
+        assert fila.status == "interrupted"
+
+    async def test_needs_input_sin_question_no_pausa_y_se_entrega_como_resultado_malformado(
+        self, store
+    ) -> None:
+        """REQ-RES-1 S3."""
+        adapter, dispatcher = _armar(
+            store=store, one_shot_for={"r": _hijo_que_pausa(_json_pausa(pregunta=None))}
+        )
+
+        task_id = await _pausar(adapter)
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert fila.status == "delivered"
+        assert fila.result_parse_error is True
+        assert "result_parse_error" in dispatcher.dispatch.await_args.kwargs["prompt"]
+
+    async def test_needs_input_con_question_en_blanco_tampoco_pausa(self, store) -> None:
+        adapter, _ = _armar(
+            store=store, one_shot_for={"r": _hijo_que_pausa(_json_pausa(pregunta="   "))}
+        )
+
+        task_id = await _pausar(adapter)
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert fila.status == "delivered"
+        assert fila.result_parse_error is True
+
+    async def test_un_cierre_success_sigue_igual_de_entregado(self, store) -> None:
+        adapter, dispatcher = _armar(store=store, one_shot_for={"r": _one_shot(_JSON_OK)})
+
+        task_id = await _pausar(adapter)
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert fila.status == "delivered"
+        assert dispatcher.dispatch.await_args.kwargs["prompt"].startswith(f"[{task_id}] success:")
+
+
+class TestPausaDegradada:
+    """4.2 — sin transcript reanudable no hay pausa: `delivered` + render no reanudable."""
+
+    async def test_si_el_snapshot_falla_se_entrega_no_reanudable_y_se_marca_incompleto(
+        self, tmp_path: Path, caplog
+    ) -> None:
+        caplog.set_level(logging.ERROR, logger=_LOGGER)
+        roto = StoreRoto(tmp_path / "bg.db", fallar=("snapshot_completo",))
+        adapter, dispatcher = _armar(store=roto, one_shot_for={"r": _hijo_que_pausa()})
+
+        task_id = await _pausar(adapter)
+        fila = await roto.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert fila is not None
+        prompt = dispatcher.dispatch.await_args.kwargs["prompt"]
+        assert prompt.startswith(f"[{task_id}] needs_input (NOT resumable")
+        assert _PREGUNTA in prompt
+        assert "cannot be resumed" in prompt and "NEW delegation" in prompt
+        assert fila.status == "delivered"
+        assert fila.transcript_incomplete is True
+        assert fila.result_status == "needs_input"
+        assert fila.result == prompt
+        assert any(_CAPACIDAD in r.getMessage() for r in _errores(caplog))
+
+    async def test_un_trace_desalineado_con_el_disco_cuenta_como_snapshot_fallido(
+        self, store
+    ) -> None:
+        """`snapshot_completo` lanza ValueError si MAX(seq) != len(trace): mismo trato."""
+        hijo = _hijo_que_pausa()
+        original = hijo.execute.side_effect
+
+        async def con_un_mensaje_de_mas(**kw):
+            raw = await original(**kw)
+            kw["recorder"].trace.append(Message(role=Role.USER, content="fantasma"))
+            return raw
+
+        hijo.execute = AsyncMock(side_effect=con_un_mensaje_de_mas)
+        adapter, dispatcher = _armar(store=store, one_shot_for={"r": hijo})
+
+        task_id = await _pausar(adapter)
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert fila.status == "delivered"
+        assert fila.transcript_incomplete is True
+        assert "NOT resumable" in dispatcher.dispatch.await_args.kwargs["prompt"]
+
+    async def test_sin_store_no_hay_pausa_y_se_loguea_la_capacidad_perdida(self, caplog) -> None:
+        caplog.set_level(logging.ERROR, logger=_LOGGER)
+        adapter, dispatcher = _armar(store=None, one_shot_for={"r": _hijo_que_pausa()})
+
+        task_id = await _pausar(adapter)
+        en_dict = adapter._tasks.get(task_id)
+        await adapter.stop()
+
+        prompt = dispatcher.dispatch.await_args.kwargs["prompt"]
+        assert task_id.startswith("bg-m")
+        assert prompt.startswith(f"[{task_id}] needs_input (NOT resumable")
+        assert en_dict is None  # delivered: salió del dict
+        assert any(_CAPACIDAD in r.getMessage() for r in _errores(caplog))
+
+    async def test_un_store_caido_al_registrar_deja_un_bg_m_no_reanudable(
+        self, tmp_path: Path, caplog
+    ) -> None:
+        caplog.set_level(logging.ERROR, logger=_LOGGER)
+        roto = StoreRoto(tmp_path / "bg.db", fallar=("create",))
+        adapter, dispatcher = _armar(store=roto, one_shot_for={"r": _hijo_que_pausa()})
+
+        task_id = await _pausar(adapter)
+        await adapter.stop()
+
+        assert task_id.startswith("bg-m")
+        assert "NOT resumable" in dispatcher.dispatch.await_args.kwargs["prompt"]
+        assert roto.llamadas["snapshot_completo"] == 0  # ni se intenta sobre un id no durable
+        assert any("needs_input sin pausa" in r.getMessage() for r in _errores(caplog))
+
+    async def test_una_task_cuya_persistencia_se_rompio_no_pausa(
+        self, tmp_path: Path, caplog
+    ) -> None:
+        """`update` falló al arrancar: la fila quedó vieja, pausar sería prometer algo que un
+        restart no podría reanudar."""
+        caplog.set_level(logging.ERROR, logger=_LOGGER)
+        roto = StoreRoto(tmp_path / "bg.db", fallar=("update",))
+        adapter, dispatcher = _armar(store=roto, one_shot_for={"r": _hijo_que_pausa()})
+
+        await _pausar(adapter)
+        await adapter.stop()
+
+        assert "NOT resumable" in dispatcher.dispatch.await_args.kwargs["prompt"]
+        assert roto.llamadas["snapshot_completo"] == 0
+
+    async def test_un_recorder_incompleto_no_pausa_y_el_error_nombra_esa_causa(
+        self, store, caplog
+    ) -> None:
+        caplog.set_level(logging.ERROR, logger=_LOGGER)
+        hijo = _one_shot()
+
+        async def rompe_el_disco_a_mitad(**kw):
+            # El disco se rompe tras el primer paso: el siguiente INSERT falla de verdad y
+            # el recorder real queda `incompleto`.
+            rec = kw["recorder"]
+            for i, mensaje in enumerate(
+                [
+                    Message(role=Role.USER, content=kw["task"]),
+                    Message(role=Role.ASSISTANT, content=_json_pausa()),
+                ]
+            ):
+                if i == 1:
+                    await store._conn().execute("DROP TABLE bg_task_messages")
+                rec.trace.append(mensaje)
+                await rec.record(mensaje)
+            return _json_pausa()
+
+        hijo.execute = AsyncMock(side_effect=rompe_el_disco_a_mitad)
+        adapter, dispatcher = _armar(store=store, one_shot_for={"r": hijo})
+
+        await _pausar(adapter)
+        await adapter.stop()
+
+        assert "NOT resumable" in dispatcher.dispatch.await_args.kwargs["prompt"]
+        assert any(
+            "needs_input sin pausa" in r.getMessage() and "incompleto" in r.getMessage()
+            for r in _errores(caplog)
+        )
+
+    async def test_sin_iteraciones_restantes_no_pausa(self, store, caplog) -> None:
+        """REQ-RES-3 S4: pausar prometería una continuación imposible."""
+        caplog.set_level(logging.ERROR, logger=_LOGGER)
+        # max_iterations=2 y el trace trae 3 ASSISTANT (2 idas a tools + cierre).
+        adapter, dispatcher = _armar(store=store, one_shot_for={"r": _hijo_que_pausa(rondas=2)})
+
+        task_id = await _pausar(adapter, max_iterations=2)
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        prompt = dispatcher.dispatch.await_args.kwargs["prompt"]
+        assert fila.status == "delivered"
+        assert fila.result_status == "needs_input"
+        assert fila.transcript_incomplete is False  # el transcript está bien: falta presupuesto
+        assert "NOT resumable" in prompt and "NEW delegation" in prompt
+        assert "delegate(resume" not in prompt  # nunca promete continuación
+        assert fila.iterations_used == 3
+
+    async def test_el_limite_exacto_todavia_pausa(self, store) -> None:
+        """max=3, usadas=2 → queda 1: se puede pausar."""
+        adapter, _ = _armar(store=store, one_shot_for={"r": _hijo_que_pausa(rondas=1)})
+
+        task_id = await _pausar(adapter, max_iterations=3)
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert fila.status == "awaiting_input"
+
+    async def test_si_no_se_puede_persistir_la_pausa_se_entrega_no_reanudable(
+        self, tmp_path: Path, caplog
+    ) -> None:
+        """El UPDATE a `awaiting_input` falla: en disco la fila sigue `running` (un restart
+        la perdería) y `resume` la rechazaría. Prometerle al padre un `delegate(resume=...)`
+        sería mentirle: se degrada igual que un snapshot fallido."""
+        caplog.set_level(logging.ERROR, logger=_LOGGER)
+        roto = StoreQueFallaAlPausar(tmp_path / "bg.db")
+        padre = _Padre()
+        adapter, _ = _armar(store=roto, one_shot_for={"r": _hijo_que_pausa()}, dispatcher=padre)
+
+        task_id = await _pausar(adapter)
+        en_dict = adapter._tasks.get(task_id)
+        reanudar = await adapter.resume(task_id, "inaki", _RESPUESTA)
+        await adapter.stop()
+
+        assert len(padre.llamadas) == 1
+        prompt = padre.llamadas[0]["prompt"]
+        assert prompt.startswith(f"[{task_id}] needs_input (NOT resumable")
+        assert "its paused state could not be saved" in prompt
+        assert _PREGUNTA in prompt and "NEW delegation" in prompt
+        assert "delegate(resume" not in prompt  # nunca promete la continuación
+        assert en_dict is None  # no quedó viva como `awaiting_input`: se entregó
+        assert reanudar.outcome != "resumed"
+        assert any(
+            _CAPACIDAD in r.getMessage() and "NO es reanudable" in r.getMessage()
+            for r in _errores(caplog)
+        )
+
+    async def test_la_pausa_que_se_persiste_bien_sigue_prometiendo_la_continuacion(
+        self, store
+    ) -> None:
+        padre = _Padre()
+        adapter, _ = _armar(store=store, one_shot_for={"r": _hijo_que_pausa()}, dispatcher=padre)
+
+        task_id = await _pausar(adapter)
+        en_dict = adapter._tasks.get(task_id)
+        await adapter.stop()
+
+        prompt = padre.llamadas[0]["prompt"]
+        assert "NOT resumable" not in prompt and f'delegate(resume="{task_id}"' in prompt
+        assert en_dict is not None and en_dict.status == "awaiting_input"
+
+    async def test_la_degradacion_conserva_el_workdir_en_el_mensaje(
+        self, tmp_path: Path, raiz: Path
+    ) -> None:
+        roto = StoreRoto(tmp_path / "bg.db", fallar=("snapshot_completo",))
+        adapter, dispatcher = _armar(
+            store=roto, one_shot_for={"r": _hijo_que_pausa()}, workdirs=_gestor(raiz)
+        )
+        await adapter.start()
+        await _encolar_completo(adapter)
+        await asyncio.sleep(0.15)
+        await adapter.stop()
+
+        prompt = dispatcher.dispatch.await_args.kwargs["prompt"]
+        assert prompt.count("Working directory:") == 1
+
+
+class TestDispatchDeLaPausa:
+    """4.3 — el dispatch de la pregunta marca `notified` y nunca degrada la pausa."""
+
+    async def test_dispatch_ok_marca_notified_en_la_fila_y_en_el_dict(self, store) -> None:
+        adapter, dispatcher = _armar(store=store, one_shot_for={"r": _hijo_que_pausa()})
+
+        task_id = await _pausar(adapter)
+        fila = await store.get(task_id, "inaki")
+        en_dict = adapter._tasks[task_id]
+        await adapter.stop()
+
+        dispatcher.dispatch.assert_awaited_once()
+        assert fila.status == "awaiting_input"
+        assert fila.notified is True and en_dict.notified is True
+
+    async def test_la_fila_nace_sin_notificar_y_se_marca_recien_tras_el_dispatch(
+        self, store
+    ) -> None:
+        visto: dict = {}
+        adapter, dispatcher = _armar(store=store, one_shot_for={"r": _hijo_que_pausa()})
+
+        async def espiar(**_kw):
+            visto["notified"] = (await store.get(visto["id"], "inaki")).notified
+            return ""
+
+        dispatcher.dispatch = AsyncMock(side_effect=espiar)
+        await adapter.start()
+        visto["id"] = await _encolar(adapter)
+        await asyncio.sleep(0.15)
+        despues = (await store.get(visto["id"], "inaki")).notified
+        await adapter.stop()
+
+        assert visto["notified"] is False
+        assert despues is True
+
+    async def test_si_el_dispatch_falla_sigue_awaiting_input_con_error_y_sin_notificar(
+        self, store, monkeypatch, caplog
+    ) -> None:
+        """Un `delivery_failed` aquí sería peor: `cancel` descartaría una pregunta viva."""
+        caplog.set_level(logging.ERROR, logger=_LOGGER)
+        monkeypatch.setattr("inaki.agents.delegation.background_queue._DISPATCH_RETRY_DELAY", 0)
+        dispatcher = MagicMock()
+        dispatcher.dispatch = AsyncMock(side_effect=RuntimeError("provider caído"))
+        adapter, _ = _armar(
+            store=store, one_shot_for={"r": _hijo_que_pausa()}, dispatcher=dispatcher
+        )
+
+        task_id = await _pausar(adapter)
+        await asyncio.sleep(0.1)
+        fila = await store.get(task_id, "inaki")
+        en_dict = adapter._tasks[task_id]
+        await adapter.stop()
+
+        assert dispatcher.dispatch.await_count == 3
+        assert fila.status == "awaiting_input"
+        assert fila.notified is False
+        assert fila.error is not None and "provider caído" in fila.error
+        assert en_dict.status == "awaiting_input" and en_dict.error == fila.error
+        assert any(
+            task_id in r.getMessage() and "awaiting_input" in r.getMessage()
+            for r in _errores(caplog)
+        )
+
+    async def test_una_excepcion_tras_pausar_nunca_llega_al_rescate(self, store, caplog) -> None:
+        """`_rescatar_task_atascada` pisaría el estado: la task ya NO está running."""
+        caplog.set_level(logging.ERROR, logger=_LOGGER)
+        sender = MagicMock()
+        sender.is_conversational.return_value = True
+        sender.build_intermediate_sink.side_effect = RuntimeError("sink roto")
+        sender.send_message = AsyncMock()
+        dispatcher = MagicMock()
+        dispatcher.dispatch = AsyncMock(return_value="")
+        adapter = BackgroundDelegationQueueAdapter(
+            dispatcher=dispatcher,
+            one_shot_resolver=lambda c, t: _hijo_que_pausa(),
+            max_concurrent=1,
+            store=store,
+            result_sender=sender,
+        )
+        rescate = AsyncMock()
+        adapter._rescatar_task_atascada = rescate  # type: ignore[method-assign]
+
+        task_id = await _pausar(adapter)
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        rescate.assert_not_awaited()
+        assert fila.status == "awaiting_input"
+        assert any(task_id in r.getMessage() for r in _errores(caplog))
+
+    async def test_el_return_del_dispatch_se_entrega_al_canal(self, store) -> None:
+        """REQ-BGD-5: la respuesta del padre a la pregunta no se descarta."""
+        sender = MagicMock()
+        sender.is_conversational.return_value = True
+        sender.build_intermediate_sink.return_value = None
+        sender.send_message = AsyncMock()
+        dispatcher = MagicMock()
+        dispatcher.dispatch = AsyncMock(return_value="Le pregunto al usuario cuál cuenta.")
+        adapter = BackgroundDelegationQueueAdapter(
+            dispatcher=dispatcher,
+            one_shot_resolver=lambda c, t: _hijo_que_pausa(),
+            max_concurrent=1,
+            store=store,
+            result_sender=sender,
+        )
+
+        await _pausar(adapter)
+        await adapter.stop()
+
+        sender.send_message.assert_awaited_once()
+        assert sender.send_message.await_args is not None
+        assert sender.send_message.await_args.args[:2] == (
+            "telegram:42",
+            "Le pregunto al usuario cuál cuenta.",
+        )
+
+    async def test_el_dispatch_de_la_pausa_no_rutea_por_su_texto(self, store) -> None:
+        adapter, dispatcher = _armar(store=store, one_shot_for={"r": _hijo_que_pausa()})
+
+        await _pausar(adapter)
+        await adapter.stop()
+
+        assert dispatcher.dispatch.await_args.kwargs["skip_routing"] is True
+
+    async def test_si_el_estado_cambio_durante_el_dispatch_el_hook_no_pisa_notified(
+        self, store
+    ) -> None:
+        """R1 (parcial): si el padre ya reanudó/descartó la task DENTRO del dispatch, el hook
+        no la toca. Se simula el resume con una transición directa a `queued`."""
+        adapter, dispatcher = _armar(store=store, one_shot_for={"r": _hijo_que_pausa()})
+        visto: dict = {}
+
+        async def reanuda_dentro_del_dispatch(**_kw):
+            task = adapter._tasks[visto["id"]]
+            await adapter._transicionar(
+                task, "queued", result=None, finished_at=None, notified=False
+            )
+            return ""
+
+        dispatcher.dispatch = AsyncMock(side_effect=reanuda_dentro_del_dispatch)
+        await adapter.start()
+        visto["id"] = await _encolar(adapter)
+        await asyncio.sleep(0.15)
+        fila = await store.get(visto["id"], "inaki")
+        await adapter.stop()
+
+        assert fila.status == "queued"
+        assert fila.notified is False
+        assert fila.error is None
+
+
+# ---------------------------------------------------------------------------
+# delegation-resume 4.4 — rehidratación y aviso post-arranque de las preguntas pendientes
+# ---------------------------------------------------------------------------
+
+
+async def _sembrar_pausada(
+    store,
+    *,
+    pregunta: str | None = _PREGUNTA,
+    notified: bool = True,
+    caller: str = "inaki",
+    chat_id: str = "42",
+) -> str:
+    """Una fila `awaiting_input` tal como la deja `_pausar`: transcript completo y cierre.
+
+    ``pregunta=None`` no escribe transcript (caso: la pregunta no se puede recuperar).
+    """
+    await store.open()
+    task_id = await store.create(_fila_nueva(caller=caller, chat_id=chat_id))
+    if pregunta is not None:
+        rec = store.transcript(task_id)
+        await rec.record(Message(role=Role.USER, content="investigá X"))
+        await rec.record(Message(role=Role.ASSISTANT, content=_json_pausa(pregunta)))
+    ahora = datetime.now(timezone.utc)
+    await store.update(
+        task_id,
+        status="awaiting_input",
+        run_started_at=ahora,
+        finished_at=ahora,
+        iterations_used=1,
+        result=f"[{task_id}] needs_input: {pregunta}\n\nThe child agent paused.",
+        result_status="needs_input",
+        notified=notified,
+    )
+    return task_id
+
+
+class TestRehidratacionDeLaPregunta:
+    async def test_una_awaiting_input_vuelve_al_dict_con_su_pregunta(self, store) -> None:
+        """REQ-BGI-1 S5: tras `_rehidratar` la pregunta está disponible para list/inspect."""
+        task_id = await _sembrar_pausada(store)
+        adapter, _ = _armar(store=store)
+
+        await adapter.start()
+        vistas = adapter.snapshot_inflight("inaki")
+        insp = await adapter.inspect(task_id, "inaki", last_n=5)
+        await adapter.stop()
+
+        assert adapter._tasks[task_id].question == _PREGUNTA
+        assert [(v.id, v.status, v.question_preview) for v in vistas] == [
+            (task_id, "awaiting_input", _PREGUNTA)
+        ]
+        assert insp is not None and insp.task.question == _PREGUNTA
+
+    async def test_la_pregunta_se_recupera_completa_aunque_pase_de_120_chars(self, store) -> None:
+        larga = "¿" + "x" * 400 + "?"
+        task_id = await _sembrar_pausada(store, pregunta=larga)
+        adapter, _ = _armar(store=store)
+
+        await adapter.start()
+        completa = adapter._tasks[task_id].question
+        vista = adapter.snapshot_inflight("inaki")[0]
+        await adapter.stop()
+
+        assert completa == larga
+        assert vista.question_preview is not None and len(vista.question_preview) <= 120
+
+    async def test_el_arranque_y_el_stop_no_la_pasan_a_interrupted(self, store) -> None:
+        """REQ-RES-4: los barridos de `queued`/`running`/`delivering` no la tocan."""
+        task_id = await _sembrar_pausada(store)
+        adapter, _ = _armar(store=store)
+
+        await adapter.start()
+        en_arranque = (await store.get(task_id, "inaki")).status
+        fila = await _stop_y_leer(adapter, store, task_id)
+
+        assert en_arranque == "awaiting_input"
+        assert fila.status == "awaiting_input"
+        assert fila.finished_at is not None
+        assert task_id in adapter._tasks  # no terminal: sigue en el dict tras el stop
+
+    async def test_una_pregunta_irrecuperable_se_rehidrata_igual_y_loguea_error(
+        self, store, caplog
+    ) -> None:
+        caplog.set_level(logging.ERROR, logger=_LOGGER)
+        task_id = await _sembrar_pausada(store, pregunta=None)
+        adapter, _ = _armar(store=store)
+
+        await adapter.start()
+        en_dict = adapter._tasks.get(task_id)
+        await adapter.stop()
+
+        assert en_dict is not None and en_dict.status == "awaiting_input"
+        assert en_dict.question is None
+        assert any(
+            task_id in r.getMessage() and _CAPACIDAD in r.getMessage() for r in _errores(caplog)
+        )
+
+    async def test_un_fallo_al_leer_el_transcript_no_tumba_el_arranque(
+        self, tmp_path: Path, caplog
+    ) -> None:
+        caplog.set_level(logging.ERROR, logger=_LOGGER)
+        roto = StoreRoto(tmp_path / "bg.db")
+        task_id = await _sembrar_pausada(roto)
+
+        class _SinMensajes(StoreRoto):
+            async def messages(self, task_id, *, last_n):
+                raise sqlite3.OperationalError("disk I/O error (messages)")
+
+        await roto.close()
+        store = _SinMensajes(tmp_path / "bg.db")
+        adapter, _ = _armar(store=store)
+
+        await adapter.start()
+        en_dict = adapter._tasks.get(task_id)
+        await adapter.stop()
+
+        assert en_dict is not None and en_dict.question is None
+        assert any(task_id in r.getMessage() for r in _errores(caplog))
+
+    async def test_las_terminadas_no_se_rehidratan_y_las_pausadas_si(self, store) -> None:
+        pausada = await _sembrar_pausada(store)
+        entregada = await _sembrar(store, "delivered", finished_at=datetime.now(timezone.utc))
+        adapter, _ = _armar(store=store)
+
+        await adapter.start()
+        ids = set(adapter._tasks)
+        await adapter.stop()
+
+        assert pausada in ids and entregada not in ids
+
+
+class TestAvisoDePreguntasPendientes:
+    """REQ-RES-4 S1-S3 + REQ-BGD-14 (M5: AGRUPADO por conversación, como `interrupted`)."""
+
+    async def test_una_pregunta_ya_notificada_no_se_vuelve_a_avisar(self, store) -> None:
+        """S1: awaiting_input notificada + restart → sigue awaiting_input, sin re-aviso."""
+        task_id = await _sembrar_pausada(store, notified=True)
+        adapter, dispatcher = _armar(store=store)
+        await adapter.start()
+
+        adapter.programar_avisos_post_arranque()
+        await asyncio.sleep(0.05)
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        dispatcher.dispatch.assert_not_awaited()
+        assert fila.status == "awaiting_input"
+
+    async def test_una_pregunta_sin_notificar_se_re_despacha_una_vez_y_se_marca(
+        self, store
+    ) -> None:
+        """S2: murió entre persistir awaiting_input y el dispatch → el arranque la reenvía."""
+        task_id = await _sembrar_pausada(store, notified=False)
+        adapter, dispatcher = _armar(store=store)
+        await adapter.start()
+
+        await _avisar(adapter)
+        fila = await store.get(task_id, "inaki")
+        en_dict = adapter._tasks[task_id]
+        await adapter.stop()
+        otro, dispatcher2 = _armar(store=store)
+        await otro.start()
+        otro.programar_avisos_post_arranque()
+        await asyncio.sleep(0.05)
+        await otro.stop()
+
+        dispatcher.dispatch.assert_awaited_once()
+        kw = dispatcher.dispatch.await_args.kwargs
+        assert kw["agent_id"] == "inaki" and (kw["channel"], kw["chat_id"]) == ("telegram", "42")
+        assert f"[{task_id}] needs_input: {_PREGUNTA}" in kw["prompt"]
+        assert "Re-sent after a daemon restart" in kw["prompt"]
+        assert kw["skip_routing"] is True
+        assert fila.status == "awaiting_input" and fila.notified is True
+        assert en_dict.status == "awaiting_input"  # NO sale del dict: sigue esperando respuesta
+        dispatcher2.dispatch.assert_not_awaited()
+
+    async def test_las_preguntas_de_una_conversacion_van_en_un_solo_aviso(self, store) -> None:
+        uno = await _sembrar_pausada(store, notified=False, pregunta="¿Cuenta A o B?")
+        dos = await _sembrar_pausada(store, notified=False, pregunta="¿Moneda?")
+        otra_conv = await _sembrar_pausada(store, notified=False, chat_id="77")
+        adapter, dispatcher = _armar(store=store)
+        await adapter.start()
+
+        await _avisar(adapter)
+        await adapter.stop()
+
+        por_chat = {
+            c.kwargs["chat_id"]: c.kwargs["prompt"] for c in dispatcher.dispatch.await_args_list
+        }
+        assert dispatcher.dispatch.await_count == 2
+        assert uno in por_chat["42"] and dos in por_chat["42"] and otra_conv not in por_chat["42"]
+        assert otra_conv in por_chat["77"]
+
+    async def test_una_pregunta_y_una_interrumpida_de_la_misma_conversacion_van_juntas(
+        self, store
+    ) -> None:
+        pausada = await _sembrar_pausada(store, notified=False)
+        cortada = await _sembrar(store, "running")
+        adapter, dispatcher = _armar(store=store)
+        await adapter.start()
+
+        await _avisar(adapter)
+        f_pausada = await store.get(pausada, "inaki")
+        f_cortada = await store.get(cortada, "inaki")
+        visibles = {v.id for v in adapter.snapshot_inflight("inaki")}
+        await adapter.stop()
+
+        dispatcher.dispatch.assert_awaited_once()
+        prompt = dispatcher.dispatch.await_args.kwargs["prompt"]
+        assert "interrupted" in prompt and cortada in prompt
+        assert f"[{pausada}] needs_input: {_PREGUNTA}" in prompt
+        assert f_pausada.notified is True and f_cortada.notified is True
+        assert visibles == {pausada}  # la interrumpida avisada sale; la pregunta sigue viva
+
+    async def test_si_el_dispatch_falla_sigue_awaiting_input_sin_notificar(
+        self, store, monkeypatch
+    ) -> None:
+        """S3: reintento en el próximo arranque; nunca `delivery_failed`."""
+        monkeypatch.setattr("inaki.agents.delegation.background_queue._DISPATCH_RETRY_DELAY", 0)
+        task_id = await _sembrar_pausada(store, notified=False)
+        dispatcher = MagicMock()
+        dispatcher.dispatch = AsyncMock(side_effect=RuntimeError("provider caído"))
+        adapter, _ = _armar(store=store, dispatcher=dispatcher)
+        await adapter.start()
+
+        await _avisar(adapter)
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert dispatcher.dispatch.await_count == 3
+        assert fila.status == "awaiting_input" and fila.notified is False
+
+    async def test_un_scope_sin_canal_no_recibe_aviso_y_la_pregunta_sigue_visible(
+        self, store
+    ) -> None:
+        """Mismo criterio que REQ-BGD-11 S4."""
+        task_id = await _sembrar_pausada(store, notified=False, chat_id="")
+        adapter, dispatcher = _armar_con_sender(store)
+        await adapter.start()
+
+        await _avisar(adapter)
+        fila = await store.get(task_id, "inaki")
+        visibles = [(v.id, v.status) for v in adapter.snapshot_inflight("inaki")]
+        await adapter.stop()
+
+        dispatcher.dispatch.assert_not_awaited()
+        assert fila.notified is False and fila.status == "awaiting_input"
+        assert visibles == [(task_id, "awaiting_input")]
+
+    async def test_muerte_entre_persistir_la_pausa_y_el_dispatch_reenvia_la_pregunta_una_vez(
+        self, tmp_path: Path
+    ) -> None:
+        """S2 de punta a punta: el daemon muere con el dispatch de la pregunta en vuelo."""
+        ruta = tmp_path / "bg.db"
+        store1 = SQLiteBackgroundTaskStore(ruta)
+        colgado = MagicMock()
+
+        async def eterno(**_kw):
+            await asyncio.sleep(60)
+
+        colgado.dispatch = AsyncMock(side_effect=eterno)
+        adapter, _ = _armar(store=store1, one_shot_for={"r": _hijo_que_pausa()}, dispatcher=colgado)
+        task_id = await _pausar(adapter)  # persistió awaiting_input; el dispatch no vuelve
+        await adapter.stop()  # "muere" con el dispatch en vuelo
+
+        store2 = SQLiteBackgroundTaskStore(ruta)
+        nuevo, dispatcher2 = _armar(store=store2)
+        await nuevo.start()
+        fila = await store2.get(task_id, "inaki")
+        await _avisar(nuevo)
+        despues = await store2.get(task_id, "inaki")
+        await nuevo.stop()
+
+        assert fila is not None and despues is not None
+        assert fila.status == "awaiting_input" and fila.notified is False
+        dispatcher2.dispatch.assert_awaited_once()
+        assert (
+            f"[{task_id}] needs_input: {_PREGUNTA}"
+            in dispatcher2.dispatch.await_args.kwargs["prompt"]
+        )
+        assert despues.notified is True
+
+
+# ---------------------------------------------------------------------------
+# delegation-resume 4.5..4.8 — cancel de awaiting_input, resume(), tramo 2 y guards R1/R2
+#
+# Viven acá y no en test_background_queue.py porque necesitan el store REAL: sin store no hay
+# pausa (la cola degrada a memoria), así que una `awaiting_input` solo existe con SQLite.
+# ---------------------------------------------------------------------------
+
+_RESPUESTA = "Usá la cuenta B."
+
+
+async def _hasta(condicion, *, plazo: float = 5.0) -> None:
+    """Espera a que ``condicion()`` sea verdadera: poll corto con tope, nunca un sleep fijo."""
+    limite = asyncio.get_running_loop().time() + plazo
+    while not condicion():
+        if asyncio.get_running_loop().time() > limite:
+            raise AssertionError("la condición no se cumplió a tiempo")
+        await asyncio.sleep(0.005)
+
+
+async def _esperar(evento: asyncio.Event, *, plazo: float = 5.0) -> None:
+    """``evento.wait()`` con tope: un test que se cuelga falla, no cuelga la suite."""
+    await asyncio.wait_for(evento.wait(), plazo)
+
+
+class _Padre(MagicMock):
+    """Dispatcher falso: registra cada dispatch y deja scriptear qué hace el padre en cada uno.
+
+    ``pasos[i]`` es una corrutina ``(kwargs) -> str | None`` que corre DENTRO del dispatch
+    número ``i + 1`` (ahí es donde un padre real llama a ``delegate``/``background_tasks``).
+    """
+
+    def __init__(self, *pasos, **kw) -> None:
+        super().__init__(**kw)
+        self.pasos = list(pasos)
+        self.llamadas: list[dict] = []
+        self.dispatch = AsyncMock(side_effect=self._dispatch)
+
+    async def _dispatch(self, **kw):
+        self.llamadas.append(kw)
+        n = len(self.llamadas)
+        paso = self.pasos[n - 1] if n <= len(self.pasos) else None
+        if paso is None:
+            return ""
+        return (await paso(kw)) or ""
+
+
+def _id_de(kw: dict) -> str:
+    """El `bg-N` del mensaje que el padre recibe en un dispatch."""
+    return kw["prompt"].split("]", 1)[0].lstrip("[")
+
+
+def _json_exito(resumen: str = "Hecho con la cuenta B.") -> str:
+    bloque = {
+        "status": "success",
+        "summary": resumen,
+        "details": None,
+        "reason": None,
+        "question": None,
+    }
+    return "```json\n" + json.dumps(bloque, ensure_ascii=False) + "\n```"
+
+
+def _hijo_continua(
+    raw: str | None = None,
+    *,
+    rondas: int = 0,
+    retener: asyncio.Event | None = None,
+    entro: asyncio.Event | None = None,
+    cortado: asyncio.Event | None = None,
+) -> MagicMock:
+    """Hijo del TRAMO 2: agrega al transcript reabierto el USER nuevo, ``rondas`` idas a una
+    tool y el cierre. Lo que el one-shot real hace con el recorder."""
+    cierre = raw if raw is not None else _json_exito()
+    hijo = _one_shot()
+
+    async def corre(**kw):
+        rec = kw["recorder"]
+        mensajes = [Message(role=Role.USER, content=kw["task"])]
+        for i in range(rondas):
+            llamada = f"seg{i}"
+            mensajes.append(
+                Message(role=Role.ASSISTANT, content="", tool_calls=[_tool_call(llamada, "shell")])
+            )
+            mensajes.append(Message(role=Role.TOOL, content="ok", tool_call_id=llamada))
+        mensajes.append(Message(role=Role.ASSISTANT, content=cierre))
+        for m in mensajes:
+            rec.trace.append(m)
+            await rec.record(m)
+        if entro is not None:
+            entro.set()
+        if retener is not None:
+            try:
+                await retener.wait()
+            except asyncio.CancelledError:
+                if cortado is not None:
+                    cortado.set()
+                raise
+        return cierre
+
+    hijo.execute = AsyncMock(side_effect=corre)
+    return hijo
+
+
+class StoreLento(SQLiteBackgroundTaskStore):
+    """Store real cuya reapertura del transcript se detiene hasta que el test la suelte."""
+
+    def __init__(self, path: Path) -> None:
+        super().__init__(path)
+        self.entro = asyncio.Event()
+        self.soltar = asyncio.Event()
+        self.aperturas = 0
+
+    async def reabrir_transcript(self, task_id):
+        self.aperturas += 1
+        self.entro.set()
+        await self.soltar.wait()
+        return await super().reabrir_transcript(task_id)
+
+
+class StoreLentoAlEncolar(SQLiteBackgroundTaskStore):
+    """Store real cuya escritura de la transición a ``queued`` (la del resume) se detiene hasta
+    que el test la suelte: la ventana en la que un cancel/stop se cuela en ``_reencolar``."""
+
+    def __init__(self, path: Path) -> None:
+        super().__init__(path)
+        self.entro = asyncio.Event()
+        self.soltar = asyncio.Event()
+
+    async def update(self, task_id, **campos):
+        # Primero escribe y después cede: el orden en disco es el real (queued → cancelled).
+        devuelto = await super().update(task_id, **campos)
+        if campos.get("status") == "queued":
+            self.entro.set()
+            await self.soltar.wait()
+        return devuelto
+
+
+async def _pausada_en_vivo(adapter, **kw) -> str:
+    """Start + encolar + dejar que el hijo pause y se avise: `awaiting_input` ya notificada y
+    el tramo 1 terminado del todo (handle olvidado)."""
+    await adapter.start()
+    task_id = await _encolar(adapter, **kw)
+    await _hasta(
+        lambda: (
+            (t := adapter._tasks.get(task_id)) is not None
+            and t.status == "awaiting_input"
+            and t.notified
+            and task_id not in adapter._handles
+        )
+    )
+    return task_id
+
+
+class TestCancelDeAwaitingInput:
+    """4.5 — descartar una pregunta sin contestar."""
+
+    async def test_cancel_descarta_con_la_pregunta_y_no_dispatcha(self, store) -> None:
+        padre = _Padre()
+        adapter, _ = _armar(store=store, one_shot_for={"r": _hijo_que_pausa()}, dispatcher=padre)
+        task_id = await _pausada_en_vivo(adapter)
+        guardada = (await store.get(task_id, "inaki")).result
+
+        salida = await adapter.cancel(task_id, "inaki")
+        fila = await store.get(task_id, "inaki")
+        en_dict = task_id in adapter._tasks
+        await adapter.stop()
+
+        assert salida.outcome == "dismissed"
+        assert salida.status == "awaiting_input"
+        assert salida.result == guardada and _PREGUNTA in (salida.result or "")
+        assert "had finished, but its result could not be delivered" not in (salida.result or "")
+        assert fila.status == "dismissed" and fila.notified is True
+        assert not en_dict
+        assert len(padre.llamadas) == 1  # solo el aviso de la pregunta: cancel no dispatcha
+
+    async def test_un_resume_posterior_a_un_cancel_es_not_awaiting(self, store) -> None:
+        adapter, _ = _armar(store=store, one_shot_for={"r": _hijo_que_pausa()})
+        task_id = await _pausada_en_vivo(adapter)
+
+        await adapter.cancel(task_id, "inaki")
+        resultado = await adapter.resume(task_id, "inaki", _RESPUESTA)
+        await adapter.stop()
+
+        assert resultado.outcome == "not_awaiting"
+        assert resultado.status == "dismissed"
+
+    async def test_cancel_de_otro_caller_es_not_found_y_no_toca_la_task(self, store) -> None:
+        adapter, _ = _armar(store=store, one_shot_for={"r": _hijo_que_pausa()})
+        task_id = await _pausada_en_vivo(adapter)
+
+        ajeno = await adapter.cancel(task_id, "otro")
+        inexistente = await adapter.cancel("bg-99999", "inaki")
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert ajeno.outcome == "not_found" and inexistente.outcome == "not_found"
+        assert ajeno.model_dump(exclude={"task_id"}) == inexistente.model_dump(exclude={"task_id"})
+        assert fila.status == "awaiting_input"
+
+    async def test_funciona_aunque_la_fila_no_este_en_el_dict(self, store) -> None:
+        """Una rehidratación fallida deja la `awaiting_input` solo en el store."""
+        task_id = await _sembrar_pausada(store)
+        adapter, _ = _armar(store=store)
+        await adapter.start()
+        adapter._tasks.pop(task_id)
+
+        salida = await adapter.cancel(task_id, "inaki")
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert salida.outcome == "dismissed" and salida.status == "awaiting_input"
+        assert salida.result is not None and _PREGUNTA in salida.result
+        assert fila.status == "dismissed" and fila.notified is True
+
+    async def test_cancel_dentro_del_dispatch_no_corta_el_turno_del_padre(self, store) -> None:
+        """Mientras el tramo 1 despacha la pregunta, su handle sigue registrado: cancelarlo
+        cortaría el turno del padre que la está procesando."""
+        visto: dict = {}
+
+        async def padre_descarta(kw):
+            visto["cancel"] = await adapter.cancel(_id_de(kw), "inaki")
+            await asyncio.sleep(0)  # un CancelledError pendiente saltaría acá
+            visto["sobrevivio"] = True
+
+        padre = _Padre(padre_descarta)
+        adapter, _ = _armar(store=store, one_shot_for={"r": _hijo_que_pausa()}, dispatcher=padre)
+        await adapter.start()
+        task_id = await _encolar(adapter)
+        await _hasta(lambda: "cancel" in visto and task_id not in adapter._handles)
+        await adapter.stop()
+
+        assert visto["cancel"].outcome == "dismissed"
+        assert visto["sobrevivio"] is True
+
+
+class TestResumeRechazos:
+    """4.6 — ninguna precondición incumplida cambia el estado de la fila."""
+
+    async def test_un_id_podado_inexistente_o_de_otro_caller_son_identicos(self, store) -> None:
+        adapter, _ = _armar(store=store, one_shot_for={"r": _hijo_que_pausa()})
+        task_id = await _pausada_en_vivo(adapter)
+
+        podada = await adapter.resume("bg-99999", "inaki", _RESPUESTA)
+        ajena = await adapter.resume(task_id, "otro", _RESPUESTA)
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert podada.outcome == "not_found" and ajena.outcome == "not_found"
+        assert podada.model_dump(exclude={"task_id"}) == ajena.model_dump(exclude={"task_id"})
+        assert "exist" not in (podada.detail or "")
+        assert fila.status == "awaiting_input"
+
+    async def test_un_id_en_memoria_no_es_reanudable_y_no_afirma_inexistencia(self) -> None:
+        adapter, _ = _armar(one_shot_for={"r": _one_shot()})
+        await adapter.start()
+
+        resultado = await adapter.resume("bg-m1", "inaki", _RESPUESTA)
+        await adapter.stop()
+
+        assert resultado.outcome == "not_found"
+        assert resultado.detail is not None and "no durable record" in resultado.detail
+        assert "exist" not in resultado.detail
+
+    async def test_una_task_viva_que_no_espera_respuesta_es_not_awaiting_con_su_estado(
+        self, store
+    ) -> None:
+        retener = asyncio.Event()
+        entro = asyncio.Event()
+        hijo = _one_shot()
+
+        async def colgado(**_kw):
+            entro.set()
+            await retener.wait()
+
+        hijo.execute = AsyncMock(side_effect=colgado)
+        adapter, _ = _armar(store=store, one_shot_for={"r": hijo})
+        await adapter.start()
+        task_id = await _encolar(adapter)
+        await _esperar(entro)
+
+        resultado = await adapter.resume(task_id, "inaki", _RESPUESTA)
+        await adapter.stop()
+
+        assert resultado.outcome == "not_awaiting" and resultado.status == "running"
+
+    async def test_una_task_entregada_se_consulta_en_el_store_y_es_not_awaiting(
+        self, store
+    ) -> None:
+        adapter, _ = _armar(store=store, one_shot_for={"r": _one_shot("listo")})
+        await adapter.start()
+        task_id = await _encolar(adapter)
+        await _hasta(lambda: task_id not in adapter._tasks)
+
+        resultado = await adapter.resume(task_id, "inaki", _RESPUESTA)
+        await adapter.stop()
+
+        assert resultado.outcome == "not_awaiting" and resultado.status == "delivered"
+
+    async def test_el_store_caido_al_consultar_una_no_viva_es_unavailable_con_error(
+        self, store, monkeypatch, caplog
+    ) -> None:
+        caplog.set_level(logging.ERROR, logger=_LOGGER)
+        task_id = await _sembrar_pausada(store)
+        adapter, _ = _armar(store=store)
+        await adapter.start()
+        adapter._tasks.pop(task_id)
+
+        async def roto(*_a, **_kw):
+            raise sqlite3.OperationalError("disk I/O error")
+
+        monkeypatch.setattr(store, "get", roto)
+        resultado = await adapter.resume(task_id, "inaki", _RESPUESTA)
+        await adapter.stop()
+
+        assert resultado.outcome == "unavailable"
+        assert any(_CAPACIDAD in r.getMessage() for r in _errores(caplog))
+
+    async def test_una_awaiting_input_que_el_dict_no_tiene_no_se_reanuda_a_ciegas(
+        self, store
+    ) -> None:
+        task_id = await _sembrar_pausada(store)
+        adapter, _ = _armar(store=store)
+        await adapter.start()
+        adapter._tasks.pop(task_id)
+
+        resultado = await adapter.resume(task_id, "inaki", _RESPUESTA)
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert resultado.outcome == "unavailable"
+        assert fila.status == "awaiting_input"
+
+    async def test_con_transcript_incomplete_marcado_el_resume_se_rechaza(self, store) -> None:
+        task_id = await _sembrar_pausada(store)
+        await store.update(task_id, transcript_incomplete=True)
+        hijo = _hijo_continua()
+        adapter, _ = _armar(store=store, one_shot_for={"r": hijo})
+        await adapter.start()
+
+        resultado = await adapter.resume(task_id, "inaki", _RESPUESTA)
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert resultado.outcome == "transcript_incomplete"
+        assert fila.status == "awaiting_input"
+        hijo.execute.assert_not_awaited()
+
+    async def test_una_reapertura_inconsistente_marca_la_fila_y_no_cambia_el_estado(
+        self, store, tmp_path: Path
+    ) -> None:
+        task_id = await _sembrar_pausada(store)
+        con = sqlite3.connect(tmp_path / "background_tasks.db")
+        rowid = int(task_id.removeprefix("bg-"))
+        con.execute("DELETE FROM bg_task_messages WHERE task_id = ? AND seq = 1", (rowid,))
+        con.commit()
+        con.close()
+        adapter, _ = _armar(store=store, one_shot_for={"r": _hijo_continua()})
+        await adapter.start()
+
+        resultado = await adapter.resume(task_id, "inaki", _RESPUESTA)
+        fila = await store.get(task_id, "inaki")
+        otra = await adapter.resume(task_id, "inaki", _RESPUESTA)
+        await adapter.stop()
+
+        assert resultado.outcome == "transcript_incomplete"
+        assert fila.status == "awaiting_input" and fila.transcript_incomplete is True
+        assert otra.outcome == "transcript_incomplete"  # ya marcada: ni se reintenta la carga
+        # El motivo del store está en español y es para el log: al LLM le llega un texto fijo
+        # en inglés (el `detail` entra tal cual en el tool result del padre).
+        assert resultado.detail == "its saved transcript is inconsistent"
+        assert "contiguos" not in (resultado.detail or "")
+
+    async def test_un_error_del_store_al_reabrir_es_unavailable_reintentable_sin_marca(
+        self, tmp_path: Path, caplog
+    ) -> None:
+        caplog.set_level(logging.ERROR, logger=_LOGGER)
+        roto = StoreRoto(tmp_path / "bg.db", fallar=("reabrir_transcript",))
+        task_id = await _sembrar_pausada(roto)
+        hijo = _hijo_continua()
+        adapter, _ = _armar(store=roto, one_shot_for={"r": hijo})
+        await adapter.start()
+
+        fallido = await adapter.resume(task_id, "inaki", _RESPUESTA)
+        fila = await roto.get(task_id, "inaki")
+        roto.fallar.clear()
+        reintento = await adapter.resume(task_id, "inaki", _RESPUESTA)
+        await _hasta(lambda: task_id not in adapter._tasks)
+        await adapter.stop()
+
+        assert fila is not None
+        assert fallido.outcome == "unavailable"
+        assert fila.status == "awaiting_input" and fila.transcript_incomplete is False
+        assert any(_CAPACIDAD in r.getMessage() for r in _errores(caplog))
+        assert reintento.outcome == "resumed"
+
+    async def test_sin_iteraciones_restantes_no_se_reserva_y_sigue_awaiting_input(
+        self, store
+    ) -> None:
+        task_id = await _sembrar_pausada(store)
+        await store.update(task_id, iterations_used=5)  # la fila sembrada tiene max=5
+        hijo = _hijo_continua()
+        adapter, _ = _armar(store=store, one_shot_for={"r": hijo})
+        await adapter.start()
+
+        resultado = await adapter.resume(task_id, "inaki", _RESPUESTA)
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert resultado.outcome == "no_iterations_left"
+        assert fila.status == "awaiting_input"
+        hijo.execute.assert_not_awaited()
+
+    async def test_un_agent_id_distinto_al_de_la_fila_es_target_mismatch(self, store) -> None:
+        task_id = await _sembrar_pausada(store)
+        adapter, _ = _armar(store=store, one_shot_for={"r": _hijo_continua()})
+        await adapter.start()
+
+        mal = await adapter.resume(task_id, "inaki", _RESPUESTA, target_agent_id="otro")
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert mal.outcome == "target_mismatch" and mal.target_agent_id == "r"
+        assert fila.status == "awaiting_input"
+
+    async def test_un_target_fuera_de_la_allow_list_es_target_not_allowed(self, store) -> None:
+        task_id = await _sembrar_pausada(store)
+        adapter, _ = _armar(store=store, one_shot_for={"r": _hijo_continua()})
+        await adapter.start()
+
+        no = await adapter.resume(task_id, "inaki", _RESPUESTA, allowed_targets=["x", "y"])
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert no.outcome == "target_not_allowed"
+        assert fila.status == "awaiting_input"
+
+    async def test_un_target_que_la_config_ya_no_resuelve_es_unknown_target(self, store) -> None:
+        task_id = await _sembrar_pausada(store)
+        pool: dict = {}  # la config cambió: "r" ya no existe
+        adapter, _ = _armar(store=store, one_shot_for=pool)
+        await adapter.start()
+
+        sin_target = await adapter.resume(task_id, "inaki", _RESPUESTA)
+
+        def explota(_caller, _target):
+            raise KeyError("config rota")
+
+        adapter._one_shot_resolver = explota
+        con_error = await adapter.resume(task_id, "inaki", _RESPUESTA)
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert sin_target.outcome == "unknown_target" and con_error.outcome == "unknown_target"
+        assert fila.status == "awaiting_input"
+
+    async def test_con_el_consumer_parado_es_unavailable(self, store) -> None:
+        task_id = await _sembrar_pausada(store)
+        adapter, _ = _armar(store=store, one_shot_for={"r": _hijo_continua()})
+        await adapter.start()
+        await adapter.stop()
+
+        resultado = await adapter.resume(task_id, "inaki", _RESPUESTA)
+
+        assert resultado.outcome == "unavailable"
+        assert adapter._tasks[task_id].status == "awaiting_input"
+
+
+class TestResumeConcurrente:
+    """4.6 — decisión y reserva síncronas; re-chequeo tras el await de la carga."""
+
+    async def test_dos_resume_simultaneos_uno_resumed_y_el_otro_already_resuming(
+        self, tmp_path: Path
+    ) -> None:
+        lento = StoreLento(tmp_path / "bg.db")
+        task_id = await _sembrar_pausada(lento)
+        hijo = _hijo_continua()
+        adapter, _ = _armar(store=lento, one_shot_for={"r": hijo})
+        await adapter.start()
+
+        primero = asyncio.create_task(adapter.resume(task_id, "inaki", "A"))
+        await _esperar(lento.entro)  # el primero ya reservó y está cargando el transcript
+        segundo = await adapter.resume(task_id, "inaki", "B")
+        lento.soltar.set()
+        r1 = await primero
+        await _hasta(lambda: task_id not in adapter._tasks)
+        await adapter.stop()
+
+        assert r1.outcome == "resumed" and segundo.outcome == "already_resuming"
+        assert lento.aperturas == 1
+        hijo.execute.assert_awaited_once()
+        assert hijo.execute.await_args.kwargs["task"] == "A"
+
+    async def test_un_cancel_intercalado_durante_la_carga_no_resucita_la_task(
+        self, tmp_path: Path
+    ) -> None:
+        lento = StoreLento(tmp_path / "bg.db")
+        task_id = await _sembrar_pausada(lento)
+        hijo = _hijo_continua()
+        adapter, _ = _armar(store=lento, one_shot_for={"r": hijo})
+        await adapter.start()
+
+        resume = asyncio.create_task(adapter.resume(task_id, "inaki", _RESPUESTA))
+        await _esperar(lento.entro)
+        descartada = await adapter.cancel(task_id, "inaki")
+        lento.soltar.set()
+        resultado = await resume
+        fila = await lento.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert descartada.outcome == "dismissed"
+        assert fila is not None
+        assert resultado.outcome == "not_awaiting"
+        assert fila.status == "dismissed"
+        hijo.execute.assert_not_awaited()
+        assert adapter._reanudaciones == {} and adapter._reanudando == set()
+
+    async def test_un_cancel_durante_la_escritura_a_queued_no_encola_el_tramo_2(
+        self, tmp_path: Path
+    ) -> None:
+        """Guard de `_reencolar`: la transición a `queued` es un `await`; un cancel que se cuela
+        ahí gana, y el resume no puede encolar ni afirmar `resumed` sobre una task ya cancelada."""
+        lento = StoreLentoAlEncolar(tmp_path / "bg.db")
+        task_id = await _sembrar_pausada(lento)
+        hijo = _hijo_continua()
+        adapter, _ = _armar(store=lento, one_shot_for={"r": hijo})
+        await adapter.start()
+
+        resume = asyncio.create_task(adapter.resume(task_id, "inaki", _RESPUESTA))
+        await _esperar(lento.entro)  # el resume ya está en `queued` (memoria) y escribiendo
+        cancelada = await adapter.cancel(task_id, "inaki")
+        lento.soltar.set()
+        resultado = await resume
+        await asyncio.sleep(0.05)  # el consumer tuvo ocasión de correr algo si se hubiera encolado
+        fila = await lento.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert cancelada.outcome == "cancelled"
+        assert resultado.outcome == "not_awaiting"
+        assert resultado.status == "cancelled"
+        assert fila is not None and fila.status == "cancelled"
+        hijo.execute.assert_not_awaited()
+        assert task_id not in adapter._tasks
+        assert adapter._reanudaciones == {} and adapter._reanudando == set()
+
+    async def test_si_el_consumer_muere_durante_la_carga_el_resume_es_unavailable_y_no_toca_nada(
+        self, tmp_path: Path
+    ) -> None:
+        """Guard de `resume`: tras el `await` de `reabrir_transcript` la cola pudo quedarse sin
+        consumer; encolar ahí dejaría la task en `queued` para siempre."""
+        lento = StoreLento(tmp_path / "bg.db")
+        task_id = await _sembrar_pausada(lento)
+        hijo = _hijo_continua()
+        adapter, _ = _armar(store=lento, one_shot_for={"r": hijo})
+        await adapter.start()
+
+        resume = asyncio.create_task(adapter.resume(task_id, "inaki", _RESPUESTA))
+        await _esperar(lento.entro)
+        # Muere SOLO el consumer: la task sigue `awaiting_input` (un `stop()` la interrumpiría
+        # y el re-chequeo de estado respondería antes que el del consumer).
+        consumer = adapter._consumer_task
+        assert consumer is not None
+        consumer.cancel()
+        await asyncio.gather(consumer, return_exceptions=True)
+        lento.soltar.set()
+        resultado = await resume
+        fila = await lento.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert resultado.outcome == "unavailable"
+        assert fila is not None and fila.status == "awaiting_input"
+        hijo.execute.assert_not_awaited()
+        assert adapter._reanudaciones == {} and adapter._reanudando == set()
+
+    async def test_la_reserva_se_libera_aunque_el_resume_falle(self, tmp_path: Path) -> None:
+        roto = StoreRoto(tmp_path / "bg.db", fallar=("reabrir_transcript",))
+        task_id = await _sembrar_pausada(roto)
+        adapter, _ = _armar(store=roto, one_shot_for={"r": _hijo_continua()})
+        await adapter.start()
+
+        await adapter.resume(task_id, "inaki", _RESPUESTA)
+        reservas = set(adapter._reanudando)
+        await adapter.stop()
+
+        assert reservas == set()
+
+
+class TestResumeFeliz:
+    """4.6 — la misma fila vuelve a `queued` y corre el tramo 2."""
+
+    async def test_resumed_reencola_la_misma_fila_y_limpia_la_pausa(
+        self, store, raiz: Path
+    ) -> None:
+        visto: dict = {}
+        pool: dict = {}
+
+        async def padre_contesta(kw):
+            pool["r"] = _hijo_continua()
+            visto["resultado"] = await adapter.resume(_id_de(kw), "inaki", _RESPUESTA)
+            visto["fila"] = await store.get(_id_de(kw), "inaki")
+            visto["en_dict"] = adapter._tasks[_id_de(kw)].model_copy()
+
+        pool["r"] = _hijo_que_pausa()
+        padre = _Padre(padre_contesta)
+        adapter, _ = _armar(
+            store=store,
+            one_shot_for=pool,
+            dispatcher=padre,
+            max_concurrent=1,  # el tramo 1 retiene el slot: el tramo 2 se queda en `queued`
+            workdirs=_gestor(raiz),
+        )
+        await adapter.start()
+        encolada = await _encolar_completo(adapter)
+        await _hasta(lambda: "fila" in visto)
+        await adapter.stop()
+
+        resultado, fila, en_dict = visto["resultado"], visto["fila"], visto["en_dict"]
+        assert resultado.outcome == "resumed" and resultado.task_id == encolada.task_id
+        assert resultado.iterations_left == 3  # max=5, el tramo 1 usó 2 (tool + cierre)
+        assert fila.id == encolada.task_id and fila.status == "queued"
+        assert fila.workdir == encolada.workdir and Path(fila.workdir).is_dir()
+        # Se limpia lo del tramo 1 y la retención no cuenta 14 días desde la pausa vieja.
+        assert fila.finished_at is None
+        assert fila.result is None and fila.result_status is None
+        assert fila.error is None and fila.failure is None and fila.result_parse_error is False
+        assert fila.notified is True
+        assert fila.iterations_used == 2  # se conserva: el presupuesto es acumulado
+        assert en_dict.question is None
+
+    async def test_el_tramo_2_ve_el_historial_y_continua_el_seq(self, store) -> None:
+        hijo2 = _hijo_continua()
+        pool: dict = {"r": _hijo_que_pausa()}
+        padre = _Padre()
+        adapter, _ = _armar(store=store, one_shot_for=pool, dispatcher=padre)
+        task_id = await _pausada_en_vivo(adapter)
+        pool["r"] = hijo2
+
+        resultado = await adapter.resume(task_id, "inaki", _RESPUESTA)
+        await _hasta(lambda: task_id not in adapter._tasks)
+        pasos, total = await store.messages(task_id, last_n=50)
+        await adapter.stop()
+
+        assert resultado.outcome == "resumed"
+        kw = hijo2.execute.await_args.kwargs
+        assert kw["task"] == _RESPUESTA
+        previos = kw["historial_previo"]
+        assert [m.role for m in previos] == [Role.USER, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT]
+        assert [e.seq for e in pasos] == [1, 2, 3, 4, 5, 6]  # el primer mensaje nuevo: seq=N+1
+        assert total == 6 and pasos[4].role is Role.USER and pasos[4].content == _RESPUESTA
+
+    async def test_el_presupuesto_es_el_de_la_fila_menos_lo_usado_y_el_timeout_se_renueva(
+        self, store
+    ) -> None:
+        hijo2 = _hijo_continua()
+        pool: dict = {"r": _hijo_que_pausa()}
+        adapter, _ = _armar(store=store, one_shot_for=pool, dispatcher=_Padre())
+        task_id = await _pausada_en_vivo(adapter, max_iterations=10, timeout_seconds=300)
+        pool["r"] = hijo2
+
+        await adapter.resume(task_id, "inaki", _RESPUESTA)
+        await _hasta(lambda: task_id not in adapter._tasks)
+        await adapter.stop()
+
+        kw = hijo2.execute.await_args.kwargs
+        assert kw["max_iterations"] == 8  # max 10 - 2 usadas en el tramo 1
+        assert kw["timeout_seconds"] == 300  # el de la fila, completo, aunque el tramo 1 gastó
+        assert kw["system_prompt"].endswith(RESULT_FORMAT_FOOTER_PAUSABLE)
+
+    async def test_el_tramo_2_usa_el_recorder_reabierto_y_el_historial_es_una_copia(
+        self, store
+    ) -> None:
+        hijo2 = _hijo_continua()
+        pool: dict = {"r": _hijo_que_pausa()}
+        adapter, _ = _armar(store=store, one_shot_for=pool, dispatcher=_Padre())
+        task_id = await _pausada_en_vivo(adapter)
+        pool["r"] = hijo2
+
+        await adapter.resume(task_id, "inaki", _RESPUESTA)
+        await _hasta(lambda: task_id not in adapter._tasks)
+        await adapter.stop()
+
+        kw = hijo2.execute.await_args.kwargs
+        assert kw["recorder"].trace[:4] == kw["historial_previo"]
+        assert len(kw["recorder"].trace) == 6  # el tramo 2 agregó 2; la copia no creció
+        assert len(kw["historial_previo"]) == 4
+
+    async def test_el_resultado_del_tramo_2_va_al_chat_original_y_acumula_iteraciones(
+        self, store
+    ) -> None:
+        """REQ-RES-14: el resume no trae scope (CLI `("", "")` u otro chat): el `[bg-N]` del
+        tramo 2 sale por el `channel/chat_id` de la fila."""
+        pool: dict = {"r": _hijo_que_pausa()}
+        padre = _Padre()
+        adapter, _ = _armar(store=store, one_shot_for=pool, dispatcher=padre)
+        task_id = await _pausada_en_vivo(adapter)
+        pool["r"] = _hijo_continua(rondas=1)
+
+        await adapter.resume(task_id, "inaki", _RESPUESTA)
+        await _hasta(lambda: len(padre.llamadas) == 2 and task_id not in adapter._tasks)
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        final = padre.llamadas[1]
+        assert (final["channel"], final["chat_id"]) == ("telegram", "42")
+        assert final["prompt"].startswith(f"[{task_id}] success")
+        assert fila.status == "delivered" and fila.notified is True
+        assert fila.iterations_used == 4  # 2 del tramo 1 + 2 del tramo 2 (tool + cierre)
+        assert adapter._reanudaciones == {}
+
+    async def test_la_segunda_pausa_vuelve_a_awaiting_input_con_snapshot_solo_del_tramo_2(
+        self, store, monkeypatch
+    ) -> None:
+        pool: dict = {"r": _hijo_que_pausa()}
+        padre = _Padre()
+        adapter, _ = _armar(store=store, one_shot_for=pool, dispatcher=padre)
+        task_id = await _pausada_en_vivo(adapter)
+        llamadas: list[tuple[int, int]] = []
+        original = store.snapshot_completo
+
+        async def espiar(tid, trace, *, desde_seq):
+            llamadas.append((desde_seq, len(trace)))
+            return await original(tid, trace, desde_seq=desde_seq)
+
+        monkeypatch.setattr(store, "snapshot_completo", espiar)
+        pool["r"] = _hijo_continua(raw=_json_pausa("¿Y la región?"), rondas=1)
+
+        await adapter.resume(task_id, "inaki", _RESPUESTA)
+        await _hasta(
+            lambda: (
+                len(padre.llamadas) == 2
+                and (t := adapter._tasks.get(task_id)) is not None
+                and t.notified
+            )
+        )
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert llamadas == [(4, 8)]  # solo las filas > 4: las del tramo 1 no se tocan
+        assert fila.status == "awaiting_input"
+        assert fila.iterations_used == 4
+        assert adapter._tasks[task_id].question == "¿Y la región?"
+
+    async def test_la_segunda_pausa_sin_presupuesto_se_entrega_como_no_reanudable(
+        self, store
+    ) -> None:
+        pool: dict = {"r": _hijo_que_pausa()}
+        padre = _Padre()
+        adapter, _ = _armar(store=store, one_shot_for=pool, dispatcher=padre)
+        task_id = await _pausada_en_vivo(adapter, max_iterations=5)  # el tramo 1 usó 2
+        pool["r"] = _hijo_continua(raw=_json_pausa("¿Y la región?"), rondas=2)  # +3 => 5/5
+
+        await adapter.resume(task_id, "inaki", _RESPUESTA)
+        await _hasta(lambda: task_id not in adapter._tasks)
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert fila.status == "delivered" and fila.result_status == "needs_input"
+        assert "NOT resumable" in padre.llamadas[1]["prompt"]
+
+    async def test_un_error_del_guard_del_one_shot_es_un_fallo_del_hijo_no_una_pausa(
+        self, store
+    ) -> None:
+        pool: dict = {"r": _hijo_que_pausa()}
+        padre = _Padre()
+        adapter, _ = _armar(store=store, one_shot_for=pool, dispatcher=padre)
+        task_id = await _pausada_en_vivo(adapter)
+        hijo2 = _one_shot()
+        hijo2.execute = AsyncMock(side_effect=ValueError("historial_previo desalineado"))
+        pool["r"] = hijo2
+
+        await adapter.resume(task_id, "inaki", _RESPUESTA)
+        await _hasta(lambda: task_id not in adapter._tasks)
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        assert fila.status == "delivered"
+        assert fila.failure is not None and fila.failure.kind == "exception"
+
+    async def test_el_resume_tras_un_restart_funciona_igual(self, tmp_path: Path) -> None:
+        ruta = tmp_path / "bg.db"
+        store1 = SQLiteBackgroundTaskStore(ruta)
+        adapter1, _ = _armar(store=store1, one_shot_for={"r": _hijo_que_pausa()})
+        task_id = await _pausada_en_vivo(adapter1)
+        await adapter1.stop()
+
+        store2 = SQLiteBackgroundTaskStore(ruta)
+        hijo2 = _hijo_continua()
+        adapter2, _ = _armar(store=store2, one_shot_for={"r": hijo2})
+        await adapter2.start()
+        resultado = await adapter2.resume(task_id, "inaki", _RESPUESTA)
+        await _hasta(lambda: task_id not in adapter2._tasks)
+        fila = await store2.get(task_id, "inaki")
+        await adapter2.stop()
+
+        assert fila is not None
+        assert resultado.outcome == "resumed"
+        assert fila.status == "delivered"
+        assert len(hijo2.execute.await_args.kwargs["historial_previo"]) == 4
+
+    async def test_un_restart_con_el_tramo_2_en_cola_la_deja_interrupted_y_no_vuelve_a_pausa(
+        self, tmp_path: Path
+    ) -> None:
+        """REQ-RES-12: la respuesta viaja en memoria y se pierde CON aviso."""
+        ruta = tmp_path / "bg.db"
+        store1 = SQLiteBackgroundTaskStore(ruta)
+        liberar = asyncio.Event()
+
+        async def padre_contesta(kw):
+            await adapter1.resume(_id_de(kw), "inaki", _RESPUESTA)
+            await liberar.wait()  # sigue "procesando": el tramo 2 no arranca (max=1)
+
+        padre1 = _Padre(padre_contesta)
+        adapter1, _ = _armar(
+            store=store1, one_shot_for={"r": _hijo_que_pausa()}, dispatcher=padre1, max_concurrent=1
+        )
+        await adapter1.start()
+        task_id = await _encolar(adapter1)
+        await _hasta(lambda: adapter1._tasks[task_id].status == "queued")
+        await adapter1.stop()
+
+        store2 = SQLiteBackgroundTaskStore(ruta)
+        adapter2, padre2 = _armar(store=store2)
+        await adapter2.start()
+        fila = await store2.get(task_id, "inaki")
+        adapter2.programar_avisos_post_arranque()
+        assert adapter2._aviso_task is not None
+        await adapter2._aviso_task
+        await adapter2.stop()
+
+        assert fila is not None
+        assert adapter1._reanudaciones == {}
+        assert fila.status == "interrupted" and fila.notified is False
+        padre2.dispatch.assert_awaited_once()
+        assert task_id in padre2.dispatch.await_args.kwargs["prompt"]
+
+
+class TestGuardsDelTramo1:
+    """4.8 — R1/R2: el tramo 1, que sigue vivo dentro del dispatch, no pisa al tramo 2."""
+
+    async def test_resume_dentro_del_dispatch_el_tramo_1_no_pisa_el_estado(self, store) -> None:
+        """R1 (REQ-RES-11 S1): al volver el dispatch la task sigue en el tramo 2."""
+        pool: dict = {}
+        retener = asyncio.Event()
+        entro = asyncio.Event()
+        visto: dict = {}
+
+        async def padre_contesta(kw):
+            pool["r"] = _hijo_continua(retener=retener, entro=entro)
+            visto["id"] = _id_de(kw)
+            visto["handle1"] = asyncio.current_task()
+            await adapter.resume(visto["id"], "inaki", _RESPUESTA)
+            await _esperar(entro)  # el tramo 2 ya corre (max_concurrent=3) mientras sigo acá
+
+        pool["r"] = _hijo_que_pausa()
+        adapter, _ = _armar(store=store, one_shot_for=pool, dispatcher=_Padre(padre_contesta))
+        await adapter.start()
+        await _encolar(adapter)
+        await _hasta(lambda: "handle1" in visto)
+        await asyncio.wait({visto["handle1"]}, timeout=5)  # el tramo 1 terminó del todo
+        await asyncio.sleep(0)
+        task = adapter._tasks[visto["id"]]
+        fila = await store.get(visto["id"], "inaki")
+        estado = (task.status, fila.status, task.notified, task.error)
+        retener.set()
+        await _hasta(lambda: visto["id"] not in adapter._tasks)
+        await adapter.stop()
+
+        assert estado == ("running", "running", True, None)
+        assert fila.error is None and fila.notified is True
+        assert fila.result is None  # ni `delivered` ni la pregunta vieja pisando al tramo 2
+
+    async def test_si_el_dispatch_falla_tras_un_resume_el_tramo_1_no_toca_el_error(
+        self, store, monkeypatch
+    ) -> None:
+        monkeypatch.setattr("inaki.agents.delegation.background_queue._DISPATCH_RETRY_DELAY", 0)
+        pool: dict = {}
+        retener = asyncio.Event()
+        visto: dict = {}
+
+        async def resume_y_falla(kw):
+            if "handle1" not in visto:
+                visto["handle1"] = asyncio.current_task()
+                pool["r"] = _hijo_continua(retener=retener)
+                await adapter.resume(_id_de(kw), "inaki", _RESPUESTA)
+            raise RuntimeError("provider caído")
+
+        pool["r"] = _hijo_que_pausa()
+        padre = _Padre(resume_y_falla, resume_y_falla, resume_y_falla)
+        adapter, _ = _armar(store=store, one_shot_for=pool, dispatcher=padre)
+        await adapter.start()
+        task_id = await _encolar(adapter)
+        await _hasta(lambda: "handle1" in visto)
+        await asyncio.wait({visto["handle1"]}, timeout=5)  # agotó los 3 intentos
+        task = adapter._tasks[task_id]
+        fila = await store.get(task_id, "inaki")
+        estado = (len(padre.llamadas), task.error, task.status)
+        retener.set()
+        await _hasta(lambda: task_id not in adapter._tasks)
+        await adapter.stop()
+
+        assert estado == (3, None, "running")
+        assert fila.error is None and fila.status == "running"
+
+    async def test_la_segunda_pausa_no_la_marca_notificada_el_hook_del_tramo_1(self, store) -> None:
+        """R1 fino: el tramo 2 vuelve a `awaiting_input` MIENTRAS el tramo 1 sigue en su
+        dispatch; el hook del tramo 1 no puede marcar como avisada la pregunta nueva."""
+        pool: dict = {}
+        visto: dict = {}
+        segunda_en_dispatch = asyncio.Event()
+        soltar_segunda = asyncio.Event()
+
+        async def tramo_1(kw):
+            visto["handle1"] = asyncio.current_task()
+            pool["r"] = _hijo_continua(raw=_json_pausa("¿Y la región?"))
+            await adapter.resume(_id_de(kw), "inaki", _RESPUESTA)
+            await _esperar(segunda_en_dispatch)
+
+        async def tramo_2(kw):
+            segunda_en_dispatch.set()
+            await _esperar(soltar_segunda)
+
+        pool["r"] = _hijo_que_pausa()
+        adapter, _ = _armar(store=store, one_shot_for=pool, dispatcher=_Padre(tramo_1, tramo_2))
+        await adapter.start()
+        task_id = await _encolar(adapter)
+        await _hasta(lambda: "handle1" in visto)
+        await asyncio.wait({visto["handle1"]}, timeout=5)  # el hook del tramo 1 ya corrió
+        task = adapter._tasks[task_id]
+        sin_avisar = (task.status, task.notified)
+        fila = await store.get(task_id, "inaki")
+        soltar_segunda.set()
+        await _hasta(lambda: adapter._tasks[task_id].notified)
+        await adapter.stop()
+
+        assert sin_avisar == ("awaiting_input", False)
+        assert fila.notified is False
+        assert adapter._tasks[task_id].question == "¿Y la región?"
+
+    async def test_el_handle_del_tramo_2_sigue_registrado_cancel_lo_corta(self, store) -> None:
+        """R2 (REQ-RES-11 S2): el `_olvidar_handle` del tramo 1 no borra el handle del 2."""
+        pool: dict = {}
+        entro = asyncio.Event()
+        cortado = asyncio.Event()
+        visto: dict = {}
+
+        async def tramo_1(kw):
+            visto["handle1"] = asyncio.current_task()
+            pool["r"] = _hijo_continua(retener=asyncio.Event(), entro=entro, cortado=cortado)
+            await adapter.resume(_id_de(kw), "inaki", _RESPUESTA)
+            await _esperar(entro)
+
+        pool["r"] = _hijo_que_pausa()
+        adapter, _ = _armar(store=store, one_shot_for=pool, dispatcher=_Padre(tramo_1))
+        await adapter.start()
+        task_id = await _encolar(adapter)
+        await _hasta(lambda: "handle1" in visto)
+        await asyncio.wait({visto["handle1"]}, timeout=5)
+        await asyncio.sleep(0)  # los done callbacks del tramo 1 ya corrieron
+        handle2 = adapter._handles.get(task_id)
+
+        salida = await adapter.cancel(task_id, "inaki")
+        await _esperar(cortado)  # el hijo del tramo 2 recibió el corte
+        await adapter.stop()
+
+        assert handle2 is not None and handle2 is not visto["handle1"]
+        assert salida.outcome == "cancelled"
+
+    async def test_stop_espera_y_corta_al_tramo_2_registrado(self, store) -> None:
+        pool: dict = {}
+        entro = asyncio.Event()
+        cortado = asyncio.Event()
+        visto: dict = {}
+
+        async def tramo_1(kw):
+            visto["handle1"] = asyncio.current_task()
+            pool["r"] = _hijo_continua(retener=asyncio.Event(), entro=entro, cortado=cortado)
+            await adapter.resume(_id_de(kw), "inaki", _RESPUESTA)
+            await _esperar(entro)
+
+        pool["r"] = _hijo_que_pausa()
+        adapter, _ = _armar(store=store, one_shot_for=pool, dispatcher=_Padre(tramo_1))
+        await adapter.start()
+        task_id = await _encolar(adapter)
+        await _hasta(lambda: "handle1" in visto)
+        await asyncio.wait({visto["handle1"]}, timeout=5)
+        await asyncio.sleep(0)
+
+        await adapter.stop()
+
+        assert cortado.is_set()
+        fila = await _reabrir_y_leer(store, task_id)
+        assert fila.status == "interrupted"
+
+    async def test_cancel_de_la_re_encolada_no_corta_el_turno_del_padre(self, store) -> None:
+        """Entre el resume y el handle del tramo 2, un cancel NO puede cortar el handle 1: es el
+        turno del padre que está procesando la pregunta."""
+        pool: dict = {}
+        visto: dict = {}
+
+        async def tramo_1(kw):
+            pool["r"] = _hijo_continua()
+            visto["resume"] = await adapter.resume(_id_de(kw), "inaki", _RESPUESTA)
+            visto["cancel"] = await adapter.cancel(_id_de(kw), "inaki")
+            await asyncio.sleep(0)  # un CancelledError pendiente del handle 1 saltaría acá
+            visto["sobrevivio"] = True
+
+        pool["r"] = _hijo_que_pausa()
+        adapter, _ = _armar(store=store, one_shot_for=pool, dispatcher=_Padre(tramo_1))
+        await adapter.start()
+        await _encolar(adapter)
+        await _hasta(lambda: "cancel" in visto)
+        await _hasta(lambda: not adapter._handles)
+        await adapter.stop()
+
+        assert visto["resume"].outcome == "resumed"
+        assert visto["cancel"].outcome == "cancelled"
+        assert visto.get("sobrevivio") is True
+        assert adapter._reanudaciones == {}
+
+    async def test_stop_corta_tambien_al_tramo_1_que_sigue_en_su_dispatch(self, store) -> None:
+        """El tramo 1 en entrega ya no está en `_handles` (el resume lo movió): `stop()` igual
+        lo corta y lo espera."""
+        visto: dict = {}
+        eterno = asyncio.Event()
+        pool: dict = {"r": _hijo_que_pausa()}
+
+        async def tramo_1(kw):
+            visto["handle1"] = asyncio.current_task()
+            pool["r"] = _hijo_continua()
+            await adapter.resume(_id_de(kw), "inaki", _RESPUESTA)
+            visto["resumido"] = True
+            await eterno.wait()  # el padre sigue "procesando" para siempre
+
+        adapter, _ = _armar(
+            store=store, one_shot_for=pool, dispatcher=_Padre(tramo_1), max_concurrent=1
+        )
+        await adapter.start()
+        await _encolar(adapter)
+        await _hasta(lambda: "resumido" in visto)
+
+        await adapter.stop()
+
+        assert visto["handle1"].done()
+
+    async def test_con_max_concurrent_1_el_resume_dentro_del_dispatch_no_hace_deadlock(
+        self, store
+    ) -> None:
+        """REQ-RES-11 S3: el tramo 1 libera el slot al terminar y recién ahí arranca el 2."""
+        pool: dict = {}
+        hijo2 = _hijo_continua()
+
+        async def tramo_1(kw):
+            pool["r"] = hijo2
+            await adapter.resume(_id_de(kw), "inaki", _RESPUESTA)
+
+        pool["r"] = _hijo_que_pausa()
+        adapter, _ = _armar(
+            store=store, one_shot_for=pool, dispatcher=_Padre(tramo_1), max_concurrent=1
+        )
+        await adapter.start()
+        task_id = await _encolar(adapter)
+        await _hasta(lambda: task_id not in adapter._tasks)
+        fila = await store.get(task_id, "inaki")
+        await adapter.stop()
+
+        hijo2.execute.assert_awaited_once()
+        assert fila.status == "delivered"
+
+    async def test_olvidar_handle_solo_borra_el_propio(self) -> None:
+        adapter, _ = _armar()
+        viejo = asyncio.ensure_future(asyncio.sleep(0))
+        nuevo = asyncio.ensure_future(asyncio.sleep(0))
+        await asyncio.gather(viejo, nuevo)
+
+        adapter._handles["bg-1"] = nuevo
+        adapter._olvidar_handle("bg-1", viejo)
+        sigue = adapter._handles.get("bg-1")
+        adapter._olvidar_handle("bg-1", nuevo)
+
+        assert sigue is nuevo
+        assert "bg-1" not in adapter._handles
+
+    async def test_olvidar_handle_tambien_lo_saca_de_en_entrega(self) -> None:
+        adapter, _ = _armar()
+        h = asyncio.ensure_future(asyncio.sleep(0))
+        await h
+        adapter._en_entrega.add(h)
+
+        adapter._olvidar_handle("bg-1", h)
+
+        assert adapter._en_entrega == set()
+
+    async def test_reanudaciones_no_se_filtra_tras_un_corte_ni_un_stop(self, store) -> None:
+        pool: dict = {}
+
+        visto: dict = {}
+
+        async def tramo_1(kw):
+            pool["r"] = _hijo_continua(retener=asyncio.Event())
+            await adapter.resume(_id_de(kw), "inaki", _RESPUESTA)
+            visto["resumido"] = True
+            await asyncio.Event().wait()  # el tramo 1 retiene el slot: el 2 sigue en cola
+
+        pool["r"] = _hijo_que_pausa()
+        adapter, _ = _armar(
+            store=store, one_shot_for=pool, dispatcher=_Padre(tramo_1), max_concurrent=1
+        )
+        await adapter.start()
+        task_id = await _encolar(adapter)
+        await _hasta(lambda: "resumido" in visto)
+        pendientes = dict(adapter._reanudaciones)
+        await adapter.stop()
+
+        assert set(pendientes) == {task_id}
+        assert adapter._reanudaciones == {}
+
+
+async def _reabrir_y_leer(store, task_id: str, caller: str = "inaki"):
+    await store.open()
+    return await store.get(task_id, caller)

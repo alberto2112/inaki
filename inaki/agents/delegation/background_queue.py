@@ -39,7 +39,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Collection, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from functools import partial
@@ -55,8 +55,15 @@ from inaki.agents.delegation.failure_report import (
     tool_calls_sin_par,
     ultimo_paso,
 )
-from inaki.agents.delegation.result_contract import con_footer, render_resultado
+from inaki.agents.delegation.ports import TranscriptNoReanudable
+from inaki.agents.delegation.result_contract import (
+    ResultadoRendido,
+    con_footer,
+    render_pregunta_no_reanudable,
+    render_resultado,
+)
 from inaki.agents.delegation.workdirs import instruccion_para_el_hijo, ruta_relativa
+from inaki.kernel._result_parser import parse_delegation_result
 from inaki.kernel.domain.background_task import (
     BackgroundTask,
     BackgroundTaskStatus,
@@ -65,6 +72,7 @@ from inaki.kernel.domain.background_task import (
     DelegationFailure,
     EnqueuedTask,
     InputFilesRejected,
+    ResumeOutcome,
     TaskInspection,
     WorkdirState,
 )
@@ -124,6 +132,30 @@ class _Desenlace:
     parse_error: bool = False
     failure: DelegationFailure | None = None
     iterations_used: int | None = None
+    # Solo con ``pausa``: el hijo cerró con ``needs_input`` y la task se pausa en
+    # ``awaiting_input`` (snapshot ya hecho) en vez de entregarse. ``content`` es entonces el
+    # ``[bg-N] needs_input: ...`` que se le inyecta al padre.
+    question: str | None = None
+    pausa: bool = False
+    # Solo con ``pausa``: el mensaje para el padre si la pausa no llega a persistirse y hay que
+    # degradarla a una entrega NO reanudable (``_pausar``). Ya lleva el aviso de workdir.
+    content_no_reanudable: str | None = None
+
+
+@dataclass(frozen=True)
+class _Reanudacion:
+    """Lo que viaja en MEMORIA entre ``resume`` y el arranque del tramo 2 (REQ-RES-12).
+
+    Si el proceso muere antes de que el tramo corra, la respuesta se pierde y la task queda
+    ``interrupted`` con aviso: nunca vuelve sola a ``awaiting_input``.
+    """
+
+    respuesta: str
+    # Recorder REABIERTO: trace precargado y ``seq`` en el último valor.
+    recorder: IDelegationTranscript
+    # Mensajes que ya tenía el transcript antes del tramo: el historial previo del hijo y el
+    # ``desde_seq`` del snapshot si el tramo vuelve a pausar.
+    n_previos: int
 
 
 def _tarea_del_hijo(task: BackgroundTask) -> str:
@@ -168,6 +200,29 @@ def _fallo_interno(task: BackgroundTask, tipo: str) -> tuple[str, DelegationFail
         )
 
 
+def _render_pregunta_reenviada(task: BackgroundTask) -> str:
+    """Mensaje al padre con la pregunta de una ``awaiting_input`` que nunca le llegó (REQ-BGD-14).
+
+    Reusa el ``[bg-N] needs_input: ...`` persistido (ya trae cómo continuar y el workdir) y
+    le avisa que es un reenvío, para que no lo trate como una pregunta nueva.
+    """
+    base = task.result or f"[{task.id}] needs_input: {task.question or '(question unavailable)'}"
+    return (
+        f"{base}\n\n(Re-sent after a daemon restart: this question was still pending and "
+        "the child is still waiting for the answer.)"
+    )
+
+
+def _sigue_en_la_pausa(task: BackgroundTask, pausada_en: datetime) -> bool:
+    """¿La task sigue en la pausa que se marcó en ``pausada_en``?
+
+    El tramo 1 queda vivo dentro del dispatch de su pregunta mientras el padre puede reanudar la
+    task y el tramo 2 volver a pausar: el estado solo no distingue una pausa de otra, el
+    ``finished_at`` (que cada pausa fija y cada resume limpia) sí.
+    """
+    return task.status == "awaiting_input" and task.finished_at == pausada_en
+
+
 def _iteraciones_usadas(trace: list[Message]) -> int:
     """Iteraciones del tool loop = respuestas del LLM en el transcript."""
     return sum(1 for m in trace if m.role is Role.ASSISTANT)
@@ -195,6 +250,13 @@ class BackgroundDelegationQueueAdapter:
         # asyncio.Task de cada delegación lanzada por el consumer: es lo que
         # ``cancel`` corta. Se limpia sola al terminar (done callback).
         self._handles: dict[str, asyncio.Task] = {}
+        # Handles de tramos 1 que ``resume`` sacó de ``_handles`` mientras seguían dentro del
+        # dispatch de la pregunta (el turno del padre que la procesa): ``cancel`` no debe
+        # cortarlos, pero ``stop`` sí tiene que cortarlos y esperarlos.
+        self._en_entrega: set[asyncio.Task] = set()
+        # Ids con un ``resume`` en curso (reservados) y las respuestas esperando su tramo 2.
+        self._reanudando: set[str] = set()
+        self._reanudaciones: dict[str, _Reanudacion] = {}
         self._queue: asyncio.Queue[BackgroundTask] = asyncio.Queue()
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._consumer_task: asyncio.Task | None = None
@@ -393,6 +455,15 @@ class BackgroundDelegationQueueAdapter:
         if task.status == "delivering":
             return CancelOutcome(outcome="delivering", task_id=task_id)
         ahora = datetime.now(timezone.utc)
+        if task.status == "awaiting_input":
+            # Nada corre: la pregunta se abandona. Sin ``handle.cancel()``: el handle del tramo 1
+            # puede seguir dentro del dispatch, o sea, ser el turno del padre que la procesa.
+            resultado = task.result
+            await self._transicionar(task, "dismissed", notified=True)
+            logger.info("background-delegation %s: descartada (esperaba respuesta)", task_id)
+            return CancelOutcome(
+                outcome="dismissed", task_id=task_id, result=resultado, status="awaiting_input"
+            )
         if task.status in ("delivery_failed", "interrupted"):
             # Nada corre: se descarta devolviendo lo que tuviera guardado, para que
             # quien la descarta no pierda el trabajo del hijo.
@@ -434,9 +505,227 @@ class BackgroundDelegationQueueAdapter:
         if fila.status == "delivering":
             # Ya salió del dict (se entregó) pero el UPDATE final todavía no se aplicó.
             return CancelOutcome(outcome="delivering", task_id=task_id)
+        if fila.status == "awaiting_input":
+            # Solo está en el store (la rehidratación falló): se descarta igual.
+            try:
+                await self._store.update(task_id, status="dismissed", notified=True)
+            except Exception as exc:  # noqa: BLE001 — cancel nunca lanza por el disco
+                self._loguear_perdida(
+                    task_id,
+                    f"no se pudo descartar la pregunta pendiente ({type(exc).__name__}: {exc}); "
+                    "se responde que no la tiene",
+                )
+                return no_encontrada
+            return CancelOutcome(
+                outcome="dismissed", task_id=task_id, result=fila.result, status="awaiting_input"
+            )
         if fila.status in _ESTADOS_TERMINADOS:
             return CancelOutcome(outcome="finished", task_id=task_id, status=fila.status)
         return no_encontrada
+
+    async def resume(
+        self,
+        task_id: str,
+        caller_agent_id: str,
+        answer: str,
+        *,
+        target_agent_id: str | None = None,
+        allowed_targets: Collection[str] = (),
+    ) -> ResumeOutcome:
+        """Reanuda una task en ``awaiting_input`` con ``answer`` (ver ``IBackgroundDelegationQueue``).
+
+        Decisión y reserva son SÍNCRONAS sobre el dict (sin ``await`` entre el chequeo y
+        ``_reanudando.add``): dos resume simultáneos no pueden ganar los dos. La carga del
+        transcript sí es un ``await``, así que después se re-chequea todo lo que pudo cambiar
+        (un ``cancel``, un ``stop``). Solo ``resumed`` cambia el estado de la fila; la única otra
+        mutación es la marca ``transcript_incomplete`` cuando la reapertura detecta un
+        historial inconsistente.
+        """
+        task = self._tasks.get(task_id)
+        if task is None or task.caller_agent_id != caller_agent_id:
+            return await self._resume_de_no_viva(task_id, caller_agent_id)
+        rechazo = self._rechazo_de_resume(task, target_agent_id, allowed_targets)
+        if rechazo is not None:
+            return rechazo
+        assert self._store is not None  # _rechazo_de_resume lo garantiza
+        self._reanudando.add(task_id)
+        recorder: IDelegationTranscript | None = None
+        inconsistente: TranscriptNoReanudable | None = None
+        try:
+            try:
+                recorder = await self._store.reabrir_transcript(task_id)
+            except TranscriptNoReanudable as exc:
+                inconsistente = exc
+            except Exception as exc:  # noqa: BLE001 — el disco no puede romper al padre
+                self._loguear_perdida(
+                    task_id,
+                    f"no se pudo reabrir el transcript para reanudar ({type(exc).__name__}: "
+                    f"{exc}); la task sigue esperando respuesta, se puede reintentar",
+                )
+                return ResumeOutcome(
+                    outcome="unavailable",
+                    task_id=task_id,
+                    detail="the transcript store failed while resuming; it can be retried",
+                )
+            # Re-chequeo SINCRÓNICO: durante el await pudo llegar un cancel o un stop.
+            if not self._sigue_esperando(task):
+                return ResumeOutcome(outcome="not_awaiting", task_id=task_id, status=task.status)
+            if inconsistente is not None:
+                self._loguear_perdida(
+                    task_id,
+                    f"el transcript persistido no permite reanudar ({inconsistente.motivo}); la "
+                    "task queda marcada transcript_incomplete y solo se puede cancelar",
+                )
+                await self._marcar_transcript_incompleto(task)
+                # El motivo del store está en español y ya quedó en el log: al LLM le llega
+                # un texto fijo en inglés (el ``detail`` entra tal cual en su tool result).
+                return ResumeOutcome(
+                    outcome="transcript_incomplete",
+                    task_id=task_id,
+                    detail="its saved transcript is inconsistent",
+                )
+            if not self._consumer_vivo():
+                return self._resume_no_disponible(task_id)
+            assert recorder is not None
+            return await self._reencolar(task, recorder, answer)
+        finally:
+            self._reanudando.discard(task_id)
+
+    async def _reencolar(
+        self, task: BackgroundTask, recorder: IDelegationTranscript, answer: str
+    ) -> ResumeOutcome:
+        """``awaiting_input`` → ``queued`` con la respuesta lista para el tramo 2.
+
+        Todo lo previo al primer ``await`` de ``_transicionar`` es síncrono: ningún otro resume,
+        ``cancel`` ni ``stop`` ve un estado intermedio. El handle del tramo 1, si todavía está
+        dentro del dispatch de la pregunta, pasa a ``_en_entrega``: así un ``cancel`` de la task
+        re-encolada no corta el turno del padre, y el handle que registre el consumer para el
+        tramo 2 no choca con él.
+        """
+        restantes = task.max_iterations - (task.iterations_used or 0)
+        self._reanudaciones[task.id] = _Reanudacion(
+            respuesta=answer, recorder=recorder, n_previos=len(recorder.trace)
+        )
+        task.question = None
+        handle1 = self._handles.pop(task.id, None)
+        if handle1 is not None:
+            self._en_entrega.add(handle1)
+        await self._transicionar(
+            task,
+            "queued",
+            result=None,
+            error=None,
+            failure=None,
+            result_status=None,
+            result_parse_error=False,
+            finished_at=None,
+            notified=True,
+        )
+        if self._tasks.get(task.id) is not task or task.status != "queued":
+            # Un cancel/stop se coló durante la escritura: el tramo 2 ya no corre.
+            return ResumeOutcome(outcome="not_awaiting", task_id=task.id, status=task.status)
+        self._queue.put_nowait(task)
+        logger.info(
+            "background-delegation %s: reanudada (le quedan %d iteraciones)", task.id, restantes
+        )
+        return ResumeOutcome(
+            outcome="resumed",
+            task_id=task.id,
+            target_agent_id=task.target_agent_id,
+            iterations_left=restantes,
+        )
+
+    def _sigue_esperando(self, task: BackgroundTask) -> bool:
+        return self._tasks.get(task.id) is task and task.status == "awaiting_input"
+
+    def _consumer_vivo(self) -> bool:
+        return self._consumer_task is not None and not self._consumer_task.done()
+
+    @staticmethod
+    def _resume_no_disponible(task_id: str) -> ResumeOutcome:
+        return ResumeOutcome(
+            outcome="unavailable",
+            task_id=task_id,
+            detail="the background queue is not running; try again later",
+        )
+
+    def _rechazo_de_resume(
+        self, task: BackgroundTask, target_agent_id: str | None, allowed_targets: Collection[str]
+    ) -> ResumeOutcome | None:
+        """Precondiciones SINCRÓNICAS de ``resume`` sobre una task viva del caller.
+
+        ``None`` = se puede reservar. Ningún rechazo cambia el estado de la task. Los chequeos
+        van de lo que el padre puede corregir a lo que no: estado, reserva ajena, transcript,
+        presupuesto, y recién entonces target y consumer.
+        """
+        if task.status != "awaiting_input":
+            return ResumeOutcome(outcome="not_awaiting", task_id=task.id, status=task.status)
+        if task.id in self._reanudando:
+            return ResumeOutcome(outcome="already_resuming", task_id=task.id)
+        if self._es_transcript_incompleto(task):
+            return ResumeOutcome(
+                outcome="transcript_incomplete",
+                task_id=task.id,
+                detail="its saved transcript is incomplete",
+            )
+        if task.max_iterations - (task.iterations_used or 0) < 1:
+            return ResumeOutcome(outcome="no_iterations_left", task_id=task.id)
+        if target_agent_id is not None and target_agent_id != task.target_agent_id:
+            return ResumeOutcome(
+                outcome="target_mismatch", task_id=task.id, target_agent_id=task.target_agent_id
+            )
+        if allowed_targets and task.target_agent_id not in allowed_targets:
+            return ResumeOutcome(
+                outcome="target_not_allowed", task_id=task.id, target_agent_id=task.target_agent_id
+            )
+        try:
+            resoluble = self._one_shot_resolver(task.caller_agent_id, task.target_agent_id)
+        except Exception:  # noqa: BLE001 — una config rota es un target que no se resuelve
+            resoluble = None
+        if resoluble is None:
+            return ResumeOutcome(
+                outcome="unknown_target", task_id=task.id, target_agent_id=task.target_agent_id
+            )
+        if self._store is None or not self._consumer_vivo():
+            return self._resume_no_disponible(task.id)
+        return None
+
+    async def _resume_de_no_viva(self, task_id: str, caller_agent_id: str) -> ResumeOutcome:
+        """``resume`` de algo que no está en el dict: lo dice el store.
+
+        ``not_found`` cubre inexistente, podada y de otro caller sin distinguirlas (el id es
+        monotónico: una ausente por debajo del máximo se podó, y "no la tengo" es cierto en
+        todos los casos). Una ``bg-m*`` nunca tuvo registro durable: se dice, sin afirmar que no
+        existió.
+        """
+        if task_id.startswith("bg-m") or self._store is None or task_id in self._sin_persistir:
+            return ResumeOutcome(
+                outcome="not_found", task_id=task_id, detail="it has no durable record"
+            )
+        try:
+            fila = await self._store.get(task_id, caller_agent_id)
+        except Exception as exc:  # noqa: BLE001 — resume nunca lanza por el disco
+            self._loguear_perdida(
+                task_id,
+                f"no se pudo consultar el store para reanudar ({type(exc).__name__}: {exc})",
+            )
+            return ResumeOutcome(
+                outcome="unavailable",
+                task_id=task_id,
+                detail="the task store failed while resuming; it can be retried",
+            )
+        if fila is None:
+            return ResumeOutcome(outcome="not_found", task_id=task_id)
+        if fila.status != "awaiting_input":
+            return ResumeOutcome(outcome="not_awaiting", task_id=task_id, status=fila.status)
+        # Espera respuesta pero este proceso no la tiene cargada (la rehidratación falló):
+        # reanudarla a ciegas saltearía las precondiciones que viven en el dict.
+        return ResumeOutcome(
+            outcome="unavailable",
+            task_id=task_id,
+            detail="it is waiting for an answer but is not loaded in this process; "
+            "try again after a restart",
+        )
 
     async def inspect(
         self, task_id: str, caller_agent_id: str, *, last_n: int
@@ -565,7 +854,10 @@ class BackgroundDelegationQueueAdapter:
             await self._consumer_task
         self._consumer_task = None
         self._marcar_interrumpidas_en_el_dict()
-        handles = list(self._handles.values())
+        # Las respuestas de los resume que no llegaron a correr se pierden con el proceso: la
+        # task queda ``interrupted`` y el padre se entera (REQ-RES-12).
+        self._reanudaciones.clear()
+        handles = list({*self._handles.values(), *self._en_entrega})
         for handle in handles:
             handle.cancel()
         if handles:
@@ -594,8 +886,11 @@ class BackgroundDelegationQueueAdapter:
             self._handles[task.id] = handle
             handle.add_done_callback(partial(self._olvidar_handle, task.id))
 
-    def _olvidar_handle(self, task_id: str, _handle: asyncio.Task) -> None:
-        self._handles.pop(task_id, None)
+    def _olvidar_handle(self, task_id: str, handle: asyncio.Task) -> None:
+        """Olvida SOLO el handle que terminó: el del tramo 1 no puede borrar el del tramo 2."""
+        if self._handles.get(task_id) is handle:
+            del self._handles[task_id]
+        self._en_entrega.discard(handle)
 
     # -- store ---------------------------------------------------------------
 
@@ -735,19 +1030,21 @@ class BackgroundDelegationQueueAdapter:
             await tarea
 
     async def _avisar_tras_arranque(self) -> None:
-        """Un aviso por (caller, canal, chat): interrumpidas y entregas barridas sin avisar.
+        """Un aviso por (caller, canal, chat): interrumpidas, entregas barridas y preguntas.
 
         Las interrumpidas y las ``delivery_failed`` que dejó el barrido de arranque tienen
         ``notified=False`` (una ``delivery_failed`` de runtime ya es visible en el prompt y
-        no lo necesita). Cada conversación es independiente: el fallo de una no frena a
-        las demás.
+        no lo necesita). Las ``awaiting_input`` sin notificar (el daemon murió entre persistir
+        la pausa y despachar la pregunta, o el dispatch falló) se re-despachan AGRUPADAS por
+        conversación, igual que las interrumpidas. Cada conversación es independiente: el
+        fallo de una no frena a las demás.
         """
         if self._store is None:
             return
         pendientes = [
             t
             for t in self._tasks.values()
-            if not t.notified and t.status in ("interrupted", "delivery_failed")
+            if not t.notified and t.status in ("interrupted", "delivery_failed", "awaiting_input")
         ]
         grupos: dict[tuple[str, str, str], list[BackgroundTask]] = {}
         for t in sorted(pendientes, key=lambda t: t.started_at):
@@ -791,7 +1088,14 @@ class BackgroundDelegationQueueAdapter:
     async def _avisar_conversacion(self, tasks: list[BackgroundTask]) -> None:
         interrumpidas = [t for t in tasks if t.status == "interrupted"]
         barridas = [t for t in tasks if t.status == "delivery_failed"]
-        aviso = render_aviso_interrupcion(interrumpidas, barridas)
+        preguntas = [t for t in tasks if t.status == "awaiting_input"]
+        partes = (
+            [render_aviso_interrupcion(interrumpidas, barridas)]
+            if (interrumpidas or barridas)
+            else []
+        )
+        partes.extend(_render_pregunta_reenviada(t) for t in preguntas)
+        aviso = "\n\n".join(partes)
 
         async def marcar() -> None:
             await self._marcar_avisadas(tasks)
@@ -800,7 +1104,7 @@ class BackgroundDelegationQueueAdapter:
         if error is not None:
             logger.error(
                 "background-delegation: no se pudo avisar a '%s' (%s:%s) de %d delegación(es) "
-                "cortada(s) por el reinicio (%s: %s); siguen sin avisar y se reintenta en el "
+                "pendiente(s) tras el reinicio (%s: %s); siguen sin avisar y se reintenta en el "
                 "próximo arranque",
                 tasks[0].caller_agent_id,
                 tasks[0].channel,
@@ -927,12 +1231,16 @@ class BackgroundDelegationQueueAdapter:
 
         ``delivery_failed`` (su resultado solo vive acá hasta que se descarte) e
         ``interrupted`` sin avisar: el padre las ve en ``snapshot_inflight`` y las
-        resuelve con ``cancel``. Las demás terminales se consultan con ``inspect``.
+        resuelve con ``cancel``. ``awaiting_input`` (no terminal, sobrevive al reinicio) vuelve
+        con su pregunta, recuperada del transcript. Las demás terminales se consultan con
+        ``inspect``.
         """
         if self._store is None:
             return
         try:
-            filas = await self._store.list_by_status(["delivery_failed", "interrupted"])
+            filas = await self._store.list_by_status(
+                ["delivery_failed", "interrupted", "awaiting_input"]
+            )
         except Exception as exc:  # noqa: BLE001
             self._loguear_perdida(
                 "rehidratación",
@@ -943,7 +1251,37 @@ class BackgroundDelegationQueueAdapter:
         for fila in filas:
             if fila.status == "interrupted" and fila.notified:
                 continue
+            if fila.status == "awaiting_input":
+                fila.question = await self._recuperar_pregunta(fila)
             self._tasks[fila.id] = fila
+
+    async def _recuperar_pregunta(self, fila: BackgroundTask) -> str | None:
+        """La pregunta de una ``awaiting_input`` rehidratada, del último mensaje del transcript.
+
+        No hay columna (sin migración): el último mensaje es el cierre ``needs_input`` del
+        hijo, completo gracias al snapshot. Si no se puede recuperar la task se rehidrata igual
+        (sigue siendo reanudable) pero sin pregunta que mostrar en list/inspect: ERROR.
+        """
+        assert self._store is not None
+        try:
+            pasos, _ = await self._store.messages(fila.id, last_n=1)
+            cierre = parse_delegation_result(pasos[-1].content) if pasos else None
+        except Exception as exc:  # noqa: BLE001 — una pregunta ilegible no tumba el arranque
+            self._loguear_perdida(
+                fila.id,
+                f"no se pudo leer la pregunta pendiente del transcript ({type(exc).__name__}: "
+                f"{exc}); la task sigue esperando respuesta pero list/inspect no la mostrarán",
+            )
+            return None
+        pregunta = ((cierre.question if cierre else None) or "").strip()
+        if cierre is None or cierre.status != "needs_input" or not pregunta:
+            self._loguear_perdida(
+                fila.id,
+                "el último mensaje del transcript no trae la pregunta pendiente; la task sigue "
+                "esperando respuesta pero list/inspect no la mostrarán",
+            )
+            return None
+        return pregunta
 
     def _loguear_perdida(self, task_id: str, que_se_pierde: str) -> None:
         """ERROR que nombra la capacidad perdida (REQ-BGP-8, decisión R1: ERROR y no WARNING)."""
@@ -964,6 +1302,9 @@ class BackgroundDelegationQueueAdapter:
             setattr(task, nombre, valor)
         if estado in _TERMINALES:
             self._tasks.pop(task.id, None)
+        if estado in _TERMINALES or estado == "interrupted":
+            # Una respuesta que no llegó a correr no puede sobrevivir a la task.
+            self._reanudaciones.pop(task.id, None)
         await self._persistir(task, status=estado, **campos)
 
     async def _persistir(self, task: BackgroundTask, **campos: Any) -> None:
@@ -1066,9 +1407,18 @@ class BackgroundDelegationQueueAdapter:
         Una cancelación (``cancel``) llega como ``CancelledError`` en cualquier
         ``await`` de la fase del hijo; ``except Exception`` no la atrapa, así que
         se propaga limpia y el ``async with`` libera el slot del semáforo.
+
+        Si el hijo cerró con ``needs_input`` el ciclo no entrega: ``_pausar`` deja la task en
+        ``awaiting_input`` y devuelve (REQ-RES-1/4). Si la pausa no llegó a persistirse,
+        ``_pausar`` devuelve el desenlace NO reanudable y el ciclo lo entrega por el camino común.
         """
         await self._transicionar(task, "running", run_started_at=datetime.now(timezone.utc))
         desenlace = await self._ejecutar_hijo(task)
+        if desenlace.pausa:
+            degradado = await self._pausar(task, desenlace)
+            if degradado is None:
+                return
+            desenlace = degradado
 
         # Sin await entre el fin del hijo y este cambio: ``cancel`` ve
         # ``running`` o ``delivering``, nunca un estado intermedio. El resultado se
@@ -1100,6 +1450,109 @@ class BackgroundDelegationQueueAdapter:
             exc_info=ultimo_error,
         )
 
+    async def _pausar(self, task: BackgroundTask, desenlace: "_Desenlace") -> "_Desenlace | None":
+        """``running`` → ``awaiting_input`` y aviso al padre de la pregunta (REQ-RES-2, REQ-RES-4).
+
+        El snapshot ya está hecho (``_desenlace_de_pausa``): acá solo se persiste el estado y
+        recién entonces se despacha, así que un resume del padre nunca lee antes del snapshot.
+        ``awaiting_input`` NO es terminal: la task sigue en el dict y no se purga.
+
+        La pregunta se fija sincrónicamente ANTES de transicionar: ``question`` no es columna
+        del store, así que no puede ir en los ``campos`` de ``_transicionar``. ``finished_at``
+        es la marca de la pausa: la retención poda ``awaiting_input`` por
+        ``COALESCE(finished_at, created_at)``, o sea, 14 días desde acá (el resume lo limpia).
+
+        Todo lo posterior a la transición está aislado: el estado ya NO es ``running`` y
+        ``_rescatar_task_atascada`` lo pisaría. Un dispatch fallido deja la task en
+        ``awaiting_input`` (no ``delivery_failed``: ``cancel`` la descartaría) con ``error`` y
+        ``notified=False``; el próximo arranque re-despacha la pregunta.
+
+        Si la transición a ``awaiting_input`` no se pudo escribir (la task pasó a
+        ``_sin_persistir``), la fila sigue ``running`` en disco: un reinicio perdería la pausa y
+        ``resume`` la rechazaría. Prometerle al padre un ``delegate(resume=...)`` sería mentirle,
+        así que NO se despacha nada acá: se devuelve el desenlace no reanudable (la misma
+        degradación que un snapshot fallido) y el ciclo lo entrega por el camino común.
+        Devuelve ``None`` cuando la pausa quedó hecha.
+        """
+        task.question = desenlace.question
+        pausada_en = datetime.now(timezone.utc)
+        await self._transicionar(
+            task,
+            "awaiting_input",
+            result=desenlace.content,
+            result_status="needs_input",
+            finished_at=pausada_en,
+            iterations_used=desenlace.iterations_used,
+            error=None,
+            notified=False,
+        )
+        if task.id in self._sin_persistir and _sigue_en_la_pausa(task, pausada_en):
+            self._loguear_perdida(
+                task.id,
+                "no se pudo persistir la pausa (awaiting_input): la task NO es reanudable (un "
+                "reinicio la perdería); se entrega la pregunta como resultado final",
+            )
+            assert desenlace.content_no_reanudable is not None  # lo arma _desenlace_de_pausa
+            task.question = None
+            return _Desenlace(
+                content=desenlace.content_no_reanudable,
+                result_status="needs_input",
+                iterations_used=desenlace.iterations_used,
+            )
+        try:
+            ultimo_error = await self._dispatch_al_scope(
+                task,
+                desenlace.content,
+                tras_dispatch=partial(self._marcar_pregunta_notificada, task, pausada_en),
+            )
+            if ultimo_error is None:
+                return None
+            if not _sigue_en_la_pausa(task, pausada_en):
+                logger.warning(
+                    "background-delegation %s: el aviso de la pregunta falló (%s: %s) pero la "
+                    "task ya no está en esa pausa (%s); no se toca",
+                    task.id,
+                    type(ultimo_error).__name__,
+                    ultimo_error,
+                    task.status,
+                )
+                return None
+            task.error = f"{type(ultimo_error).__name__}: {ultimo_error}"
+            await self._persistir(task, error=task.error)
+            logger.error(
+                "background-delegation %s: no se pudo avisar al padre de la pregunta del hijo "
+                "tras %d intentos (último error: %s); la task sigue en awaiting_input sin "
+                "notificar y se reintenta en el próximo arranque",
+                task.id,
+                _DISPATCH_ATTEMPTS,
+                task.error,
+                exc_info=ultimo_error,
+            )
+        except Exception as exc:  # noqa: BLE001 — nunca al rescate: ya no está running
+            logger.error(
+                "background-delegation %s: excepción al avisar de la pregunta del hijo "
+                "(%s: %s); la task sigue en %s y se reintenta en el próximo arranque",
+                task.id,
+                type(exc).__name__,
+                exc,
+                task.status,
+                exc_info=exc,
+            )
+        return None
+
+    async def _marcar_pregunta_notificada(self, task: BackgroundTask, pausada_en: datetime) -> None:
+        """Hook de ``_dispatch_al_scope`` tras el dispatch de la pregunta. Nunca lanza.
+
+        Marca ``notified`` SOLO si la task sigue en LA pausa que este tramo avisó: si el padre
+        la reanudó o descartó dentro del propio dispatch, el estado que quedó no es de este
+        tramo y no se pisa (REQ-RES-11, R1) —ni siquiera si el tramo 2 ya volvió a
+        ``awaiting_input`` con otra pregunta—.
+        """
+        if not _sigue_en_la_pausa(task, pausada_en):
+            return
+        task.notified = True
+        await self._persistir(task, notified=True)
+
     async def _ejecutar_hijo(self, task: BackgroundTask) -> "_Desenlace":
         """Corre al hijo y devuelve lo que se le entrega al padre (éxito o fallo honesto).
 
@@ -1113,9 +1566,15 @@ class BackgroundDelegationQueueAdapter:
         (nunca ``str(exc)`` crudo). ``CancelledError`` no es ``Exception``: la
         cancelación (``cancel``/``stop``) se propaga limpia.
         """
-        recorder = self._recorder_de(task)
+        reanudacion = self._reanudaciones.pop(task.id, None)
+        recorder = reanudacion.recorder if reanudacion is not None else self._recorder_de(task)
         try:
-            return await self._correr_hijo(task, recorder)
+            return await self._correr_hijo(
+                task,
+                recorder,
+                desde_seq=reanudacion.n_previos if reanudacion is not None else 0,
+                respuesta=reanudacion.respuesta if reanudacion is not None else None,
+            )
         finally:
             if getattr(recorder, "incompleto", False):
                 await self._marcar_transcript_incompleto(task)
@@ -1132,10 +1591,25 @@ class BackgroundDelegationQueueAdapter:
         await self._persistir(task, transcript_incomplete=True)
 
     async def _correr_hijo(
-        self, task: BackgroundTask, recorder: IDelegationTranscript
+        self,
+        task: BackgroundTask,
+        recorder: IDelegationTranscript,
+        *,
+        desde_seq: int = 0,
+        respuesta: str | None = None,
     ) -> "_Desenlace":
         """Cuerpo de ``_ejecutar_hijo``: separado para que el flag de transcript incompleto
-        se anote también si el hijo se corta (``CancelledError``)."""
+        se anote también si el hijo se corta (``CancelledError``).
+
+        ``desde_seq`` es cuántos mensajes tiene el transcript ANTES de este tramo (0 en el
+        primero): el snapshot de una pausa solo reescribe las filas del tramo actual.
+
+        Con ``respuesta`` es el TRAMO 2 de una reanudación: el hijo recibe el historial ya
+        persistido (``recorder.trace[:desde_seq]``, una copia tomada justo antes de ejecutar)
+        más la respuesta como siguiente turno del usuario. El presupuesto es el de la FILA
+        (inmutable) menos lo ya gastado —el tool loop solo cuenta las iteraciones del tramo
+        nuevo—, y el timeout se renueva por tramo.
+        """
         inicio = time.monotonic()
         try:
             one_shot = self._one_shot_resolver(task.caller_agent_id, task.target_agent_id)
@@ -1147,13 +1621,26 @@ class BackgroundDelegationQueueAdapter:
                     task.target_agent_id,
                 )
                 return _Desenlace(content=render_fallo(task, falla), failure=falla)
-            raw = await one_shot.execute(
-                task=_tarea_del_hijo(task),
-                system_prompt=con_footer(task.system_prompt, por_defecto=one_shot.system_prompt),
-                max_iterations=task.max_iterations,
-                timeout_seconds=task.timeout_seconds,
-                recorder=recorder,
+            system_prompt = con_footer(
+                task.system_prompt, por_defecto=one_shot.system_prompt, puede_pausar=True
             )
+            if respuesta is None:
+                raw = await one_shot.execute(
+                    task=_tarea_del_hijo(task),
+                    system_prompt=system_prompt,
+                    max_iterations=task.max_iterations,
+                    timeout_seconds=task.timeout_seconds,
+                    recorder=recorder,
+                )
+            else:
+                raw = await one_shot.execute(
+                    task=respuesta,
+                    system_prompt=system_prompt,
+                    max_iterations=task.max_iterations - (task.iterations_used or 0),
+                    timeout_seconds=task.timeout_seconds,
+                    recorder=recorder,
+                    historial_previo=recorder.trace[:desde_seq],
+                )
         except Exception as exc:  # noqa: BLE001
             falla = clasificar_fallo(exc, recorder.trace, task, time.monotonic() - inicio)
             logger.warning(
@@ -1164,13 +1651,109 @@ class BackgroundDelegationQueueAdapter:
                 failure=falla,
                 iterations_used=falla.iterations_used,
             )
-        rendido = render_resultado(task.id, raw)
+        rendido = render_resultado(
+            task.id,
+            raw,
+            puede_pausar=True,
+            workdir=ruta_relativa(task.workdir) if task.workdir else None,
+        )
+        if rendido.question is not None:
+            return await self._desenlace_de_pausa(task, recorder, rendido, desde_seq=desde_seq)
         return _Desenlace(
             content=_con_aviso_de_workdir(task, rendido.content),
             result_status=rendido.result_status,
             parse_error=rendido.parse_error,
             iterations_used=_iteraciones_usadas(recorder.trace),
         )
+
+    async def _desenlace_de_pausa(
+        self,
+        task: BackgroundTask,
+        recorder: IDelegationTranscript,
+        rendido: ResultadoRendido,
+        *,
+        desde_seq: int,
+    ) -> "_Desenlace":
+        """Decide si el ``needs_input`` del hijo se puede pausar de verdad (REQ-RES-2/3).
+
+        Pausar es prometerle al padre una continuación, así que solo se pausa si hay con qué
+        cumplirla: transcript durable y entero (snapshot hecho) y al menos una iteración de
+        presupuesto. Si no, la pregunta se entrega igual pero como ``delivered`` y con un
+        mensaje que dice la verdad (``render_pregunta_no_reanudable``), nunca prometiendo un
+        ``delegate(resume=...)`` que fallaría. Cada causa deja un ERROR que nombra la
+        capacidad perdida.
+
+        Cualquier excepción del snapshot —también el ``ValueError`` de un trace desalineado
+        con el disco— es un snapshot fallido: la task NO es reanudable y queda marcada
+        ``transcript_incomplete``. Se mira primero ``recorder.incompleto`` para que el log
+        nombre la causa real y no el síntoma.
+        """
+        usadas = _iteraciones_usadas(recorder.trace)
+        motivo = self._motivo_sin_pausa(task, recorder, usadas)
+        if motivo is None:
+            assert self._store is not None  # _motivo_sin_pausa lo garantiza
+            try:
+                await self._store.snapshot_completo(task.id, recorder.trace, desde_seq=desde_seq)
+            except Exception as exc:  # noqa: BLE001 — un snapshot fallido = no reanudable
+                motivo = "its transcript could not be saved in full"
+                self._loguear_perdida(
+                    task.id,
+                    f"el snapshot del transcript falló al pausar el needs_input "
+                    f"({type(exc).__name__}: {exc}); la task NO es reanudable y se entrega la "
+                    "pregunta como resultado final",
+                )
+                await self._marcar_transcript_incompleto(task)
+        if motivo is not None:
+            content = _con_aviso_de_workdir(
+                task, render_pregunta_no_reanudable(task.id, rendido, motivo)
+            )
+            return _Desenlace(content=content, result_status="needs_input", iterations_used=usadas)
+        return _Desenlace(
+            content=rendido.content,
+            result_status="needs_input",
+            iterations_used=usadas,
+            question=rendido.question,
+            pausa=True,
+            content_no_reanudable=_con_aviso_de_workdir(
+                task,
+                render_pregunta_no_reanudable(
+                    task.id, rendido, "its paused state could not be saved"
+                ),
+            ),
+        )
+
+    def _motivo_sin_pausa(
+        self, task: BackgroundTask, recorder: IDelegationTranscript, usadas: int
+    ) -> str | None:
+        """Por qué NO se puede pausar (texto para el padre), o ``None`` si se puede.
+
+        Los chequeos previos al snapshot, en orden de causa: sin disco, transcript cortado, sin
+        presupuesto. Loguea la causa; el snapshot en sí lo hace el caller.
+        """
+        if self._store is None or task.id.startswith("bg-m") or task.id in self._sin_persistir:
+            self._loguear_perdida(
+                task.id,
+                "needs_input sin pausa: la delegación no tiene transcript durable, no se puede "
+                "reanudar; se entrega la pregunta como resultado final",
+            )
+            return "it has no durable transcript to resume from"
+        if getattr(recorder, "incompleto", False):
+            self._loguear_perdida(
+                task.id,
+                "needs_input sin pausa: el transcript quedó incompleto por un fallo del disco, "
+                "no se puede reanudar; se entrega la pregunta como resultado final",
+            )
+            return "its transcript is incomplete"
+        if task.max_iterations - usadas < 1:
+            logger.warning(
+                "background-delegation %s: needs_input sin pausa: el hijo usó %d de %d "
+                "iteraciones y no queda presupuesto para continuar con la respuesta",
+                task.id,
+                usadas,
+                task.max_iterations,
+            )
+            return "no iterations left in its budget"
+        return None
 
     def _recorder_de(self, task: BackgroundTask) -> IDelegationTranscript:
         """Recorder SQLite de la task, o uno nulo si no hay dónde persistir (``bg-m*``,

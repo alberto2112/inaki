@@ -1049,3 +1049,176 @@ async def test_con_recorder_el_loop_recibe_el_trace_del_recorder_y_un_persist():
         _, kwargs = mock_loop.call_args
         assert kwargs["tool_trace"] is recorder.trace
         assert callable(kwargs["persist_message"])
+
+
+# ---------------------------------------------------------------------------
+# delegation-resume — historial_previo (reanudación de un hijo pausado, REQ-RES-5)
+# ---------------------------------------------------------------------------
+
+
+def _historial_pausado() -> list[Message]:
+    """Lo que un hijo dejó al pausar: user, assistant+tool_calls, tool result, pregunta final."""
+    return [
+        Message(role=Role.USER, content="investigá X"),
+        Message(role=Role.ASSISTANT, content="voy a mirar", tool_calls=[_tool_call("c1", "ls")]),
+        Message(role=Role.TOOL, content="a.txt", tool_call_id="c1"),
+        Message(role=Role.ASSISTANT, content="¿Cuál de los dos formatos preferís?"),
+    ]
+
+
+async def test_historial_previo_llega_al_llm_en_orden_seguido_del_user_nuevo():
+    """REQ-RES-5: el hijo ve lo que ya había hecho y, al final, la respuesta recibida."""
+    previo = _historial_pausado()
+    uc = _make_use_case()
+
+    with patch(
+        "inaki.kernel.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
+        mock_loop.return_value = "ok"
+        await uc.execute(
+            task="el formato A",
+            system_prompt="p",
+            max_iterations=5,
+            timeout_seconds=30,
+            historial_previo=previo,
+        )
+
+        _, kwargs = mock_loop.call_args
+        enviados: list[Message] = kwargs["messages"]
+
+    assert enviados[:-1] == previo
+    assert enviados[-1].role == Role.USER
+    assert enviados[-1].content == "el formato A"
+    assert len(enviados) == len(previo) + 1
+
+
+async def test_historial_previo_no_muta_la_secuencia_del_caller():
+    previo = _historial_pausado()
+    copia = list(previo)
+    uc = _make_use_case()
+
+    with patch(
+        "inaki.kernel.run_agent_one_shot.run_tool_loop", new_callable=AsyncMock
+    ) as mock_loop:
+        mock_loop.return_value = "ok"
+        await uc.execute(
+            task="r",
+            system_prompt="p",
+            max_iterations=5,
+            timeout_seconds=30,
+            historial_previo=previo,
+        )
+
+    assert previo == copia
+
+
+async def test_con_historial_previo_solo_el_user_nuevo_se_anota():
+    """El historial rehidratado ya vive en el trace del recorder reabierto: ni se graba
+    de nuevo ni se duplica en ``trace``."""
+    previo = _historial_pausado()
+    recorder = _RecorderFake()
+    recorder.trace.extend(previo)
+    uc = _uc_sin_delay(llm=_llm_con_una_tool("terminé"))
+
+    result = await uc.execute(
+        task="el formato A",
+        system_prompt="p",
+        max_iterations=5,
+        timeout_seconds=30,
+        recorder=recorder,
+        historial_previo=previo,
+    )
+
+    assert result == "terminé"
+    # Solo lo NUEVO se grabó: el user de la respuesta + assistant/tool/final del tramo.
+    assert [m.role for m in recorder.grabados] == [
+        Role.USER,
+        Role.ASSISTANT,
+        Role.TOOL,
+        Role.ASSISTANT,
+    ]
+    assert recorder.grabados[0].content == "el formato A"
+    # El espejo es el historial intacto (mismos objetos, mismo orden) + lo nuevo, sin repetidos.
+    assert recorder.trace[: len(previo)] == previo
+    assert recorder.trace[len(previo) :] == recorder.grabados
+    assert len(recorder.trace) == len(previo) + len(recorder.grabados)
+
+
+async def test_con_historial_previo_el_llm_ve_el_historial_completo_en_la_primera_llamada():
+    previo = _historial_pausado()
+    recorder = _RecorderFake()
+    recorder.trace.extend(previo)
+    llm = _make_llm("fin")
+    uc = _uc_sin_delay(llm=llm)
+
+    await uc.execute(
+        task="el formato A",
+        system_prompt="p",
+        max_iterations=5,
+        timeout_seconds=30,
+        recorder=recorder,
+        historial_previo=previo,
+    )
+
+    mensajes_al_llm = llm.complete.call_args.args[0]
+    assert [m.content for m in mensajes_al_llm[:-1]] == [m.content for m in previo]
+    assert mensajes_al_llm[-1].content == "el formato A"
+
+
+async def test_recorder_con_trace_distinto_del_historial_previo_falla_ruidoso():
+    """Un recorder que no es el reabierto de ESTE historial contaminaría el transcript
+    durable (seq repetidos o saltos): se corta ANTES de llamar al LLM ni grabar nada."""
+    previo = _historial_pausado()
+    recorder = _RecorderFake()  # trace vacío: no coincide con los 4 mensajes
+    llm = _make_llm("no debería llamarse")
+    uc = _uc_sin_delay(llm=llm)
+
+    with pytest.raises(ValueError, match="historial_previo"):
+        await uc.execute(
+            task="r",
+            system_prompt="p",
+            max_iterations=5,
+            timeout_seconds=30,
+            recorder=recorder,
+            historial_previo=previo,
+        )
+
+    llm.complete.assert_not_called()
+    assert recorder.grabados == []
+    assert recorder.trace == []
+
+
+async def test_historial_previo_sin_recorder_no_dispara_el_guard():
+    """Sin recorder no hay transcript que desalinear: el guard no aplica."""
+    previo = _historial_pausado()
+    llm = _make_llm("fin")
+    uc = _uc_sin_delay(llm=llm)
+
+    result = await uc.execute(
+        task="r", system_prompt="p", max_iterations=5, timeout_seconds=30, historial_previo=previo
+    )
+
+    assert result == "fin"
+    assert len(llm.complete.call_args.args[0]) == len(previo) + 1
+
+
+async def test_historial_previo_vacio_se_comporta_como_sin_historial():
+    recorder = _RecorderFake()
+    uc = _uc_sin_delay(llm=_llm_con_una_tool("terminé"))
+
+    await uc.execute(
+        task="t",
+        system_prompt="p",
+        max_iterations=5,
+        timeout_seconds=30,
+        recorder=recorder,
+        historial_previo=(),
+    )
+
+    assert [m.role for m in recorder.trace] == [
+        Role.USER,
+        Role.ASSISTANT,
+        Role.TOOL,
+        Role.ASSISTANT,
+    ]
+    assert recorder.trace == recorder.grabados

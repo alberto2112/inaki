@@ -73,6 +73,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
 
 | Nota | Cambio observable |
 |---|---|
+| [`delegation-resume`](#delegation-resume) | Un hijo background puede pausar con UNA pregunta (`[bg-N] needs_input`, estado nuevo `awaiting_input`, no terminal, sobrevive al reinicio) y el padre la reanuda con `delegate(resume="bg-N", task=<respuesta>)` sobre la MISMA fila y transcript. `agent_id` deja de ser `required` en el schema de `delegate`; `background_tasks` muestra la pregunta pendiente. Sin migración ni config; rollback: `DELETE FROM bg_tasks WHERE status='awaiting_input'` (ver la nota) |
 | [`bg-delivery-sin-routing`](#bg-delivery-sin-routing) | El turno que entrega un `[bg-N]` (o el aviso de interrupción) ya no hace semantic routing ni pre-fetch de knowledge: ve las tools/skills sticky de la conversación más `tools.pinned`, en vez de las que matchean el tema del resultado. El provider de embeddings `openai` recorta la entrada a 24.000 chars y el error de OpenAI ahora trae el cuerpo de la respuesta |
 | [`bg-delegation-transcript`](#bg-delegation-transcript) | Las delegaciones en background sobreviven al reinicio: ids `bg-1000+` en `background_tasks.db`, transcript completo consultable con `background_tasks(action=inspect)`, fallos con diagnóstico (ya no `TimeoutError: ` vacío) y aviso agrupado de lo que un reinicio / `/reload` cortó. Opt-in `delegation.grant_workdir` (directorio de trabajo `dwss/<8>` por delegación) y parámetro `input_files` de `delegate` |
 | [`grupos-persisten-sin-turno`](#grupos-persisten-sin-turno) | Telegram, grupos en `mention`/`listen`: los mensajes que no invocan al LLM se guardan en el historial (texto, fotos analizadas, audios transcriptos) y el agente los ve como contexto cuando lo mencionan. En `mention`, un audio o una foto sin mención ya no disparan respuesta, y una mención en el caption de un media cuenta. El análisis de fotos y la transcripción corren sobre todo lo que llega al grupo |
@@ -151,7 +152,156 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `config-set-efimero`, `privilegio-por-operacion`, `operator-user-ids`,
   `agent-id-igual-al-fichero`, `knowledge-token-budget-retirado`
 - **Providers LLM y embeddings**: `bg-delivery-sin-routing` (embeddings `openai`), `llm-un-solo-camino-de-construccion`, `openai-habla-responses`, `anthropic-api-actual`
-- **Delegación**: `bg-delivery-sin-routing`, `bg-scope-del-turno`, `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`, `bg-delegation-transcript`
+- **Delegación**: `delegation-resume`, `bg-delivery-sin-routing`, `bg-scope-del-turno`, `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`, `bg-delegation-transcript`
+
+---
+
+### `delegation-resume`
+
+**La decisión (2026-10-30)**: hasta acá un hijo de `delegate(wait=false)` era
+*one-shot*: arrancaba con `[Message(USER, task)]`, el footer del resultado solo admitía
+`success | failed` y el prompt de discovery le decía al padre que el hijo era
+"stateless" y que no había ida y vuelta. Si el hijo necesitaba un dato que solo el
+usuario o el padre tenían (qué cuenta usar, cuál de dos archivos), la única salida era
+fallar o adivinar, y el padre tenía que re-delegar desde cero y repetir el trabajo.
+El cambio le dio al hijo background UNA salida más: pausar con una pregunta y continuar
+la MISMA tarea cuando llega la respuesta.
+
+**El cambio**:
+
+- **Pausa.** El footer del hijo background admite `status: "needs_input"` con un campo
+  `question` (la fuente única sigue siendo `result_contract.py`: `con_footer(...,
+  puede_pausar=True)` solo desde la cola; el path sync `wait=true` conserva el footer de
+  siempre, byte a byte, y no ofrece `needs_input`). Un `needs_input` sin `question` (o
+  con solo espacios) no pausa: se entrega como `result_parse_error`. Al pausar la fila
+  pasa al estado nuevo `awaiting_input` y el padre recibe `[bg-N] needs_input: <pregunta>`
+  con las dos vías de seguir (responder él mismo con `delegate(resume="bg-N", task=...)`
+  o preguntarle al usuario y reanudar con su respuesta) y la ruta del workdir si la hay.
+- **`awaiting_input`.** Estado persistido, **no terminal**: `result` guarda el mensaje
+  renderizado, `result_status` queda en `needs_input`, `finished_at` marca la pausa e
+  `iterations_used` el presupuesto gastado. Un `stop()`, un `/reload` o un reinicio **no**
+  la pasan a `interrupted` (el hijo no estaba corriendo: esperaba), y `start()` la
+  rehidrata al dict de la cola con su pregunta, recuperada del último mensaje del
+  transcript. Si el dispatch de la pregunta falla, la fila sigue `awaiting_input` con
+  `error` y `notified=0` (no `delivery_failed`, porque `cancel` la descartaría). Tras
+  arrancar los canales, el aviso post-arranque re-despacha las preguntas con
+  `notified=0`, **agrupadas por conversación** junto con lo `interrupted` (mismo criterio
+  que ya tenía), respetando el return de `dispatch()` y los scopes sin canal.
+- **`delegate(resume="bg-N", task=<respuesta>)`.** Reanuda la misma fila (mismo id, mismo
+  transcript append-only, mismo workdir): vuelve a `queued`, limpia
+  `result/error/failure/result_status/finished_at` y marca `notified=1`. El tramo 2 corre
+  con el historial rehidratado más la respuesta como último mensaje `user`
+  (`RunAgentOneShotUseCase.execute(historial_previo=...)`). **Siempre en background**:
+  con `wait=true` se rechaza (`resume_requires_background`). También se rechazan
+  `input_files` (`resume_rejects_input_files`), `system_prompt`
+  (`resume_rejects_system_prompt`) y una respuesta vacía (`resume_answer_empty`), todos con
+  `reason` estable y sin tocar la task. `agent_id` deja de ser `required` en el schema
+  (ahora lo valida `execute`: `agent_id_required`); si se manda con `resume` y no coincide
+  con el de la fila, `target_mismatch`.
+- **Diez resultados posibles del resume** (`ResumeOutcome`, y `reason` = su nombre cuando
+  no es `resumed`): `not_found`, `not_awaiting` (nombra el estado real),
+  `already_resuming`, `transcript_incomplete`, `no_iterations_left`, `target_mismatch`,
+  `target_not_allowed` (el target de la fila ya no está en `tools.allowed` del caller),
+  `unknown_target` (la config cambió y el resolver ya no lo conoce) y `unavailable`
+  (error de store, reintentable). Ninguno distinto de `resumed` cambia el `status` de la
+  fila; la única mutación permitida es marcar `transcript_incomplete=1` cuando la
+  reapertura detecta un historial inconsistente. Una `bg-N` podada, inexistente o de otro
+  caller responde lo mismo ("I no longer have it"), y una `bg-m*` dice "no durable record".
+- **Reapertura verificada.** `reabrir_transcript` exige `seq` contiguo 1..N, primer mensaje
+  `user`, último `assistant` final (sin `tool_calls`), ningún tool call en vuelo o sin par y
+  `original_chars` NULL en todas las filas. Si algo falla: `transcript_incomplete`
+  (queda solo `cancel`); no se reanuda un historial truncado ni uno que el provider
+  rechazaría con 400.
+- **Pausa degradada, sin promesas.** Si el snapshot falla, el store está degradado
+  (`bg-m*`), el recorder quedó incompleto, no queda presupuesto de iteraciones o la
+  transición a `awaiting_input` no se pudo escribir (la fila seguiría `running` en disco y un
+  restart la perdería), **no hay pausa**: la task termina `delivered` con `result_status='needs_input'` y el padre recibe
+  `[bg-N] needs_input (NOT resumable: ...)`, que sugiere una delegación NUEVA con la
+  respuesta incluida y nunca promete una continuación. Cada causa deja un ERROR que nombra
+  la capacidad perdida. Lo que el padre lee es siempre texto fijo en inglés: el motivo en
+  español de una reapertura inconsistente queda solo en el log.
+- **El padre lo ve.** `snapshot_inflight` incluye `awaiting_input` (una línea por task: id,
+  target, pregunta truncada a 120 chars y `| not resumable` cuando corresponde) y la
+  sección in-flight explica el estado (no relanzar; responder o preguntarle al usuario;
+  `cancel` = abandonar) solo cuando hay una pausada. `background_tasks` muestra
+  `pending_question` y cómo reanudar en `list`/`inspect`; `cancel` sobre una
+  `awaiting_input` la pasa a `dismissed` con texto propio, sin dispatch. El prompt de
+  discovery dejó de decir "stateless" y describe la pausa.
+- **Retención.** `awaiting_input` se poda **solo por edad** (14 días desde `finished_at`,
+  o sea desde la pausa; `created_at` si faltara) y queda **fuera** del ranking "últimas 20
+  por caller": una pregunta pendiente no puede perderse porque se terminaron otras tareas.
+  Una task reanudada tiene `finished_at` NULL y no entra a esa cláusula. El workdir se
+  borra con la fila, por la misma compuerta de siempre.
+- **Presupuesto.** `max_iterations` y `timeout_seconds` son los de la **fila** (inmutables:
+  no se refrescan desde la config del caller). `max_iterations` es acumulado
+  (`iterations_used` = respuestas `assistant` del transcript, incluido el cierre
+  `needs_input`) y cada tramo recibe `max - usadas`; el techo total es el de una task sin
+  pausas. El `timeout` se renueva por tramo. El target y su LLM, en cambio, se reconstruyen
+  con la config del momento.
+
+**Decisiones de diseño y por qué**:
+
+- **La MISMA fila, no una task nueva encadenada.** El id es lo que el padre y el usuario ya
+  tienen, el transcript es append-only y el workdir pertenece a la fila; una fila nueva
+  obligaba a copiar historial y a explicar dos ids de la misma tarea. El costo es el
+  estado `awaiting_input` y los guards de abajo.
+- **Snapshot al pausar, sin transacción.** El cap de 12450 chars por mensaje sigue vigente
+  para todas las tasks (no se paga más escritura a las que nunca pausan), pero un
+  historial recortado no sirve para reanudar. Al pausar, la cola reescribe con el
+  contenido completo (desde `recorder.trace`, que nunca se recorta) solo las filas que
+  el cap había acotado, del tramo actual (`fue_acotado(msg)` es el mismo predicado que usa
+  el escritor). Se hace con `UPDATE`s idempotentes por fila y **sin `BEGIN/COMMIT`**: la
+  conexión de `aiosqlite` es compartida con los recorders de las demás tasks, y una
+  transacción explícita dejaría colarse sus `INSERT` y un `ROLLBACK` los borraría en
+  silencio. La atomicidad era innecesaria: un fallo parcial deja filas ya reescritas
+  (completas, inocuas) y la task como no reanudable. Antes de escribir se verifica
+  `MAX(seq) == len(trace)`.
+- **Orden fijo: snapshot → `awaiting_input` → dispatch.** Si el padre o el usuario
+  contestan rápido, el resume no puede leer antes de que el historial esté completo.
+- **La pregunta vive en memoria, no en una columna.** Se evitó un `ALTER`: se fija al
+  pausar y se recupera al rehidratar parseando el último mensaje (completo gracias al
+  snapshot). No pasa por `_transicionar(**campos)` porque `store.update` rechaza campos
+  desconocidos.
+- **Reserva síncrona y re-chequeo.** El resume decide y reserva sobre el dict antes del
+  primer `await`; tras la carga del transcript re-chequea. Dos resumes simultáneos dan un
+  `resumed` y un `already_resuming`; un `cancel` intercalado gana (`not_awaiting`).
+- **El tramo 1 no pisa al tramo 2.** El padre puede llamar a `resume` DENTRO del dispatch
+  de la pregunta, cuando el tramo 1 sigue vivo. Por eso el tramo 1 solo muta la fila si
+  sigue en *esa* pausa (`status == awaiting_input` y el mismo `finished_at`), el olvido
+  de handles borra únicamente el propio, y el handle del tramo 1 pasa a `_en_entrega`
+  (para que `stop()` lo espere y un `cancel` de la task re-encolada no corte el turno
+  del padre).
+- **Restart tras el resume pierde la respuesta, con aviso.** La respuesta viaja en
+  memoria; si el proceso muere con el tramo 2 en `queued`/`running`, queda `interrupted`
+  (aviso agrupado) y nunca vuelve sola a `awaiting_input`.
+- **Scope original.** El resultado del tramo 2 sale por el `channel/chat_id` de la fila, no
+  por los de quien reanudó (un `inaki tool delegate` sin turno o el usuario respondiendo
+  desde otro chat).
+- **Sin migración.** `status` es `TEXT` sin `CHECK`; el esquema SQL no cambió.
+
+**Cambios observables**:
+
+- `delegate` acepta `resume`; `agent_id` ya no figura en `required`.
+- Un hijo background puede quedar `awaiting_input` y el padre recibe `[bg-N] needs_input`.
+- `background_tasks(action=list|inspect)` muestra la pregunta pendiente y cómo reanudar.
+- El prompt del padre ya no afirma que el hijo es "stateless".
+
+**Acción del operador**: ninguna. Sin migración de DB (el esquema no cambió) ni de config
+(no hay campos nuevos).
+
+**Rollback**: revertir el cambio y limpiar las pausas, que el código anterior no conoce:
+`DELETE FROM bg_tasks WHERE status = 'awaiting_input';` en `background_tasks.db` (los
+mensajes caen por `ON DELETE CASCADE`; los `dwss/*` huérfanos los barre el próximo arranque).
+
+**Al cerrar la implementación quedó sin verificar en vivo**: que DeepSeek en *thinking
+mode* acepte un resume con mensajes `assistant` + `tool_calls` rehidratados, que no llevan
+`reasoning_content` (es transitorio y nunca se persiste). Se probó con providers
+simulados, no contra el API real.
+
+**Reglas de diseño que dejó** (no vienen de un fallo en producción, por eso viven en
+[`convenciones.md`](convenciones.md) y no en `CLAUDE.md`): no reanudar un historial que no
+pasó la reapertura verificada; no abrir una transacción explícita sobre la conexión
+compartida del store; el tramo viejo muta estado solo si sigue siendo dueño de él.
 
 ---
 
@@ -279,6 +429,8 @@ existido.
   14 días O fuera de las últimas 20. Nunca se poda `queued`, `running`,
   `delivering` ni `delivery_failed`; una `interrupted` aún no avisada solo cae por
   edad (14 días).
+  *Cerrado después:* el estado `awaiting_input` (pausa `needs_input`) tampoco se poda por el
+  ranking de las últimas 20, solo por edad; ver [`delegation-resume`](#delegation-resume).
 - **Red de seguridad del ciclo de vida.** Una excepción inesperada fuera de la ejecución
   del hijo (render, sink, store) ya no deja la tarea en `running`/`delivering` para
   siempre: sin resultado se entrega al padre un `[bg-N] failed (exception)` de error

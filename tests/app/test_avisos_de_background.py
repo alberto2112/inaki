@@ -76,6 +76,60 @@ async def test_con_la_cola_real_el_hook_vuelve_enseguida_aunque_el_padre_tarde(
         await cola.stop()  # corta el aviso en vuelo
 
 
+async def test_con_la_cola_real_el_hook_reenvia_la_pregunta_pendiente_de_un_hijo_pausado(
+    tmp_path: Path,
+) -> None:
+    """Una `awaiting_input` sin notificar (el daemon murió antes del dispatch) se avisa al
+    arrancar, agrupada con el resto de la conversación."""
+    store = SQLiteBackgroundTaskStore(tmp_path / "bg.db")
+    await store.open()
+    task_id = await store.create(
+        BackgroundTask(
+            id="",
+            caller_agent_id="inaki",
+            target_agent_id="r",
+            prompt="investigá X",
+            system_prompt=None,
+            channel="telegram",
+            chat_id="42",
+            max_iterations=5,
+            timeout_seconds=30,
+            started_at=datetime.now(timezone.utc),
+            status="queued",
+        )
+    )
+    ahora = datetime.now(timezone.utc)
+    await store.update(
+        task_id,
+        status="awaiting_input",
+        run_started_at=ahora,
+        finished_at=ahora,
+        result=f"[{task_id}] needs_input: ¿Qué cuenta uso?",
+        result_status="needs_input",
+        notified=False,
+    )
+    dispatcher = MagicMock()
+    dispatcher.dispatch = AsyncMock(return_value="")
+    cola = BackgroundDelegationQueueAdapter(
+        dispatcher=dispatcher, one_shot_resolver=lambda _c, _t: None, store=store
+    )
+    await cola.start()
+    try:
+        await avisos_de_background()(MagicMock(background_queue=cola))
+        assert cola._aviso_task is not None
+        await asyncio.wait_for(asyncio.shield(cola._aviso_task), timeout=5)
+
+        dispatcher.dispatch.assert_awaited_once()
+        assert dispatcher.dispatch.await_args is not None
+        prompt = dispatcher.dispatch.await_args.kwargs["prompt"]
+        assert f"[{task_id}] needs_input: ¿Qué cuenta uso?" in prompt
+        assert "Re-sent after a daemon restart" in prompt
+        fila = await store.get(task_id, "inaki")
+        assert fila is not None and fila.notified is True
+    finally:
+        await cola.stop()
+
+
 async def test_componer_corre_los_hooks_en_orden() -> None:
     orden: list[str] = []
 

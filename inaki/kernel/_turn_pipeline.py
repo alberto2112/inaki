@@ -216,9 +216,29 @@ def render_in_flight_section(snap: list[BackgroundTaskView]) -> str:
         )
         if v.error:
             linea += f" | delivery error: {v.error}"
+        if v.question_preview:
+            # Una sola línea: la pregunta ya viene acotada (≤120) pero puede traer saltos. La
+            # escribe el LLM hijo y viaja en el system prompt del padre cada turno (hasta 14
+            # días), así que se escapan ``\\`` y ``"``: una comilla no puede cerrar el campo.
+            pregunta = " ".join(v.question_preview.split())
+            pregunta = pregunta.replace("\\", "\\\\").replace('"', '\\"')
+            linea += f' | question: "{pregunta}"'
+        if v.status == "awaiting_input" and v.resumable is False:
+            linea += " | not resumable"
         return linea
 
     bullets = "\n".join(_bullet(v) for v in snap)
+    # El estado nuevo solo se explica cuando hay una pausada: no se paga en cada turno.
+    estado_pausa = (
+        "- `awaiting_input` = the child PAUSED waiting for the answer to its question (shown).\n"
+        "  It will not continue on its own: answer it with\n"
+        '  `delegate(resume="bg-N", task="<answer>")` if you know the answer, or ask the user\n'
+        "  first and resume it with their reply. Do NOT re-launch it as a new delegation. If it\n"
+        "  says `not resumable` it can only be dismissed with\n"
+        "  `background_tasks(action=cancel, task_id=...)`, as can any task you no longer need.\n"
+        if any(v.status == "awaiting_input" for v in snap)
+        else ""
+    )
     return (
         "## In-flight background delegations\n\n"
         "You have one or more delegations launched via `delegate(... wait=false)` running in\n"
@@ -247,6 +267,7 @@ def render_in_flight_section(snap: list[BackgroundTaskView]) -> str:
         "  still needed and safe: a relaunch repeats any side effects, and the tool call it was in\n"
         "  the middle of may already have had effects. Clear it with\n"
         "  `background_tasks(action=cancel, task_id=...)`.\n"
+        f"{estado_pausa}"
         "A delegation that was delivered is NOT in this list — its result already arrived as a\n"
         "`[bg-N] ...` message, so check the conversation for it instead.\n\n"
         "Do NOT re-launch a task that is already `queued` or `running` below — that would\n"

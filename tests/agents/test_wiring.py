@@ -89,3 +89,36 @@ def test_sin_targets_o_todos_desconocidos_no_hay_seccion() -> None:
         )
         == ""
     )
+
+
+# --- prompt de descubrimiento: la pausa needs_input (REQ-BGD-13) -------------
+
+
+def _seccion_con_un_target() -> str:
+    raw = {"id": "b", "name": "Agent B", "description": "Hace cosas."}
+    return build_discovery_section(
+        "parent", ["b"], get_sub_agent_raw=lambda _: raw, describir_agente=lambda _: None
+    )
+
+
+def test_el_prompt_explica_la_pausa_y_el_resume_sin_decir_stateless() -> None:
+    seccion = _seccion_con_un_target()
+
+    assert "stateless" not in seccion
+    assert "needs_input" in seccion
+    assert 'delegate(resume="bg-N", task=' in seccion
+
+
+def test_el_prompt_mantiene_no_usar_al_hijo_para_chat() -> None:
+    seccion = _seccion_con_un_target()
+
+    assert "not a chat partner" in seccion
+    assert "tight back-and-forth" in seccion
+
+
+def test_el_prompt_dice_que_se_pregunta_al_usuario_salvo_que_se_sepa_la_respuesta() -> None:
+    seccion = _seccion_con_un_target()
+
+    assert "ask the user" in seccion
+    assert "unless you already know the answer" in seccion
+    assert "never start a new delegation for a paused task" in seccion.lower()

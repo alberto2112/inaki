@@ -228,11 +228,38 @@ way via `one_shot_resolver(caller_id, target_id)`.
 See [`arquitectura.md`](arquitectura.md) → delegación con herencia.
 
 **Note:** the background queue is durable. `start()` opens `background_tasks.db`, closes the
-orphans left by a crash (`running` → `interrupted`), prunes by age/count, rehydrates the
-`delivery_failed` ones and sweeps unreferenced `dwss/*` workdirs; `stop()` marks the live tasks
-`interrupted` without dispatching. The bootstrap `al_arrancar` hook (`avisos_de_background`,
-composed with `componer_al_arrancar`) only *schedules* one grouped notice per conversation, so
-channel startup is never blocked by it.
+orphans left by a crash (`running` → `interrupted`), prunes by age/count (`awaiting_input` only
+by age, outside the "last 20" ranking), rehydrates the `delivery_failed` and `awaiting_input` ones
+(the latter with their pending question) and sweeps unreferenced `dwss/*` workdirs; `stop()` marks
+the live tasks `interrupted` without dispatching and leaves `awaiting_input` untouched. The
+bootstrap `al_arrancar` hook (`avisos_de_background`, composed with `componer_al_arrancar`) only
+*schedules* one grouped notice per conversation (interrupted tasks and still-unannounced pending
+questions together), so channel startup is never blocked by it.
+
+**Pausa y reanudación de un hijo background** (`delegation-resume`). El hijo ya no es
+"stateless" de punta a punta: puede pausar UNA vez por tramo con una pregunta.
+
+```
+hijo background cierra con {"status":"needs_input","question":"..."}
+  └─ cola: snapshot_completo (repara las filas que el cap de 12450 chars acotó, tramo actual)
+     └─ _transicionar(awaiting_input)   result = "[bg-N] needs_input: <q>", finished_at = pausa
+        └─ dispatch al padre            (notified=True solo si la task SIGUE en esa pausa)
+
+padre / usuario responde → delegate(resume="bg-N", task=<respuesta>)
+  └─ queue.resume: reserva SÍNCRONA sobre el dict (not_awaiting / already_resuming /
+     transcript_incomplete / no_iterations_left / target_* / unknown_target)
+     └─ await store.reabrir_transcript   (verifica seq, extremos y original_chars)
+        └─ re-chequeo síncrono → _transicionar(queued, notified=True) → put_nowait
+           └─ tramo 2: RunAgentOneShotUseCase.execute(task=<respuesta>,
+              historial_previo=<transcript>, max_iterations = fila − usadas, recorder reabierto)
+              └─ cierra con success/failed/needs_input → entrega [bg-N] o vuelve a awaiting_input
+```
+
+Si el snapshot falla, el store está degradado (`bg-m*`), el recorder quedó incompleto, no queda
+presupuesto o la propia transición a `awaiting_input` no se pudo escribir, NO hay pausa: la task termina `delivered` con un `[bg-N] needs_input (NOT resumable)`
+que sugiere delegar de nuevo con la respuesta incluida. Un restart con la task en `awaiting_input`
+la conserva y rehidrata; un restart con el tramo 2 en `queued`/`running` la deja `interrupted`
+(la respuesta viajaba en memoria). El resultado del tramo 2 sale por el `channel/chat_id` originales.
 
 ---
 

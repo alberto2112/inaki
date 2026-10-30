@@ -2,7 +2,7 @@
 
 El feature ``background-delegation`` (REQ-BGD-1..8) desacopla las delegaciones
 largas (``delegate(..., wait=False)``) del turno del agente padre. El port
-expone cinco operaciones:
+expone seis operaciones:
 
 - ``enqueue`` — registra una task y devuelve un ``task_id`` (``bg-N``) en <50ms,
   sin esperar a que el hijo termine (REQ-BGD-2).
@@ -12,6 +12,8 @@ expone cinco operaciones:
 - ``cancel`` — corta una task en cola o corriendo, o descarta una cuya entrega
   falló devolviendo su resultado.
 - ``inspect`` — transcript y desenlace de una task, viva o terminada (REQ-BGI-1).
+- ``resume`` — reanuda una task que pausó con una pregunta (``awaiting_input``) sobre la
+  MISMA fila: mismo id, transcript y workdir (REQ-RES-5).
 - ``start`` / ``stop`` — ciclo de vida del consumer interno (REQ-BGD-1).
 
 El estado de las tasks y su transcript sobreviven a un restart (REQ-BGD-8, REQ-BGP-1..4):
@@ -22,13 +24,14 @@ pierde en silencio. La implementación vive en el módulo ``agents``
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from typing import Protocol
 
 from inaki.kernel.domain.background_task import (
     BackgroundTaskView,
     CancelOutcome,
     EnqueuedTask,
+    ResumeOutcome,
     TaskInspection,
 )
 
@@ -77,8 +80,10 @@ class IBackgroundDelegationQueue(Protocol):
         """Devuelve las tasks pendientes del caller, ordenadas por start time.
 
         Incluye ``delivery_failed`` (una entrega fallida sigue siendo asunto
-        pendiente del caller) e ``interrupted`` mientras espera su aviso. Las
-        tasks terminales NO aparecen (REQ-BGD-4): se consultan con ``inspect``.
+        pendiente del caller), ``interrupted`` mientras espera su aviso y
+        ``awaiting_input`` (el hijo pausó con una pregunta que nadie contestó
+        todavía). Las tasks terminales NO aparecen (REQ-BGD-4): se consultan con
+        ``inspect``.
         Lista vacía si no hay ninguna para ese caller.
         """
         ...
@@ -88,13 +93,42 @@ class IBackgroundDelegationQueue(Protocol):
 
         ``queued``/``running`` → se corta (``cancelled``); ``delivery_failed`` →
         se descarta devolviendo el resultado guardado (``dismissed``);
-        ``delivering`` → no se toca (cortaría el turno del padre a mitad); una task
-        ya terminada responde ``finished``. Una task de OTRO caller responde
-        ``not_found``: un agente no ve ni corta las delegaciones de otro.
+        ``awaiting_input`` → se abandona (``dismissed``) devolviendo la pregunta sin
+        contestar, sin disparar ningún dispatch; ``delivering`` → no se toca (cortaría
+        el turno del padre a mitad); una task ya terminada responde ``finished``. Una
+        task de OTRO caller responde ``not_found``: un agente no ve ni corta las
+        delegaciones de otro.
 
         Es ``async`` porque persiste la transición, pero la decisión y la mutación
         del estado en memoria ocurren ANTES del primer ``await``: sin ventana para
         que el consumer cambie la task entre el chequeo y la acción.
+        """
+        ...
+
+    async def resume(
+        self,
+        task_id: str,
+        caller_agent_id: str,
+        answer: str,
+        *,
+        target_agent_id: str | None = None,
+        allowed_targets: Collection[str] = (),
+    ) -> ResumeOutcome:
+        """Reanuda ``task_id`` (en ``awaiting_input``) con ``answer`` como siguiente turno.
+
+        Reabre la MISMA fila: mismo id, transcript y workdir; vuelve a ``queued`` y el
+        resultado del nuevo tramo llega como un ``[bg-N] ...`` más. ``target_agent_id``,
+        si se da, debe ser el de la fila (si no, ``target_mismatch``). ``allowed_targets``
+        es la allow-list ``tools.allowed`` del caller (vacía = sin restricción) y se
+        valida contra el target de la fila.
+
+        Siempre devuelve un ``ResumeOutcome``; solo ``resumed`` cambia el estado de la
+        task (la única otra mutación es la marca ``transcript_incomplete`` cuando la
+        reapertura detecta un historial inconsistente). Una task de OTRO caller responde
+        ``not_found``, igual que una podada o inexistente.
+
+        La decisión y la reserva ocurren de forma síncrona sobre el estado en memoria;
+        tras cualquier ``await`` (la carga del transcript) se vuelve a chequear.
         """
         ...
 

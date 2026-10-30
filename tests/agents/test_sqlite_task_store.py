@@ -17,12 +17,13 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from inaki.agents.delegation.ports import ResultadoPoda
+from inaki.agents.delegation.ports import ResultadoPoda, TranscriptNoReanudable
 from inaki.agents.delegation.sqlite_task_store import (
     MENSAJE_CAP_CHARS,
     RETENCION_DIAS,
     RETENCION_ULTIMAS,
     SQLiteBackgroundTaskStore,
+    fue_acotado,
 )
 from inaki.kernel.domain.background_task import (
     BackgroundTask,
@@ -577,6 +578,436 @@ class TestCapPorMensaje:
             con.close()
         assert json.loads(crudo)[0]["id"] == "c1"
 
+    # -- fue_acotado: el predicado del snapshot ES el del escritor (REQ-RES-2) ---------
+
+    @pytest.mark.parametrize("largo", [12_449, 12_450, 12_451, 50_000])
+    async def test_fue_acotado_coincide_con_lo_que_el_escritor_acota_en_el_content(
+        self, store, largo: int
+    ) -> None:
+        msg = Message(role=Role.TOOL, content="x" * largo, tool_call_id="c1")
+
+        paso = await self._guardar_tool(store, msg.content)
+
+        assert fue_acotado(msg) is (paso.original_chars is not None)
+        assert fue_acotado(msg) is (largo > MENSAJE_CAP_CHARS)
+
+    async def test_fue_acotado_ve_tool_calls_enormes_con_content_corto(self, store) -> None:
+        """REQ-RES-2 S2: el content corto no delata un ``write_file`` gigante."""
+        enorme = _llamada("c1", "write_file", json.dumps({"content": "q" * 30_000}))
+        chico = _llamada("c2", "write_file", json.dumps({"content": "q"}))
+        task_id = await store.create(_task())
+        rec = store.transcript(task_id)
+        await rec.record(enorme)
+        await rec.record(chico)
+
+        pasos, _ = await store.messages(task_id, last_n=2)
+
+        # el escritor acotó los arguments del primero (sin tocar original_chars) y no el segundo
+        assert "characters omitted" in pasos[0].tool_calls[0]["function"]["arguments"]  # type: ignore[index]
+        assert "characters omitted" not in pasos[1].tool_calls[0]["function"]["arguments"]  # type: ignore[index]
+        assert fue_acotado(enorme) is True
+        assert fue_acotado(chico) is False
+
+    async def test_fue_acotado_un_mensaje_sin_tool_calls_ni_content_largo_no_lo_esta(self) -> None:
+        assert fue_acotado(Message(role=Role.USER, content="hola")) is False
+
+
+# ---------------------------------------------------------------------------
+# REQ-RES-2 — snapshot completo antes de pausar
+# ---------------------------------------------------------------------------
+
+
+async def _persistir(store: SQLiteBackgroundTaskStore, task_id: str, *mensajes: Message):
+    """Persiste ``mensajes`` como el use case one-shot: ``trace`` en memoria + ``record``."""
+    rec = store.transcript(task_id)
+    for m in mensajes:
+        rec.trace.append(m)
+        await rec.record(m)
+    return rec
+
+
+class _ConexionQueFalla:
+    """Envuelve la conexión REAL del store: anota cada sentencia y falla en el UPDATE n-ésimo.
+
+    SQLite sigue siendo el real; el proxy solo permite (a) probar que el snapshot no abre
+    transacciones y (b) cortar a mitad de la escritura, que un disco sano no deja hacer.
+    """
+
+    def __init__(self, real, *, falla_en_update: int | None = None) -> None:
+        self._real = real
+        self._falla_en_update = falla_en_update
+        self._updates = 0
+        self.sentencias: list[str] = []
+
+    def execute(self, sql, params=()):
+        self.sentencias.append(sql)
+        if sql.lstrip().upper().startswith("UPDATE BG_TASK_MESSAGES"):
+            self._updates += 1
+            if self._updates == self._falla_en_update:
+                raise sqlite3.OperationalError("disk I/O error (simulado)")
+        return self._real.execute(sql, params)
+
+    def __getattr__(self, nombre):
+        return getattr(self._real, nombre)
+
+
+class TestSnapshotCompleto:
+    async def test_un_tool_result_de_50000_queda_completo_y_sin_original_chars(self, store) -> None:
+        """REQ-RES-2 S1."""
+        task_id = await store.create(_task())
+        enorme = "".join(chr(65 + i % 26) for i in range(50_000))
+        trace = [
+            Message(role=Role.USER, content="investigá X"),
+            _llamada("c1", "web_fetch"),
+            Message(role=Role.TOOL, content=enorme, tool_call_id="c1"),
+            Message(role=Role.ASSISTANT, content="necesito un dato"),
+        ]
+        await _persistir(store, task_id, *trace)
+        antes, _ = await store.messages(task_id, last_n=10)
+        assert antes[2].original_chars == 50_000  # el escritor lo acotó
+
+        await store.snapshot_completo(task_id, trace, desde_seq=0)
+
+        despues, total = await store.messages(task_id, last_n=10)
+        assert total == 4
+        assert despues[2].content == enorme
+        assert despues[2].original_chars is None
+        assert despues[0].content == "investigá X"  # lo chico quedó como estaba
+        assert despues[3].content == "necesito un dato"
+
+    async def test_un_assistant_con_write_file_enorme_y_content_corto_queda_con_tool_calls_completo(
+        self, store
+    ) -> None:
+        """REQ-RES-2 S2: el acotado de tool_calls no deja ``original_chars``."""
+        task_id = await store.create(_task())
+        args = json.dumps({"path": "a.txt", "content": "q" * 30_000})
+        trace = [
+            Message(role=Role.USER, content="escribí"),
+            _llamada("c1", "write_file", args),
+            Message(role=Role.TOOL, content="ok", tool_call_id="c1"),
+        ]
+        await _persistir(store, task_id, *trace)
+        antes, _ = await store.messages(task_id, last_n=10)
+        assert antes[1].original_chars is None
+        assert "characters omitted" in antes[1].tool_calls[0]["function"]["arguments"]  # type: ignore[index]
+
+        await store.snapshot_completo(task_id, trace, desde_seq=0)
+
+        despues, _ = await store.messages(task_id, last_n=10)
+        assert despues[1].tool_calls == trace[1].tool_calls
+        assert despues[1].tool_calls[0]["function"]["arguments"] == args  # type: ignore[index]
+
+    async def test_las_filas_del_tramo_1_no_se_tocan(self, store) -> None:
+        """REQ-RES-2 S3: solo se reescribe seq > desde_seq."""
+        task_id = await store.create(_task())
+        enorme_1, enorme_2 = "a" * 20_000, "b" * 20_000
+        trace = [
+            Message(role=Role.USER, content="x"),
+            Message(role=Role.ASSISTANT, content=enorme_1),  # seq 2: tramo 1
+            Message(role=Role.USER, content="respuesta"),
+            Message(role=Role.ASSISTANT, content=enorme_2),  # seq 4: tramo 2
+        ]
+        await _persistir(store, task_id, *trace)
+
+        await store.snapshot_completo(task_id, trace, desde_seq=2)
+
+        pasos, _ = await store.messages(task_id, last_n=10)
+        assert pasos[1].original_chars == 20_000  # tramo 1: sigue acotado
+        assert len(pasos[1].content) < 20_000
+        assert pasos[3].content == enorme_2  # tramo 2: completo
+        assert pasos[3].original_chars is None
+
+    async def test_sin_nada_acotado_no_escribe_nada_y_es_idempotente(self, store) -> None:
+        task_id = await store.create(_task())
+        trace = [Message(role=Role.USER, content="x"), Message(role=Role.ASSISTANT, content="y")]
+        await _persistir(store, task_id, *trace)
+        proxy = _ConexionQueFalla(store._db)
+        store._db = proxy  # type: ignore[assignment]
+
+        await store.snapshot_completo(task_id, trace, desde_seq=0)
+        await store.snapshot_completo(task_id, trace, desde_seq=0)
+
+        assert not [q for q in proxy.sentencias if q.lstrip().upper().startswith("UPDATE")]
+        pasos, _ = await store.messages(task_id, last_n=10)
+        assert [p.content for p in pasos] == ["x", "y"]
+
+    async def test_un_update_que_falla_a_mitad_lanza_sin_transaccion_y_deja_lo_hecho_completo(
+        self, store
+    ) -> None:
+        """REQ-RES-2 S4: sin BEGIN/COMMIT/ROLLBACK (la conexión es compartida y autocommit);
+        las filas ya reescritas quedan completas (inocuo)."""
+        task_id = await store.create(_task())
+        g1, g2, g3 = "1" * 20_000, "2" * 20_000, "3" * 20_000
+        trace = [
+            Message(role=Role.USER, content="x"),
+            Message(role=Role.ASSISTANT, content=g1),
+            Message(role=Role.USER, content=g2),
+            Message(role=Role.ASSISTANT, content=g3),
+        ]
+        await _persistir(store, task_id, *trace)
+        proxy = _ConexionQueFalla(store._db, falla_en_update=2)
+        store._db = proxy  # type: ignore[assignment]
+
+        with pytest.raises(sqlite3.OperationalError):
+            await store.snapshot_completo(task_id, trace, desde_seq=0)
+
+        sentencias = [q.lstrip().upper() for q in proxy.sentencias]
+        assert not [q for q in sentencias if q.startswith(("BEGIN", "COMMIT", "ROLLBACK"))]
+        pasos, _ = await store.messages(task_id, last_n=10)
+        assert pasos[1].content == g1 and pasos[1].original_chars is None  # ya reescrita
+        assert pasos[2].original_chars == 20_000  # falló acá: sigue acotada
+        assert pasos[3].original_chars == 20_000  # ni se intentó
+
+    async def test_si_max_seq_no_coincide_con_el_trace_lanza_antes_de_escribir(self, store) -> None:
+        """REQ-RES-2 S5: el trace en memoria tiene un mensaje que el disco no vio."""
+        task_id = await store.create(_task())
+        enorme = "z" * 20_000
+        persistidos = [
+            Message(role=Role.USER, content="x"),
+            Message(role=Role.ASSISTANT, content=enorme),
+        ]
+        await _persistir(store, task_id, *persistidos)
+        trace = [*persistidos, Message(role=Role.ASSISTANT, content="nunca llegó al disco")]
+        proxy = _ConexionQueFalla(store._db)
+        store._db = proxy  # type: ignore[assignment]
+
+        with pytest.raises(ValueError, match="trace"):
+            await store.snapshot_completo(task_id, trace, desde_seq=0)
+
+        assert not [q for q in proxy.sentencias if q.lstrip().upper().startswith("UPDATE")]
+        pasos, _ = await store.messages(task_id, last_n=10)
+        assert pasos[1].original_chars == 20_000  # intacta
+
+    async def test_un_id_no_durable_es_un_error_de_uso(self, store) -> None:
+        with pytest.raises(ValueError):
+            await store.snapshot_completo("bg-m1", [], desde_seq=0)
+
+
+# ---------------------------------------------------------------------------
+# REQ-RES-9 / REQ-BGP-9 — reapertura verificada del transcript
+# ---------------------------------------------------------------------------
+
+
+def _trace_pausado() -> list[Message]:
+    """Siete mensajes que terminan en un cierre ASSISTANT limpio: lo que deja una pausa."""
+    return [
+        Message(role=Role.USER, content="investigá X"),
+        _llamada("c1", "web_fetch"),
+        Message(role=Role.TOOL, content="<html>", tool_call_id="c1"),
+        _llamada("c2", "shell_exec", '{"cmd": "ls"}'),
+        Message(role=Role.TOOL, content="a.txt", tool_call_id="c2"),
+        Message(role=Role.ASSISTANT, content="hmm, falta algo"),
+        Message(role=Role.ASSISTANT, content='{"status": "needs_input"}'),
+    ]
+
+
+async def _quitar_fila(store: SQLiteBackgroundTaskStore, task_id: str, seq: int) -> None:
+    await store._conn().execute(
+        "DELETE FROM bg_task_messages WHERE task_id = ? AND seq = ?",
+        (int(task_id.removeprefix("bg-")), seq),
+    )
+
+
+class TestReapertura:
+    async def test_trae_el_trace_precargado_y_el_primer_mensaje_nuevo_es_seq_n_mas_1(
+        self, store
+    ) -> None:
+        """REQ-RES-5 S1: sin re-INSERT, y la numeración sigue donde quedó."""
+        task_id = await store.create(_task())
+        original = _trace_pausado()
+        await _persistir(store, task_id, *original)
+
+        rec = await store.reabrir_transcript(task_id)
+
+        assert len(rec.trace) == 7
+        assert [(m.role, m.content, m.tool_calls, m.tool_call_id) for m in rec.trace] == [
+            (m.role, m.content, m.tool_calls, m.tool_call_id) for m in original
+        ]
+        _, total = await store.messages(task_id, last_n=1)
+        assert total == 7  # reabrir no escribió nada
+        await rec.record(Message(role=Role.USER, content="la respuesta"))
+        pasos, total = await store.messages(task_id, last_n=2)
+        assert total == 8
+        assert [p.seq for p in pasos] == [7, 8]
+        assert pasos[1].content == "la respuesta"
+        assert rec.incompleto is False  # type: ignore[attr-defined]
+
+    async def test_el_trace_reabierto_es_propio_de_cada_reapertura(self, store) -> None:
+        task_id = await store.create(_task())
+        await _persistir(store, task_id, *_trace_pausado())
+
+        a = await store.reabrir_transcript(task_id)
+        b = await store.reabrir_transcript(task_id)
+        a.trace.append(Message(role=Role.USER, content="solo en A"))
+
+        assert len(a.trace) == 8
+        assert len(b.trace) == 7
+
+    async def test_un_seq_no_contiguo_no_es_reanudable(self, store) -> None:
+        """REQ-RES-9 S1: falta la fila seq=5."""
+        task_id = await store.create(_task())
+        await _persistir(store, task_id, *_trace_pausado())
+        await _quitar_fila(store, task_id, 5)
+
+        with pytest.raises(TranscriptNoReanudable) as exc:
+            await store.reabrir_transcript(task_id)
+
+        assert "contiguo" in exc.value.motivo
+
+    async def test_un_transcript_vacio_no_es_reanudable(self, store) -> None:
+        task_id = await store.create(_task())
+
+        with pytest.raises(TranscriptNoReanudable):
+            await store.reabrir_transcript(task_id)
+
+    async def test_si_el_ultimo_es_un_assistant_con_tool_calls_no_es_reanudable(
+        self, store
+    ) -> None:
+        """REQ-RES-9 S3: no es una respuesta final, el hijo estaba a mitad de un paso."""
+        task_id = await store.create(_task())
+        await _persistir(
+            store,
+            task_id,
+            Message(role=Role.USER, content="x"),
+            _llamada("c1", "web_fetch"),
+        )
+
+        with pytest.raises(TranscriptNoReanudable) as exc:
+            await store.reabrir_transcript(task_id)
+
+        assert "assistant" in exc.value.motivo
+
+    async def test_si_el_ultimo_no_es_un_assistant_no_es_reanudable(self, store) -> None:
+        task_id = await store.create(_task())
+        await _persistir(
+            store,
+            task_id,
+            Message(role=Role.USER, content="x"),
+            Message(role=Role.ASSISTANT, content="y"),
+            Message(role=Role.TOOL, content="z", tool_call_id="c1"),
+        )
+
+        with pytest.raises(TranscriptNoReanudable):
+            await store.reabrir_transcript(task_id)
+
+    async def test_un_tool_call_sin_resultado_en_el_medio_no_es_reanudable(self, store) -> None:
+        """REQ-RES-9 S2: ``c1`` quedó en vuelo y después el hijo siguió igual."""
+        task_id = await store.create(_task())
+        await _persistir(
+            store,
+            task_id,
+            Message(role=Role.USER, content="x"),
+            _llamada("c1", "shell_exec"),
+            Message(role=Role.ASSISTANT, content="cierre"),
+        )
+
+        with pytest.raises(TranscriptNoReanudable) as exc:
+            await store.reabrir_transcript(task_id)
+
+        assert "c1" in exc.value.motivo or "shell_exec" in exc.value.motivo
+
+    async def test_si_el_primer_mensaje_no_es_user_no_es_reanudable(self, store) -> None:
+        """REQ-RES-9 S4."""
+        task_id = await store.create(_task())
+        await _persistir(
+            store,
+            task_id,
+            Message(role=Role.ASSISTANT, content="arranqué solo"),
+            Message(role=Role.ASSISTANT, content="cierre"),
+        )
+
+        with pytest.raises(TranscriptNoReanudable) as exc:
+            await store.reabrir_transcript(task_id)
+
+        assert "user" in exc.value.motivo
+
+    async def test_una_fila_con_original_chars_no_es_reanudable_hasta_que_el_snapshot_la_completa(
+        self, store
+    ) -> None:
+        """REQ-RES-9 S5, y su par feliz: el snapshot (2.2) es lo que habilita reabrir."""
+        task_id = await store.create(_task())
+        trace = [
+            Message(role=Role.USER, content="x"),
+            _llamada("c1", "web_fetch"),
+            Message(role=Role.TOOL, content="t" * 50_000, tool_call_id="c1"),
+            Message(role=Role.ASSISTANT, content="cierre"),
+        ]
+        await _persistir(store, task_id, *trace)
+
+        with pytest.raises(TranscriptNoReanudable) as exc:
+            await store.reabrir_transcript(task_id)
+        assert "acotad" in exc.value.motivo
+
+        await store.snapshot_completo(task_id, trace, desde_seq=0)
+        rec = await store.reabrir_transcript(task_id)
+
+        assert rec.trace[2].content == "t" * 50_000
+
+    async def test_una_fila_ilegible_no_es_reanudable_en_lugar_de_tumbar_con_otra_excepcion(
+        self, store
+    ) -> None:
+        task_id = await store.create(_task())
+        await _persistir(store, task_id, *_trace_pausado())
+        await store._conn().execute(
+            "UPDATE bg_task_messages SET tool_calls = '{no es json' WHERE seq = 2"
+        )
+
+        with pytest.raises(TranscriptNoReanudable) as exc:
+            await store.reabrir_transcript(task_id)
+
+        assert "ilegible" in exc.value.motivo
+
+    async def test_un_error_del_store_no_es_una_inconsistencia(self, tmp_path: Path) -> None:
+        """REQ-RES-9 S6: con el store caído lanza otra cosa, que la cola trata como reintentable."""
+        s = SQLiteBackgroundTaskStore(tmp_path / "bg.db")
+        await s.open()
+        task_id = await s.create(_task())
+        await s.close()
+
+        with pytest.raises(Exception) as exc:
+            await s.reabrir_transcript(task_id)
+
+        assert not isinstance(exc.value, TranscriptNoReanudable)
+
+    async def test_un_id_no_durable_es_un_error_de_uso(self, store) -> None:
+        with pytest.raises(ValueError):
+            await store.reabrir_transcript("bg-m1")
+
+    async def test_una_db_previa_con_filas_abre_sin_migrar_y_se_reabre(
+        self, tmp_path: Path
+    ) -> None:
+        """REQ-BGP-9 S1: el esquema no cambió; una DB escrita antes sigue siendo legible."""
+        ruta = tmp_path / "previa.db"
+        viejo = SQLiteBackgroundTaskStore(ruta)
+        await viejo.open()
+        task_id = await viejo.create(_task())
+        await _persistir(viejo, task_id, *_trace_pausado())
+        await viejo.close()
+
+        nuevo = SQLiteBackgroundTaskStore(ruta)
+        await nuevo.open()
+        try:
+            rec = await nuevo.reabrir_transcript(task_id)
+        finally:
+            await nuevo.close()
+
+        assert len(rec.trace) == 7
+        con = sqlite3.connect(ruta)
+        try:
+            columnas = [f[1] for f in con.execute("PRAGMA table_info(bg_task_messages)")]
+        finally:
+            con.close()
+        assert columnas == [
+            "task_id",
+            "seq",
+            "role",
+            "content",
+            "tool_calls",
+            "tool_call_id",
+            "original_chars",
+            "created_at",
+        ]
+
 
 # ---------------------------------------------------------------------------
 # REQ-BGP-7 — retención en TASKS (dos cotas simultáneas)
@@ -709,6 +1140,97 @@ class TestRetencion:
         finally:
             con.close()
         assert filas == [(int(conservada.removeprefix("bg-")),)]
+
+    # -- awaiting_input: se poda SOLO por edad y no compite en el ranking ----------------
+
+    async def test_awaiting_input_no_ocupa_un_lugar_en_las_20_de_terminadas(self, store) -> None:
+        """REQ-BGP-7 (base): con 20 terminadas más recientes, una pausa más vieja no
+        desplaza a nadie ni es desplazada."""
+        pausa = await _crear(store, status="awaiting_input", hace=timedelta(days=1))
+        terminadas = [await _crear(store, hace=timedelta(hours=1 + i)) for i in range(20)]
+
+        assert (await store.prune(_AHORA)).borradas == 0
+        assert await _ids_de(store, "awaiting_input") == {pausa}
+        assert await _ids_de(store, "delivered") == set(terminadas)
+
+    async def test_una_pausa_de_1_dia_con_25_terminadas_posteriores_no_se_poda(self, store) -> None:
+        """REQ-BGP-7 S5: en el ranking sería la 26.ª y caería; por edad, no."""
+        pausa = await _crear(store, status="awaiting_input", hace=timedelta(days=1))
+        terminadas = [await _crear(store, hace=timedelta(hours=1 + i)) for i in range(25)]
+
+        borradas = (await store.prune(_AHORA)).borradas
+
+        assert borradas == 5  # el ranking sigue recortando las terminadas a 20
+        assert await _ids_de(store, "awaiting_input") == {pausa}
+        assert await _ids_de(store, "delivered") == set(terminadas[:20])
+
+    async def test_una_pausa_de_15_dias_se_poda_con_sus_mensajes_y_su_workdir(
+        self, store, tmp_path: Path
+    ) -> None:
+        """REQ-BGP-7 S6."""
+        vieja = await _crear_con_workdir(
+            store, "/ws/dwss/pausa000", status="awaiting_input", hace=timedelta(days=15)
+        )
+        await _persistir(store, vieja, Message(role=Role.USER, content="x"))
+        await _persistir(store, vieja, Message(role=Role.ASSISTANT, content="y"))
+        reciente = await _crear_con_workdir(
+            store, "/ws/dwss/pausa111", status="awaiting_input", hace=timedelta(days=1)
+        )
+
+        resultado = await store.prune(_AHORA)
+
+        assert resultado.borradas == 1
+        assert resultado.workdirs == [(vieja, "/ws/dwss/pausa000")]
+        assert await store.get(vieja, "inaki") is None
+        assert await store.get(reciente, "inaki") is not None
+        con = sqlite3.connect(tmp_path / "background_tasks.db")
+        try:
+            filas = con.execute("SELECT task_id FROM bg_task_messages").fetchall()
+        finally:
+            con.close()
+        assert filas == []  # cascade
+
+    async def test_una_pausa_de_13_dias_se_conserva(self, store) -> None:
+        pausa = await _crear(store, status="awaiting_input", hace=timedelta(days=13, hours=23))
+
+        assert (await store.prune(_AHORA)).borradas == 0
+        assert await store.get(pausa, "inaki") is not None
+
+    async def test_una_pausa_reanudada_no_entra_a_la_clausula_de_edad(self, store) -> None:
+        """REQ-BGP-7 S7: al reanudar, ``finished_at`` vuelve a NULL y el estado a ``queued``."""
+        task = _task()
+        task.started_at = _AHORA - timedelta(days=20)  # creada hace 20 días, pausada hace 1
+        task_id = await store.create(task)
+        await store.update(task_id, status="awaiting_input", finished_at=_AHORA - timedelta(days=1))
+        await store.update(task_id, status="queued", finished_at=None)
+
+        assert (await store.prune(_AHORA)).borradas == 0
+        assert await store.get(task_id, "inaki") is not None
+
+    async def test_una_pausa_sin_finished_at_cae_por_la_fecha_de_creacion(self, store) -> None:
+        """Defensa: el ``COALESCE`` de la cláusula de edad cubre una fila sin ``finished_at``."""
+        task = _task()
+        task.started_at = _AHORA - timedelta(days=20)
+        task_id = await store.create(task)
+        await store.update(task_id, status="awaiting_input")
+
+        assert (await store.prune(_AHORA)).borradas == 1
+        assert await store.get(task_id, "inaki") is None
+
+    async def test_la_clausula_de_pausas_no_arrastra_a_delivery_failed_ni_a_interrupted_sin_avisar(
+        self, store
+    ) -> None:
+        """REQ-BGP-7 S3 junto a la pausa vieja: solo ella cae."""
+        fallida = await _crear(store, status="delivery_failed", hace=timedelta(days=30))
+        interrumpida = await _crear(
+            store, status="interrupted", notified=False, hace=timedelta(days=1)
+        )
+        pausa_vieja = await _crear(store, status="awaiting_input", hace=timedelta(days=15))
+
+        assert (await store.prune(_AHORA)).borradas == 1
+        assert await store.get(pausa_vieja, "inaki") is None
+        assert await store.get(fallida, "inaki") is not None
+        assert await store.get(interrumpida, "inaki") is not None
 
 
 # ---------------------------------------------------------------------------

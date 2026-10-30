@@ -30,7 +30,11 @@ from typing import TYPE_CHECKING, Callable, Protocol
 from inaki.agents.delegation.result_contract import con_footer
 from inaki.agents.delegation.sqlite_task_store import RETENCION_DIAS, RETENCION_ULTIMAS
 from inaki.agents.delegation.workdirs import ruta_relativa
-from inaki.kernel.domain.background_task import EnqueuedTask, InputFilesRejected
+from inaki.kernel.domain.background_task import (
+    EnqueuedTask,
+    InputFilesRejected,
+    ResumeOutcome,
+)
 from inaki.kernel.domain.delegation_result import DelegationResult
 from inaki.kernel.ports.tool_port import ITool, ToolResult
 from inaki.kernel._result_parser import parse_delegation_result
@@ -105,13 +109,81 @@ def _detalle_encolada(enqueued: EnqueuedTask) -> str:
     return "\n".join(lineas)
 
 
+def _resultado_de_resume(outcome: ResumeOutcome) -> DelegationResult:
+    """``ResumeOutcome`` → ``DelegationResult`` (lo lee el LLM, en inglés).
+
+    ``resumed`` es ``success``; cualquier otro outcome es ``failed`` con ``reason`` = su
+    nombre. Ningún texto afirma que la task "no existe": la cola responde igual para una
+    podada, una inexistente y una ajena, y lo único honesto es "ya no la tengo".
+    """
+    tid = outcome.task_id
+    if outcome.outcome == "resumed":
+        detalle = f"{tid} continues with your answer"
+        if outcome.iterations_left is not None:
+            detalle += f" ({outcome.iterations_left} iterations left)"
+        return DelegationResult(
+            status="success",
+            summary="Delegation resumed",
+            details=(
+                f"{detalle}. It runs in background: its result will arrive as a [bg-N] message "
+                f"(this one is {tid}). Do not start a new delegation for it."
+            ),
+        )
+    detalle_cola = f" ({outcome.detail})" if outcome.detail else ""
+    objetivo = outcome.target_agent_id or "its agent"
+    textos = {
+        "not_found": (
+            f"{tid} cannot be resumed: {outcome.detail}."
+            if outcome.detail
+            else f"I no longer have {tid}. It may have been pruned, or it is not one of your tasks."
+        ),
+        "not_awaiting": (
+            f"{tid} is not waiting for an answer (status: {outcome.status}). Only a task "
+            "that ended in needs_input can be resumed."
+        ),
+        "already_resuming": (
+            f"{tid} is already being resumed by another call. Do not resume it again: its "
+            "result will arrive as a [bg-N] message."
+        ),
+        "transcript_incomplete": (
+            f"{tid} cannot be resumed; delegate again including the answer{detalle_cola}. "
+            "You can dismiss it with background_tasks(action=cancel)."
+        ),
+        "no_iterations_left": (
+            f"{tid} has no iterations left in its budget, so it cannot continue. Delegate "
+            "again including the answer, or dismiss it with background_tasks(action=cancel)."
+        ),
+        "target_mismatch": (
+            f"{tid} belongs to agent '{objetivo}', not to the agent_id you passed. Omit "
+            "agent_id when you resume."
+        ),
+        "target_not_allowed": (
+            f"{tid} belongs to agent '{objetivo}', which is not among your allowed delegation "
+            "targets, so you cannot resume it."
+        ),
+        "unknown_target": (
+            f"{tid} belongs to agent '{objetivo}', which is no longer available (the "
+            "configuration changed). It cannot be resumed; dismiss it with "
+            "background_tasks(action=cancel)."
+        ),
+        "unavailable": (
+            f"{tid} cannot be resumed right now{detalle_cola or ''}. Nothing was changed: "
+            "you may retry."
+        ),
+    }
+    return DelegationResult(
+        status="failed", summary=textos[outcome.outcome], reason=outcome.outcome
+    )
+
+
 class DelegateTool(ITool):
     """
     Tool que delega una tarea a otro agente (hijo) y retorna un resultado estructurado.
 
-    El hijo se ejecuta de forma stateless vía RunAgentOneShotUseCase. No persiste
-    historial, no lee digest, y no tiene acceso a la tool "delegate" en su schema
-    (recursión imposible por construcción — REQ-DG-9).
+    El hijo se ejecuta vía RunAgentOneShotUseCase: no persiste historial de conversación,
+    no lee digest, y no tiene acceso a la tool "delegate" en su schema (recursión imposible
+    por construcción — REQ-DG-9). Un hijo en background puede pausar con UNA pregunta
+    (``needs_input``) y se reanuda sobre la misma fila con ``delegate(resume="bg-N", task=...)``.
     """
 
     name = "delegate"
@@ -121,18 +193,26 @@ class DelegateTool(ITool):
     description = (
         "Delegate a task to a specialized agent when the task requires expertise or tools you don't have, "
         "or involves multiple steps better handled end-to-end by another agent. "
-        "Returns a structured result with status, summary, details, and reason."
+        "Returns a structured result with status, summary, details, and reason. "
+        "A background child that paused with a question (a [bg-N] needs_input message) "
+        "continues when you call this tool again with resume set to its bg-N id and your "
+        "answer in task."
     )
     parameters_schema = {
         "type": "object",
         "properties": {
             "agent_id": {
                 "type": "string",
-                "description": "ID of the target agent to delegate the task to.",
+                "description": (
+                    "ID of the target agent to delegate the task to. Required unless resume is set."
+                ),
             },
             "task": {
                 "type": "string",
-                "description": "Description of the work to delegate to the target agent.",
+                "description": (
+                    "Description of the work to delegate to the target agent. "
+                    "With resume, your ANSWER to the question the child asked."
+                ),
             },
             "system_prompt": {
                 "type": "string",
@@ -166,8 +246,19 @@ class DelegateTool(ITool):
                     "fails."
                 ),
             },
+            "resume": {
+                "type": "string",
+                "description": (
+                    "Optional. The bg-N id of a background task that ended in needs_input "
+                    "(the child paused with one question). When set, task is your answer and "
+                    "the SAME child continues where it stopped, in background: its result "
+                    "arrives as a new [bg-N] message. Never start a new delegation for a "
+                    "paused task. agent_id is not needed; wait=true, input_files and "
+                    "system_prompt are not accepted together with resume."
+                ),
+            },
         },
-        "required": ["agent_id", "task"],
+        "required": ["task"],
     }
 
     def __init__(
@@ -217,20 +308,26 @@ class DelegateTool(ITool):
             schema["properties"]["agent_id"]["enum"] = sorted(allowed_targets)
             schema["properties"]["agent_id"]["description"] = (
                 "ID of the target agent to delegate the task to. "
-                f"Must be one of: {', '.join(sorted(allowed_targets))}."
+                f"Must be one of: {', '.join(sorted(allowed_targets))}. "
+                "Required unless resume is set."
             )
             self.parameters_schema = schema
 
     async def execute(  # type: ignore[override]
         self,
-        agent_id: str,
-        task: str,
+        agent_id: str | None = None,
+        task: str = "",
         system_prompt: str | None = None,
         wait: bool = False,
         input_files: list[str] | str | None = None,
+        resume: str | None = None,
         **kwargs,
     ) -> ToolResult:
-        """Dispatcher: ``wait=True`` → sync path (legacy); ``wait=False`` → async queue.
+        """Dispatcher: ``resume`` → reanudar; ``wait=True`` → sync path (legacy);
+        ``wait=False`` → async queue.
+
+        ``agent_id`` ya no es ``required`` en el schema (con ``resume`` no hace falta), así
+        que se valida acá: sin ``resume`` y sin ``agent_id`` → ``agent_id_required``.
 
         Default es async (REQ-DG-10). El caller marca ``wait=True`` explícitamente
         cuando necesita el resultado de la delegación en este mismo turno (para
@@ -256,6 +353,26 @@ class DelegateTool(ITool):
         crashear.
         """
         insumos = _normalizar_input_files(input_files)
+        if resume is not None and resume.strip():
+            return await self._execute_resume(
+                task_id=resume.strip(),
+                respuesta=task,
+                agent_id=agent_id,
+                system_prompt=system_prompt,
+                wait=wait,
+                input_files=insumos,
+            )
+        if agent_id is None or not agent_id.strip():
+            return self._build_tool_result(
+                DelegationResult(
+                    status="failed",
+                    summary=(
+                        "agent_id is required to start a delegation (it is only optional "
+                        "when you resume a paused task with resume=bg-N)."
+                    ),
+                    reason="agent_id_required",
+                )
+            )
         if wait:
             if insumos:
                 # El workdir solo existe en background (hay una fila que lo purgue): con
@@ -539,6 +656,83 @@ class DelegateTool(ITool):
             chat_id,
         )
         return self._build_tool_result(result)
+
+    # ---------------------------------------------------------------------------
+    # Resume path — REQ-RES-5/6/7
+    # ---------------------------------------------------------------------------
+
+    async def _execute_resume(
+        self,
+        *,
+        task_id: str,
+        respuesta: str,
+        agent_id: str | None,
+        system_prompt: str | None,
+        wait: bool,
+        input_files: tuple[str, ...],
+    ) -> ToolResult:
+        """Reanuda la task ``task_id`` (en ``awaiting_input``) con ``respuesta``.
+
+        Los parámetros que no tienen sentido al reanudar se rechazan ANTES de tocar la
+        cola, con un ``reason`` estable y sin mutar nada (REQ-RES-6): la task sigue
+        esperando su respuesta. Todo ``ResumeOutcome`` distinto de ``resumed`` es ``failed``
+        con ``reason`` = el nombre del outcome. NUNCA propaga excepciones (REQ-DG-8).
+        """
+        if wait:
+            return self._rechazo_de_resume(
+                "resume_requires_background",
+                "resume only works in background mode: do not set wait=true.",
+            )
+        if input_files:
+            return self._rechazo_de_resume(
+                "resume_rejects_input_files",
+                "input_files cannot be combined with resume: the child keeps its own "
+                "working directory.",
+            )
+        if system_prompt is not None:
+            return self._rechazo_de_resume(
+                "resume_rejects_system_prompt",
+                "system_prompt cannot be combined with resume: the child keeps the prompt "
+                "it started with.",
+            )
+        if not respuesta.strip():
+            return self._rechazo_de_resume(
+                "resume_answer_empty",
+                "task must contain your answer to the child's question when you use resume.",
+            )
+        if self._queue is None:
+            return self._build_tool_result(
+                DelegationResult(
+                    status="failed",
+                    summary="Background delegation is not available (queue not wired).",
+                    reason="background_delegation_unavailable",
+                )
+            )
+        objetivo = agent_id.strip() if agent_id is not None and agent_id.strip() else None
+        try:
+            outcome = await self._queue.resume(
+                task_id,
+                self._caller_agent_id,
+                respuesta,
+                target_agent_id=objetivo,
+                allowed_targets=self._allowed_targets,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("DelegateTool(resume): queue.resume() falló para '%s'", task_id)
+            return self._build_tool_result(
+                DelegationResult(
+                    status="failed",
+                    summary=f"Could not resume {task_id}: {type(exc).__name__}.",
+                    details=str(exc),
+                    reason="resume_failed",
+                )
+            )
+        return self._build_tool_result(_resultado_de_resume(outcome))
+
+    def _rechazo_de_resume(self, reason: str, summary: str) -> ToolResult:
+        return self._build_tool_result(
+            DelegationResult(status="failed", summary=summary, reason=reason)
+        )
 
     # ---------------------------------------------------------------------------
     # Private helpers

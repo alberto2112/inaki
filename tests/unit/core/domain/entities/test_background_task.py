@@ -21,6 +21,7 @@ from inaki.kernel.domain.background_task import (
     EnqueuedTask,
     InFlightToolCall,
     InputFilesRejected,
+    ResumeOutcome,
     TaskInspection,
     TranscriptEntry,
     WorkdirEntry,
@@ -165,14 +166,15 @@ _TODOS_LOS_ESTADOS = (
     "cancelled",
     "dismissed",
     "interrupted",
+    "awaiting_input",
 )
 
 
 class TestEstadosPersistidos:
-    """REQ-BGP-4 / REQ-BGD-9: ocho estados; los terminales ya no se purgan."""
+    """REQ-BGP-4 / REQ-BGD-9: nueve estados; los terminales ya no se purgan."""
 
     @pytest.mark.parametrize("estado", _TODOS_LOS_ESTADOS)
-    def test_la_task_acepta_los_ocho_estados(self, estado: str) -> None:
+    def test_la_task_acepta_los_nueve_estados(self, estado: str) -> None:
         assert _make_task(status=estado).status == estado
 
     def test_campos_nuevos_tienen_default_y_no_rompen_construccion_existente(self) -> None:
@@ -203,6 +205,14 @@ class TestEstadosPersistidos:
         view = BackgroundTaskView.from_task(task, now=task.started_at)
 
         assert view.status == "interrupted"
+
+    def test_view_acepta_awaiting_input(self) -> None:
+        """REQ-BGD-4/7: una pausa esperando respuesta sigue siendo asunto del padre."""
+        task = _make_task(status="awaiting_input")
+
+        view = BackgroundTaskView.from_task(task, now=task.started_at)
+
+        assert view.status == "awaiting_input"
 
     @pytest.mark.parametrize("estado", ["delivered", "cancelled", "dismissed"])
     def test_view_rechaza_los_terminales(self, estado: str) -> None:
@@ -474,3 +484,141 @@ class TestInputFilesRejected:
     def test_reason_desconocido_cae_con_valueerror(self) -> None:
         with pytest.raises(ValueError):
             InputFilesRejected("nope")  # type: ignore[arg-type]
+
+
+class TestPreguntaPendiente:
+    """REQ-RES-4 / REQ-BGD-4/7 S3: la pregunta de una task en ``awaiting_input``."""
+
+    def test_una_task_nueva_no_tiene_pregunta(self) -> None:
+        assert _make_task().question is None
+
+    def test_la_pregunta_vive_en_memoria_y_no_es_un_campo_persistido_obligatorio(self) -> None:
+        task = _make_task(status="awaiting_input")
+        task.question = "¿Cuál cuenta uso?"
+
+        assert task.question == "¿Cuál cuenta uso?"
+
+    def test_la_view_trunca_una_pregunta_de_400_chars_a_120_con_elipsis(self) -> None:
+        task = _make_task(status="awaiting_input")
+        task.question = "q" * 400
+
+        view = BackgroundTaskView.from_task(task, now=task.started_at)
+
+        assert view.question_preview is not None
+        assert len(view.question_preview) == 120
+        assert view.question_preview.endswith("…")
+        assert view.question_preview[:-1] == "q" * 119
+
+    def test_la_view_deja_intacta_una_pregunta_corta_y_una_de_exactamente_120(self) -> None:
+        corta = _make_task(status="awaiting_input")
+        corta.question = "¿Cuál cuenta?"
+        justa = _make_task(status="awaiting_input")
+        justa.question = "x" * 120
+
+        assert BackgroundTaskView.from_task(corta, now=corta.started_at).question_preview == (
+            "¿Cuál cuenta?"
+        )
+        assert BackgroundTaskView.from_task(justa, now=justa.started_at).question_preview == (
+            "x" * 120
+        )
+
+    @pytest.mark.parametrize("estado", ["queued", "running", "delivering", "interrupted"])
+    def test_en_otros_estados_no_hay_question_preview_aunque_la_task_tenga_pregunta(
+        self, estado: str
+    ) -> None:
+        task = _make_task(status=estado)
+        task.question = "residuo"
+
+        view = BackgroundTaskView.from_task(task, now=task.started_at)
+
+        assert view.question_preview is None
+        assert view.resumable is None
+
+    def test_awaiting_input_sin_pregunta_en_memoria_no_inventa_una(self) -> None:
+        task = _make_task(status="awaiting_input")
+
+        view = BackgroundTaskView.from_task(task, now=task.started_at)
+
+        assert view.question_preview is None
+
+    def test_awaiting_input_es_reanudable_salvo_transcript_incompleto(self) -> None:
+        sana = _make_task(status="awaiting_input")
+        rota = _make_task(status="awaiting_input")
+        rota.transcript_incomplete = True
+
+        assert BackgroundTaskView.from_task(sana, now=sana.started_at).resumable is True
+        assert BackgroundTaskView.from_task(rota, now=rota.started_at).resumable is False
+
+
+class TestResumeOutcome:
+    """REQ-RES-7: el port ``resume`` devuelve uno de diez desenlaces honestos."""
+
+    _LOS_DIEZ = (
+        "resumed",
+        "not_found",
+        "not_awaiting",
+        "already_resuming",
+        "transcript_incomplete",
+        "no_iterations_left",
+        "target_mismatch",
+        "target_not_allowed",
+        "unknown_target",
+        "unavailable",
+    )
+
+    def test_expone_exactamente_los_diez_desenlaces(self) -> None:
+        from typing import get_args
+
+        from inaki.kernel.domain.background_task import ResumeOutcomeKind
+
+        assert set(get_args(ResumeOutcomeKind)) == set(self._LOS_DIEZ)
+        assert len(get_args(ResumeOutcomeKind)) == 10
+
+    @pytest.mark.parametrize("outcome", _LOS_DIEZ)
+    def test_acepta_cada_desenlace(self, outcome: str) -> None:
+        assert ResumeOutcome(outcome=outcome, task_id="bg-1").outcome == outcome  # type: ignore[arg-type]
+
+    def test_un_desenlace_desconocido_se_rechaza(self) -> None:
+        with pytest.raises(ValidationError):
+            ResumeOutcome(outcome="boom", task_id="bg-1")  # type: ignore[arg-type]
+
+    def test_los_campos_opcionales_tienen_default_none(self) -> None:
+        res = ResumeOutcome(outcome="not_found", task_id="bg-1")
+
+        assert res.status is None
+        assert res.target_agent_id is None
+        assert res.iterations_left is None
+        assert res.detail is None
+
+    def test_resumed_lleva_las_iteraciones_restantes(self) -> None:
+        res = ResumeOutcome(
+            outcome="resumed", task_id="bg-1", target_agent_id="researcher", iterations_left=6
+        )
+
+        assert res.iterations_left == 6
+        assert res.target_agent_id == "researcher"
+
+    def test_not_awaiting_nombra_el_estado_en_que_esta(self) -> None:
+        res = ResumeOutcome(outcome="not_awaiting", task_id="bg-1", status="delivered")
+
+        assert res.status == "delivered"
+
+
+class TestAwaitingInputNoEsTerminal:
+    """REQ-RES-4: ``awaiting_input`` es un estado vivo, no terminal ni terminado."""
+
+    def test_no_es_un_estado_terminal_ni_terminado(self) -> None:
+        from typing import get_args
+
+        from inaki.kernel.domain.background_task import (
+            FinishedBackgroundTaskStatus,
+            LiveBackgroundTaskStatus,
+        )
+
+        assert "awaiting_input" in get_args(LiveBackgroundTaskStatus)
+        assert "awaiting_input" not in get_args(FinishedBackgroundTaskStatus)
+
+    def test_cancel_puede_reportar_awaiting_input_como_estado_de_la_task(self) -> None:
+        res = CancelOutcome(outcome="dismissed", task_id="bg-1", status="awaiting_input")
+
+        assert res.status == "awaiting_input"

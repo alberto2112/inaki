@@ -573,3 +573,125 @@ class TestInspectWorkdirEInsumos:
         d = json.loads((await tool.execute(action="inspect", task_id="bg-1003")).output)
 
         assert d["input_files"] == ["a.md", "b.csv"]
+
+
+# ---------------------------------------------------------------------------
+# awaiting_input: list / inspect / cancel (REQ-BGI-1 S5, REQ-BGI-6)
+# ---------------------------------------------------------------------------
+
+_PREGUNTA_LARGA = "¿Qué rango de fechas querés? " + "detalle " * 60
+
+
+def _en_pausa(**campos) -> BackgroundTask:
+    return _tarea(
+        status="awaiting_input",
+        result="[bg-1003] needs_input: ...",
+        result_status="needs_input",
+        question=_PREGUNTA_LARGA,
+        **campos,
+    )
+
+
+class TestAwaitingInput:
+    async def test_list_muestra_la_pregunta_truncada_y_como_reanudar(self) -> None:
+        vista = BackgroundTaskView.from_task(_en_pausa(), now=_T0)
+        tool, _ = _tool(snapshot=[vista])
+
+        res = await tool.execute(action="list")
+
+        payload = json.loads(res.output)
+        tarea = payload["tasks"][0]
+        assert tarea["status"] == "awaiting_input"
+        assert tarea["question_preview"].endswith("…")
+        assert len(tarea["question_preview"]) <= 120
+        assert tarea["resumable"] is True
+        assert 'delegate(resume="bg-N", task=' in payload["note"]
+        assert "action=cancel" in payload["note"]
+
+    async def test_list_sin_pausadas_no_agrega_la_nota_de_resume(self) -> None:
+        vista = BackgroundTaskView(
+            id="bg-2",
+            target_agent_id="researcher",
+            prompt_preview="x",
+            elapsed_seconds=3,
+            status="running",
+        )
+        tool, _ = _tool(snapshot=[vista])
+
+        res = await tool.execute(action="list")
+
+        assert "note" not in json.loads(res.output)
+
+    async def test_inspect_muestra_la_pregunta_completa_y_como_reanudar(self) -> None:
+        tool, _ = _tool(inspection=_inspeccion(_en_pausa()))
+
+        res = await tool.execute(action="inspect", task_id="bg-1003")
+
+        payload = json.loads(res.output)
+        assert res.success
+        assert payload["status"] == "awaiting_input"
+        assert payload["pending_question"] == _PREGUNTA_LARGA
+        assert payload["resumable"] is True
+        assert 'delegate(resume="bg-1003", task=' in payload["how_to_resume"]
+        assert "action=cancel" in payload["how_to_resume"]
+
+    async def test_inspect_de_una_pausa_no_reanudable_solo_ofrece_cancel(self) -> None:
+        tool, _ = _tool(inspection=_inspeccion(_en_pausa(transcript_incomplete=True)))
+
+        res = await tool.execute(action="inspect", task_id="bg-1003")
+
+        payload = json.loads(res.output)
+        assert payload["resumable"] is False
+        assert "pending_question" in payload
+        assert "delegate(resume" not in payload["how_to_resume"]
+        assert "cannot be resumed" in payload["how_to_resume"]
+        assert "delegate again including the answer" in payload["how_to_resume"]
+
+    async def test_inspect_de_una_pausa_sin_pregunta_en_memoria_no_inventa_una(self) -> None:
+        tarea = _tarea(status="awaiting_input", result="[bg-1003] needs_input: ...")
+        tool, _ = _tool(inspection=_inspeccion(tarea))
+
+        res = await tool.execute(action="inspect", task_id="bg-1003")
+
+        payload = json.loads(res.output)
+        assert payload["pending_question"] is None
+
+    async def test_inspect_de_otros_estados_no_lleva_campos_de_pausa(self) -> None:
+        tool, _ = _tool(inspection=_inspeccion(_tarea(status="delivered")))
+
+        res = await tool.execute(action="inspect", task_id="bg-1003")
+
+        payload = json.loads(res.output)
+        for campo in ("pending_question", "resumable", "how_to_resume"):
+            assert campo not in payload
+
+    async def test_cancel_de_awaiting_input_usa_su_propio_texto_y_devuelve_la_pregunta(
+        self,
+    ) -> None:
+        tool, _ = _tool(
+            cancel_outcome=CancelOutcome(
+                outcome="dismissed",
+                task_id="bg-5",
+                status="awaiting_input",
+                result="[bg-5] needs_input: ¿qué fechas?",
+            )
+        )
+
+        res = await tool.execute(action="cancel", task_id="bg-5")
+
+        payload = json.loads(res.output)
+        assert res.success
+        assert payload["outcome"] == "dismissed"
+        assert payload["message"] == (
+            "The child was waiting for your answer; the task is dismissed and will not continue."
+        )
+        assert payload["result"] == "[bg-5] needs_input: ¿qué fechas?"
+        assert "had finished" not in payload["message"]
+        assert "delivery_error" not in payload
+
+    def test_la_descripcion_menciona_awaiting_input_y_resume(self) -> None:
+        tool, _ = _tool()
+
+        assert "awaiting_input" in tool.description
+        assert "resume" in tool.description
+        assert "\n" not in tool.description

@@ -225,10 +225,17 @@ def build_discovery_section(
         "agent orchestrate the steps.\n\n"
         "## When NOT to delegate\n\n"
         "- The task is trivial or you already have the tools to solve it in 1-2 steps.\n"
-        "- You need tight back-and-forth with the user — the child is stateless and "
-        "returns a single structured result.\n"
+        "- You need tight back-and-forth with the user — the child is not a chat partner: "
+        "it returns a single structured result. At most a background child can pause with "
+        "ONE question (see below).\n"
         "- You already delegated the same task and it failed — try a different approach "
         "or ask the user.\n\n"
+        "## When a background child pauses\n\n"
+        "A background child may stop with ONE question instead of a result: you receive "
+        "`[bg-N] needs_input: <question>`. Ask the user that question — unless you already "
+        "know the answer yourself — and then continue the SAME child with "
+        '`delegate(resume="bg-N", task="<answer>")`. Never start a new delegation for a '
+        "paused task: the work it already did would be lost.\n\n"
         "## Available agents\n"
     )
     return "\n" + header + "\n" + "\n".join(lines)

@@ -18,6 +18,7 @@ from typing import Any, Protocol
 
 from inaki.kernel.domain.background_task import BackgroundTask, TranscriptEntry
 from inaki.kernel.ports.delegation_transcript_port import IDelegationTranscript
+from inaki.shared.message import Message
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,20 @@ class ResultadoPoda:
 
     borradas: int
     workdirs: list[tuple[str, str]] = field(default_factory=list)
+
+
+class TranscriptNoReanudable(Exception):
+    """El transcript persistido no sirve para reanudar la task (REQ-RES-9).
+
+    Es una inconsistencia de los DATOS (hueco en ``seq``, tool call sin par, mensajes
+    acotados...), no un fallo del disco: la cola la marca ``transcript_incomplete`` y
+    solo queda ``cancel``. Un error del store al leer NO es esto (es reintentable).
+    ``motivo`` dice cuál chequeo falló.
+    """
+
+    def __init__(self, motivo: str) -> None:
+        super().__init__(motivo)
+        self.motivo = motivo
 
 
 class IBackgroundTaskStore(Protocol):
@@ -76,6 +91,31 @@ class IBackgroundTaskStore(Protocol):
 
     def transcript(self, task_id: str) -> IDelegationTranscript:
         """Recorder SQLite para la task: un INSERT por mensaje, en orden, sin lanzar."""
+        ...
+
+    async def snapshot_completo(
+        self, task_id: str, trace: Sequence[Message], *, desde_seq: int
+    ) -> None:
+        """Reescribe COMPLETOS los mensajes que el cap acotó, solo del tramo actual.
+
+        Toca las filas con ``seq`` en ``(desde_seq, len(trace)]`` para las que
+        ``fue_acotado`` es verdadero (content y tool_calls enteros, ``original_chars``
+        NULL); las del tramo anterior no se tocan. Antes de escribir verifica que lo
+        persistido coincida con el trace (``MAX(seq) == len(trace)``). NO es
+        transaccional: son UPDATEs idempotentes por fila sobre la conexión compartida, y
+        LANZA ante cualquier fallo (un fallo a mitad deja filas ya completas, inocuo).
+        """
+        ...
+
+    async def reabrir_transcript(self, task_id: str) -> IDelegationTranscript:
+        """Recorder con el trace precargado desde el disco y ``seq`` en el último valor.
+
+        No re-inserta nada: el próximo ``record`` escribe ``seq = N + 1``. Verifica antes
+        que el transcript sea reanudable (``seq`` contiguo 1..N, primer mensaje USER,
+        último ASSISTANT final sin tool_calls, ningún tool call sin resultado, ninguna
+        fila con ``original_chars``) y si no lanza ``TranscriptNoReanudable``. Un fallo
+        del store al leer lanza su propia excepción (no es una inconsistencia).
+        """
         ...
 
     async def list_by_status(self, statuses: Sequence[str]) -> list[BackgroundTask]:

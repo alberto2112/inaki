@@ -124,8 +124,35 @@ def _workdir_a_dict(w: "WorkdirState") -> dict:
     return payload
 
 
+def _pausa_a_dict(insp: "TaskInspection") -> dict:
+    """Campos de una task en ``awaiting_input``: la pregunta completa y cómo continuar.
+
+    ``pending_question`` es ``None`` si el proceso no la tiene en memoria (la rehidratación
+    no pudo recuperarla): se dice, no se inventa.
+    """
+    t = insp.task
+    reanudable = not (t.transcript_incomplete or insp.transcript_incomplete)
+    plantilla = _COMO_REANUDAR if reanudable else _NO_REANUDABLE
+    return {
+        "pending_question": t.question,
+        "resumable": reanudable,
+        "how_to_resume": plantilla.format(id=t.id),
+    }
+
+
 def _iso(valor: datetime | None) -> str | None:
     return valor.isoformat() if valor is not None else None
+
+
+_COMO_REANUDAR = (
+    'Resume it with delegate(resume="{id}", task=<your answer>) — do NOT start a new '
+    'delegation — or abandon it with background_tasks(action=cancel, task_id="{id}").'
+)
+_NO_REANUDABLE = (
+    "It cannot be resumed (its saved transcript is incomplete). If the answer is still "
+    "needed, ask the user and delegate again including the answer; dismiss this one with "
+    'background_tasks(action=cancel, task_id="{id}").'
+)
 
 
 def _hay_desenlace(task: "BackgroundTask") -> bool:
@@ -142,8 +169,10 @@ class BackgroundTasksTool(ITool):
         "action=inspect with a task_id shows why a task ended (or how it is going): status, "
         "timings, budget, failure details and the last steps of the child's transcript. "
         "action=cancel with a task_id stops a queued or running task, or dismisses a "
-        "delivery_failed or interrupted task (a delivery_failed one also returns the result "
-        "it had produced)."
+        "delivery_failed, interrupted or awaiting_input task (a delivery_failed one also "
+        "returns the result it had produced). A task in awaiting_input is a child that "
+        "paused with a question: answer it with delegate(resume=bg-N, task=your answer) "
+        "instead of cancelling it."
     )
     routing_keywords = (
         "cancelar tarea en segundo plano, cancelar delegación, tarea colgada, "
@@ -215,6 +244,13 @@ class BackgroundTasksTool(ITool):
                 "No pending background tasks for you. Finished tasks already delivered their "
                 "[bg-N] result; use action=inspect with a task_id to review any recent one."
             )
+        elif any(t.status == "awaiting_input" for t in tasks):
+            payload["note"] = (
+                "A task in awaiting_input paused with the question shown in question_preview "
+                '(action=inspect shows it in full). Resume it with delegate(resume="bg-N", '
+                "task=<your answer>) — do NOT start a new delegation — or abandon it with "
+                "action=cancel. If resumable is false it can only be cancelled."
+            )
         return self._ok(payload)
 
     async def _cancel(self, task_id: str) -> ToolResult:
@@ -225,6 +261,18 @@ class BackgroundTasksTool(ITool):
                     "outcome": "cancelled",
                     "task_id": task_id,
                     "message": "The task was stopped. No [bg-N] result will arrive for it.",
+                }
+            )
+        if res.outcome == "dismissed" and res.status == "awaiting_input":
+            return self._ok(
+                {
+                    "outcome": "dismissed",
+                    "task_id": task_id,
+                    "message": (
+                        "The child was waiting for your answer; the task is dismissed and "
+                        "will not continue."
+                    ),
+                    "result": res.result,
                 }
             )
         if res.outcome == "dismissed" and res.status == "interrupted":
@@ -319,6 +367,8 @@ class BackgroundTasksTool(ITool):
             "messages_omitted": max(0, insp.messages_total - len(insp.messages)),
             "messages": [_paso_a_dict(m) for m in insp.messages],
         }
+        if t.status == "awaiting_input":
+            payload.update(_pausa_a_dict(insp))
         notas = []
         if not insp.persisted:
             notas.append(

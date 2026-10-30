@@ -139,9 +139,19 @@ tags:
 ### `BackgroundTask` — `background_task.py`
 
 Una delegación `delegate(wait=false)`. Id `bg-{rowid}` desde `bg-1000` (`bg-m{N}` = no
-persistida: el store estaba caído y solo vive en el proceso). Estados: vivos `queued`,
+persistida: el store estaba caído y solo vive en el proceso). Estados (9): vivos `queued`,
 `running`, `delivering`; terminales `delivered`, `cancelled`, `dismissed`; `delivery_failed` (viva: resultado guardado,
-cancelable) e `interrupted` (cortada por un restart; sigue visible hasta que se avisa).
+cancelable), `interrupted` (cortada por un restart; sigue visible hasta que se avisa) y
+`awaiting_input` (el hijo PAUSÓ con una pregunta `needs_input`: no es terminal, sobrevive al
+reinicio y se reanuda con `delegate(resume="bg-N")` sobre la misma fila). `BackgroundTask.question`
+es la pregunta pendiente y vive solo en memoria (se recupera del último mensaje del transcript al
+rehidratar; no es columna). `BackgroundTaskView` suma `question_preview` (≤ 120 chars, solo en
+`awaiting_input`) y `resumable`. `ResumeOutcome` (lo que devuelve `IBackgroundDelegationQueue.resume`)
+lleva un `outcome` de `ResumeOutcomeKind` — `resumed`, `not_found`, `not_awaiting`,
+`already_resuming`, `transcript_incomplete`, `no_iterations_left`, `target_mismatch`,
+`target_not_allowed`, `unknown_target`, `unavailable` — más `task_id`, `status`, `target_agent_id`,
+`iterations_left` y `detail`. `DelegationResult` (el JSON que cierra el hijo) suma `question: str | None`
+y su `status` admite `needs_input` además de `success`/`failed`.
 Guarda `result`, `result_status`, `result_parse_error`, `failure` (`DelegationFailure`:
 `timeout` / `max_iterations` / `exception` / `unknown_target`, con el último paso y las tool calls
 sin par), `iterations_used`, `notified`, `transcript_incomplete`, `workdir` (ruta absoluta o

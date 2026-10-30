@@ -28,7 +28,11 @@ import pytest
 from inaki.agents.delegation import delegate_tool as delegate_tool_module
 from inaki.agents.delegation.delegate_tool import DelegateTool
 from inaki.agents.delegation.result_contract import RESULT_FORMAT_FOOTER
-from inaki.kernel.domain.background_task import EnqueuedTask, InputFilesRejected
+from inaki.kernel.domain.background_task import (
+    EnqueuedTask,
+    InputFilesRejected,
+    ResumeOutcome,
+)
 from inaki.kernel.domain.delegation_result import DelegationResult
 from inaki.kernel.ports.tool_port import ToolResult
 from inaki.app.assembly import contexto_del_turno
@@ -592,10 +596,10 @@ def test_tool_name_is_delegate():
 
 
 def test_tool_schema_required_fields():
-    """El schema de parámetros incluye agent_id y task como required."""
+    """Solo ``task`` es required: ``agent_id`` se valida en ``execute`` porque con
+    ``resume`` no hace falta (REQ-BGD-12)."""
     schema = DelegateTool.parameters_schema
-    assert "agent_id" in schema["required"]
-    assert "task" in schema["required"]
+    assert schema["required"] == ["task"]
     assert "system_prompt" not in schema["required"]  # opcional
 
 
@@ -1211,3 +1215,311 @@ async def test_error_target_not_allowed_async_tambien_lista_targets():
     dr = DelegationResult.model_validate_json(result.output)
     assert dr.reason == "target_not_allowed"
     assert "deep_research" in dr.summary
+
+
+# ---------------------------------------------------------------------------
+# delegate(resume=) — reanudar una task en awaiting_input (REQ-BGD-12, REQ-RES-6/7/13)
+# ---------------------------------------------------------------------------
+
+
+def _resume_tool(outcome: ResumeOutcome | None = None, *, allowed=None):
+    """Tool con una cola cuyo ``resume`` devuelve ``outcome`` (por defecto ``resumed``)."""
+    queue = MagicMock()
+    queue.enqueue = AsyncMock(return_value=EnqueuedTask(task_id="bg-1"))
+    queue.resume = AsyncMock(
+        return_value=outcome
+        or ResumeOutcome(
+            outcome="resumed", task_id="bg-7", target_agent_id="researcher", iterations_left=6
+        )
+    )
+    tool, queue, _ = _make_async_tool(queue=queue, allowed_targets=allowed)
+    return tool, queue
+
+
+def _dr(result: ToolResult) -> DelegationResult:
+    return DelegationResult.model_validate_json(result.output)
+
+
+class TestEsquemaDeResume:
+    def test_resume_es_un_string_opcional_descrito_en_ingles(self) -> None:
+        prop = DelegateTool.parameters_schema["properties"]["resume"]
+
+        assert prop["type"] == "string"
+        assert "resume" not in DelegateTool.parameters_schema["required"]
+        assert "bg-N" in prop["description"]
+        assert "needs_input" in prop["description"]
+        assert "\n" not in prop["description"]
+
+    def test_agent_id_dice_que_no_hace_falta_con_resume(self) -> None:
+        desc = DelegateTool.parameters_schema["properties"]["agent_id"]["description"]
+
+        assert "Required unless resume is set" in desc
+
+    def test_la_allowlist_conserva_la_aclaracion_de_resume_en_agent_id(self) -> None:
+        tool = _make_tool_with_targets(["coder", "deep_research"])
+
+        desc = tool.parameters_schema["properties"]["agent_id"]["description"]
+        assert "Must be one of: coder, deep_research." in desc
+        assert "Required unless resume is set" in desc
+
+    def test_la_descripcion_del_tool_sigue_siendo_texto_plano_y_menciona_resume(self) -> None:
+        assert "\n" not in DelegateTool.description
+        assert "`" not in DelegateTool.description
+        assert "resume" in DelegateTool.description
+
+    async def test_el_registry_no_rechaza_un_resume_sin_agent_id(self) -> None:
+        from inaki.tools.registry import ToolRegistry
+
+        tool, queue = _resume_tool()
+        registry = ToolRegistry(embedder=MagicMock())
+        registry.register(tool)
+
+        res = await registry.execute("delegate", resume="bg-7", task="la respuesta")
+
+        assert _dr(res).summary == "Delegation resumed"
+        queue.resume.assert_awaited_once()
+
+
+class TestAgentIdSinResume:
+    async def test_sin_agent_id_ni_resume_falla_pidiendo_agent_id(self) -> None:
+        tool, queue = _resume_tool()
+
+        res = await tool.execute(task="hacé algo")
+
+        dr = _dr(res)
+        assert res.success is False
+        assert dr.status == "failed"
+        assert dr.reason == "agent_id_required"
+        assert "agent_id" in dr.summary
+        queue.enqueue.assert_not_awaited()
+        queue.resume.assert_not_awaited()
+
+    async def test_agent_id_vacio_cuenta_como_ausente(self) -> None:
+        tool, _ = _resume_tool()
+
+        res = await tool.execute(agent_id="  ", task="hacé algo")
+
+        assert _dr(res).reason == "agent_id_required"
+
+    async def test_con_wait_true_tambien_exige_agent_id(self) -> None:
+        tool, _ = _resume_tool()
+
+        res = await tool.execute(task="hacé algo", wait=True)
+
+        assert _dr(res).reason == "agent_id_required"
+
+
+class TestResumeFeliz:
+    async def test_resumed_es_success_con_iteraciones_y_aviso_del_bg(self) -> None:
+        tool, queue = _resume_tool()
+
+        res = await tool.execute(resume="bg-7", task="  la respuesta  ")
+
+        dr = _dr(res)
+        assert res.success is True
+        assert dr.status == "success"
+        assert dr.summary == "Delegation resumed"
+        assert "bg-7" in (dr.details or "")
+        assert "6 iterations left" in (dr.details or "")
+        assert "[bg-N] message" in (dr.details or "")
+        queue.enqueue.assert_not_awaited()
+
+    async def test_pasa_caller_respuesta_y_allowlist_a_la_cola(self) -> None:
+        tool, queue = _resume_tool(allowed=["researcher", "coder"])
+
+        await tool.execute(resume="bg-7", task="la respuesta", agent_id="researcher")
+
+        queue.resume.assert_awaited_once_with(
+            "bg-7",
+            "inaki",
+            "la respuesta",
+            target_agent_id="researcher",
+            allowed_targets=["researcher", "coder"],
+        )
+
+    async def test_sin_agent_id_el_target_va_en_none(self) -> None:
+        tool, queue = _resume_tool()
+
+        await tool.execute(resume="bg-7", task="la respuesta")
+
+        assert queue.resume.await_args.kwargs["target_agent_id"] is None
+        assert queue.resume.await_args.kwargs["allowed_targets"] == _ALLOWED_TARGETS
+
+    async def test_no_construye_el_hijo(self) -> None:
+        tool, _ = _resume_tool()
+
+        await tool.execute(resume="bg-7", task="la respuesta")
+
+        tool._build_child.assert_not_called()  # type: ignore[attr-defined]
+
+    async def test_el_id_se_normaliza_sin_espacios(self) -> None:
+        tool, queue = _resume_tool()
+
+        await tool.execute(resume="  bg-7 ", task="la respuesta")
+
+        assert queue.resume.await_args.args[0] == "bg-7"
+
+
+class TestResumeRechazosLocales:
+    """REQ-RES-6: rechazos con reason estable, SIN tocar la cola (la task sigue como estaba)."""
+
+    @pytest.mark.parametrize(
+        ("kwargs", "reason"),
+        [
+            ({"wait": True}, "resume_requires_background"),
+            ({"input_files": ["a.md"]}, "resume_rejects_input_files"),
+            ({"system_prompt": "otro prompt"}, "resume_rejects_system_prompt"),
+            ({"task": ""}, "resume_answer_empty"),
+            ({"task": "   \n "}, "resume_answer_empty"),
+        ],
+    )
+    async def test_cada_rechazo_tiene_su_reason_y_no_toca_la_cola(
+        self, kwargs: dict, reason: str
+    ) -> None:
+        tool, queue = _resume_tool()
+        args = {"resume": "bg-7", "task": "la respuesta", **kwargs}
+
+        res = await tool.execute(**args)
+
+        dr = _dr(res)
+        assert res.success is False
+        assert dr.status == "failed"
+        assert dr.reason == reason
+        assert res.error == reason
+        queue.resume.assert_not_awaited()
+        queue.enqueue.assert_not_awaited()
+
+    async def test_input_files_vacio_no_es_un_pedido(self) -> None:
+        tool, queue = _resume_tool()
+
+        res = await tool.execute(resume="bg-7", task="la respuesta", input_files=[])
+
+        assert res.success is True
+        queue.resume.assert_awaited_once()
+
+    async def test_sin_cola_falla_con_background_delegation_unavailable(self) -> None:
+        tool = DelegateTool(
+            allowed_targets=_ALLOWED_TARGETS,
+            build_child=MagicMock(),
+            max_iterations_per_sub=_MAX_ITERATIONS,
+            timeout_seconds=_TIMEOUT_SECONDS,
+            caller_agent_id="inaki",
+            caller_container=MagicMock(),
+            queue=None,
+        )
+
+        res = await tool.execute(resume="bg-7", task="la respuesta")
+
+        assert _dr(res).reason == "background_delegation_unavailable"
+
+    async def test_una_excepcion_de_la_cola_no_se_propaga(self) -> None:
+        tool, queue = _resume_tool()
+        queue.resume = AsyncMock(side_effect=RuntimeError("boom"))
+
+        res = await tool.execute(resume="bg-7", task="la respuesta")
+
+        dr = _dr(res)
+        assert res.success is False
+        assert dr.reason == "resume_failed"
+        assert "RuntimeError" in dr.summary
+
+
+class TestResumeOutcomesNoFelices:
+    """REQ-RES-6/7: todo outcome distinto de ``resumed`` es ``failed`` con reason = outcome."""
+
+    @pytest.mark.parametrize(
+        "outcome",
+        [
+            ResumeOutcome(outcome="not_found", task_id="bg-7"),
+            ResumeOutcome(outcome="not_found", task_id="bg-m3", detail="it has no durable record"),
+            ResumeOutcome(outcome="not_awaiting", task_id="bg-7", status="delivered"),
+            ResumeOutcome(outcome="already_resuming", task_id="bg-7"),
+            ResumeOutcome(outcome="transcript_incomplete", task_id="bg-7"),
+            ResumeOutcome(outcome="no_iterations_left", task_id="bg-7"),
+            ResumeOutcome(outcome="target_mismatch", task_id="bg-7", target_agent_id="coder"),
+            ResumeOutcome(outcome="target_not_allowed", task_id="bg-7", target_agent_id="coder"),
+            ResumeOutcome(outcome="unknown_target", task_id="bg-7", target_agent_id="coder"),
+            ResumeOutcome(outcome="unavailable", task_id="bg-7", detail="try again later"),
+        ],
+    )
+    async def test_reason_es_el_nombre_del_outcome(self, outcome: ResumeOutcome) -> None:
+        tool, _ = _resume_tool(outcome)
+
+        res = await tool.execute(resume=outcome.task_id, task="la respuesta")
+
+        dr = _dr(res)
+        assert res.success is False
+        assert dr.status == "failed"
+        assert dr.reason == outcome.outcome
+        assert res.error == outcome.outcome
+        assert dr.summary
+
+    async def test_not_found_dice_que_ya_no_la_tiene_sin_afirmar_inexistencia(self) -> None:
+        tool, _ = _resume_tool(ResumeOutcome(outcome="not_found", task_id="bg-7"))
+
+        res = await tool.execute(resume="bg-7", task="x")
+
+        texto = _dr(res).summary
+        assert "I no longer have bg-7" in texto
+        for prohibido in ("doesn't exist", "does not exist", "never existed"):
+            assert prohibido not in texto
+
+    async def test_not_found_de_un_bg_m_usa_el_detalle_de_la_cola(self) -> None:
+        tool, _ = _resume_tool(
+            ResumeOutcome(outcome="not_found", task_id="bg-m3", detail="it has no durable record")
+        )
+
+        res = await tool.execute(resume="bg-m3", task="x")
+
+        texto = _dr(res).summary
+        assert "no durable record" in texto
+        assert "I no longer have" not in texto
+        assert "exist" not in texto
+
+    async def test_not_awaiting_nombra_el_estado(self) -> None:
+        tool, _ = _resume_tool(
+            ResumeOutcome(outcome="not_awaiting", task_id="bg-7", status="running")
+        )
+
+        res = await tool.execute(resume="bg-7", task="x")
+
+        assert "running" in _dr(res).summary
+
+    async def test_transcript_incomplete_sugiere_delegar_de_nuevo_con_la_respuesta(self) -> None:
+        tool, _ = _resume_tool(
+            ResumeOutcome(
+                outcome="transcript_incomplete", task_id="bg-7", detail="seq is not contiguous"
+            )
+        )
+
+        res = await tool.execute(resume="bg-7", task="x")
+
+        dr = _dr(res)
+        assert "cannot be resumed" in dr.summary
+        assert "delegate again including the answer" in dr.summary
+        assert "seq is not contiguous" in (dr.details or dr.summary)
+
+    async def test_target_mismatch_dice_cual_es_el_target_de_la_fila(self) -> None:
+        tool, _ = _resume_tool(
+            ResumeOutcome(outcome="target_mismatch", task_id="bg-7", target_agent_id="coder")
+        )
+
+        res = await tool.execute(resume="bg-7", task="x", agent_id="researcher")
+
+        assert "coder" in _dr(res).summary
+
+    async def test_unavailable_usa_el_detalle(self) -> None:
+        tool, _ = _resume_tool(
+            ResumeOutcome(outcome="unavailable", task_id="bg-7", detail="try again later")
+        )
+
+        res = await tool.execute(resume="bg-7", task="x")
+
+        assert "try again later" in _dr(res).summary
+
+    async def test_ningun_texto_de_rechazo_promete_continuacion(self) -> None:
+        tool, _ = _resume_tool(ResumeOutcome(outcome="no_iterations_left", task_id="bg-7"))
+
+        res = await tool.execute(resume="bg-7", task="x")
+
+        assert "iterations" in _dr(res).summary

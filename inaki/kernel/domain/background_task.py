@@ -30,6 +30,7 @@ from pydantic import BaseModel
 from inaki.shared.message import Role
 
 _PROMPT_PREVIEW_MAX = 80
+_QUESTION_PREVIEW_MAX = 120
 _ELLIPSIS = "…"
 
 # Ciclo de vida de una delegación async:
@@ -42,7 +43,12 @@ _ELLIPSIS = "…"
 #   reintentos (o el daemon murió entregándola). El resultado y el error quedan
 #   guardados en la task; NUNCA se presenta como ``running`` (caso real: un bg-N
 #   "corriendo" 6 horas después de que su hijo había terminado).
-LiveBackgroundTaskStatus = Literal["queued", "running", "delivering", "delivery_failed"]
+# - ``awaiting_input``: el hijo PAUSÓ con una pregunta (``needs_input``) y espera la
+#   respuesta. NO es terminal: sobrevive a restart, ``/reload`` y ``stop()``, y se
+#   reanuda sobre la misma fila con ``delegate(resume=...)`` (o se abandona con ``cancel``).
+LiveBackgroundTaskStatus = Literal[
+    "queued", "running", "delivering", "delivery_failed", "awaiting_input"
+]
 
 # Estados en los que la task ya no avanza sola:
 # - ``delivered``: el resultado llegó al padre.
@@ -53,7 +59,7 @@ LiveBackgroundTaskStatus = Literal["queued", "running", "delivering", "delivery_
 #   descarte con ``cancel``.
 FinishedBackgroundTaskStatus = Literal["delivered", "cancelled", "dismissed", "interrupted"]
 
-# Los ocho estados persistidos (REQ-BGP-4). Se escriben completos y no como unión
+# Los nueve estados persistidos (REQ-BGP-4). Se escriben completos y no como unión
 # de los dos alias de arriba: ``Literal`` no se compone desde otros ``Literal``.
 BackgroundTaskStatus = Literal[
     "queued",
@@ -64,19 +70,21 @@ BackgroundTaskStatus = Literal[
     "cancelled",
     "dismissed",
     "interrupted",
+    "awaiting_input",
 ]
 
 # Lo que puede verse en el prompt del padre (``BackgroundTaskView``): las vivas más
 # ``interrupted`` mientras esperan su aviso. Las terminales NO viajan al prompt: se
 # consultan con ``inspect`` (REQ-BGD-4 / REQ-BGD-7).
 InFlightBackgroundTaskStatus = Literal[
-    "queued", "running", "delivering", "delivery_failed", "interrupted"
+    "queued", "running", "delivering", "delivery_failed", "interrupted", "awaiting_input"
 ]
 
 # Desenlace de ``IBackgroundDelegationQueue.cancel``:
 # - ``cancelled``: estaba ``queued``/``running`` y se cortó.
-# - ``dismissed``: estaba ``delivery_failed`` o ``interrupted`` sin avisar; se
-#   descartó devolviendo lo que tuviera guardado.
+# - ``dismissed``: estaba ``delivery_failed``, ``interrupted`` sin avisar o
+#   ``awaiting_input``; se descartó devolviendo lo que tuviera guardado (en
+#   ``awaiting_input``, la pregunta que quedó sin respuesta).
 # - ``finished``: ya había terminado (``delivered``/``cancelled``/``dismissed``/
 #   ``interrupted`` ya avisada); no hay nada que cortar. ``CancelOutcome.status``
 #   dice en qué estado quedó.
@@ -84,6 +92,34 @@ InFlightBackgroundTaskStatus = Literal[
 #   canceló, se podó, o es de otro agente). No afirma que nunca existió.
 # - ``delivering``: su resultado se está entregando justo ahora; no se corta.
 CancelOutcomeKind = Literal["cancelled", "dismissed", "finished", "not_found", "delivering"]
+
+# Desenlace de ``IBackgroundDelegationQueue.resume`` (REQ-RES-7). Ninguno distinto de
+# ``resumed`` cambia el ``status`` de la fila (la única mutación permitida es la marca
+# ``transcript_incomplete`` cuando la reapertura detecta un transcript inconsistente):
+# - ``resumed``: la task volvió a ``queued`` con la respuesta; el tramo corre solo.
+# - ``not_found``: no hay una task con ese id de ese caller (podada, inexistente o de
+#   otro agente: indistinguibles a propósito). No afirma que nunca existió.
+# - ``not_awaiting``: la task existe pero no está esperando una respuesta (``status``
+#   dice en cuál está).
+# - ``already_resuming``: otro ``resume`` de la misma task ya reservó el turno.
+# - ``transcript_incomplete``: el historial persistido no permite reanudar sin mentir.
+# - ``no_iterations_left``: el presupuesto acumulado de la fila ya se agotó.
+# - ``target_mismatch``: el ``agent_id`` que dio el caller no es el de la fila.
+# - ``target_not_allowed``: el target de la fila ya no está en la allow-list del caller.
+# - ``unknown_target``: el target de la fila ya no se resuelve (la config cambió).
+# - ``unavailable``: el store o el consumer no están disponibles; reintentable.
+ResumeOutcomeKind = Literal[
+    "resumed",
+    "not_found",
+    "not_awaiting",
+    "already_resuming",
+    "transcript_incomplete",
+    "no_iterations_left",
+    "target_mismatch",
+    "target_not_allowed",
+    "unknown_target",
+    "unavailable",
+]
 
 # Por qué falló una delegación (REQ-BGP-5). ``unknown_target`` e ``interrupted`` no
 # son fallos del hijo: el primero nunca arrancó, el segundo lo cortó el daemon.
@@ -170,6 +206,10 @@ class BackgroundTask(BaseModel):
     # persiste (sobrevive a un reinicio) para que ``inspect`` nunca presente un transcript
     # trunco como si fuera el completo.
     transcript_incomplete: bool = False
+    # Solo en ``awaiting_input``: la pregunta con la que pausó el hijo. Vive en MEMORIA y no
+    # es columna del store (sin migración): se fija al pausar y se recupera en el arranque
+    # parseando el último mensaje del transcript.
+    question: str | None = None
 
 
 class BackgroundTaskView(BaseModel):
@@ -188,6 +228,12 @@ class BackgroundTaskView(BaseModel):
     # resultado en sí NO viaja en el View: puede ser largo y el View se inyecta
     # en el system prompt de cada turno; se recupera con ``cancel``.
     error: str | None = None
+    # Solo en ``awaiting_input``: la pregunta del hijo, truncada a ≤120 con elipsis (el
+    # View se inyecta en el system prompt de cada turno). La completa se ve con ``inspect``.
+    question_preview: str | None = None
+    # Solo en ``awaiting_input``: ¿se puede reanudar? ``False`` si el transcript quedó
+    # incompleto (solo queda ``cancel``). ``None`` en cualquier otro estado.
+    resumable: bool | None = None
 
     @classmethod
     def from_task(cls, task: BackgroundTask, *, now: datetime) -> "BackgroundTaskView":
@@ -210,6 +256,13 @@ class BackgroundTaskView(BaseModel):
 
         elapsed = int((now - task.started_at).total_seconds())
 
+        en_pausa = task.status == "awaiting_input"
+        question_preview: str | None = None
+        if en_pausa and task.question is not None:
+            question_preview = task.question
+            if len(question_preview) > _QUESTION_PREVIEW_MAX:
+                question_preview = question_preview[: _QUESTION_PREVIEW_MAX - 1] + _ELLIPSIS
+
         return cls(
             id=task.id,
             target_agent_id=task.target_agent_id,
@@ -219,6 +272,8 @@ class BackgroundTaskView(BaseModel):
             # padre: la validación de pydantic la rechaza, no hay filtro aparte que olvidar.
             status=task.status,  # type: ignore[arg-type]
             error=task.error,
+            question_preview=question_preview,
+            resumable=(not task.transcript_incomplete) if en_pausa else None,
         )
 
 
@@ -226,8 +281,8 @@ class CancelOutcome(BaseModel):
     """Resultado de ``IBackgroundDelegationQueue.cancel``.
 
     ``result`` y ``error`` solo vienen con ``dismissed``: son lo que la task en
-    ``delivery_failed`` tenía guardado, para que quien la descarta no pierda el
-    trabajo del hijo. ``status`` solo viene con ``finished``: el estado terminal en
+    ``delivery_failed`` (o ``awaiting_input``, donde ``result`` es la pregunta sin
+    contestar) tenía guardado, para que quien la descarta no pierda el trabajo del hijo. ``status`` solo viene con ``finished``: el estado terminal en
     el que la task ya estaba.
     """
 
@@ -236,6 +291,23 @@ class CancelOutcome(BaseModel):
     result: str | None = None
     error: str | None = None
     status: BackgroundTaskStatus | None = None
+
+
+class ResumeOutcome(BaseModel):
+    """Resultado de ``IBackgroundDelegationQueue.resume`` (REQ-RES-7).
+
+    ``status`` solo viene con ``not_awaiting`` (el estado en que la task sí está);
+    ``target_agent_id`` con ``resumed`` y ``target_mismatch`` (el de la fila);
+    ``iterations_left`` solo con ``resumed``; ``detail`` es una nota libre para el
+    mensaje al LLM (p. ej. por qué no se puede reanudar).
+    """
+
+    outcome: ResumeOutcomeKind
+    task_id: str
+    status: BackgroundTaskStatus | None = None
+    target_agent_id: str | None = None
+    iterations_left: int | None = None
+    detail: str | None = None
 
 
 class TranscriptEntry(BaseModel):

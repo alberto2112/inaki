@@ -18,6 +18,9 @@ Contratos clave:
              (user inicial, assistant+tool_calls, tool results, respuesta final):
              ``recorder.trace`` es el espejo en memoria y ``recorder.record`` la
              escritura durable. Sin ``recorder`` la llamada al loop es la de siempre.
+- REQ-RES-5: con ``historial_previo`` el hijo REANUDA un transcript pausado: ve lo que ya hizo
+             más la respuesta nueva como último ``user``. Ese historial ya está en el
+             ``recorder.trace`` reabierto, así que NO se vuelve a anotar ni a grabar.
 - REQ-DG-9: Filtra la tool "delegate" de los schemas antes de pasarlos al loop
              (prevención de recursión por construcción). Filtra también
              "background_tasks": las delegaciones en background son del padre, y
@@ -29,7 +32,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 
 from inaki.kernel.domain.agent_settings import OneShotSettings
 from inaki.kernel.ports.delegation_transcript_port import IDelegationTranscript
@@ -86,6 +89,7 @@ class RunAgentOneShotUseCase:
         timeout_seconds: int,
         *,
         recorder: IDelegationTranscript | None = None,
+        historial_previo: Sequence[Message] = (),
     ) -> str:
         """
         Ejecuta el agente sobre `task` y retorna la respuesta final del LLM.
@@ -103,6 +107,11 @@ class RunAgentOneShotUseCase:
                       pasa, recibe cada mensaje del hijo al generarse; ``record``
                       nunca lo mata al turno. Los errores de arriba se propagan
                       IGUAL: el recorder solo observa.
+            historial_previo: Mensajes de un tramo anterior de ESTA misma delegación
+                              (reanudación tras ``needs_input``). El LLM los ve antes de
+                              ``task``; no se vuelven a anotar. Con ``recorder``, su
+                              ``trace`` DEBE ser ese mismo historial (el recorder
+                              reabierto lo trae precargado).
 
         Returns:
             Respuesta final en texto del LLM.
@@ -110,7 +119,21 @@ class RunAgentOneShotUseCase:
         Raises:
             asyncio.TimeoutError: Si la ejecución supera timeout_seconds.
             ToolLoopMaxIterationsError: Si el loop supera max_iterations.
+            ValueError: Si ``historial_previo`` y ``recorder`` no están alineados.
         """
+        # REQ-RES-5: fail-loud ANTES de tocar nada. Un recorder cuyo trace no es el
+        # historial a rehidratar grabaría el tramo nuevo con seq repetidos o con huecos.
+        if (
+            historial_previo
+            and recorder is not None
+            and len(recorder.trace) != len(historial_previo)
+        ):
+            raise ValueError(
+                "historial_previo no coincide con recorder.trace "
+                f"({len(historial_previo)} mensajes contra {len(recorder.trace)}): el "
+                "recorder debe ser el reabierto de esta misma delegación"
+            )
+
         # REQ-OS-2: usa el system_prompt del caller, o el default del agente.
         effective_prompt = system_prompt if system_prompt is not None else self._cfg.system_prompt
 
@@ -143,14 +166,17 @@ class RunAgentOneShotUseCase:
                 "todas" if allowed is None else sorted(allowed),
             )
 
-        # REQ-OS-1: historial limpio — solo el mensaje de la tarea actual.
-        messages = [Message(role=Role.USER, content=task)]
+        # REQ-OS-1: historial limpio — solo el mensaje de la tarea actual. Única excepción:
+        # la reanudación de un hijo pausado (REQ-RES-5), que arrastra su propio tramo previo.
+        messages = [*historial_previo, Message(role=Role.USER, content=task)]
 
         tool_trace: list[Message] | None = None
         persist_message: Callable[[Message], Awaitable[None]] | None = None
         if recorder is not None:
             persist_message = _grabar_seguro(recorder)
-            await _anotar(recorder, persist_message, messages[0])
+            # Solo el user nuevo es novedad: el historial previo ya está en el trace
+            # reabierto y en las filas persistidas.
+            await _anotar(recorder, persist_message, messages[-1])
             tool_trace = recorder.trace
 
         # REQ-OS-3: timeout + iteraciones.

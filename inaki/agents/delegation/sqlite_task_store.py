@@ -14,13 +14,17 @@ Decisiones de diseño (ver ``bg-delegation-transcript``):
 - UNA conexión ``aiosqlite`` abierta en ``open()``, en autocommit, WAL y
   ``synchronous=NORMAL`` (la SD de la Pi sufre con un fsync por mensaje; con WAL+NORMAL un
   crash del PROCESO no pierde nada, solo un corte de energía puede perder el último commit).
-  ``foreign_keys=ON`` es por conexión y obligatorio para el CASCADE.
+  ``foreign_keys=ON`` es por conexión y obligatorio para el CASCADE. Como esa conexión la
+  comparten los recorders de TODAS las tasks en curso, una vez que la cola arrancó NO se
+  abren transacciones explícitas: se colarían los INSERT de otras tasks y un ROLLBACK los
+  borraría en silencio (por eso ``snapshot_completo`` es de UPDATEs idempotentes por fila).
 - "Tabla recién creada" se detecta por la AUSENCIA de ``bg_tasks`` en ``sqlite_master`` y no
   por ``COUNT(*)=0``: tras podar todo la tabla queda vacía y re-sembrar volvería los ids atrás.
 - Cada mensaje se acota a ``MENSAJE_CAP_CHARS`` (cabeza 40 % / cola 60 % con marcador): la
   cola es donde viven los tracebacks y el final de un output. El resultado final de la task
   (``bg_tasks.result``) NUNCA se recorta, y el output completo no se guarda fuera de su fila.
-- Retención en TASKS, no en filas: dos cotas simultáneas (edad y rango por caller).
+- Retención en TASKS, no en filas: dos cotas simultáneas (edad y rango por caller). Las
+  pausas ``awaiting_input`` caen solo por edad, fuera del ranking.
 
 El store lanza si el disco falla (la cola decide cómo degradar), salvo el recorder de
 ``transcript()``, cuyo ``record`` nunca lanza (REQ-BGP-8).
@@ -41,7 +45,8 @@ from typing import Any
 
 import aiosqlite
 
-from inaki.agents.delegation.ports import ResultadoPoda
+from inaki.agents.delegation.failure_report import tool_calls_sin_par
+from inaki.agents.delegation.ports import ResultadoPoda, TranscriptNoReanudable
 from inaki.kernel.domain.background_task import (
     BackgroundTask,
     DelegationFailure,
@@ -146,6 +151,10 @@ _COLUMNAS_TASK = (
 # ``interrupted`` ya avisada): fuera de las últimas N por caller O más vieja que el corte.
 # Una ``interrupted`` sin avisar solo cae por edad. Nunca queued/running/delivering/
 # delivery_failed. ``COALESCE`` cubre una terminal sin ``finished_at`` (defensa).
+# ``awaiting_input`` (una pausa esperando respuesta) cae SOLO por edad —14 días desde la
+# pausa, que es su ``finished_at``— y queda FUERA del ranking: si compitiera en las últimas
+# N, 20 terminadas posteriores borrarían una pregunta de ayer. Su cláusula va en una línea
+# propia: para meterla en el ranking basta moverla al ``status IN (...)`` de arriba.
 # ``RETURNING`` (SQLite >= 3.35) devuelve el workdir de lo borrado en el mismo statement.
 _SQL_PRUNE = """
 DELETE FROM bg_tasks
@@ -164,6 +173,7 @@ WHERE id IN (
     WHERE rango > :ultimas OR fin < :corte
 )
 OR (status = 'interrupted' AND notified = 0 AND COALESCE(finished_at, created_at) < :corte)
+OR (status = 'awaiting_input' AND COALESCE(finished_at, created_at) < :corte)
 RETURNING id, workdir
 """
 
@@ -190,13 +200,36 @@ def _rowid(task_id: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
+def _contenido_excede(texto: str) -> bool:
+    """``True`` si el texto pasa el cap por mensaje (el escritor lo va a acotar)."""
+    return len(texto) > MENSAJE_CAP_CHARS
+
+
+def _tool_calls_exceden(tool_calls: list[dict] | None) -> bool:
+    """``True`` si el JSON de ``tool_calls`` pasa el cap por mensaje."""
+    if not tool_calls:
+        return False
+    return len(json.dumps(tool_calls, ensure_ascii=False)) > MENSAJE_CAP_CHARS
+
+
+def fue_acotado(mensaje: Message) -> bool:
+    """``True`` si el escritor del recorder acotó ``mensaje`` al persistirlo.
+
+    Es el MISMO predicado que usan ``_acotar`` y ``_acotar_tool_calls``: el snapshot de una
+    pausa reescribe exactamente lo que el escritor recortó, ni más ni menos. Mirar solo
+    ``content`` no alcanza — un ``write_file`` enorme con ``content`` corto también se acota
+    (en ``tool_calls``) y no deja ``original_chars``.
+    """
+    return _contenido_excede(mensaje.content) or _tool_calls_exceden(mensaje.tool_calls)
+
+
 def _acotar(texto: str) -> tuple[str, int | None]:
     """Aplica el cap por mensaje. Devuelve ``(texto, original_chars | None)``.
 
     Hasta ``MENSAJE_CAP_CHARS`` se guarda íntegro (``original_chars`` = None). Más allá,
     cabeza 40 % + marcador con la cantidad omitida + cola 60 %.
     """
-    if len(texto) <= MENSAJE_CAP_CHARS:
+    if not _contenido_excede(texto):
         return texto, None
     omitidos = len(texto) - _CABEZA_CHARS - _COLA_CHARS
     marcador = f"\n[… {omitidos} characters omitted …]\n"
@@ -212,9 +245,8 @@ def _acotar_tool_calls(tool_calls: list[dict] | None) -> str | None:
     """
     if not tool_calls:
         return None
-    serializado = json.dumps(tool_calls, ensure_ascii=False)
-    if len(serializado) <= MENSAJE_CAP_CHARS:
-        return serializado
+    if not _tool_calls_exceden(tool_calls):
+        return json.dumps(tool_calls, ensure_ascii=False)
     copia = copy.deepcopy(tool_calls)
     for tc in copia:
         funcion = tc.get("function")
@@ -298,6 +330,43 @@ def _asignaciones(campos: dict[str, Any]) -> dict[str, Any]:
     return columnas
 
 
+def _verificar_reanudable(filas: Sequence[aiosqlite.Row]) -> list[Message]:
+    """Reconstruye el trace de ``filas`` o lanza ``TranscriptNoReanudable`` (REQ-RES-9).
+
+    Un historial a medias no se reanuda: el provider lo rechazaría con 400 (tool call sin
+    par) o el hijo seguiría sobre contenido recortado sin saberlo.
+    """
+    if not filas:
+        raise TranscriptNoReanudable("el transcript está vacío")
+    try:
+        trace = [
+            Message(
+                role=Role(f["role"]),
+                content=f["content"],
+                tool_calls=json.loads(f["tool_calls"]) if f["tool_calls"] else None,
+                tool_call_id=f["tool_call_id"],
+            )
+            for f in filas
+        ]
+    except ValueError as exc:
+        raise TranscriptNoReanudable(f"hay una fila ilegible ({exc})") from exc
+    if [f["seq"] for f in filas] != list(range(1, len(filas) + 1)):
+        raise TranscriptNoReanudable("los seq no son contiguos de 1 a N (falta alguna fila)")
+    if trace[0].role is not Role.USER:
+        raise TranscriptNoReanudable("el primer mensaje no es del user")
+    if any(f["original_chars"] is not None for f in filas):
+        raise TranscriptNoReanudable("hay mensajes acotados (el snapshot no los completó)")
+    if trace[-1].role is not Role.ASSISTANT or trace[-1].tool_calls:
+        raise TranscriptNoReanudable("el último mensaje no es un assistant final sin tool_calls")
+    sin_par = tool_calls_sin_par(trace)
+    if sin_par.en_vuelo is not None:
+        raise TranscriptNoReanudable(
+            f"el tool call {sin_par.en_vuelo.tool_call_id} ({sin_par.en_vuelo.name}) "
+            "no tiene resultado"
+        )
+    return trace
+
+
 # ---------------------------------------------------------------------------
 # Recorder
 # ---------------------------------------------------------------------------
@@ -313,12 +382,22 @@ class SqliteDelegationTranscript:
     que un timeout que cancela al hijo justo en el ``await`` no pierda el último resultado.
     """
 
-    def __init__(self, store: SQLiteBackgroundTaskStore, task_id: str, rowid: int) -> None:
+    def __init__(
+        self,
+        store: SQLiteBackgroundTaskStore,
+        task_id: str,
+        rowid: int,
+        *,
+        trace: list[Message] | None = None,
+        seq: int = 0,
+    ) -> None:
         self._store = store
         self._task_id = task_id
         self._rowid = rowid
-        self._trace: list[Message] = []
-        self._seq = 0
+        # Un recorder REABIERTO (resume) arranca con el trace ya persistido y ``seq`` en el
+        # último valor: el próximo ``record`` escribe ``seq + 1``, sin re-INSERT.
+        self._trace: list[Message] = trace if trace is not None else []
+        self._seq = seq
         self._roto = False
 
     @property
@@ -510,6 +589,56 @@ class SQLiteBackgroundTaskStore:
         if rowid is None:
             raise ValueError(f"transcript: {task_id!r} no es un id durable")
         return SqliteDelegationTranscript(self, task_id, rowid)
+
+    async def reabrir_transcript(self, task_id: str) -> IDelegationTranscript:
+        rowid = _rowid(task_id)
+        if rowid is None:
+            raise ValueError(f"reabrir_transcript: {task_id!r} no es un id durable")
+        async with self._conn().execute(
+            "SELECT seq, role, content, tool_calls, tool_call_id, original_chars "
+            "FROM bg_task_messages WHERE task_id = ? ORDER BY seq",
+            (rowid,),
+        ) as cur:
+            filas = list(await cur.fetchall())
+        trace = _verificar_reanudable(filas)
+        return SqliteDelegationTranscript(self, task_id, rowid, trace=trace, seq=len(trace))
+
+    async def snapshot_completo(
+        self, task_id: str, trace: Sequence[Message], *, desde_seq: int
+    ) -> None:
+        rowid = _rowid(task_id)
+        if rowid is None:
+            raise ValueError(f"snapshot_completo: {task_id!r} no es un id durable")
+        db = self._conn()
+        async with db.execute(
+            "SELECT COALESCE(MAX(seq), 0) FROM bg_task_messages WHERE task_id = ?", (rowid,)
+        ) as cur:
+            persistidos = (await cur.fetchone())[0]  # type: ignore[index]
+        if persistidos != len(trace):
+            raise ValueError(
+                f"snapshot_completo {task_id}: el trace en memoria tiene {len(trace)} mensajes "
+                f"y el disco {persistidos}; no se reescribe nada sobre un transcript desalineado"
+            )
+        # Sin BEGIN/COMMIT a propósito: la conexión es compartida y está en autocommit, y una
+        # transacción abierta se tragaría los INSERT de los recorders de OTRAS tasks (un
+        # ROLLBACK los borraría en silencio). Cada UPDATE es idempotente por sí solo; un fallo
+        # a mitad deja filas ya completas (inocuo) y el caller lo trata como "no reanudable".
+        for seq in range(desde_seq + 1, len(trace) + 1):
+            mensaje = trace[seq - 1]
+            if not fue_acotado(mensaje):
+                continue
+            await db.execute(
+                "UPDATE bg_task_messages SET content = ?, tool_calls = ?, original_chars = NULL "
+                "WHERE task_id = ? AND seq = ?",
+                (
+                    mensaje.content,
+                    json.dumps(mensaje.tool_calls, ensure_ascii=False)
+                    if mensaje.tool_calls
+                    else None,
+                    rowid,
+                    seq,
+                ),
+            )
 
     async def mark_notified(self, task_ids: Sequence[str]) -> None:
         rowids = [r for r in (_rowid(t) for t in task_ids) if r is not None]

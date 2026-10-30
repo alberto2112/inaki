@@ -94,3 +94,21 @@ def test_missing_required_field_status_raises() -> None:
 def test_missing_required_field_summary_raises() -> None:
     with pytest.raises(Exception):
         DelegationResult(status="success")  # type: ignore[call-arg]
+
+
+def test_optional_question_defaults_to_none() -> None:
+    result = DelegationResult(status="success", summary="ok")
+    assert result.question is None
+
+
+def test_question_when_provided() -> None:
+    result = DelegationResult(
+        status="needs_input", summary="blocked", question="Which account should I use?"
+    )
+    assert result.status == "needs_input"
+    assert result.question == "Which account should I use?"
+
+
+def test_question_roundtrip_from_json() -> None:
+    raw = json.dumps({"status": "needs_input", "summary": "s", "question": "q?"})
+    assert DelegationResult.model_validate_json(raw).question == "q?"

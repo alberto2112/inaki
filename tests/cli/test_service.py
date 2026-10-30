@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 
 from inaki.cli import service
 from inaki.cli.service import render_unit, service_app
+from inaki.config.boundary import EXIT_CONFIG
 from inaki.config.home import set_inaki_home
 
 
@@ -40,6 +41,20 @@ def test_render_unit_apunta_al_ejecutable_absoluto_y_al_home() -> None:
     assert "WorkingDirectory=/srv/inaki\n" in unidad
     assert "User=pi\nGroup=pi\n" in unidad
     assert "WantedBy=multi-user.target" in unidad
+
+
+def test_un_error_de_config_no_se_reinicia_pero_un_crash_si() -> None:
+    """Sin esto, una config rota es un loop infinito de arranques cada 5 s.
+
+    El freno por defecto de systemd (5 arranques en 10 s) nunca salta con
+    ``RestartSec=5s``. El borde de config sale con ``EXIT_CONFIG`` y la unidad no
+    reinicia ESE código; cualquier otro fallo (un crash) se sigue reiniciando.
+    """
+    unidad = render_unit(
+        user="pi", group="pi", exec_start=Path("/opt/venv/bin/inaki"), home=Path("/srv/inaki")
+    )
+    assert "Restart=on-failure\n" in unidad
+    assert f"RestartPreventExitStatus={EXIT_CONFIG}\n" in unidad
 
 
 def test_print_muestra_la_unidad_sin_escribir_nada(home: Path, entorno) -> None:

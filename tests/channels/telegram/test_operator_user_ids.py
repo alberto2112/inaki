@@ -27,7 +27,7 @@ from inaki.channels.telegram.auth import TelegramAuth
 from inaki.channels.telegram.config import TelegramChannelConfig
 from inaki.channels.telegram.wiring import build_telegram_channel_settings
 from inaki.config import load_agent_config, load_global_config
-from inaki.config.boundary import borde_de_config
+from inaki.config.boundary import EXIT_CONFIG, borde_de_config
 from inaki.shared.errors import ConfigError
 
 A, B, C, YO = 11, 22, 33, 99
@@ -225,7 +225,7 @@ def test_el_loader_aborta_con_un_operador_que_no_puede_hablar(tmp_path: Path) ->
 def test_el_error_llega_al_operador_por_el_borde_de_config(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Sin traceback y con exit 1: lo que lee el operador cuando el daemon no arranca."""
+    """Sin traceback y con EXIT_CONFIG: lo que lee el operador cuando el daemon no arranca."""
     cfg_dir, agents_dir = _escribir_home(
         tmp_path, "    allowed_user_ids: [11]\n    operator_user_ids: [33]\n"
     )
@@ -235,7 +235,7 @@ def test_el_error_llega_al_operador_por_el_borde_de_config(
         with borde_de_config(str(agents_dir)):
             load_agent_config("dev", agents_dir, global_raw)
 
-    assert salida.value.code == 1
+    assert salida.value.code == EXIT_CONFIG
     err = capsys.readouterr().err
     assert err.startswith("Error de configuración")
     assert "operator_user_ids" in err and "33" in err

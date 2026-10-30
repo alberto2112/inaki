@@ -21,6 +21,7 @@ from pathlib import Path
 
 import typer
 
+from inaki.config.boundary import EXIT_CONFIG
 from inaki.config.home import get_inaki_home
 
 service_app = typer.Typer(help="Instalar o quitar la unidad systemd del daemon.")
@@ -45,9 +46,13 @@ Environment=INAKI_HOME={home}
 ExecStart={exec_start} daemon
 ExecReload=/bin/kill -HUP $MAINPID
 
-# Reiniciar automáticamente si falla (salvo salida limpia o señal de stop)
+# Reiniciar automáticamente si falla (salvo salida limpia o señal de stop).
+# Un error de config (exit {exit_config}) NO se reinicia: ningún reinicio lo arregla y
+# el freno por defecto de systemd no salta con RestartSec=5s, así que era un loop
+# infinito. Ver el mensaje con: journalctl -u inaki -n 20
 Restart=on-failure
 RestartSec=5s
+RestartPreventExitStatus={exit_config}
 
 # Logs van a journald (ver con: journalctl -u inaki -f)
 StandardOutput=journal
@@ -70,7 +75,9 @@ WantedBy=multi-user.target
 
 def render_unit(*, user: str, group: str, exec_start: Path, home: Path) -> str:
     """La unidad como texto. Función pura: lo único que se testea del render."""
-    return _PLANTILLA.format(user=user, group=group, exec_start=exec_start, home=home)
+    return _PLANTILLA.format(
+        user=user, group=group, exec_start=exec_start, home=home, exit_config=EXIT_CONFIG
+    )
 
 
 def ruta_del_cli() -> Path:

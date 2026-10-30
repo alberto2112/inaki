@@ -22,16 +22,26 @@ if TYPE_CHECKING:
     from inaki.config.runtime_overrides import OverridesDeRuntime
 
 
-def bootstrap(config_dir: Path, agents_dir: Path, overrides: OverridesDeRuntime | None = None):
+def bootstrap(
+    config_dir: Path,
+    agents_dir: Path,
+    overrides: OverridesDeRuntime | None = None,
+    *,
+    codigo_de_salida: int | None = None,
+):
     """Carga config, logging y registry. Retorna (global_config, registry).
 
     ``overrides`` es la capa de overrides en memoria (``config set``): el loader la apila
     después de los YAML. ``None`` (o un store vacío) deja el comportamiento de siempre.
+
+    ``codigo_de_salida`` es el exit de una config rechazada: ``EXIT_CONFIG`` (la unidad no
+    reinicia) por defecto; el reload pasa ``EXIT_REINICIAR`` (ver ``inaki.config.boundary``).
     """
     from inaki.config import AgentRegistry, load_global_config
-    from inaki.config.boundary import borde_de_config
+    from inaki.config.boundary import EXIT_CONFIG, borde_de_config
 
-    with borde_de_config(str(config_dir)):
+    codigo = EXIT_CONFIG if codigo_de_salida is None else codigo_de_salida
+    with borde_de_config(str(config_dir), codigo_de_salida=codigo):
         global_config, global_raw = load_global_config(
             config_dir, runtime=overrides.capa_global() if overrides else None
         )
@@ -45,7 +55,7 @@ def bootstrap(config_dir: Path, agents_dir: Path, overrides: OverridesDeRuntime 
     # (`_check_top_level`, shape legacy, unicidad de canal), y su `ConfigError`
     # salía crudo porque el `try` cubría la carga del global y nada más. El
     # mensaje del core era bueno; llegaba enterrado bajo el traceback.
-    with borde_de_config(str(agents_dir)):
+    with borde_de_config(str(agents_dir), codigo_de_salida=codigo):
         registry = AgentRegistry(
             agents_dir,
             global_raw,
@@ -57,7 +67,8 @@ def bootstrap(config_dir: Path, agents_dir: Path, overrides: OverridesDeRuntime 
             "Crea un archivo .yaml de agente para comenzar.",
             file=sys.stderr,
         )
-        sys.exit(1)
+        # Es config del operador como cualquier otra: un reinicio no crea el agente.
+        sys.exit(codigo)
 
     return global_config, registry
 
@@ -153,7 +164,7 @@ def run_daemon_mode(config_dir: Path, agents_dir: Path, global_config, registry)
 
     from inaki.app.runner import run_daemon
     from inaki.app.assembly import ensamblar
-    from inaki.config.boundary import borde_de_config
+    from inaki.config.boundary import EXIT_REINICIAR, borde_de_config
     from inaki.config.runtime_overrides import OverridesDeRuntime
 
     logger = logging.getLogger(__name__)
@@ -178,10 +189,15 @@ def run_daemon_mode(config_dir: Path, agents_dir: Path, global_config, registry)
 
     ensure_user_channel_dirs(get_inaki_home(), registry.list_all())
 
+    # El reload sale con EXIT_REINICIAR, no EXIT_CONFIG: este proceso puede traer overrides
+    # que el disco no tiene, y el reinicio leyendo disco puede arrancar sano. Si no, el
+    # arranque limpio sale con EXIT_CONFIG y la unidad se para ahí (sin loop).
     def bootstrap_fn():
-        gc, reg = bootstrap(config_dir, agents_dir, overrides=overrides)
+        gc, reg = bootstrap(
+            config_dir, agents_dir, overrides=overrides, codigo_de_salida=EXIT_REINICIAR
+        )
         ensure_user_channel_dirs(get_inaki_home(), reg.list_all())
-        with borde_de_config(str(config_dir)):
+        with borde_de_config(str(config_dir), codigo_de_salida=EXIT_REINICIAR):
             return ensamblar(gc, reg, config_dir=config_dir, overrides=overrides), reg
 
     asyncio.run(

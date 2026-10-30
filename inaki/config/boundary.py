@@ -22,6 +22,16 @@ import sys
 from contextlib import contextmanager
 from typing import Iterator
 
+# ``EX_CONFIG`` de sysexits.h: "la config está mal", no "el proceso se cayó". La unidad
+# systemd lo lista en ``RestartPreventExitStatus``: con exit 1 ``Restart=on-failure``
+# reintentaba cada 5 s para siempre una config que ningún reinicio va a arreglar.
+EXIT_CONFIG = 78
+# El fallo de config de un RELOAD sí lo puede arreglar un reinicio: el proceso puede traer
+# overrides en memoria (``config set``) que el disco no tiene, y systemd reinicia leyendo
+# disco (``reload-fallido-reinicia``). Si el disco también está roto, el arranque limpio
+# que sigue sale con ``EXIT_CONFIG`` y ahí se para.
+EXIT_REINICIAR = 1
+
 
 def errores_del_operador() -> tuple[type[BaseException], ...]:
     """Familias de error que significan "tu config está mal", no "hay un bug".
@@ -48,8 +58,12 @@ def errores_del_operador() -> tuple[type[BaseException], ...]:
 
 
 @contextmanager
-def borde_de_config(contexto: str | None = None) -> Iterator[None]:
-    """Convierte un fallo de config en un mensaje limpio + exit 1.
+def borde_de_config(
+    contexto: str | None = None, *, codigo_de_salida: int = EXIT_CONFIG
+) -> Iterator[None]:
+    """Convierte un fallo de config en un mensaje limpio + exit ``codigo_de_salida``.
+
+    ``EXIT_CONFIG`` por defecto; el re-bootstrap de un reload pasa ``EXIT_REINICIAR``.
 
     ``contexto`` es el directorio o fichero que se estaba leyendo, y solo se
     imprime si el error no lo dijo ya: los ``ConfigError`` de un agente traen el
@@ -69,4 +83,4 @@ def borde_de_config(contexto: str | None = None) -> Iterator[None]:
     except errores_del_operador() as exc:
         detalle = f" en {contexto}" if contexto and contexto not in str(exc) else ""
         print(f"Error de configuración{detalle}: {exc}", file=sys.stderr)
-        sys.exit(1)
+        sys.exit(codigo_de_salida)

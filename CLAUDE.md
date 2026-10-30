@@ -318,6 +318,10 @@ Cada una salió de un fallo en producción. El caso completo está en
   El borde es UNO (`inaki/config/boundary.py`), no un `try` por call-site. Y una
   vista de config que no valida con el MISMO loader del arranque puede decir "todo
   bien" sobre lo que no arranca — peor que no tenerla. → `borde-de-config`
+- **NUNCA** salir con el mismo código por "config rota" y por "me caí": systemd solo lee
+  el exit. Una config que ningún reinicio arregla sale con `EXIT_CONFIG` (78, la unidad
+  no la reinicia); un reload sale con `EXIT_REINICIAR` (1), porque el reinicio desde
+  disco puede arreglarlo (overrides en memoria). → `config-rota-no-reinicia`
 - **NUNCA** volver al rol implícito por presencia de campo en la config de broadcast, ni
   duplicar `auth` por rol. → `broadcast-topology-config`
 - **NUNCA** dejar el `bind()` de un puerto dentro de una tarea de fondo mientras el caller

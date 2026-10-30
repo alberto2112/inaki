@@ -34,6 +34,7 @@ existe este documento— y la contradicción no queda flotando.
 
 | Nota | Acción |
 |---|---|
+| [`config-rota-no-reinicia`](#config-rota-no-reinicia) | Re-correr `inaki service install` en cada máquina para que la unidad tenga `RestartPreventExitStatus=78` (sin eso, una config rota sigue en loop de reinicios) |
 | [`openai-habla-responses`](#openai-habla-responses) | **Puede impedir el arranque**: cambiar `provider: openai_responses` por `provider: openai` en `llm`/`memories.llm` y borrar la entrada `providers.openai_responses` (su `api_key` ya está en `providers.openai`). Con modelos de razonamiento, subir `llm.timeout_seconds` (el adapter pasó a respetarlo; antes usaba 120 fijos) |
 | [`agent-id-igual-al-fichero`](#agent-id-igual-al-fichero) | **Puede impedir el arranque**: renombrar el YAML de cada agente/sub-agente cuyo `id:` no coincide con el nombre del fichero (o cambiar el `id:`) |
 | [`scheduler-trigger-type-mutable`](#scheduler-trigger-type-mutable) | **Chequeo previo al deploy**: query SQL sobre `scheduler.db` buscando filas incoherentes |
@@ -144,7 +145,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `agent-state-scoped-by-channel-chat`, `memory-tool-unificada`
 - **Scheduler**: `modulos-scheduler-y-agents`, `scheduler-trigger-type-mutable`, `channel-send-history-persist`
 - **Refactor modular 2026-09 (índice)**: `refactor-modular`, `kernel-plano`
-- **Instalación y producto**: `instalacion-como-producto`, `config-web`, `agentes-y-providers-web`
+- **Instalación y producto**: `config-rota-no-reinicia`, `instalacion-como-producto`, `config-web`, `agentes-y-providers-web`
 - **Tools y config**: `runtimes-tipados`, `wiring-por-modulo`, `kernel-y-fachada-de-tools`, `modulos-tools-llm-extensions`, `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
@@ -153,6 +154,40 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `agent-id-igual-al-fichero`, `knowledge-token-budget-retirado`
 - **Providers LLM y embeddings**: `bg-delivery-sin-routing` (embeddings `openai`), `llm-un-solo-camino-de-construccion`, `openai-habla-responses`, `anthropic-api-actual`
 - **Delegación**: `delegation-resume`, `bg-delivery-sin-routing`, `bg-scope-del-turno`, `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`, `bg-delegation-transcript`
+
+---
+
+### `config-rota-no-reinicia`
+
+**El bug (2026-10-30)**: desde `config-falla-ruidoso` el daemon no arranca con el
+menor parámetro mal, y `borde_de_config` salía con `sys.exit(1)`. La unidad generada
+usaba `Restart=on-failure` con `RestartSec=5s` y sin `StartLimit*`: el freno por
+defecto de systemd (5 arranques en 10 s) nunca saltaba con 5 s entre intentos, así
+que una config rota era un loop infinito de arranques cada 5 s. El mensaje
+accionable quedaba enterrado entre miles de repeticiones en `journalctl`. Para
+systemd, "no puedo arrancar con esta config" y "me caí" eran el mismo exit 1.
+
+**El cambio**:
+- `borde_de_config` sale con `EXIT_CONFIG = 78` (`EX_CONFIG` de `sysexits.h`), y la
+  unidad que genera `inaki service install` lleva `RestartPreventExitStatus=78`: una
+  config rota deja el servicio en `failed` una vez; un crash (exit 1 o señal) se
+  sigue reiniciando como antes. Lo mismo un `agents/` vacío al arrancar.
+- El re-bootstrap de un `/reload` NO usa 78: sale con `EXIT_REINICIAR = 1`, como
+  pedía `reload-fallido-reinicia`. El proceso puede traer overrides en memoria
+  (`config set`) que el disco no tiene, y el reinicio leyendo disco puede arrancar
+  sano; si el disco también está roto, ese arranque limpio sale con 78 y la unidad
+  se para ahí. Un reload con config rota cuesta UN reinicio, no un loop.
+- Los comandos de CLI que pasan por el borde (`inaki config show`, por ejemplo)
+  también salen con 78 en vez de 1.
+
+**Acción del operador**: la unidad instalada no cambia sola. Re-correr
+`inaki service install` (o `sudo inaki service install`) en cada máquina. Con la
+unidad vieja todo sigue funcionando, pero una config rota sigue en loop.
+
+**Invariante**: NUNCA salir con `EXIT_CONFIG` de algo que un reinicio puede arreglar
+(un reload con overrides en memoria, un fallo de una dependencia externa), ni con
+exit 1 de una config que ningún reinicio arregla. El código de salida es lo único
+que systemd lee para decidir.
 
 ---
 
@@ -922,6 +957,11 @@ reinicia ni deja rastro de por qué. Es el mismo principio que
 *Cerrado después:* el rollback que esta nota dejó para `config_set` se descartó
 en [`config-set-efimero`](#config-set-efimero): un reload fallido sale con
 exit 1 y se pierden todos los overrides.
+
+*Cerrado después:* el "ciclo de reinicios" con una config rota terminó en
+[`config-rota-no-reinicia`](#config-rota-no-reinicia): el reload sigue saliendo con
+exit 1 (un reinicio), pero el arranque limpio con config rota sale con 78 y la unidad
+no lo reinicia.
 
 ---
 

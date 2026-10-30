@@ -10,7 +10,7 @@ campo válido justo aquello por lo que el daemon se negaba a arrancar.
 
 Estos tests fijan las dos mitades de la regla:
 
-1. Lo que es config del operador sale como UNA línea legible y exit 1.
+1. Lo que es config del operador sale como UNA línea legible y ``EXIT_CONFIG`` (78).
 2. Lo que es un bug NUESTRO sigue saliendo como traceback — ahí el traceback es
    la información, y disfrazarlo de "revisá tu YAML" manda a buscar un typo que
    no existe.
@@ -27,7 +27,7 @@ from pydantic import BaseModel
 from ruamel.yaml import YAMLError as RuamelYAMLError
 from typer.testing import CliRunner
 
-from inaki.config.boundary import borde_de_config
+from inaki.config.boundary import EXIT_CONFIG, borde_de_config
 from inaki.config.home import set_inaki_home
 from inaki.shared.errors import ConfigError
 
@@ -79,10 +79,17 @@ def test_lo_que_es_config_del_operador_sale_limpio(
         with borde_de_config():
             raise excepcion
 
-    assert exc.value.code == 1
+    assert exc.value.code == EXIT_CONFIG
     err = capsys.readouterr().err
     assert err.startswith("Error de configuración")
     assert "Traceback" not in err
+
+
+def test_el_exit_de_config_es_ex_config_de_sysexits() -> None:
+    """78 = ``EX_CONFIG`` (sysexits.h). La unidad systemd lo lista en
+    ``RestartPreventExitStatus``: cambiarlo sin regenerar la unidad devuelve el loop
+    de reinicios."""
+    assert EXIT_CONFIG == 78
 
 
 def test_un_valor_que_el_schema_rechaza_tambien_sale_limpio(
@@ -153,11 +160,28 @@ def test_el_arranque_no_tira_traceback_con_un_agente_roto(
     with pytest.raises(SystemExit) as exc:
         bootstrap(config_dir, agents_dir)
 
-    assert exc.value.code == 1
+    assert exc.value.code == EXIT_CONFIG
     err = capsys.readouterr().err
     assert "dev.yaml" in err
     assert "schedulr" in err
     assert "Traceback" not in err
+
+
+def test_sin_agentes_el_arranque_sale_como_error_de_config(
+    home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Un ``agents/`` vacío también es config del operador: reiniciar no lo arregla."""
+    from inaki.app.bootstrap import bootstrap
+    from inaki.config import ensure_user_config
+
+    config_dir, agents_dir = home / "config", home / "agents"
+    ensure_user_config(config_dir, agents_dir)
+
+    with pytest.raises(SystemExit) as exc:
+        bootstrap(config_dir, agents_dir)
+
+    assert exc.value.code == EXIT_CONFIG
+    assert "No hay agentes configurados" in capsys.readouterr().err
 
 
 def test_config_show_no_dice_ok_con_una_config_que_no_arranca(home: Path) -> None:
@@ -176,7 +200,7 @@ def test_config_show_no_dice_ok_con_una_config_que_no_arranca(home: Path) -> Non
 
     result = CliRunner().invoke(app, ["config", "show"])
 
-    assert result.exit_code == 1, "un exit 0 acá es la herramienta mintiendo"
+    assert result.exit_code == EXIT_CONFIG, "un exit 0 acá es la herramienta mintiendo"
     salida = _salida(result)
     assert "schedulr" in salida
     assert "schedulr.enabled" not in salida, "no listarlo como si fuera config real"

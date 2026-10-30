@@ -2,7 +2,7 @@
 
 El loader no sabe todo: un ``llm.provider`` que no existe o una credencial que
 falta los descubre la factory al ensamblar. Ese ``ConfigError`` tiene que salir
-como el del loader — mensaje limpio y exit 1 —, no como un traceback (y, en el
+como el del loader — mensaje limpio y ``EXIT_CONFIG`` —, no como un traceback (y, en el
 reload, no como un exit 0 que systemd no reinicia).
 """
 
@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from inaki.app import bootstrap as bootstrap_mod
+from inaki.config.boundary import EXIT_CONFIG, EXIT_REINICIAR
 from inaki.shared.errors import ConfigError
 
 
@@ -22,7 +23,7 @@ def sin_fs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("inaki.config.ensure_user_channel_dirs", lambda *_a, **_k: None)
 
 
-def test_arranque_con_ensamblado_rechazado_sale_limpio_con_exit_1(
+def test_arranque_con_ensamblado_rechazado_sale_limpio_con_exit_config(
     sin_fs: None, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     def _ensamblar_roto(*_a, **_k):
@@ -33,14 +34,14 @@ def test_arranque_con_ensamblado_rechazado_sale_limpio_con_exit_1(
     with pytest.raises(SystemExit) as salida:
         bootstrap_mod.run_daemon_mode(Path("/cfg"), Path("/cfg/agents"), MagicMock(), MagicMock())
 
-    assert salida.value.code == 1
+    assert salida.value.code == EXIT_CONFIG
     err = capsys.readouterr().err
     assert "Error de configuración" in err
     assert "Proveedor LLM 'nope'" in err
     assert "Traceback" not in err
 
 
-def test_reload_con_ensamblado_rechazado_sale_limpio_con_exit_1(
+def test_reload_con_ensamblado_rechazado_sale_limpio_y_pide_reinicio(
     sin_fs: None, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     llamadas = {"n": 0}
@@ -63,7 +64,8 @@ def test_reload_con_ensamblado_rechazado_sale_limpio_con_exit_1(
     with pytest.raises(SystemExit) as salida:
         bootstrap_mod.run_daemon_mode(Path("/cfg"), Path("/cfg/agents"), MagicMock(), MagicMock())
 
-    assert salida.value.code == 1
+    # Un reload NO usa EXIT_CONFIG: reiniciar desde disco puede arreglarlo.
+    assert salida.value.code == EXIT_REINICIAR
     err = capsys.readouterr().err
     assert "requiere credenciales" in err
     assert "Traceback" not in err
@@ -107,7 +109,7 @@ def test_un_unico_store_viaja_al_arranque_y_a_cada_reload(
     assert callable(vistos["al_arrancar"])
 
 
-def test_reload_con_overrides_cuyo_ensamblado_falla_sale_con_exit_1_sin_reintentar(
+def test_reload_con_overrides_cuyo_ensamblado_falla_pide_reinicio_sin_reintentar(
     sin_fs: None, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Sin rollback (D6): el ensamblado falla UNA vez y el proceso sale; no hay segundo
@@ -131,6 +133,31 @@ def test_reload_con_overrides_cuyo_ensamblado_falla_sale_con_exit_1_sin_reintent
     with pytest.raises(SystemExit) as salida:
         bootstrap_mod.run_daemon_mode(Path("/cfg"), Path("/cfg/agents"), MagicMock(), MagicMock())
 
-    assert salida.value.code == 1
+    assert salida.value.code == EXIT_REINICIAR
     assert llamadas["n"] == 2
     assert "fuente de knowledge ilegible" in capsys.readouterr().err
+
+
+def test_el_re_bootstrap_del_reload_pide_reinicio_tambien_al_cargar(
+    sin_fs: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La carga del reload (``bootstrap``) va con el mismo código que su ensamblado: un
+    YAML roto en disco lo detecta el arranque limpio siguiente, que sale con
+    ``EXIT_CONFIG`` y ahí se para."""
+    vistos: list[int] = []
+
+    def _bootstrap(*_a, codigo_de_salida: int = EXIT_CONFIG, **_k):
+        vistos.append(codigo_de_salida)
+        return MagicMock(), MagicMock()
+
+    monkeypatch.setattr(bootstrap_mod, "bootstrap", _bootstrap)
+    monkeypatch.setattr("inaki.app.assembly.ensamblar", lambda *_a, **_k: MagicMock())
+
+    async def _run_daemon_que_recarga(bootstrap_fn, initial, **_k):
+        bootstrap_fn()
+
+    monkeypatch.setattr("inaki.app.runner.run_daemon", _run_daemon_que_recarga)
+
+    bootstrap_mod.run_daemon_mode(Path("/cfg"), Path("/cfg/agents"), MagicMock(), MagicMock())
+
+    assert vistos == [EXIT_REINICIAR]

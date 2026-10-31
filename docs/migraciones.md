@@ -34,6 +34,7 @@ existe este documento— y la contradicción no queda flotando.
 
 | Nota | Acción |
 |---|---|
+| [`service-install-bajo-sudo`](#service-install-bajo-sudo) | Si instalaste la unidad con `sudo inaki service install`, mirá `systemctl cat inaki`: si dice `/root/.inaki`, re-correr `inaki service install` (con o sin sudo) con esta versión — la unidad vieja no arranca (`200/CHDIR`) |
 | [`config-rota-no-reinicia`](#config-rota-no-reinicia) | Re-correr `inaki service install` en cada máquina para que la unidad tenga `RestartPreventExitStatus=78` (sin eso, una config rota sigue en loop de reinicios) |
 | [`openai-habla-responses`](#openai-habla-responses) | **Puede impedir el arranque**: cambiar `provider: openai_responses` por `provider: openai` en `llm`/`memories.llm` y borrar la entrada `providers.openai_responses` (su `api_key` ya está en `providers.openai`). Con modelos de razonamiento, subir `llm.timeout_seconds` (el adapter pasó a respetarlo; antes usaba 120 fijos) |
 | [`agent-id-igual-al-fichero`](#agent-id-igual-al-fichero) | **Puede impedir el arranque**: renombrar el YAML de cada agente/sub-agente cuyo `id:` no coincide con el nombre del fichero (o cambiar el `id:`) |
@@ -145,7 +146,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `agent-state-scoped-by-channel-chat`, `memory-tool-unificada`
 - **Scheduler**: `modulos-scheduler-y-agents`, `scheduler-trigger-type-mutable`, `channel-send-history-persist`
 - **Refactor modular 2026-09 (índice)**: `refactor-modular`, `kernel-plano`
-- **Instalación y producto**: `config-rota-no-reinicia`, `instalacion-como-producto`, `config-web`, `agentes-y-providers-web`
+- **Instalación y producto**: `service-install-bajo-sudo`, `config-rota-no-reinicia`, `instalacion-como-producto`, `config-web`, `agentes-y-providers-web`
 - **Tools y config**: `runtimes-tipados`, `wiring-por-modulo`, `kernel-y-fachada-de-tools`, `modulos-tools-llm-extensions`, `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
@@ -154,6 +155,35 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `agent-id-igual-al-fichero`, `knowledge-token-budget-retirado`
 - **Providers LLM y embeddings**: `bg-delivery-sin-routing` (embeddings `openai`), `llm-un-solo-camino-de-construccion`, `openai-habla-responses`, `anthropic-api-actual`
 - **Delegación**: `delegation-resume`, `bg-delivery-sin-routing`, `bg-scope-del-turno`, `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`, `bg-delegation-transcript`
+
+---
+
+### `service-install-bajo-sudo`
+
+**El bug (2026-10-31)**: `inaki service install` corrido con `sudo` generaba una unidad
+que no arrancaba. El usuario salía bien (`SUDO_USER`, así que `User=<operador>`), pero
+el home de la instancia salía del default `~/.inaki`, y bajo `sudo` `~` es `/root`
+(`sudo` resetea `HOME` y descarta `INAKI_HOME`). La unidad quedaba con
+`User=production`, `WorkingDirectory=/root/.inaki` e `INAKI_HOME=/root/.inaki`; `/root`
+es 700, systemd no podía hacer el chdir y el servicio moría con `status=200/CHDIR`. Aunque
+hubiera arrancado, apuntaba a un home vacío. Lo destapó una Pi al seguir la acción de
+`config-rota-no-reinicia`, que recomendaba `sudo inaki service install`; el propio
+comando, sin root, también sugería `sudo <exe> service install`. Las unidades que
+funcionaban se habían generado sin `sudo`.
+
+**El cambio**: bajo `sudo`, si el home es el default (nadie pasó `--home` ni
+`INAKI_HOME`), `service install` lo resuelve contra el directorio del usuario REAL
+(`pwd.getpwnam(SUDO_USER).pw_dir / ".inaki"`), el mismo que va a `User=`. Un home
+elegido a mano se respeta tal cual. `inaki.config.home` expone `home_es_el_default()`
+para distinguir los dos casos.
+
+**Acción del operador**: si la unidad se instaló con `sudo` antes de este cambio, re-correr
+`inaki service install` (con o sin `sudo`). Sin `sudo` sigue siendo el camino seguro en
+cualquier versión: escribe la unidad en `~/.inaki/inaki.service` y dicta los tres `sudo`.
+
+**Invariante**: lo que la unidad dice de la instancia (`User=`, `WorkingDirectory=`,
+`INAKI_HOME=`) se resuelve contra el MISMO usuario. Mezclar el usuario real con el home
+de root da una unidad que se instala bien y no arranca nunca.
 
 ---
 
@@ -183,6 +213,9 @@ systemd, "no puedo arrancar con esta config" y "me caí" eran el mismo exit 1.
 **Acción del operador**: la unidad instalada no cambia sola. Re-correr
 `inaki service install` (o `sudo inaki service install`) en cada máquina. Con la
 unidad vieja todo sigue funcionando, pero una config rota sigue en loop.
+
+*Cerrado después:* la variante con `sudo` generaba una unidad con el home de root que
+no arrancaba → `service-install-bajo-sudo`.
 
 **Invariante**: NUNCA salir con `EXIT_CONFIG` de algo que un reinicio puede arreglar
 (un reload con overrides en memoria, un fallo de una dependencia externa), ni con

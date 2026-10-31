@@ -22,7 +22,7 @@ from pathlib import Path
 import typer
 
 from inaki.config.boundary import EXIT_CONFIG
-from inaki.config.home import get_inaki_home
+from inaki.config.home import get_inaki_home, home_es_el_default
 
 service_app = typer.Typer(help="Instalar o quitar la unidad systemd del daemon.")
 
@@ -107,6 +107,24 @@ def _usuario_y_grupo() -> tuple[str, str]:
     return user, grp.getgrgid(gid).gr_name
 
 
+def _directorio_del_usuario(user: str) -> Path:
+    import pwd
+
+    return Path(pwd.getpwnam(user).pw_dir)
+
+
+def _home_de_la_instancia(user: str) -> Path:
+    """El home que va a la unidad: el de la instancia del usuario REAL, como el ``User=``.
+
+    Bajo ``sudo`` el default ``~/.inaki`` resuelve contra ``/root``: la unidad salía con
+    ``User=<operador>`` y ``WorkingDirectory=/root/.inaki``, y systemd fallaba en el chdir
+    (``200/CHDIR``). Un home elegido a mano (``--home`` / ``INAKI_HOME``) no se toca.
+    """
+    if os.environ.get("SUDO_USER") and home_es_el_default():
+        return _directorio_del_usuario(user) / ".inaki"
+    return get_inaki_home()
+
+
 def _es_root() -> bool:
     return os.geteuid() == 0
 
@@ -128,8 +146,8 @@ def install(
     ),
 ) -> None:
     """Genera la unidad systemd y, con sudo, la instala, habilita y arranca."""
-    home = get_inaki_home().expanduser().resolve()
     user, group = _usuario_y_grupo()
+    home = _home_de_la_instancia(user).expanduser().resolve()
     exec_start = ruta_del_cli()
     unidad = render_unit(user=user, group=group, exec_start=exec_start, home=home)
 

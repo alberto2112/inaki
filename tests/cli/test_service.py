@@ -79,6 +79,39 @@ def test_sin_root_deja_la_unidad_en_el_home_y_dicta_los_sudo(home: Path, entorno
     assert "sudo /opt/venv/bin/inaki service install --link-cli" in result.output
 
 
+def test_bajo_sudo_el_home_por_defecto_es_el_del_usuario_real(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Bajo ``sudo``, ``~`` es ``/root``: la unidad salía con ``User=pi`` y
+    ``WorkingDirectory=/root/.inaki``, y systemd fallaba en el chdir (``200/CHDIR``)."""
+    set_inaki_home(None)
+    monkeypatch.delenv("INAKI_HOME", raising=False)
+    monkeypatch.setenv("SUDO_USER", "pi")
+    with (
+        patch.object(service, "_usuario_y_grupo", return_value=("pi", "pi")),
+        patch.object(service, "ruta_del_cli", return_value=Path("/opt/venv/bin/inaki")),
+        patch.object(service, "_directorio_del_usuario", return_value=tmp_path / "pi"),
+    ):
+        result = CliRunner().invoke(service_app, ["install", "--print"])
+
+    esperado = (tmp_path / "pi" / ".inaki").resolve()
+    assert result.exit_code == 0, result.output
+    assert f"WorkingDirectory={esperado}\n" in result.output
+    assert f"Environment=INAKI_HOME={esperado}\n" in result.output
+
+
+def test_bajo_sudo_un_home_explicito_se_respeta(
+    home: Path, entorno, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--home`` (o ``INAKI_HOME``) gana: solo se corrige el default, que es el que miente."""
+    monkeypatch.setenv("SUDO_USER", "pi")
+    with patch.object(service, "_directorio_del_usuario", return_value=Path("/home/pi")):
+        result = CliRunner().invoke(service_app, ["install", "--print"])
+
+    assert result.exit_code == 0, result.output
+    assert f"WorkingDirectory={home.resolve()}\n" in result.output
+
+
 def test_con_root_escribe_la_unidad_y_la_habilita(home: Path, entorno, tmp_path: Path) -> None:
     destino = tmp_path / "etc" / "inaki.service"
     destino.parent.mkdir()

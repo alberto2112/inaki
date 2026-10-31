@@ -51,3 +51,11 @@ def get_inaki_home() -> Path:
     if env:
         return Path(env).expanduser()
     return _DEFAULT_HOME
+
+
+def home_es_el_default() -> bool:
+    """``True`` si nadie eligió el home (ni ``--home`` ni ``INAKI_HOME``): salió de ``~``.
+
+    Lo necesita quien corre bajo ``sudo``, donde ``~`` es el de root y no el del operador.
+    """
+    return _override is None and not os.environ.get("INAKI_HOME")

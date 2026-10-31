@@ -260,7 +260,7 @@ async def test_wiring_construye_deepseek_con_credencial_de_providers() -> None:
         {"scene": {"provider": "deepseek", "model": "deepseek-flash"}}
     )
 
-    adapter = _build_scene_describer(photos, {"deepseek": ProviderConfig(api_key=FAKE_KEY)})
+    adapter = _build_scene_describer(photos.scene, {"deepseek": ProviderConfig(api_key=FAKE_KEY)})
 
     assert isinstance(adapter, DeepSeekSceneDescriberAdapter)
     await adapter.describe_image(FAKE_IMAGE)

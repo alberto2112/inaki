@@ -26,7 +26,13 @@ from inaki.config.schema.memories import (
     MemoryLLMConfig,
     ReconciliationConfig,
 )
-from inaki.config.schema.photos import DedupConfig, FacesConfig, PhotosConfig, SceneConfig
+from inaki.config.schema.photos import (
+    AgentPhotosConfig,
+    DedupConfig,
+    FacesConfig,
+    PhotosConfig,
+    SceneConfig,
+)
 from inaki.config.schema.providers import ProviderConfig
 from inaki.config.schema.root import AgentConfig, GlobalConfig
 from inaki.config.schema.scheduler import SchedulerConfig
@@ -40,6 +46,7 @@ __all__ = [
     "AdminConfig",
     "AgentConfig",
     "AgentDelegationConfig",
+    "AgentPhotosConfig",
     "AppConfig",
     "CaptureConfig",
     "ChannelFallbackConfig",

@@ -43,11 +43,18 @@ def destino_de(path: str) -> Destino:
     Se deriva del schema, no de una lista: ``llm``, ``tools``, ``memories``… los
     declara ``AgentConfig`` (van al agente del turno); ``user``, ``scheduler``,
     ``app``, ``knowledge``… son ``GlobalConfig``-only (afectan a todo el arnés).
+    En un bloque mixto (``photos``) decide el segundo segmento: ``photos.scene`` es
+    del agente, ``photos.faces`` del arnés (``campos_solo_globales``). En la capa
+    del agente, un campo del arnés abortaría la carga.
     """
     from inaki.config import AgentConfig
+    from inaki.config.loader import campos_solo_globales
 
-    raiz = path.split(".", 1)[0]
-    return "agente" if raiz in AgentConfig.model_fields else "global"
+    raiz, _, resto = path.partition(".")
+    if raiz not in AgentConfig.model_fields:
+        return "global"
+    campo = resto.split(".", 1)[0]
+    return "global" if campo in campos_solo_globales(raiz) else "agente"
 
 
 def anidar(path: str, valor: Any) -> dict[str, Any]:

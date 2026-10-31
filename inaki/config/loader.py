@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Protocol
+from typing import Any, Iterable, Mapping, Protocol, get_args
 
 import yaml
+from pydantic import BaseModel
 
 from inaki.config.channels import canales_registrados
 from inaki.config.merge import deep_merge, resolver_inherit
@@ -24,6 +25,7 @@ from inaki.config.schema import (
     AdminConfig,
     AgentConfig,
     AgentDelegationConfig,
+    AgentPhotosConfig,
     AppConfig,
     ChannelsGlobalConfig,
     ChatHistoryConfig,
@@ -211,6 +213,7 @@ def ensure_user_config(config_dir: Path, agents_dir: Path) -> None:
             migracion(config_dir, agents_dir)
     migrate_secrets_into_main_layers(config_dir, agents_dir)
     migrate_photos_debug(config_dir)
+    migrate_photos_enrollment_chats(config_dir)
     migrate_knowledge_token_budget(config_dir)
 
 
@@ -243,6 +246,59 @@ def migrate_photos_debug(config_dir: Path) -> None:
         "ya no existe: el análisis de cada foto sale como traza `photo.analysis` en "
         "<home>/debug/turns/ con `inaki --debug daemon` o `app.debug: true`.",
         global_yaml,
+    )
+
+
+def migrate_photos_enrollment_chats(config_dir: Path) -> None:
+    """Migración one-shot: ``photos.enrollment_chats`` → ``photos.faces.enrollment_chats``.
+
+    Decide si el agente ofrece enrolar las caras que no reconoce: es reconocimiento
+    facial, y vivía suelto en ``photos`` al lado de ``scene`` (2026-10,
+    ``photos-scene-por-agente``). Como una clave desconocida aborta el arranque, se
+    mueve en el YAML conservando el valor del operador. Si ya están las dos con
+    valores distintos, aborta: elegir una en silencio contradiría al YAML. Solo
+    ``global.yaml``: hasta este cambio ``photos`` no se podía declarar en un agente.
+    Idempotente: sin la clave vieja, no hace nada.
+    """
+    from ruamel.yaml import YAML
+
+    from inaki.shared.errors import ConfigError
+
+    global_yaml = config_dir / "global.yaml"
+    if not global_yaml.exists():
+        return
+    yaml_rt = YAML()
+    yaml_rt.preserve_quotes = True
+    yaml_rt.width = 4096
+    data = yaml_rt.load(global_yaml.read_text(encoding="utf-8")) or {}
+    photos = data.get("photos")
+    if not isinstance(photos, dict) or "enrollment_chats" not in photos:
+        return
+    valor = photos["enrollment_chats"]
+    faces = photos.get("faces")
+    if faces is None:
+        photos["faces"] = faces = {}
+    if not isinstance(faces, dict):
+        raise ConfigError(
+            f"{global_yaml}: no se puede migrar photos.enrollment_chats a "
+            f"photos.faces.enrollment_chats porque photos.faces no es un bloque."
+        )
+    if "enrollment_chats" in faces and faces["enrollment_chats"] != valor:
+        raise ConfigError(
+            f"{global_yaml}: photos.enrollment_chats ({valor}) y "
+            f"photos.faces.enrollment_chats ({faces['enrollment_chats']}) dicen cosas "
+            f"distintas. El campo se movió a photos.faces: borrá photos.enrollment_chats "
+            f"y dejá en photos.faces.enrollment_chats el valor que querés."
+        )
+    faces["enrollment_chats"] = valor
+    del photos["enrollment_chats"]
+    with global_yaml.open("w", encoding="utf-8") as fh:
+        yaml_rt.dump(data, fh)
+    logger.warning(
+        "Migración photos.enrollment_chats: se movió a photos.faces.enrollment_chats "
+        "en %s (valor conservado: %s).",
+        global_yaml,
+        valor,
     )
 
 
@@ -603,6 +659,64 @@ def _check_legacy_shape(merged: dict) -> None:
                     raise ConfigError(_LEGACY_ERROR_TEMPLATE.format(field=f"memories.llm.{key}"))
 
 
+def _modelo_del_bloque(modelo: type[BaseModel], raiz: str) -> type[BaseModel] | None:
+    """El modelo Pydantic del bloque ``raiz`` (desenvolviendo ``X | None``), o ``None``."""
+    campo = modelo.model_fields.get(raiz)
+    if campo is None:
+        return None
+    candidatos = get_args(campo.annotation) or (campo.annotation,)
+    for tipo in candidatos:
+        if isinstance(tipo, type) and issubclass(tipo, BaseModel):
+            return tipo
+    return None
+
+
+def campos_solo_globales(raiz: str) -> frozenset[str]:
+    """Campos del bloque ``raiz`` que existen en ``GlobalConfig`` y NO en su vista del agente.
+
+    Un bloque que el agente declara con un modelo propio más chico que el global
+    (``photos`` → ``AgentPhotosConfig``, solo ``scene``) es MIXTO: lo que falta en la
+    vista del agente es del tier harness-global. Se deriva del schema, no de una
+    lista, así que un campo nuevo queda clasificado solo. Vacío para los bloques en
+    que el agente cubre todo el global (``llm``, ``delegation``) o que no son modelos.
+    """
+    del_agente = _modelo_del_bloque(AgentConfig, raiz)
+    del_global = _modelo_del_bloque(GlobalConfig, raiz)
+    if del_agente is None or del_global is None:
+        return frozenset()
+    return frozenset(del_global.model_fields) - frozenset(del_agente.model_fields)
+
+
+def _check_campos_solo_globales(raw: dict, contexto: str) -> None:
+    """Rechaza, en una capa de agente, los campos del arnés de un bloque mixto.
+
+    Va sobre la capa CRUDA (el fichero del agente o su override de runtime): tras el
+    merge, el agente hereda esos campos del global y ya no se distingue lo declarado
+    de lo heredado. Sin este chequeo, ``assemble_agent_config`` los filtraría en
+    silencio y el operador creería que su ``photos.faces`` aplica.
+    """
+    from inaki.shared.errors import ConfigError
+
+    detalles = []
+    for raiz in sorted(k for k in raw if isinstance(k, str)):
+        bloque = raw[raiz]
+        solo_globales = campos_solo_globales(raiz)
+        if not solo_globales or not isinstance(bloque, dict):
+            continue
+        declarados = sorted(k for k in bloque if k in solo_globales)
+        if not declarados:
+            continue
+        vista = _modelo_del_bloque(AgentConfig, raiz)
+        pisables = sorted(vista.model_fields) if vista else []
+        detalles.append(
+            f"{', '.join(f'{raiz}.{k}' for k in declarados)} es config de nivel GLOBAL "
+            f"(harness): va en config/global.yaml, acá no tiene efecto. Por agente solo "
+            f"se pisa {', '.join(f'{raiz}.{k}' for k in pisables)}"
+        )
+    if detalles:
+        raise ConfigError(f"{contexto}: {'; '.join(detalles)}.")
+
+
 def _check_top_level(
     raw: dict, modelo: type[AgentConfig] | type[GlobalConfig], contexto: str
 ) -> None:
@@ -683,6 +797,8 @@ def _aplicar_runtime(
     from inaki.shared.errors import ConfigError
 
     _check_top_level(runtime, modelo, "override de runtime")
+    if modelo is AgentConfig:
+        _check_campos_solo_globales(runtime, "override de runtime")
     try:
         return _deep_merge(base, runtime)
     except ConfigError as exc:
@@ -740,8 +856,12 @@ def load_global_config(config_dir: Path, runtime: dict | None = None) -> tuple[G
         else None
     )
 
+    # Copias antes de cada `pop`: `merged` es el `global_raw` que se devuelve, la BASE
+    # del merge de cada agente. Mutarlo le borraba al agente lo que hereda del global
+    # (con `photos.scene` per-agente, el agente perdía la escena del global entera).
     knowledge_raw = merged.get("knowledge")
     if knowledge_raw is not None:
+        knowledge_raw = dict(knowledge_raw)
         sources_raw = knowledge_raw.pop("sources", []) or []
         sources = [KnowledgeSourceConfig(**s) for s in sources_raw]
         knowledge = KnowledgeConfig(**knowledge_raw, sources=sources)
@@ -750,6 +870,7 @@ def load_global_config(config_dir: Path, runtime: dict | None = None) -> tuple[G
 
     photos_raw = merged.get("photos")
     if photos_raw is not None:
+        photos_raw = dict(photos_raw)
         faces_raw = photos_raw.pop("faces", {}) or {}
         scene_raw = photos_raw.pop("scene", {}) or {}
         dedup_raw = photos_raw.pop("dedup", {}) or {}
@@ -831,6 +952,19 @@ def _filter_channel_adapters(raw: dict) -> dict:
     return {k: v for k, v in raw.items() if isinstance(v, dict)}
 
 
+def _vista_del_agente(merged: dict, raiz: str) -> dict:
+    """El bloque ``raiz`` mergeado, sin los campos del arnés que el agente heredó del global.
+
+    Quita SOLO ``campos_solo_globales(raiz)``: un typo sigue llegando al modelo, que
+    tiene ``extra="forbid"`` y lo rechaza. Filtrar por "lo que el modelo conoce"
+    tragaría el typo en silencio. Que el agente no los DECLARE lo garantiza
+    ``_check_campos_solo_globales`` antes del merge.
+    """
+    bloque = merged.get(raiz) or {}
+    solo_globales = campos_solo_globales(raiz)
+    return {k: v for k, v in bloque.items() if k not in solo_globales}
+
+
 def assemble_agent_config(merged: dict) -> AgentConfig:
     """Ensambla un ``AgentConfig`` desde un dict YA mergeado y resuelto.
 
@@ -864,6 +998,11 @@ def assemble_agent_config(merged: dict) -> AgentConfig:
         workspace=WorkspaceConfig(**merged.get("workspace", {})),
         delegation=AgentDelegationConfig(**merged.get("delegation", {})),
         transcription=transcription,
+        photos=(
+            AgentPhotosConfig(**_vista_del_agente(merged, "photos"))
+            if merged.get("photos") is not None
+            else None
+        ),
         channels=_filter_channel_adapters(merged.get("channels", {})),
         providers=providers,
     )
@@ -905,6 +1044,7 @@ def load_agent_config(
     # Sobre el fichero CRUDO del agente, antes del merge: tras mergear ya no se
     # puede distinguir lo que el agente declaró de lo que heredó del global.
     _check_top_level(agent_raw, AgentConfig, str(agent_yaml))
+    _check_campos_solo_globales(agent_raw, str(agent_yaml))
 
     if extra_base is not None:
         global_raw = _deep_merge(global_raw, extra_base)

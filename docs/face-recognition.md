@@ -169,6 +169,21 @@ photos:
     api_key: "sk-ant-..."
 ```
 
+### Per-agent scene
+
+`photos.scene` is the default for every agent; each `agents/{id}.yaml` can override it
+field by field (for example, its own `prompt_template` so it describes photos in its own
+voice). It is the **only** part of `photos` an agent can override: `faces` (one model in
+RAM, one shared `faces.db`), `dedup` and `enabled` belong to the harness, and declaring
+them in an agent aborts the load naming the field.
+
+```yaml
+# ~/.inaki/agents/federico.yaml
+photos:
+  scene:
+    prompt_template: "Describí la foto con el tono de Federico…"
+```
+
 See the full configuration reference in [`config-reference.md`](config-reference.md).
 
 ## Bootstrap from Scratch

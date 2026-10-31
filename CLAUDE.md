@@ -85,7 +85,9 @@ Resumen operativo. El texto completo, con el porqué y los antipatrones, está e
    - **Harness-global** (`knowledge`, `scheduler`, `faces`/`photos`): singleton pesado,
      config solo en `GlobalConfig`, construido una vez en el ensamblador (vive en el `HarnessRuntime`). **No hay
      aislamiento per-agente — es por diseño.** ¿Hay que aislar? → otra instancia del
-     arnés como proceso aparte, con `--home` / `INAKI_HOME` propio.
+     arnés como proceso aparte, con `--home` / `INAKI_HOME` propio. Excepción acotada:
+     `photos.scene` (un cliente HTTP por agente, no un singleton) se pisa por agente; el
+     resto de `photos` no. → `photos-scene-por-agente`
    - **Per-agente** (`memory`, `history`, `channels`, `llm`, `embedding`): config en
      `AgentConfig`, construido por agente (`AgentRuntime`). Aislamiento por columna `agent_id`
      (mismo fichero) o por `db_filename` distinto (aislamiento físico).

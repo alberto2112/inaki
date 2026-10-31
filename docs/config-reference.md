@@ -817,18 +817,17 @@ Configuración del pipeline de fotos (reconocimiento facial + escena).
 | Field | Type | Default | Secret |
 |---|---|---|---|
 | `enabled` | `bool` | `True` |  |
-| `enrollment_chats` | `Literal['private', 'none']` | `'private'` |  |
 | `faces` | `FacesConfig` | _(sub-config)_ |  |
 | `scene` | `SceneConfig` | _(sub-config)_ |  |
 | `dedup` | `DedupConfig` | _(sub-config)_ |  |
 
 **`enabled`** — Si False, el bot ignora todas las fotos con warning. No se carga ningún modelo.
 
-**`enrollment_chats`** — Tipos de chat donde el agente ofrecerá registrar caras nuevas. 'private' = solo chats privados. 'none' = el agente nunca ofrece enrolar.
-
 **`faces`** — Reconocimiento facial local (InsightFace): qué modelo y con qué umbrales decide.
 
 **`scene`** — Descripción de la escena vía LLM multimodal: vendor, modelo, prompt y credencial.
+
+Es el DEFAULT de todos los agentes: cada ``agents/{id}.yaml`` puede pisarlo campo a campo con su propio ``photos.scene``. Es lo único de ``photos`` que se pisa por agente: ``faces``, ``dedup`` y ``enabled`` son del arnés.
 
 **`dedup`** — Job nocturno que detecta personas registradas dos veces y reporta los pares.
 
@@ -840,6 +839,7 @@ Configuración del proveedor de reconocimiento facial (InsightFace).
 |---|---|---|---|
 | `provider` | `Literal['insightface']` | `'insightface'` |  |
 | `model` | `Literal['buffalo_sc', 'buffalo_s', 'buffalo_l']` | `'buffalo_sc'` |  |
+| `enrollment_chats` | `Literal['private', 'none']` | `'private'` |  |
 | `match_threshold` | `float` | `0.55` |  |
 | `ambiguous_threshold` | `float` | `0.4` |  |
 
@@ -850,6 +850,10 @@ DECLARATIVO: al haber una sola opción, ningún componente lo lee — el adapter
 **`model`** — Pack de modelos de InsightFace, de más liviano a más preciso.
 
 ``buffalo_sc`` (default, ~200MB) es el indicado para la Pi 5; ``buffalo_s`` y ``buffalo_l`` ganan precisión a costa de RAM y descarga (``buffalo_l`` ~1GB). ⚠ Cambiarlo INVALIDA ``faces.db``: los embeddings guardados son de otro espacio vectorial. Hay que parar el daemon, borrar la DB y volver a enrolar todas las caras.
+
+**`enrollment_chats`** — Tipos de chat donde el agente ofrece registrar las caras que no reconoce.
+
+``private`` = solo en chats privados: ahí anota la foto numerando las caras desconocidas o ambiguas y ofrece enrolarlas. ``none`` = nunca lo ofrece (la foto se sigue analizando y las caras conocidas se siguen nombrando). Hasta 2026-10 era ``photos.enrollment_chats``; el arranque lo migra solo.
 
 **`match_threshold`** — Score mínimo de similitud coseno para considerar una cara como MATCHED.
 
@@ -930,7 +934,7 @@ Lo que el operador escribe en ``agents/{id}.yaml`` es un DELTA: cada bloque que 
 
 Solo ``id``, ``name`` y ``description`` son obligatorios y exclusivos del agente: no tienen contraparte global de la que heredar.
 
-Acá viven únicamente los recursos del tier PER-AGENTE (``llm``, ``embedding``, ``memories``, ``chat_history``, ``channels``). Los harness-global (``scheduler``, ``knowledge``, ``photos``) no tienen campo en este modelo a propósito: declararlos en el YAML de un agente es un error de clave, no un override silencioso.
+Acá viven únicamente los recursos del tier PER-AGENTE (``llm``, ``embedding``, ``memories``, ``chat_history``, ``channels``). Los harness-global (``scheduler``, ``knowledge``) no tienen campo en este modelo a propósito: declararlos en el YAML de un agente es un error de clave, no un override silencioso. ``photos`` es mixto: su campo acá es una VISTA parcial (``AgentPhotosConfig``, solo ``scene``) y lo demás del bloque es del arnés.
 
 Los use cases NO reciben este objeto: el composition root lo traduce a Settings VOs (``inaki/kernel/domain/agent_settings.py``) para que el dominio no dependa del schema de infraestructura.
 
@@ -949,6 +953,7 @@ Los use cases NO reciben este objeto: el composition root lo traduce a Settings 
 | `semantic_routing` | `SemanticRoutingConfig` | _(sub-config)_ |  |
 | `workspace` | `WorkspaceConfig` | _(sub-config)_ |  |
 | `delegation` | `AgentDelegationConfig` | _(sub-config)_ |  |
+| `photos` | `AgentPhotosConfig \| None` | `null` |  |
 | `transcription` | `TranscriptionConfig \| None` | `null` |  |
 | `channels` | `dict[str, Any]` | `{}` |  |
 | `providers` | `dict[str, ProviderConfig]` | `{}` |  |
@@ -996,6 +1001,10 @@ Además de heredar el bloque global, es donde un SUB-agente declara ``tools.allo
 **`delegation`** — Si este agente puede delegar, a qué sub-agentes y con qué presupuesto.
 
 ``enabled`` y ``allowed_targets`` son opt-in per-agente. Los presupuestos (``max_iterations_per_sub``, ``timeout_seconds``) heredan el default de ``GlobalConfig.delegation`` y se pisan acá. En un sub-agente declarar los presupuestos es error: manda siempre el del caller.
+
+**`photos`** — La parte per-agente del pipeline de fotos: hoy, la descripción de escena.
+
+``None`` cuando ni el global ni el agente declaran ``photos`` (feature apagada). Pisa campo a campo ``photos.scene`` del global. ``photos.faces``, ``photos.dedup`` y ``photos.enabled`` son del arnés: declararlos acá aborta la carga nombrando el campo.
 
 **`transcription`** — Provider de transcripción de audio de este agente. ``None`` → hereda el global.
 
@@ -1046,6 +1055,20 @@ Con ``False`` (default) la tool no se registra siquiera: no aparece en los schem
 **`allowed_targets`** — Allow-list de sub-agentes a los que delegar. Lista vacía = todos los disponibles.
 
 Se INTERSECA con los sub-agentes registrados (``agents/sub-agents/*.yaml``): nunca amplía el universo, solo lo recorta — un id que no existe se ignora. Filtra a la vez los destinos que la tool acepta y los que se anuncian en el bloque de descubrimiento del prompt. Si la intersección queda vacía, la tool ``delegate`` no se registra.
+
+### `AgentPhotosConfig`
+
+Lo de ``photos`` que un agente puede pisar: solo la descripción de escena.
+
+El resto del bloque es del tier harness-global y no tiene campo acá a propósito: ``faces`` es UN modelo en RAM y UN ``faces.db`` compartido (dos modelos con la misma dimensión de embedding compararían vectores de espacios distintos sin que nada lo detecte), ``dedup`` es UN job sobre ese registro, y ``enabled`` decide si esos singletons se cargan. Declararlos en ``agents/{id}.yaml`` aborta la carga.
+
+| Field | Type | Default | Secret |
+|---|---|---|---|
+| `scene` | `SceneConfig` | _(sub-config)_ |  |
+
+**`scene`** — Escena de ESTE agente: pisa campo a campo ``photos.scene`` del global.
+
+Útil para que cada agente describa las fotos con su voz (``prompt_template``) o con otro vendor/modelo. Lo que no declara lo hereda del global. Sin el pipeline de fotos activo en el global (``photos`` ausente o ``enabled: false``) no tiene efecto, igual que el resto de ``photos``.
 
 ## Channels — `agents/{id}.yaml` → `channels.<nombre>`
 

@@ -68,13 +68,14 @@ existe este documento— y la contradicción no queda flotando.
 `persist-tool-calls`, `groups-vs-broadcast`, `tool-config-own-file`,
 `agent-state-scoped-by-channel-chat`, `secrets-layer-eradication`,
 `channels-validados-al-cargar`, `motor-de-merge-unico`, `kernel-limpio` (quita `photos.debug`
-de `global.yaml`), `knowledge-token-budget-retirado` (quita
+de `global.yaml`), `photos-scene-por-agente` (mueve `photos.enrollment_chats` a `photos.faces`), `knowledge-token-budget-retirado` (quita
 `knowledge.token_budget_warn_threshold` de `global.yaml`).
 
 ### Sin migración — pero cambian comportamiento observable
 
 | Nota | Cambio observable |
 |---|---|
+| [`photos-scene-por-agente`](#photos-scene-por-agente) | `photos.scene` se puede pisar en `agents/{id}.yaml` (antes abortaba la carga como "config de nivel GLOBAL"); `photos.faces`/`dedup`/`enabled` en un agente siguen abortando, ahora nombrando el campo. `photos.enrollment_chats` pasa a `photos.faces.enrollment_chats`: el arranque lo migra solo en `global.yaml` |
 | [`delegation-resume`](#delegation-resume) | Un hijo background puede pausar con UNA pregunta (`[bg-N] needs_input`, estado nuevo `awaiting_input`, no terminal, sobrevive al reinicio) y el padre la reanuda con `delegate(resume="bg-N", task=<respuesta>)` sobre la MISMA fila y transcript. `agent_id` deja de ser `required` en el schema de `delegate`; `background_tasks` muestra la pregunta pendiente. Sin migración ni config; rollback: `DELETE FROM bg_tasks WHERE status='awaiting_input'` (ver la nota) |
 | [`bg-delivery-sin-routing`](#bg-delivery-sin-routing) | El turno que entrega un `[bg-N]` (o el aviso de interrupción) ya no hace semantic routing ni pre-fetch de knowledge: ve las tools/skills sticky de la conversación más `tools.pinned`, en vez de las que matchean el tema del resultado. El provider de embeddings `openai` recorta la entrada a 24.000 chars y el error de OpenAI ahora trae el cuerpo de la respuesta |
 | [`bg-delegation-transcript`](#bg-delegation-transcript) | Las delegaciones en background sobreviven al reinicio: ids `bg-1000+` en `background_tasks.db`, transcript completo consultable con `background_tasks(action=inspect)`, fallos con diagnóstico (ya no `TimeoutError: ` vacío) y aviso agrupado de lo que un reinicio / `/reload` cortó. Opt-in `delegation.grant_workdir` (directorio de trabajo `dwss/<8>` por delegación) y parámetro `input_files` de `delegate` |
@@ -147,6 +148,7 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
 - **Scheduler**: `modulos-scheduler-y-agents`, `scheduler-trigger-type-mutable`, `channel-send-history-persist`
 - **Refactor modular 2026-09 (índice)**: `refactor-modular`, `kernel-plano`
 - **Instalación y producto**: `service-install-bajo-sudo`, `config-rota-no-reinicia`, `instalacion-como-producto`, `config-web`, `agentes-y-providers-web`
+- **Fotos**: `photos-scene-por-agente`, `telegram-photo-recognition`, `kernel-limpio`
 - **Tools y config**: `runtimes-tipados`, `wiring-por-modulo`, `kernel-y-fachada-de-tools`, `modulos-tools-llm-extensions`, `write-file-explicit-mode`, `tool-config-protocol`,
   `tool-config-own-file`, `secrets-layer-eradication`, `motor-de-merge-unico`,
   `config-falla-ruidoso`, `config-show-effective`, `docs-de-config-autogeneradas`,
@@ -155,6 +157,49 @@ de `global.yaml`), `knowledge-token-budget-retirado` (quita
   `agent-id-igual-al-fichero`, `knowledge-token-budget-retirado`
 - **Providers LLM y embeddings**: `bg-delivery-sin-routing` (embeddings `openai`), `llm-un-solo-camino-de-construccion`, `openai-habla-responses`, `anthropic-api-actual`
 - **Delegación**: `delegation-resume`, `bg-delivery-sin-routing`, `bg-scope-del-turno`, `agent-id-igual-al-fichero`, `bg-stuck-task`, `delegation-limites-per-agente`, `subagent-inheritance`, `background-delegation`, `bg-delegation-transcript`
+
+---
+
+### `photos-scene-por-agente`
+
+**El caso (2026-10-31)**: un agente (`federico`) declaraba `photos.scene` en su YAML para
+describir las fotos con su propia voz, y el daemon no arrancaba: `'photos' es config de
+nivel GLOBAL (harness)`. El error era fiel al schema: `photos` no tenía campo en
+`AgentConfig`, y antes de `config-falla-ruidoso` ese bloque se ignoraba en silencio, así
+que el override **nunca había tenido efecto**. Pero la regla era más gruesa que el tier:
+el describer de escena no es un singleton, `build_photos_for_agent` ya construía uno por
+agente, solo que siempre desde la escena del global.
+
+**El cambio**:
+- `AgentConfig.photos` es una VISTA parcial (`AgentPhotosConfig`) con un único campo,
+  `scene`, que pisa campo a campo el `photos.scene` del global con el merge de siempre.
+  El describer de cada agente sale de su escena efectiva.
+- `photos.faces`, `photos.dedup` y `photos.enabled` siguen siendo del arnés. Declararlos
+  en un agente (YAML u override de runtime) aborta nombrando EL CAMPO y diciendo qué sí
+  se pisa. `faces` no se parte a propósito: hay UN modelo InsightFace en RAM y UN
+  `faces.db`, y los tres packs (`buffalo_sc`/`s`/`l`) sacan embeddings de 512
+  dimensiones, así que dos modelos compararían vectores de espacios distintos sin que la
+  guarda de dimensión lo detecte. Tampoco se pisan sus umbrales: se decidió no partir
+  `faces` (o es entero del arnés, o nada).
+- Qué campos son del arnés se deriva del schema (`campos_solo_globales`: lo que el modelo
+  global del bloque tiene y la vista del agente no). `config set` usa la misma regla para
+  elegir la capa: `photos.scene.*` va al agente, `photos.faces.*` al global.
+- `photos.enrollment_chats` pasó a `photos.faces.enrollment_chats`: decide si el agente
+  ofrece enrolar caras desconocidas, es reconocimiento facial. `migrate_photos_enrollment_chats`
+  lo mueve en `global.yaml` conservando el valor; si ya estaban las dos claves con
+  valores distintos, aborta sin elegir.
+- Bug encontrado en el camino: al construir `GlobalConfig`, el loader hacía `pop` de
+  `faces`/`scene`/`dedup` (y de `knowledge.sources`) sobre el MISMO dict que devuelve como
+  `global_raw`, la base del merge de cada agente. Mientras `photos` no se leía del lado del
+  agente no se notaba; con `scene` per-agente, cada agente perdía la escena del global.
+  Ahora se copia antes.
+
+**Acción del operador**: ninguna. Un `photos.scene` que ya esté en un agente empieza a
+aplicar; otro bloque de `photos` en un agente sigue abortando, con un mensaje más preciso.
+
+**Invariante**: un bloque mixto se expresa con una vista parcial del modelo en
+`AgentConfig`, nunca con una lista de campos; y lo del arnés se rechaza en la capa CRUDA
+del agente, porque tras el merge lo heredado y lo declarado no se distinguen.
 
 ---
 

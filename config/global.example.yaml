@@ -495,15 +495,14 @@ knowledge:
 photos:
   # Si False, el bot ignora todas las fotos con warning. No se carga ningún modelo.
   enabled: true
-  # Tipos de chat donde el agente ofrecerá registrar caras nuevas. 'private' = solo
-  # chats privados. 'none' = el agente nunca ofrece enrolar.
-  enrollment_chats: private
   # Reconocimiento facial local (InsightFace): qué modelo y con qué umbrales decide.
   faces:
     # Motor de detección y embedding facial. ``insightface`` es el único soportado.
     provider: insightface
     # Pack de modelos de InsightFace, de más liviano a más preciso.
     model: buffalo_sc
+    # Tipos de chat donde el agente ofrece registrar las caras que no reconoce.
+    enrollment_chats: private
     # Score mínimo de similitud coseno para considerar una cara como MATCHED.
     match_threshold: 0.55
     # Score entre ambiguous_threshold y match_threshold → cara AMBIGUOUS.

@@ -21,7 +21,13 @@ from pathlib import Path
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from inaki.config import AgentConfig, PhotosConfig, ProviderConfig, TranscriptionConfig
+from inaki.config import (
+    AgentConfig,
+    PhotosConfig,
+    ProviderConfig,
+    SceneConfig,
+    TranscriptionConfig,
+)
 from inaki.kernel.ports.tool_port import ITool
 from inaki.kernel.ports.turn_tracer_port import ITurnTracer
 from inaki.perception.adapters.face_metadata.sqlite_message_face_metadata_repo import (
@@ -161,7 +167,7 @@ class TranscriptionProviderFactory:
 def build_photos_settings(photos_cfg: PhotosConfig) -> PhotosSettings:
     return PhotosSettings(
         enabled=photos_cfg.enabled,
-        enrollment_chats=photos_cfg.enrollment_chats,
+        enrollment_chats=photos_cfg.faces.enrollment_chats,
         match_threshold=photos_cfg.faces.match_threshold,
         ambiguous_threshold=photos_cfg.faces.ambiguous_threshold,
     )
@@ -220,6 +226,9 @@ def build_photos_for_agent(
 ) -> PhotosBundle:
     """Adapters per-agente (describer de escena, anotador, repo de metadata) + use case + tools.
 
+    La escena sale de ``agent_cfg.photos.scene`` (la del global pisada por el agente);
+    ``photos_cfg`` aporta lo del arnés: umbrales, ``enrollment_chats`` y ``dedup``.
+
     Lanza si algo no se puede construir: el composition root decide si degradar
     (hoy: fotos deshabilitadas para ese agente, el resto arranca).
     """
@@ -227,7 +236,9 @@ def build_photos_for_agent(
     process_photo = ProcessPhotoUseCase(
         vision=singletons.vision,
         face_registry=singletons.face_registry,
-        scene_describer=_build_scene_describer(photos_cfg, agent_cfg.providers),
+        scene_describer=_build_scene_describer(
+            _escena_de(agent_cfg, photos_cfg), agent_cfg.providers
+        ),
         annotator=PillowPhotoAnnotator(),
         metadata_repo=metadata_repo,
         config=build_photos_settings(photos_cfg),
@@ -247,15 +258,23 @@ def build_photos_for_agent(
     return PhotosBundle(process_photo=process_photo, tools=tools)
 
 
+def _escena_de(agent_cfg: AgentConfig, photos_cfg: PhotosConfig) -> SceneConfig:
+    """La escena efectiva del agente; la del global si el agente no tiene vista de ``photos``.
+
+    Con el pipeline activo el merge siempre le da la vista (hereda el bloque del
+    global); el fallback cubre un ``AgentConfig`` construido a mano.
+    """
+    return agent_cfg.photos.scene if agent_cfg.photos is not None else photos_cfg.scene
+
+
 def _build_scene_describer(
-    photos_cfg: PhotosConfig, providers: dict[str, ProviderConfig]
+    scene: SceneConfig, providers: dict[str, ProviderConfig]
 ) -> ISceneDescriberPort:
-    """El adaptador de descripción de escena según ``photos.scene.provider``.
+    """El adaptador de descripción de escena según ``scene.provider``.
 
     Sin ``scene.api_key`` propia, toma la del registry ``providers`` (por key o
     por ``type``) — el mismo vendor que el LLM no obliga a repetir la credencial.
     """
-    scene = photos_cfg.scene
     api_key = scene.api_key
     if not api_key:
         match = providers.get(scene.provider) or next(

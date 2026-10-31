@@ -21,7 +21,7 @@ from inaki.config.schema.embedding import EmbeddingConfig
 from inaki.config.schema.knowledge import KnowledgeConfig
 from inaki.config.schema.llm import LLMConfig
 from inaki.config.schema.memories import MemoriesConfig
-from inaki.config.schema.photos import PhotosConfig
+from inaki.config.schema.photos import AgentPhotosConfig, PhotosConfig
 from inaki.config.schema.providers import ProviderConfig
 from inaki.config.schema.scheduler import SchedulerConfig
 from inaki.config.schema.skills import SkillsConfig
@@ -51,9 +51,10 @@ class AgentConfig(_ConfigBaseModel):
 
     Acá viven únicamente los recursos del tier PER-AGENTE (``llm``, ``embedding``,
     ``memories``, ``chat_history``, ``channels``). Los harness-global
-    (``scheduler``, ``knowledge``, ``photos``) no tienen campo en este modelo a
-    propósito: declararlos en el YAML de un agente es un error de clave, no un
-    override silencioso.
+    (``scheduler``, ``knowledge``) no tienen campo en este modelo a propósito:
+    declararlos en el YAML de un agente es un error de clave, no un override
+    silencioso. ``photos`` es mixto: su campo acá es una VISTA parcial
+    (``AgentPhotosConfig``, solo ``scene``) y lo demás del bloque es del arnés.
 
     Los use cases NO reciben este objeto: el composition root lo traduce a Settings
     VOs (``inaki/kernel/domain/agent_settings.py``) para que el dominio no
@@ -135,6 +136,14 @@ class AgentConfig(_ConfigBaseModel):
     (``max_iterations_per_sub``, ``timeout_seconds``) heredan el default de
     ``GlobalConfig.delegation`` y se pisan acá. En un sub-agente declarar los
     presupuestos es error: manda siempre el del caller."""
+
+    photos: AgentPhotosConfig | None = None
+    """La parte per-agente del pipeline de fotos: hoy, la descripción de escena.
+
+    ``None`` cuando ni el global ni el agente declaran ``photos`` (feature apagada).
+    Pisa campo a campo ``photos.scene`` del global. ``photos.faces``,
+    ``photos.dedup`` y ``photos.enabled`` son del arnés: declararlos acá aborta la
+    carga nombrando el campo."""
 
     transcription: TranscriptionConfig | None = None
     """Provider de transcripción de audio de este agente. ``None`` → hereda el global.

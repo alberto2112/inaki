@@ -120,7 +120,9 @@ regla escrita).
 
 - **Harness-global (singleton, compartido por TODOS los agentes del proceso):**
   `knowledge`, `scheduler`, `faces`/`photos`. Config SOLO en `GlobalConfig` (NUNCA en
-  `AgentConfig`); se construyen UNA vez en la pasada 2 del ensamblador (viven en el `HarnessRuntime`), no por agente. Son los
+  `AgentConfig`; la única excepción es `photos.scene`, que no es un singleton sino el
+  describer de escena que ya se construía uno por agente — ver `photos-scene-por-agente`
+  en `migraciones.md`); se construyen UNA vez en la pasada 2 del ensamblador (viven en el `HarnessRuntime`), no por agente. Son los
   singletons pesados (modelo InsightFace en RAM, índice RAG, loop de cron): duplicarlos
   in-process reventaría recursos en la Pi. **No hay aislamiento per-agente para estos —
   es por diseño, no una limitación a resolver.** ¿El usuario final necesita aislar uno?

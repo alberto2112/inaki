@@ -738,7 +738,7 @@ def _wire_photos(b: _Borrador, global_cfg: GlobalConfig, harness: _Harness) -> N
     logger.info(
         "Agente '%s': photos wired (scene_provider=%s, %d face tools)",
         b.cfg.id,
-        photos_cfg.scene.provider,
+        (b.cfg.photos.scene if b.cfg.photos else photos_cfg.scene).provider,
         len(armado.tools),
     )
 

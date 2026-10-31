@@ -36,6 +36,14 @@ class FacesConfig(_ConfigBaseModel):
     espacio vectorial. Hay que parar el daemon, borrar la DB y volver a enrolar
     todas las caras."""
 
+    enrollment_chats: Literal["private", "none"] = "private"
+    """Tipos de chat donde el agente ofrece registrar las caras que no reconoce.
+
+    ``private`` = solo en chats privados: ahí anota la foto numerando las caras
+    desconocidas o ambiguas y ofrece enrolarlas. ``none`` = nunca lo ofrece (la
+    foto se sigue analizando y las caras conocidas se siguen nombrando).
+    Hasta 2026-10 era ``photos.enrollment_chats``; el arranque lo migra solo."""
+
     match_threshold: float = 0.55
     """Score mínimo de similitud coseno para considerar una cara como MATCHED."""
     ambiguous_threshold: float = 0.40
@@ -96,14 +104,33 @@ class PhotosConfig(_ConfigBaseModel):
 
     enabled: bool = True
     """Si False, el bot ignora todas las fotos con warning. No se carga ningún modelo."""
-    enrollment_chats: Literal["private", "none"] = "private"
-    """Tipos de chat donde el agente ofrecerá registrar caras nuevas.
-    'private' = solo chats privados. 'none' = el agente nunca ofrece enrolar."""
     faces: FacesConfig = FacesConfig()
     """Reconocimiento facial local (InsightFace): qué modelo y con qué umbrales decide."""
 
     scene: SceneConfig = SceneConfig()
-    """Descripción de la escena vía LLM multimodal: vendor, modelo, prompt y credencial."""
+    """Descripción de la escena vía LLM multimodal: vendor, modelo, prompt y credencial.
+
+    Es el DEFAULT de todos los agentes: cada ``agents/{id}.yaml`` puede pisarlo campo
+    a campo con su propio ``photos.scene``. Es lo único de ``photos`` que se pisa por
+    agente: ``faces``, ``dedup`` y ``enabled`` son del arnés."""
 
     dedup: DedupConfig = DedupConfig()
     """Job nocturno que detecta personas registradas dos veces y reporta los pares."""
+
+
+class AgentPhotosConfig(_ConfigBaseModel):
+    """Lo de ``photos`` que un agente puede pisar: solo la descripción de escena.
+
+    El resto del bloque es del tier harness-global y no tiene campo acá a propósito:
+    ``faces`` es UN modelo en RAM y UN ``faces.db`` compartido (dos modelos con la
+    misma dimensión de embedding compararían vectores de espacios distintos sin que
+    nada lo detecte), ``dedup`` es UN job sobre ese registro, y ``enabled`` decide si
+    esos singletons se cargan. Declararlos en ``agents/{id}.yaml`` aborta la carga."""
+
+    scene: SceneConfig = SceneConfig()
+    """Escena de ESTE agente: pisa campo a campo ``photos.scene`` del global.
+
+    Útil para que cada agente describa las fotos con su voz (``prompt_template``) o
+    con otro vendor/modelo. Lo que no declara lo hereda del global. Sin el pipeline
+    de fotos activo en el global (``photos`` ausente o ``enabled: false``) no tiene
+    efecto, igual que el resto de ``photos``."""
